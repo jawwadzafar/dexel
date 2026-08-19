@@ -1,0 +1,11 @@
+[workspace]
+resolver = "2"
+members = ["activity", "companion"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+
+# dev-companion v0.1 — Rust + Bevy developer companion desktop game.
+# See docs/implementation-plan.md for the architecture and milestone plan.

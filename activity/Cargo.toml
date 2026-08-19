@@ -1,0 +1,11 @@
+[package]
+name = "activity"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+# IMPORTANT boundary: this crate must stay a plain-Rust lib with NO Bevy
+# dependency. The game (companion) consumes it, never the reverse. Adding Bevy
+# here would break the architecture boundary in docs/implementation-plan.md §3.1.
+
+[dependencies]
