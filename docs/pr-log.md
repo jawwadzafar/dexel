@@ -7,3 +7,5 @@ Never delete or rewrite a past row — append corrections as new rows.
 |----|-----------|-------------|------------|-------|----------|-----------|
 | #1 | M0 | Approve | Approve (no veto) | Approve | Merged | 84895215f5958d15612fb1c6ac34b1a8815dce2c |
 | #2 | M1 | not run | not run | not run | **Merged without review** — explicit user request, opencode offline, no reviewer subagents available | 4cda6b5 |
+| #2 | M1 | Approve (backfill) | Approve (backfill, no veto) | Approve (backfill) | **Backfilled review** — audit record only; PR already merged. All 3 reviewers independently re-verified commit 4cda6b5 in isolated worktrees; all approve. No defects requiring fix-forward. | 4cda6b5 |
+| #3 | M2 | pending | pending | pending | **Opened by game-engineer** (this row will be updated by pr-merge-decider when the 3 reviewers finish) | — |

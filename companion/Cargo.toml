@@ -6,4 +6,16 @@ license.workspace = true
 
 [dependencies]
 activity = { path = "../activity" }
+# Bevy is pulled with the default 2d+3d+ui+audio feature set (which
+# transitively enables the keyboard + mouse input features we need for
+# `KeyboardInput` / `MouseMotion` message types and `InputPlugin`).
+# Sub-crates (`bevy_input`, `bevy_ecs`, `bevy_time`, `bevy_ui`) are listed
+# explicitly so the **integration test** can import them directly without
+# re-exporting through the container `bevy` crate (each sub-crate has its own
+# prelude surface and the test uses `bevy_input::keyboard::KeyboardInput`
+# etc. rather than the thin `bevy::input` re-exports).
 bevy = "0.19.1"
+bevy_input = { version = "0.19.1", features = ["keyboard", "mouse"] }
+bevy_ecs = { version = "0.19.1" }
+bevy_time = { version = "0.19.1" }
+bevy_ui = { version = "0.19.1" }

@@ -2038,6 +2038,10 @@ version = "0.1.0"
 dependencies = [
  "activity",
  "bevy",
+ "bevy_ecs",
+ "bevy_input",
+ "bevy_time",
+ "bevy_ui",
 ]
 
 [[package]]
