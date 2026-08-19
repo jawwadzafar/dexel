@@ -2,6 +2,7 @@
 description: "Pr Reviewer Boundaries of the dev-companion fleet for Rust + Bevy developer companion desktop game. Independently checks a milestone PR against the project's three non-negotiable architecture boundaries and Rust idiom/lint cleanliness. Holds veto power: a boundary violation blocks merge regardless of the other two reviewers' verdicts."
 mode: subagent
 temperature: 0.2
+model: tokenfactory/Qwen/Qwen3-Omni-30B-A3B-Instruct
 permission:
   read: allow
   edit:

@@ -16,15 +16,24 @@ fleet:
 defaults:
   model: inherit
   capabilities: { read: true }
-  # The engineer's "fast" tier is pinned to Qwen3.8-27B via the TokenFactory
-  # opencode provider. This was previously pinned to an invalid guessed slug
-  # (deepseek/deepseek-v4-flash — wrong provider prefix, not the registered
-  # id) which made game-engineer and pr-reviewer-tests unusable as subagents
-  # until diagnosed. This slug was verified directly against
-  # https://tf-stage-api.iamsaif.ai/v1/models before being pinned here — if
-  # you change providers, re-verify against that provider's actual model
-  # list rather than guessing a plausible-looking id.
-  opencodeModels: { fast: tokenfactory/Qwen/Qwen3.8-27B }
+  # Three real, distinct models across the fleet's tiers, all verified live
+  # against https://tf-stage-api.iamsaif.ai/v1/models before pinning (an
+  # earlier guessed deepseek slug had the wrong provider prefix and made
+  # every "fast"-tier agent unusable until diagnosed — re-verify against the
+  # provider's actual model list if you change any of these, never guess):
+  #   smart -> Qwen3-Omni-30B-A3B-Instruct (judgment-heavy: architect, both
+  #                            reviewers with veto/synthesis power, the merge
+  #                            decider — gpt-oss deliberately not used here)
+  #   fast  -> Qwen3.8-27B    (the implementer, game-engineer)
+  #   cheap -> DeepSeek V4 Flash (pr-reviewer-tests — a mechanical re-run-and-
+  #                            check role, deliberately a different model
+  #                            from game-engineer so the check is genuinely
+  #                            independent, not the same model reviewing
+  #                            itself)
+  opencodeModels:
+    smart: tokenfactory/Qwen/Qwen3-Omni-30B-A3B-Instruct
+    fast: tokenfactory/Qwen/Qwen3.8-27B
+    cheap: tokenfactory/deepseek-ai/DeepSeek-V4-Flash-0731
 
 agents:
   - name: game-architect
@@ -113,7 +122,7 @@ agents:
       worktree and assesses whether new code has adequate, non-flaky test
       coverage.
     goal: A verdict on test adequacy and a from-scratch cargo test run, independent of whatever the engineer already ran.
-    model: fast
+    model: cheap
     capabilities: { read: true, run: true }
     skills: [pr-review-lens]
     principles:

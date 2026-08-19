@@ -8,5 +8,6 @@
   "compaction": {
     "prune": true,
     "tail_turns": 4
-  }
+  },
+  "small_model": "tokenfactory/deepseek-ai/DeepSeek-V4-Flash-0731"
 }

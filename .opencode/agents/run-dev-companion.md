@@ -1,6 +1,7 @@
 ---
 description: Orchestrates the dev-companion fleet for Rust + Bevy developer companion desktop game (game-architect, game-engineer, pr-reviewer-correctness, pr-reviewer-boundaries, pr-reviewer-tests, pr-merge-decider). Use for implementing, extending, or re-planning the dev-companion Rust/Bevy game, including re-runs and partial fixes.
 mode: primary
+model: tokenfactory/Qwen/Qwen3-Omni-30B-A3B-Instruct
 permission:
   read: allow
   edit: allow
