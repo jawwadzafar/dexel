@@ -43,10 +43,21 @@ each verified with a real tool-call probe AND a realistic reasoning task
   `chat_template_kwargs: {"enable_thinking": true→false}` in
   `~/.config/opencode/opencode.jsonc`'s model entry, already set.** Without
   it, this model burns its entire token budget on hidden reasoning and
-  returns EMPTY content on anything past trivial one-shot tool calls — 1500+
-  tokens of reasoning with no answer, and can hit an upstream gateway timeout
-  entirely uncapped. With thinking disabled it's fast (~4s) and correct. If
-  you ever add another Qwen3.x-family model, check for the same issue.
+  returns EMPTY content on anything past trivial one-shot tool calls. Tested
+  exhaustively — reasoning scales to fill whatever budget it gets and never
+  reaches an answer, and above ~8k tokens the request outlives the gateway:
+  | max_tokens | time | reasoning | answer |
+  | 2,000 | 23s | 6.8k chars | empty (finish_reason=length) |
+  | 3,000 | 34s | 11.2k chars | empty (length) |
+  | 4,000 | 43s | 14.7k chars | empty (length) |
+  | 8,000 | 86s | 28.3k chars | empty (length) |
+  | 15,000 | 125.7s | — | **HTTP 524 gateway timeout, no response** |
+  | thinking off | 4-7s | 0 | correct |
+  So there is no budget that works: below ~8k it runs out mid-reasoning,
+  above that the Cloudflare gateway (~120s ceiling) kills the request first.
+  `reasoning_effort: low` is ignored by this vLLM deployment. Don't retry
+  this — with thinking disabled it's fast (~4s) and correct. If you ever add
+  another Qwen3.x-family model, check for the same issue.
 - `cheap` -> DeepSeek V4 Flash (pr-reviewer-tests). Slower per call (~15s)
   but the only model with a real proven track record across actual
   multi-step agentic tool use (all of M0 and the M1 recovery ran on it).
