@@ -16,32 +16,32 @@ fleet:
 defaults:
   model: inherit
   capabilities: { read: true }
-  # Three real, distinct models across the fleet's tiers. Being listed by
+  # Two verified-working models across the fleet's tiers. Being listed by
   # the provider is NOT enough — verify each one actually returns a working
   # tool_calls response (POST /v1/chat/completions with a tool + tool_choice:
-  # auto and check the response), not just that /v1/models lists it. Two
-  # earlier picks (Qwen3-Omni-30B-A3B-Instruct, and before that a guessed
-  # deepseek slug) looked reasonable and were both wrong for different
-  # reasons — Qwen3-Omni-30B specifically returns
-  # `"auto" tool choice requires --enable-auto-tool-choice and
-  # --tool-call-parser to be set`, i.e. the backend vLLM deployment for that
-  # model doesn't support function calling at all, which is silent death for
-  # any agent role that needs read/edit/run. Also confirmed broken on this
-  # backend: microsoft/Fara1.5-27B (same tool_choice error), openai/gpt-oss-120b
-  # (returns malformed tool output as plain text, not a tool_calls array),
-  # Qwen/Qwen3.6-27B-FP8 (model_not_found despite being in the local
-  # opencode.jsonc models map — stale entry, doesn't exist server-side).
-  #   smart -> google/gemma-4-31B-it (judgment-heavy: architect, both
-  #                            reviewers with veto/synthesis power, the merge
-  #                            decider — gpt-oss deliberately not used per
-  #                            user preference, and confirmed working)
+  # auto and check the response), not just that /v1/models lists it.
+  # Qwen/Qwen3-Omni-30B-A3B-Instruct (a former "smart"-tier pick) failed this
+  # exact check — `"auto" tool choice requires --enable-auto-tool-choice and
+  # --tool-call-parser to be set` — a server-side vLLM deployment gap for
+  # that model specifically, confirmed via `kubectl logs` on the
+  # Qwen3.8-27B-FP8 deployment showing `enable_auto_tool_choice: True,
+  # tool_call_parser: qwen3_coder` was set for THAT deployment but not
+  # Omni's; removed from opencode.jsonc's models map entirely. Also
+  # confirmed broken the same way: microsoft/Fara1.5-27B (same tool_choice
+  # error), openai/gpt-oss-120b (malformed tool output as plain text, not a
+  # tool_calls array), Qwen/Qwen3.6-27B-FP8 (model_not_found through the
+  # gateway despite being one of the deployment's served_model_name aliases).
+  #   smart -> google/gemma-4-31B-it (architect, both reviewers with
+  #                            veto/synthesis power, the merge decider —
+  #                            confirmed working by direct probe)
   #   fast  -> Qwen3.8-27B    (the implementer, game-engineer — confirmed
-  #                            working; it was NOT the broken one)
-  #   cheap -> DeepSeek V4 Flash (pr-reviewer-tests — a mechanical re-run-and-
-  #                            check role, deliberately a different model
-  #                            from game-engineer so the check is genuinely
-  #                            independent, not the same model reviewing
-  #                            itself)
+  #                            working both by direct probe and by the
+  #                            deployment's own vLLM startup log)
+  #   cheap -> DeepSeek V4 Flash (pr-reviewer-tests — the model proven
+  #                            reliable across the actual live M0/M1 run)
+  # Reusing a model across tiers is fine (tiers are an intent, not a forced
+  # diversity requirement) — these three are just the full verified-working
+  # roster, one per tier.
   opencodeModels:
     smart: tokenfactory/google/gemma-4-31B-it
     fast: tokenfactory/Qwen/Qwen3.8-27B
