@@ -17,12 +17,19 @@ run. The architect phase is already complete — read
 This whole implement-review-merge cycle is ONE orchestrator phase
 ("Milestone cycle") with a single loop spanning all six milestones (max 30
 passes) — it does not stop and wait after M0 merges. If any single pass
-stalls (an agent announces a plan and stops without finishing, which
-`game-engineer`'s deepseek model is known to occasionally do), re-invoke that
-same phase's agent with exactly what's missing appended, per the
-orchestrator's own loop rule — check `docs/milestone-log.md`/`docs/pr-log.md`
-for real evidence of progress before assuming a pass is done, never trust an
-agent's self-report alone.
+stalls (an agent announces a plan and stops without finishing — a tendency
+some smaller/faster models show under long agentic tasks, and `game-engineer`
+and `pr-reviewer-tests` run on one), re-invoke that same phase's agent with
+exactly what's missing appended, per the orchestrator's own loop rule — check
+`docs/milestone-log.md`/`docs/pr-log.md` for real evidence of progress before
+assuming a pass is done, never trust an agent's self-report alone.
+
+`game-engineer` and `pr-reviewer-tests` run on the "fast" tier, pinned in
+`fleet.yaml` to `tokenfactory/Qwen/Qwen3.8-27B` (verified live against the
+TokenFactory API before pinning — an earlier guessed DeepSeek slug was wrong
+and made both agents unusable until fixed). **opencode does not hot-reload
+agent config** — restart it after any `fleet.yaml`/model change before
+relying on these two agents.
 
 For each milestone, in order, run the full cycle before starting the next:
 

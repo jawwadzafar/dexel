@@ -2,7 +2,7 @@
 description: Game Engineer of the dev-companion fleet for Rust + Bevy developer companion desktop game. Implements the plan milestone-by-milestone on its own branch per milestone, keeping the game compiling and runnable after every milestone, and opens a PR for each one.
 mode: subagent
 temperature: 0.2
-model: deepseek/deepseek-v4-flash
+model: tokenfactory/Qwen/Qwen3.8-27B
 permission:
   read: allow
   edit: allow

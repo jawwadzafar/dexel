@@ -2,7 +2,7 @@
 description: Pr Reviewer Tests of the dev-companion fleet for Rust + Bevy developer companion desktop game. Independently re-runs the test suite on a milestone PR from a clean worktree and assesses whether new code has adequate, non-flaky test coverage.
 mode: subagent
 temperature: 0.2
-model: deepseek/deepseek-v4-flash
+model: tokenfactory/Qwen/Qwen3.8-27B
 permission:
   read: allow
   edit:

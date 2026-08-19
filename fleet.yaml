@@ -16,11 +16,15 @@ fleet:
 defaults:
   model: inherit
   capabilities: { read: true }
-  # The engineer's "fast" tier is pinned to DeepSeek V4 Flash for opencode runs.
-  # Verify this provider/model slug against your opencode provider config before
-  # relying on it — opencode model ids are provider-qualified and slug naming
-  # varies by provider registration.
-  opencodeModels: { fast: deepseek/deepseek-v4-flash }
+  # The engineer's "fast" tier is pinned to Qwen3.8-27B via the TokenFactory
+  # opencode provider. This was previously pinned to an invalid guessed slug
+  # (deepseek/deepseek-v4-flash — wrong provider prefix, not the registered
+  # id) which made game-engineer and pr-reviewer-tests unusable as subagents
+  # until diagnosed. This slug was verified directly against
+  # https://tf-stage-api.iamsaif.ai/v1/models before being pinned here — if
+  # you change providers, re-verify against that provider's actual model
+  # list rather than guessing a plausible-looking id.
+  opencodeModels: { fast: tokenfactory/Qwen/Qwen3.8-27B }
 
 agents:
   - name: game-architect
