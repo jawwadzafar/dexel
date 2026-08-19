@@ -15,31 +15,62 @@ run. The architect phase is already complete — read
 `_fleet/local/LEDGER.md` (task 1 is done) — skip the Architecture phase.
 
 Read `_fleet/local/LEDGER.md` before doing anything else — it has the real
-current state. As of this writing: M0 merged (PR #1, full 3-reviewer
-pipeline). M1 merged (PR #2) but **without** the reviewer pipeline — it was
-merged directly on explicit user request while opencode was offline; this is
-recorded plainly in `docs/pr-log.md` and is not a precedent, just a one-off.
-Start the Milestone cycle at M2.
+current state, including a naming-collision bug that made an earlier "M1
+backfill review" accidentally re-review M0 instead (now fixed in
+`pr-review-lens`; two stale handoff files are renamed with a
+`.stale-was-actually-m0` suffix so they aren't mistaken for real M1 verdicts).
+As of this writing: M0 merged and fully reviewed. M1 merged without the
+reviewer pipeline, and only `pr-reviewer-tests` has genuinely reviewed it —
+**correctness and boundaries review for M1/PR #2 is still outstanding**, do
+that before M2.
 
 This whole implement-review-merge cycle is ONE orchestrator phase
 ("Milestone cycle") with a single loop spanning all six milestones (max 30
 passes) — it does not stop and wait after M0 merges. If any single pass
-stalls (an agent announces a plan and stops without finishing — a tendency
-some smaller/faster models show under long agentic tasks, and `game-engineer`
-and `pr-reviewer-tests` run on one), re-invoke that same phase's agent with
-exactly what's missing appended, per the orchestrator's own loop rule — check
-`docs/milestone-log.md`/`docs/pr-log.md` for real evidence of progress before
-assuming a pass is done, never trust an agent's self-report alone.
+stalls (an agent announces a plan and stops without finishing), re-invoke
+that same phase's agent with exactly what's missing appended, per the
+orchestrator's own loop rule — check `docs/milestone-log.md`/`docs/pr-log.md`
+for real evidence of progress before assuming a pass is done, never trust an
+agent's self-report alone.
 
-Three distinct real models across the fleet's tiers (`fleet.yaml`'s
-`defaults.opencodeModels`, all verified live against the TokenFactory API
-before pinning): `smart` -> `Qwen/Qwen3-Omni-30B-A3B-Instruct` (game-architect,
-pr-reviewer-correctness, pr-reviewer-boundaries, pr-merge-decider — the
-judgment-heavy roles), `fast` -> `Qwen/Qwen3.8-27B` (game-engineer, the
-implementer), `cheap` -> DeepSeek V4 Flash (pr-reviewer-tests — deliberately
-a different model from the implementer, so its check is genuinely
-independent). **opencode does not hot-reload agent config** — restart it
-after any `fleet.yaml`/model change before relying on any of these agents.
+Three models across the fleet's tiers (`fleet.yaml`'s `defaults.opencodeModels`),
+each verified with a real tool-call probe AND a realistic reasoning task
+(not just checked against `/v1/models`):
+- `smart` -> `google/gemma-4-31B-it` (game-architect, pr-reviewer-correctness,
+  pr-reviewer-boundaries, pr-merge-decider). Fast (~1-2s) and answered a real
+  Bevy/clippy bug-finding task correctly and concisely on the first try.
+- `fast` -> `Qwen/Qwen3.8-27B` (game-engineer). **Requires
+  `chat_template_kwargs: {"enable_thinking": true→false}` in
+  `~/.config/opencode/opencode.jsonc`'s model entry, already set.** Without
+  it, this model burns its entire token budget on hidden reasoning and
+  returns EMPTY content on anything past trivial one-shot tool calls — 1500+
+  tokens of reasoning with no answer, and can hit an upstream gateway timeout
+  entirely uncapped. With thinking disabled it's fast (~4s) and correct. If
+  you ever add another Qwen3.x-family model, check for the same issue.
+- `cheap` -> DeepSeek V4 Flash (pr-reviewer-tests). Slower per call (~15s)
+  but the only model with a real proven track record across actual
+  multi-step agentic tool use (all of M0 and the M1 recovery ran on it).
+
+No gpt-oss, no Qwen3-Omni-30B-A3B-Instruct, no Fara1.5-27B, no
+Qwen3.6-27B-FP8 — all four confirmed broken (either tool-calling disabled
+server-side, malformed tool output, or the model doesn't exist through the
+gateway despite being listed).
+
+**opencode does not hot-reload agent/model config** — restart it (a genuinely
+new session, not resumed) after any `fleet.yaml` or `opencode.jsonc` change
+before relying on any agent. A resumed session keeps whatever model was
+cached at its creation regardless of later config changes; only brand-new
+subagent sessions it spawns pick up current config.
+
+**There is no automatic model-fallback-on-failure** — opencode's config
+schema has no such mechanism (checked directly against its schema). If a
+pinned model starts failing, the fix is manual: edit the model in
+`fleet.yaml`'s `opencodeModels` (or per-model `options` in
+`opencode.jsonc` for provider-level quirks like the one above), then rebuild
+the harness (`fleetsmith build fleet.yaml --target all --force`, then delete
+`.goose/`) and restart opencode fresh. There's no way to make this automatic
+within opencode itself — don't assume a stalled agent will self-heal onto a
+different model.
 
 For each milestone, in order, run the full cycle before starting the next:
 

@@ -47,10 +47,17 @@ is real" bugs happen for the next agent.
 ## Writing your verdict
 
 Write your handoff to `_fleet/local/handoffs/` named
-`{seq}-<your-agent-name>-to-pr-merge-decider.md` per
-`HANDOFF.template.md`. The `Context digest` section must state your
-verdict (Approve / Request changes) in its first bullet, with the
-command output that produced it. Do not post a `gh pr review` yourself
+`{seq}-<your-agent-name>-to-pr-merge-decider-pr<n>.md` per
+`HANDOFF.template.md` — the PR number is part of the filename, not
+just the content. A filename that omits it (e.g. reusing
+`pr-reviewer-correctness-to-pr-merge-decider.md` across two different
+PRs) has already caused one reviewer to silently overwrite an earlier
+milestone's verdict with a new one and re-review the wrong PR by
+mistake — always double check which PR number you were actually asked
+to review before writing anything, and never reuse a filename across
+PRs. The `Context digest` section must state your verdict (Approve /
+Request changes) in its first bullet, with the command output that
+produced it. Do not post a `gh pr review` yourself
 — only `pr-merge-decider` issues the actual GitHub review and merge,
 since all agents share one authenticated GitHub account and separate
 per-agent "reviews" from the same account would just overwrite each
