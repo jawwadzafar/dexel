@@ -14,6 +14,13 @@ run. The architect phase is already complete — read
 `_fleet/local/handoffs/01-game-architect-to-game-engineer.md` and
 `_fleet/local/LEDGER.md` (task 1 is done) — skip the Architecture phase.
 
+Read `_fleet/local/LEDGER.md` before doing anything else — it has the real
+current state. As of this writing: M0 merged (PR #1, full 3-reviewer
+pipeline). M1 merged (PR #2) but **without** the reviewer pipeline — it was
+merged directly on explicit user request while opencode was offline; this is
+recorded plainly in `docs/pr-log.md` and is not a precedent, just a one-off.
+Start the Milestone cycle at M2.
+
 This whole implement-review-merge cycle is ONE orchestrator phase
 ("Milestone cycle") with a single loop spanning all six milestones (max 30
 passes) — it does not stop and wait after M0 merges. If any single pass
@@ -24,12 +31,15 @@ exactly what's missing appended, per the orchestrator's own loop rule — check
 `docs/milestone-log.md`/`docs/pr-log.md` for real evidence of progress before
 assuming a pass is done, never trust an agent's self-report alone.
 
-`game-engineer` and `pr-reviewer-tests` run on the "fast" tier, pinned in
-`fleet.yaml` to `tokenfactory/Qwen/Qwen3.8-27B` (verified live against the
-TokenFactory API before pinning — an earlier guessed DeepSeek slug was wrong
-and made both agents unusable until fixed). **opencode does not hot-reload
-agent config** — restart it after any `fleet.yaml`/model change before
-relying on these two agents.
+Three distinct real models across the fleet's tiers (`fleet.yaml`'s
+`defaults.opencodeModels`, all verified live against the TokenFactory API
+before pinning): `smart` -> `Qwen/Qwen3-Omni-30B-A3B-Instruct` (game-architect,
+pr-reviewer-correctness, pr-reviewer-boundaries, pr-merge-decider — the
+judgment-heavy roles), `fast` -> `Qwen/Qwen3.8-27B` (game-engineer, the
+implementer), `cheap` -> DeepSeek V4 Flash (pr-reviewer-tests — deliberately
+a different model from the implementer, so its check is genuinely
+independent). **opencode does not hot-reload agent config** — restart it
+after any `fleet.yaml`/model change before relying on any of these agents.
 
 For each milestone, in order, run the full cycle before starting the next:
 
