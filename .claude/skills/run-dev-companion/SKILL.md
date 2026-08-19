@@ -34,62 +34,29 @@ Agents: `game-architect`.
 
 **Gate before next phase:** docs/implementation-plan.md exists and every milestone in it has a command-verifiable exit criterion
 
-### Phase 2: Milestone implementation
+### Phase 2: Milestone cycle
 **Execution mode:** subagents
 
-Agents: `game-engineer`.
+Agents: `game-engineer`, `pr-reviewer-correctness`, `pr-reviewer-boundaries`, `pr-reviewer-tests`, `pr-merge-decider`.
 - `game-engineer`: Each milestone compiles, passes cargo fmt/clippy/test, passes its manual smoke test, and lands as its own reviewable PR before the next milestone starts.
 . Hands off to `pr-reviewer-correctness`, `pr-reviewer-boundaries`, `pr-reviewer-tests` (artifact: `docs/milestone-log.md`).
-
-**Loop — iterate until done (max 8 passes):**
-
-Stop on whichever of these three comes first:
-1. **Success** — the exit condition holds: _game-engineer has opened a PR for the next not-yet-merged milestone in docs/implementation-plan.md, or reports a blocking issue in docs/milestone-log.md_. The objective signal is `cargo test --workspace` (exit 0 = satisfied); trust it over any agent's self-assessment, and record the command and its actual output in the ledger — not your conclusion about it.
-2. **No progress** — 2 consecutive passes produce no material change. A pass that fixes nothing will not start fixing things on the next attempt; stop and report the sticking point.
-3. **Cap** — 8 passes are spent. Proceed with the shortfall recorded in the ledger and the final report; a bounded, documented gap beats an unbounded loop.
-
-Between passes, re-run this phase's agent(s) with the **specific failures from the last pass appended** to their brief — refine, do not restart from scratch.
-When the check is test-shaped, verify the implementation actually does the work rather than only that `cargo test --workspace` exits 0 — an agent that can see the check can satisfy it without satisfying the requirement.
-
-**Gate before next phase:** the current milestone's PR exists on GitHub, branched from main, linked to its docs/milestone-log.md entry
-
-### Phase 3: PR review
-**Execution mode:** subagents (parallel)
-
-Agents: `pr-reviewer-correctness`, `pr-reviewer-boundaries`, `pr-reviewer-tests`.
-Launch these agents concurrently; none depends on another within this phase.
 - `pr-reviewer-correctness`: A verdict on plan/exit-criterion adherence backed by commands this agent ran itself, in its own worktree.. Hands off to `pr-merge-decider` (artifact: `_fleet/local/handoffs/*-pr-reviewer-correctness-to-pr-merge-decider.md`).
 - `pr-reviewer-boundaries`: A verdict on the activity-isolation boundary, no-raw-content-persistence, the anti-mashing clamp, and clippy/style cleanliness.. Hands off to `pr-merge-decider` (artifact: `_fleet/local/handoffs/*-pr-reviewer-boundaries-to-pr-merge-decider.md`).
 - `pr-reviewer-tests`: A verdict on test adequacy and a from-scratch cargo test run, independent of whatever the engineer already ran.. Hands off to `pr-merge-decider` (artifact: `_fleet/local/handoffs/*-pr-reviewer-tests-to-pr-merge-decider.md`).
-
-**Loop — iterate until done (max 6 passes):**
-
-Stop on whichever of these three comes first:
-1. **Success** — the exit condition holds: _all three reviewers have written their independent verdict handoff for the currently open milestone PR_. Require evidence for the call, not an assertion that it looks done.
-2. **No progress** — 2 consecutive passes produce no material change. A pass that fixes nothing will not start fixing things on the next attempt; stop and report the sticking point.
-3. **Cap** — 6 passes are spent. Proceed with the shortfall recorded in the ledger and the final report; a bounded, documented gap beats an unbounded loop.
-
-Between passes, re-run this phase's agent(s) with the **specific failures from the last pass appended** to their brief — refine, do not restart from scratch.
-
-**Gate before next phase:** _fleet/local/handoffs/ has one verdict handoff per reviewer for this PR, each in its own worktree-isolated pass
-
-### Phase 4: Merge decision
-**Execution mode:** subagents
-
-Agents: `pr-merge-decider`.
 - `pr-merge-decider`: Every milestone PR ends this phase either merged into main with a logged commit SHA, or explicitly left open with every reviewer's required fix stated in one place.
 . Terminal agent — its output is (part of) the final deliverable.
 
-**Loop — iterate until done (max 4 passes):**
+**Loop — iterate until done (max 30 passes):**
 
 Stop on whichever of these three comes first:
-1. **Success** — the exit condition holds: _the current milestone's PR is merged, or left open with a consolidated change request in docs/pr-log.md_. Require evidence for the call, not an assertion that it looks done.
-2. **No progress** — 2 consecutive passes produce no material change. A pass that fixes nothing will not start fixing things on the next attempt; stop and report the sticking point.
-3. **Cap** — 4 passes are spent. Proceed with the shortfall recorded in the ledger and the final report; a bounded, documented gap beats an unbounded loop.
+1. **Success** — the exit condition holds: _Every milestone M0 through M5 in docs/implementation-plan.md has a merged PR recorded in docs/pr-log.md, in order. Within each milestone's sub-cycle: game-engineer opens the PR first; the three reviewers run concurrently with each other but only after that PR exists, each in its own git worktree; pr-merge-decider runs only after all three reviewer handoffs exist, and merges or requests changes. game-engineer does not branch for the next milestone until pr-merge-decider has merged the current one.
+_. Require evidence for the call, not an assertion that it looks done.
+2. **No progress** — 3 consecutive passes produce no material change. A pass that fixes nothing will not start fixing things on the next attempt; stop and report the sticking point.
+3. **Cap** — 30 passes are spent. Proceed with the shortfall recorded in the ledger and the final report; a bounded, documented gap beats an unbounded loop.
 
 Between passes, re-run this phase's agent(s) with the **specific failures from the last pass appended** to their brief — refine, do not restart from scratch.
 
-**Gate before next phase:** docs/pr-log.md has a final decision for this PR citing all three reviewer verdicts, and a merge commit SHA if approved
+**Gate before next phase:** docs/pr-log.md has a Merged decision with a commit SHA for every milestone M0 through M5, or the run stopped early with a documented blocker in docs/milestone-log.md or docs/pr-log.md
 
 ## Data flow
 

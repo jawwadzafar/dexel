@@ -14,6 +14,16 @@ run. The architect phase is already complete — read
 `_fleet/local/handoffs/01-game-architect-to-game-engineer.md` and
 `_fleet/local/LEDGER.md` (task 1 is done) — skip the Architecture phase.
 
+This whole implement-review-merge cycle is ONE orchestrator phase
+("Milestone cycle") with a single loop spanning all six milestones (max 30
+passes) — it does not stop and wait after M0 merges. If any single pass
+stalls (an agent announces a plan and stops without finishing, which
+`game-engineer`'s deepseek model is known to occasionally do), re-invoke that
+same phase's agent with exactly what's missing appended, per the
+orchestrator's own loop rule — check `docs/milestone-log.md`/`docs/pr-log.md`
+for real evidence of progress before assuming a pass is done, never trust an
+agent's self-report alone.
+
 For each milestone, in order, run the full cycle before starting the next:
 
 1. **game-engineer** implements the milestone on its own branch

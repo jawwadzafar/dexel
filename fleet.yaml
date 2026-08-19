@@ -408,40 +408,38 @@ skills:
 orchestrator:
   name: run-dev-companion
   trigger: implementing, extending, or re-planning the dev-companion Rust/Bevy game
-  # These four phases interleave per milestone, not run once each end-to-end:
-  # M0 goes Milestone implementation -> PR review -> Merge decision -> merged,
-  # THEN M1 starts the same three-phase cycle. Never let game-engineer open
-  # M<n+1>'s branch while M<n>'s PR is still open (its own skill enforces
-  # this). Six milestones means this three-phase cycle runs roughly six times
-  # in one fleet invocation.
+  # fleetsmith phases run once each, in order — there is no schema primitive
+  # for "go back to an earlier phase for the next item in a list." Six
+  # milestones therefore CANNOT be modeled as separate implement/review/merge
+  # phases run once each (that would do M0 end-to-end and then stop, waiting
+  # for a human to say "now do M1" — exactly the failure mode this fleet
+  # exists to avoid). Instead, "Milestone cycle" is ONE phase whose loop
+  # itself carries all six milestones: each pass is one sub-step of one
+  # milestone's implement -> review -> merge sequence, and the loop does not
+  # exit until every milestone is merged. Do not re-split this into per-stage
+  # phases without also giving the orchestrator an explicit "repeat from
+  # Phase 2" instruction, which the compiler has nowhere to render.
   phases:
     - name: Architecture
       mode: subagents
       agents: [game-architect]
       gate: "docs/implementation-plan.md exists and every milestone in it has a command-verifiable exit criterion"
-    - name: Milestone implementation
+    - name: Milestone cycle
       mode: subagents
-      agents: [game-engineer]
+      agents: [game-engineer, pr-reviewer-correctness, pr-reviewer-boundaries, pr-reviewer-tests, pr-merge-decider]
       loop:
-        until: "game-engineer has opened a PR for the next not-yet-merged milestone in docs/implementation-plan.md, or reports a blocking issue in docs/milestone-log.md"
-        max: 8
-        check: "cargo test --workspace"
-      gate: "the current milestone's PR exists on GitHub, branched from main, linked to its docs/milestone-log.md entry"
-    - name: PR review
-      mode: subagents
-      parallel: true
-      agents: [pr-reviewer-correctness, pr-reviewer-boundaries, pr-reviewer-tests]
-      loop:
-        until: "all three reviewers have written their independent verdict handoff for the currently open milestone PR"
-        max: 6
-      gate: "_fleet/local/handoffs/ has one verdict handoff per reviewer for this PR, each in its own worktree-isolated pass"
-    - name: Merge decision
-      mode: subagents
-      agents: [pr-merge-decider]
-      loop:
-        until: "the current milestone's PR is merged, or left open with a consolidated change request in docs/pr-log.md"
-        max: 4
-      gate: "docs/pr-log.md has a final decision for this PR citing all three reviewer verdicts, and a merge commit SHA if approved"
+        until: >
+          Every milestone M0 through M5 in docs/implementation-plan.md has a
+          merged PR recorded in docs/pr-log.md, in order. Within each
+          milestone's sub-cycle: game-engineer opens the PR first; the three
+          reviewers run concurrently with each other but only after that PR
+          exists, each in its own git worktree; pr-merge-decider runs only
+          after all three reviewer handoffs exist, and merges or requests
+          changes. game-engineer does not branch for the next milestone until
+          pr-merge-decider has merged the current one.
+        max: 30
+        noProgress: 3
+      gate: "docs/pr-log.md has a Merged decision with a commit SHA for every milestone M0 through M5, or the run stopped early with a documented blocker in docs/milestone-log.md or docs/pr-log.md"
 
 handover:
   strategy: file
