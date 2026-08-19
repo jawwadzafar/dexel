@@ -2,7 +2,7 @@
 description: "Game Architect of the dev-companion fleet for Rust + Bevy developer companion desktop game. Produces and maintains the concrete Rust + Bevy implementation plan for the dev-companion game: architecture, ECS component/system design, persistence, the activity-monitoring abstraction boundary, and a milestone sequence with verifiable exit criteria."
 mode: subagent
 temperature: 0.2
-model: tokenfactory/Qwen/Qwen3-Omni-30B-A3B-Instruct
+model: tokenfactory/google/gemma-4-31B-it
 permission:
   read: allow
   edit:

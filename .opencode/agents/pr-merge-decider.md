@@ -2,7 +2,7 @@
 description: Pr Merge Decider of the dev-companion fleet for Rust + Bevy developer companion desktop game. Synthesizes the three independent reviewer verdicts for a milestone PR into one decision and executes it — merge on approval, or a consolidated change request back to game-engineer.
 mode: subagent
 temperature: 0.2
-model: tokenfactory/Qwen/Qwen3-Omni-30B-A3B-Instruct
+model: tokenfactory/google/gemma-4-31B-it
 permission:
   read: allow
   edit:
