@@ -1,0 +1,11 @@
+{
+  "skill": "pr-review-lens",
+  "description": "Shared methodology for the three independent milestone-PR reviewers (pr-reviewer-correctness, pr-reviewer-boundaries, pr-reviewer-tests): how to check out the PR in isolation, what to re-verify yourself, and how to write your verdict as a handoff. Use whenever independently reviewing a dev-companion milestone PR — each reviewer applies this methodology through its own specific lens (see the agent's `role` and `principles`).\n",
+  "should_trigger": [
+    "TODO: a request that must invoke pr-review-lens"
+  ],
+  "should_not_trigger": [
+    "TODO: a nearby request that must NOT invoke pr-review-lens (e.g. one belonging to another dev-companion skill)"
+  ],
+  "cases": []
+}

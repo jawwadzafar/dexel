@@ -1,0 +1,12 @@
+# Rust
+/target/
+**/target/
+# Cargo.lock is committed deliberately — this workspace builds an application
+# (the companion binary), where a locked dependency tree is the convention.
+
+# fleetsmith — per-developer runtime tier, never committed
+_fleet/local/
+
+# local save data, if ever written into the repo during dev testing
+saves/
+*.save.json

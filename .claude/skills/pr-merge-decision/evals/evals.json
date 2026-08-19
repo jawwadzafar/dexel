@@ -1,0 +1,11 @@
+{
+  "skill": "pr-merge-decision",
+  "description": "Methodology for pr-merge-decider: how to synthesize three independent reviewer verdicts on a milestone PR into one decision, merge on approval, and consolidate change requests otherwise. Use whenever deciding the fate of a dev-companion milestone PR after all three reviewers have reported.\n",
+  "should_trigger": [
+    "TODO: a request that must invoke pr-merge-decision"
+  ],
+  "should_not_trigger": [
+    "TODO: a nearby request that must NOT invoke pr-merge-decision (e.g. one belonging to another dev-companion skill)"
+  ],
+  "cases": []
+}

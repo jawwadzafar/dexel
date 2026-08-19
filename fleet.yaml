@@ -1,0 +1,448 @@
+# fleetsmith fleet spec for dev-companion — a Rust + Bevy desktop companion
+# game where a tiny developer character works while the real user codes.
+#
+# Build:    node <fleetsmith-checkout>/src/cli.js build fleet.yaml --target all
+# Validate: node <fleetsmith-checkout>/src/cli.js validate fleet.yaml
+
+version: 1
+
+fleet:
+  name: dev-companion
+  domain: "Rust + Bevy developer companion desktop game"
+  pattern: pipeline        # architect plans, engineer implements — one direction, no loop back required
+  execution: subagents     # portable across Claude Code / opencode identically
+  workspace: _fleet
+
+defaults:
+  model: inherit
+  capabilities: { read: true }
+  # The engineer's "fast" tier is pinned to DeepSeek V4 Flash for opencode runs.
+  # Verify this provider/model slug against your opencode provider config before
+  # relying on it — opencode model ids are provider-qualified and slug naming
+  # varies by provider registration.
+  opencodeModels: { fast: deepseek/deepseek-v4-flash }
+
+agents:
+  - name: game-architect
+    role: >
+      Produces and maintains the concrete Rust + Bevy implementation plan for
+      the dev-companion game: architecture, ECS component/system design,
+      persistence, the activity-monitoring abstraction boundary, and a
+      milestone sequence with verifiable exit criteria.
+    goal: >
+      A plan precise enough that an engineer can implement milestone-by-milestone
+      without re-deriving architecture decisions or guessing scope.
+    model: smart
+    capabilities: { read: true, web: true }
+    skills: [rust-bevy-game-architecture]
+    handoff:
+      to: [game-engineer]
+      artifact: docs/implementation-plan.md
+      criteria:
+        - Every milestone has an exit criterion a shell command can verify (cargo test/run/build)
+        - Activity monitoring stays behind the ActivityProvider trait boundary — no game system reads raw input directly
+        - No milestone assumes an integration explicitly deferred out of MVP (VS Code, Git, GitHub, AI coding agents)
+        - Progression math rewards meaningful sessions, not raw keystroke counts, and this is stated as a concrete rule (not a vibe)
+
+  - name: game-engineer
+    role: >
+      Implements the plan milestone-by-milestone on its own branch per
+      milestone, keeping the game compiling and runnable after every
+      milestone, and opens a PR for each one.
+    goal: >
+      Each milestone compiles, passes cargo fmt/clippy/test, passes its
+      manual smoke test, and lands as its own reviewable PR before the next
+      milestone starts.
+    model: fast
+    capabilities: { read: true, edit: true, run: true }
+    skills: [milestone-driven-rust-implementation]
+    handoff:
+      to: [pr-reviewer-correctness, pr-reviewer-boundaries, pr-reviewer-tests]
+      artifact: docs/milestone-log.md
+      criteria:
+        - Every milestone entry lists changed files, exact commands run, and their results
+        - Failures are debugged to root cause and recorded, never silently bypassed (no blanket #[allow], no --no-verify equivalents)
+        - Remaining issues at handoff time are stated explicitly, not omitted
+        - A PR exists on GitHub for the milestone, branched from main, with a description linking its milestone-log entry
+
+  - name: pr-reviewer-correctness
+    role: >
+      Independently verifies a milestone PR actually does what the plan says
+      it does — re-derives the evidence rather than trusting the PR
+      description or the milestone log's own claims.
+    goal: A verdict on plan/exit-criterion adherence backed by commands this agent ran itself, in its own worktree.
+    model: smart
+    capabilities: { read: true, run: true }
+    skills: [pr-review-lens]
+    principles:
+      - Diff against the plan's milestone entry and its stated exit criterion, not against vibes
+      - Re-run the command sequence yourself; a green claim in the PR description or milestone log is not evidence
+    handoff:
+      to: [pr-merge-decider]
+      artifact: "_fleet/local/handoffs/*-pr-reviewer-correctness-to-pr-merge-decider.md"
+      criteria:
+        - Verdict states which exit criterion was or wasn't demonstrated, with the command output that shows it
+
+  - name: pr-reviewer-boundaries
+    role: >
+      Independently checks a milestone PR against the project's three
+      non-negotiable architecture boundaries and Rust idiom/lint cleanliness.
+      Holds veto power: a boundary violation blocks merge regardless of the
+      other two reviewers' verdicts.
+    goal: A verdict on the activity-isolation boundary, no-raw-content-persistence, the anti-mashing clamp, and clippy/style cleanliness.
+    model: smart
+    capabilities: { read: true, run: true }
+    skills: [pr-review-lens]
+    principles:
+      - A boundary violation is an automatic Request-changes no matter how good everything else is
+      - Read the diff for the boundary, not just grep for the word "ActivityEvent" — a leak can be indirect (e.g. a system taking a raw winit event as a parameter)
+    handoff:
+      to: [pr-merge-decider]
+      artifact: "_fleet/local/handoffs/*-pr-reviewer-boundaries-to-pr-merge-decider.md"
+      criteria:
+        - Verdict explicitly addresses all three boundaries (activity isolation, no raw content, anti-mashing clamp) even when clean
+        - Any veto names the exact file/line and which boundary it violates
+
+  - name: pr-reviewer-tests
+    role: >
+      Independently re-runs the test suite on a milestone PR from a clean
+      worktree and assesses whether new code has adequate, non-flaky test
+      coverage.
+    goal: A verdict on test adequacy and a from-scratch cargo test run, independent of whatever the engineer already ran.
+    model: fast
+    capabilities: { read: true, run: true }
+    skills: [pr-review-lens]
+    principles:
+      - Run cargo test --workspace twice in your own worktree; a test that doesn't pass both times is flaky, not passing
+      - New systems and pure functions from the plan's testable-function rule should have a corresponding test — flag the gap even if everything currently passes
+    handoff:
+      to: [pr-merge-decider]
+      artifact: "_fleet/local/handoffs/*-pr-reviewer-tests-to-pr-merge-decider.md"
+      criteria:
+        - Verdict includes real (pasted) output from at least two independent test runs
+        - Any coverage gap names the specific untested function or system
+
+  - name: pr-merge-decider
+    role: >
+      Synthesizes the three independent reviewer verdicts for a milestone PR
+      into one decision and executes it — merge on approval, or a
+      consolidated change request back to game-engineer.
+    goal: >
+      Every milestone PR ends this phase either merged into main with a
+      logged commit SHA, or explicitly left open with every reviewer's
+      required fix stated in one place.
+    model: smart
+    capabilities: { read: true, run: true }
+    skills: [pr-merge-decision]
+    principles:
+      - "Decision rule: any reviewer veto (a stated boundary violation from pr-reviewer-boundaries) blocks merge outright; otherwise merge requires at least 2 of 3 approvals"
+      - Wait for all three reviewer handoffs to exist before deciding — do not decide on a partial set
+    handoff:
+      to: []
+      artifact: docs/pr-log.md
+      criteria:
+        - Every PR has a final verdict (Merged / Request changes) citing all three reviewers' individual verdicts
+        - An approved PR is actually merged (gh pr merge), and docs/pr-log.md records the merge commit SHA
+        - A Request-changes verdict consolidates every reviewer's required fix into one list for game-engineer
+
+skills:
+  - name: rust-bevy-game-architecture
+    description: >
+      Methodology for architecting the dev-companion Rust + Bevy desktop game:
+      ECS component/system/resource design, the ActivityProvider abstraction
+      boundary, save/load persistence, and milestone sequencing down to the
+      smallest playable vertical slice. Use when writing or revising
+      docs/implementation-plan.md, deciding how a new signal (git, VS Code, AI
+      agent) should enter the ECS, or scoping a new milestone.
+    body: |
+      # Rust + Bevy game architecture for dev-companion
+
+      ## Non-negotiable boundaries
+
+      1. **Activity monitoring is a separate crate from the game.** The game
+         (Bevy) crate never reads OS input or editor/git state directly — it
+         only consumes `ActivityEvent`s from an `ActivityProvider` trait object
+         defined in a plain-Rust `activity` crate with zero Bevy dependency.
+         This is what lets VS Code / Git / AI-agent signals get added later as
+         new event producers without touching any game system.
+      2. **Never collect or persist raw input content.** Counts and durations
+         only (keystrokes-this-tick, idle duration, focus duration). No key
+         identity, no file contents, no clipboard, no window titles beyond
+         "focused vs not."
+      3. **Reward meaningful sessions, not raw activity volume.** Any function
+         mapping activity to progress must clamp/smooth its input (e.g. a
+         diminishing-returns curve or a rate cap) so key-mashing plateaus
+         quickly. State this as a testable pure function, not a comment.
+
+      ## Default shape (deviate only with a stated reason)
+
+      - Cargo workspace, two crates: `activity` (lib, no Bevy dep) and
+        `companion` (bin, Bevy app). This is a compiler-enforced boundary, not
+        a convention someone can accidentally violate.
+      - Bevy `States<AppState>` for `Loading` / `Playing`; character mood
+        (`Idle` / `Coding` / `OnBreak`) is a component field, not a global
+        state, since it belongs to the developer entity.
+      - Progression math (activity → progress delta, XP thresholds, level
+        curve) lives in plain functions outside any Bevy system so they are
+        unit-testable without spinning up an `App`.
+      - Persistence is `serde` + JSON to the OS data dir (`dirs` crate). JSON
+        until there's a concrete reason to change — it's human-diffable while
+        debugging save format issues.
+
+      ## Milestone sequencing rule
+
+      Order milestones so the game is playable (even if ugly) as early as
+      possible, and every milestone after that only adds one new axis:
+      rendering skeleton → activity wiring → the actual game loop →
+      persistence → polish. Never bundle "wire up the input source" and "build
+      the reward loop" into the same milestone — if the reward math is wrong,
+      you need to know without also doubting the input plumbing.
+
+      Every milestone's exit criterion must be a command someone can run and
+      get a pass/fail answer from — "the character looks nice" is not a
+      milestone exit criterion, "cargo test --workspace passes and the
+      progress bar visibly moves after 10s of typing" is.
+
+  - name: milestone-driven-rust-implementation
+    description: >
+      Discipline for implementing a dev-companion milestone from
+      docs/implementation-plan.md: what to run after every milestone, how to
+      debug a Bevy/ECS failure to root cause instead of working around it, and
+      what the handoff log must contain. Use whenever implementing, fixing, or
+      completing a milestone in this repository.
+    body: |
+      # Milestone-driven Rust/Bevy implementation
+
+      ## After every milestone, in this order
+
+      1. `cargo fmt --all -- --check` — fix formatting, don't just note it.
+      2. `cargo clippy --workspace --all-targets -- -D warnings` — a clippy
+         warning is a build failure here. Silence a specific lint only with an
+         inline `#[allow(...)]` carrying a one-line reason; never a blanket
+         crate-level allow.
+      3. `cargo test --workspace` — including the pure progression-math tests
+         and the activity-provider mock tests. All green before moving on.
+      4. `cargo run -p companion` — manual smoke test against the milestone's
+         stated exit criterion in the plan. Actually do it; don't infer it
+         compiles therefore it works.
+      5. Append an entry to `docs/milestone-log.md`: milestone id, files
+         changed, exact commands run, their results (paste real output, not a
+         summary), and anything still broken or deferred.
+
+      ## Debugging a Bevy/ECS failure
+
+      - A panic with a Bevy-internal frame almost always means a system
+        ordering or missing-resource bug, not a Bevy bug — check `.add_systems`
+        ordering and whether every `Res`/`ResMut`/`Query` param the panicking
+        system asks for was actually inserted before this schedule ran.
+      - Run with `RUST_LOG=debug,wgpu=warn` and `RUST_BACKTRACE=1` before
+        guessing.
+      - For "system reads stale data" bugs, check the schedule label
+        (`Startup` vs `Update` vs `FixedUpdate`) before touching system logic —
+        misplaced schedule is a much more common cause than logic errors.
+      - Enable the `dynamic_linking` Bevy feature in the dev profile only
+        (never release) to keep the compile-run-check loop fast enough to
+        actually do this iteratively.
+      - When a query returns nothing unexpectedly, the fix is almost always a
+        missing component on the entity or an overly narrow `With<T>`/
+        `Without<T>` filter — print `query.iter().count()` before assuming the
+        system logic itself is wrong.
+
+      ## What "done" means for a milestone
+
+      A milestone is done when steps 1-4 above all pass AND the plan's stated
+      exit criterion is demonstrated, not when the code compiles. If a
+      milestone can't be finished as scoped, say so explicitly in the log
+      rather than silently shipping a partial version of it under the same
+      milestone name.
+
+      ## Git and PR workflow — every milestone gets its own PR
+
+      1. Branch from `main`: `git checkout -b milestone/m<N>-<slug>` (e.g.
+         `milestone/m0-workspace-scaffold`).
+      2. Commit as you go, not one giant commit at the end — a commit per
+         coherent step (e.g. "scaffold activity crate", "wire DefaultPlugins
+         window") makes the PR diff and any later `git bisect` legible.
+         Author as the current git identity (`git config user.name/email`) —
+         do not override it.
+      3. After the milestone passes steps 1-4 above and its log entry is
+         appended: `git push -u origin milestone/m<N>-<slug>`, then
+         `gh pr create --base main --title "M<N>: <milestone name>" --body`
+         with a body that links the exact `docs/milestone-log.md` entry and
+         states the exit criterion demonstrated.
+      4. Do not merge your own PR. Hand off to the three reviewers
+         (`pr-reviewer-correctness`, `pr-reviewer-boundaries`,
+         `pr-reviewer-tests`) and stop — do not start the next milestone's
+         branch until `pr-merge-decider` has merged the current PR (check
+         `gh pr view <n> --json state`), so two milestones are never in
+         flight as unreviewed branches at once.
+      5. If `pr-merge-decider` comes back with requested changes, fix them on
+         the same branch, push, and hand off to the reviewers again — do not
+         open a second PR for the same milestone.
+
+  - name: pr-review-lens
+    description: >
+      Shared methodology for the three independent milestone-PR reviewers
+      (pr-reviewer-correctness, pr-reviewer-boundaries, pr-reviewer-tests):
+      how to check out the PR in isolation, what to re-verify yourself, and
+      how to write your verdict as a handoff. Use whenever independently
+      reviewing a dev-companion milestone PR — each reviewer applies this
+      methodology through its own specific lens (see the agent's `role` and
+      `principles`).
+    body: |
+      # PR review lens (shared by all three milestone reviewers)
+
+      You are one of three independent reviewers checking the same PR. You do
+      not see the other two reviewers' verdicts, and they do not see yours —
+      that independence is the point; do not try to coordinate with them.
+
+      ## Isolation: always review in your own git worktree
+
+      Never `git checkout` the PR branch in the shared working directory —
+      `game-engineer` or another reviewer may have it checked out
+      concurrently, and a second `checkout` there would clobber their state.
+      Instead:
+
+      ```bash
+      git fetch origin pull/<n>/head:review/<your-agent-name>-pr<n>
+      git worktree add ../dev-companion-review-<your-agent-name>-pr<n> review/<your-agent-name>-pr<n>
+      cd ../dev-companion-review-<your-agent-name>-pr<n>
+      # run your checks here
+      cd - && git worktree remove ../dev-companion-review-<your-agent-name>-pr<n>
+      git branch -D review/<your-agent-name>-pr<n>
+      ```
+
+      Do all of your `cargo` commands inside that worktree directory, not the
+      main checkout. Remove the worktree and local review branch when done,
+      whether you approve or not — leftover worktrees are how "which checkout
+      is real" bugs happen for the next agent.
+
+      ## Before rendering a verdict
+
+      1. Read the PR's linked `docs/milestone-log.md` entry and the
+         corresponding milestone section in `docs/implementation-plan.md` —
+         know what this PR is supposed to demonstrate before looking at the
+         diff.
+      2. `gh pr diff <n>` — read the actual diff, not just the description.
+      3. Re-run whatever your specific lens requires (see your agent's `role`
+         and `principles`) inside your worktree. A milestone-log claim that
+         something passed is a claim, not evidence — you produce the
+         evidence yourself.
+
+      ## Writing your verdict
+
+      Write your handoff to `_fleet/local/handoffs/` named
+      `{seq}-<your-agent-name>-to-pr-merge-decider.md` per
+      `HANDOFF.template.md`. The `Context digest` section must state your
+      verdict (Approve / Request changes) in its first bullet, with the
+      command output that produced it. Do not post a `gh pr review` yourself
+      — only `pr-merge-decider` issues the actual GitHub review and merge,
+      since all agents share one authenticated GitHub account and separate
+      per-agent "reviews" from the same account would just overwrite each
+      other on GitHub's side. A PR comment (`gh pr comment <n> --body`) with
+      your verdict is fine for visibility, but the handoff file is the
+      binding artifact `pr-merge-decider` actually reads.
+
+      ## What "done" means for a review pass
+
+      Done means you personally ran the commands your lens requires, in your
+      own worktree, and wrote a handoff whose first Context-digest bullet is
+      an unambiguous Approve or Request-changes backed by that output —
+      not "looks fine to me."
+
+  - name: pr-merge-decision
+    description: >
+      Methodology for pr-merge-decider: how to synthesize three independent
+      reviewer verdicts on a milestone PR into one decision, merge on
+      approval, and consolidate change requests otherwise. Use whenever
+      deciding the fate of a dev-companion milestone PR after all three
+      reviewers have reported.
+    body: |
+      # Merge decision
+
+      ## Before deciding
+
+      Confirm all three handoffs exist for this PR:
+      `_fleet/local/handoffs/*-pr-reviewer-correctness-to-pr-merge-decider.md`,
+      `*-pr-reviewer-boundaries-to-pr-merge-decider.md`,
+      `*-pr-reviewer-tests-to-pr-merge-decider.md`. If any is missing, do not
+      decide — that reviewer hasn't finished; wait or flag it as blocked in
+      `docs/pr-log.md` rather than deciding on two-of-three by default.
+
+      ## Decision rule
+
+      1. If `pr-reviewer-boundaries` reported a veto (a stated architecture
+         boundary violation): **Request changes**, full stop, regardless of
+         the other two verdicts. This is the one lens with veto power because
+         its three checks (activity isolation, no raw content, anti-mashing
+         clamp) are the plan's non-negotiables, not a quality preference.
+      2. Otherwise: **Approve and merge** if at least 2 of the 3 reviewers
+         approved; **Request changes** if 2 or more requested changes.
+
+      ## On approval
+
+      1. `gh pr review <n> --approve --body "..."` — this is the one formal
+         GitHub review posted for this PR; summarize what each of the three
+         reviewers verified.
+      2. `gh pr merge <n> --squash --delete-branch` — do not wait for a human
+         to merge. This project runs with standing authorization to commit,
+         push, open PRs, review, and merge without per-action confirmation;
+         that authorization lives here and in `docs/RUN_PROMPT.md`, not in
+         any single conversation turn.
+      3. Append a row to `docs/pr-log.md`: PR number, milestone, each
+         reviewer's individual verdict, final decision, merge commit SHA
+         (`git rev-parse HEAD` on `main` after the merge, or the SHA `gh pr
+         merge` reports).
+
+      ## On request-changes
+
+      1. `gh pr review <n> --request-changes --body "..."` consolidating
+         every reviewer's required fix into one list — game-engineer reads
+         only this, not each reviewer's individual handoff, so nothing you
+         omit here reaches them.
+      2. Do not merge. Append a row to `docs/pr-log.md` recording the
+         decision and the consolidated fix list.
+      3. Leave the PR open on its existing branch — `game-engineer` fixes and
+         re-hands-off to the reviewers on the same branch, not a new PR.
+
+orchestrator:
+  name: run-dev-companion
+  trigger: implementing, extending, or re-planning the dev-companion Rust/Bevy game
+  # These four phases interleave per milestone, not run once each end-to-end:
+  # M0 goes Milestone implementation -> PR review -> Merge decision -> merged,
+  # THEN M1 starts the same three-phase cycle. Never let game-engineer open
+  # M<n+1>'s branch while M<n>'s PR is still open (its own skill enforces
+  # this). Six milestones means this three-phase cycle runs roughly six times
+  # in one fleet invocation.
+  phases:
+    - name: Architecture
+      mode: subagents
+      agents: [game-architect]
+      gate: "docs/implementation-plan.md exists and every milestone in it has a command-verifiable exit criterion"
+    - name: Milestone implementation
+      mode: subagents
+      agents: [game-engineer]
+      loop:
+        until: "game-engineer has opened a PR for the next not-yet-merged milestone in docs/implementation-plan.md, or reports a blocking issue in docs/milestone-log.md"
+        max: 8
+        check: "cargo test --workspace"
+      gate: "the current milestone's PR exists on GitHub, branched from main, linked to its docs/milestone-log.md entry"
+    - name: PR review
+      mode: subagents
+      parallel: true
+      agents: [pr-reviewer-correctness, pr-reviewer-boundaries, pr-reviewer-tests]
+      loop:
+        until: "all three reviewers have written their independent verdict handoff for the currently open milestone PR"
+        max: 6
+      gate: "_fleet/local/handoffs/ has one verdict handoff per reviewer for this PR, each in its own worktree-isolated pass"
+    - name: Merge decision
+      mode: subagents
+      agents: [pr-merge-decider]
+      loop:
+        until: "the current milestone's PR is merged, or left open with a consolidated change request in docs/pr-log.md"
+        max: 4
+      gate: "docs/pr-log.md has a final decision for this PR citing all three reviewer verdicts, and a merge commit SHA if approved"
+
+handover:
+  strategy: file
+  ledger: true

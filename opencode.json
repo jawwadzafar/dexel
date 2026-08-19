@@ -1,0 +1,12 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "default_agent": "run-dev-companion",
+  "subagent_depth": 2,
+  "instructions": [
+    "AGENTS.md"
+  ],
+  "compaction": {
+    "prune": true,
+    "tail_turns": 4
+  }
+}

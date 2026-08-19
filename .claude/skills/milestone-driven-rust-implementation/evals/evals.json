@@ -1,0 +1,11 @@
+{
+  "skill": "milestone-driven-rust-implementation",
+  "description": "Discipline for implementing a dev-companion milestone from docs/implementation-plan.md: what to run after every milestone, how to debug a Bevy/ECS failure to root cause instead of working around it, and what the handoff log must contain. Use whenever implementing, fixing, or completing a milestone in this repository.\n",
+  "should_trigger": [
+    "TODO: a request that must invoke milestone-driven-rust-implementation"
+  ],
+  "should_not_trigger": [
+    "TODO: a nearby request that must NOT invoke milestone-driven-rust-implementation (e.g. one belonging to another dev-companion skill)"
+  ],
+  "cases": []
+}
