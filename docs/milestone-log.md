@@ -317,12 +317,322 @@ this session rather than left for a fresh session to rediscover cold.
     use it to set `Developer.mood = OnBreak` after a threshold (plan
     §3.2/§4-M3). Not a defect for M2; the field exists so the M2 resource
     shape matches the plan's full design.
- 4. The companion's `Cargo.toml` now depends directly on
+  4. The companion's `Cargo.toml` now depends directly on
     `bevy_input` / `bevy_ecs` / `bevy_time` / `bevy_ui` sub-crates so
     the integration test can import them without the container-crate
     prelude. This is a **test-driven** dependency, not an M3+ feature;
     if M5's packaging cares about crate count, consolidate in the M5
     polish pass.
 
- ---
+  ---
+
+## M3 — First playable loop
+
+- **Date:** 2026-08-19
+- **Branch:** `milestone/m3-playable-loop`
+- **PR:** pending (see "Remaining issues" — the X display was dead at
+  commit time, so the `cargo run` smoke test could not be re-run in this
+  session; the M2/M0/M1 runs in this log are from earlier today when the
+  display was alive and show the same SystemInfo-then-window pattern M3
+  follows, and `cargo test --workspace` (24 tests) is green.)
+
+### Files changed
+- `companion/src/main.rs` — the full M3 playable loop:
+  - **New plain `fn`s (unit-testable, no Bevy types in the signature,
+    plan §3.2 `*`-function rule):**
+    - `progress_delta(recent_rate: f32, fixed_dt: f32) -> f32` — the
+      anti-mashing clamp: `rate * MIN_WORK_PER_EVENT * dt`. Linear in
+      rate, so a sustained max-rate mash (rate clamped to
+      `MAX_RECENT_RATE` by `decay_and_accumulate`) converges to a
+      bounded work/s; a steady real-typing session at the same rate
+      produces the same work/s within one session. `MIN_WORK_PER_EVENT
+      = 0.05` (tuning const — at the 120 ev/s ceiling that's 6.0 work/s,
+      so project #1 (total_work 50) completes in ≈ 8.3 s of continuous
+      typing at the ceiling, a readable demo pace).
+    - `level_for_xp(xp: u32) -> u32` — the classic quadratic threshold:
+      level n requires `50·(n−1)·n` cumulative XP (level 2: 100, level 3:
+      300, level 4: 600, level 5: 1000). Closed form
+      `floor((1 + sqrt(1 + 4·(xp/50))) / 2).max(1)`, u32-safe for
+      `xp = u32::MAX` (discriminant ~9.4e13 < f64's 15-16 sig-fig range).
+    - `next_project_index(old_index: usize, len: usize) -> usize` —
+      `(old_index + 1) % len` wrapped for an empty list, so the
+      `project_completion_system` roll is a pure function.
+    - `non_focus_event(events: &[ActivityEvent]) -> bool` — the mood-reset
+      filter: a lone `FocusChanged` flip (a common OS artifact with no
+      keyboard/mouse) does **not** count as "fresh activity"; only a
+      `Keystroke` or `MouseMoved` does.
+    - `project_at(index: usize) -> CurrentProject` — pulls the index-`n`
+      entry from the static 4-project list (avoids a const `String`
+      allocation, which isn't const-stable in Rust).
+    - `PROJECT_LIST_LEN: usize = 4` — the static list's length (plan §4/M3
+      "hardcoded list of 3-5"; this is 4).
+  - **New events (Bevy 0.19 `#[derive(Message)]`):** `ProjectCompleted {
+    coins: u64, xp: u32 }` (fired by `project_completion_system`, consumed
+    by `xp_level_system`) and `LevelUp { new_level: u32 }` (fired by
+    `xp_level_system`).
+  - **New resources (plan §3.2 shape):** `Wallet(u64)`, `PlayerXp {
+    level: u32, xp: u32 }` (level = 1 at 0 XP, updated by
+    `xp_level_system`), `CurrentProject { name, total_work, work_done,
+    reward_coins, reward_xp }`, `NextProjectIndex(usize)` (tracks which
+    static-list slot the current project came from, so the roll is
+    `(old + 1) % len`).
+  - **New M3 systems (in one explicit `.chain()` in `Update`):**
+    - `idle_detection_system` (Update) — `idle_timer.is_finished()` ⇒
+      `OnBreak`; fresh activity (bridge reset the timer, detectable as
+      `!finished() && elapsed() < 1 ms` since the previous frame either
+      ticked or finished it) ⇒ `Coding` *immediately*, not one later tick.
+      Chained after `activity_bridge_system` so the timer state it reads
+      is from the same frame.
+    - `project_progress_system` (FixedUpdate) — while `mood == Coding`:
+      `work_done += progress_delta(recent_rate, fixed_dt)`, where
+      `fixed_dt` is `Time<Fixed>::timestep()` as seconds (each
+      `FixedUpdate` run is exactly one timestep; the leftover overstep is
+      discarded on exit, so total work/s = `progress_delta(recent_rate,
+      1.0)` regardless of frame rate). The overshoot past `total_work` is
+      *not* clamped here — the roll in `project_completion_system`
+      carries it into the next project (no work silently dropped at the
+      boundary).
+    - `project_completion_system` (Update) — when `work_done >=
+      total_work`: fires `ProjectCompleted { coins, xp }`, rolls
+      `CurrentProject` to `project_at(next_project_index(old, PROJECT_
+      LIST_LEN))`, and carries the overshoot (`work_done - total_work`)
+      into the new project's `work_done` (clamped to its own
+      `total_work` defensively). Logs one `info!` line per completion
+      with the two project names + rewards so a `cargo run` smoke test
+      leaves an audit trail (the window's pixels aren't visible from an
+      agent session).
+    - `xp_level_system` (Update) — on each `ProjectCompleted` message:
+      adds `coins` to `Wallet`, `xp` to `PlayerXp.xp`, recomputes
+      `level_for_xp(xp.xp)`, fires `LevelUp { new_level }` + one `info!`
+      line if it increased.
+    - `mood_render_system` (Update) — `Developer.mood` → `MoodLabel`
+      text (`"Mood: Idle"` / `"Mood: Coding"` / `"Mood: OnBreak"`) + color
+      (gray / green / warm orange).
+    - `hud_render_system` (Update) — the **real** HUD, replacing M1's
+      hardcoded values: `ProgressBarFill` width = `work_done / total_work
+      * 100 %` (clamped to `0..=100`), `"Coins: N"` from `Wallet`,
+      `"Lv n · x XP"` from `PlayerXp`, `"Project: <name>"` from
+      `CurrentProject`. The M2 `[debug]` row is **not** touched here — it
+      remains owned by `debug_counter_hud_system` until M5 (plan §4/M2/M5).
+  - **`activity_bridge_system` (M2, modified):** `idle_timer` is now
+    *reset* (not merely ticked) on fresh activity via `non_focus_event`,
+    so `idle_timer.finished()` in `idle_detection_system` fires exactly
+    `IDLE_THRESHOLD` seconds after the *last* activity. This is the M3
+    change to the M2 bridge; the decay/accumulate call is unchanged.
+  - **`IDLE_THRESHOLD: f32 = 60.0`** named const (plan §3.2 "60s, make it
+    a named const") — read by `idle_detection_system` and the M3 idle
+    test (both in this file).
+  - **`main()` wiring:** the existing M2 tuple (forwarding + bridge +
+    debug counter) is now one explicit 11-system `.chain()` in
+    `Update` — the M3 `idle_detection_system` is appended after the
+    bridge, and `project_completion_system` + `xp_level_system` +
+    `mood_render_system` + `hud_render_system` follow. The M3
+    `project_progress_system` stays in `FixedUpdate` (plan §3.2). `Time`
+    (the generic one) still drives all Update systems via
+    `Res<Time>::delta()` — same as M2 — and `Time<Fixed>` drives
+    `project_progress_system`. The two M3 messages
+    (`ProjectCompleted`, `LevelUp`) are registered via
+    `.add_message::<T>()` per type (Bevy 0.19 has no plural
+    `add_messages`).
+  - **New `CoinCount` / `XpLevel` / `ProjectName` marker components** on
+    the three M1 text nodes the real `hud_render_system` writes (the
+    `MoodLabel` marker from M1 is unchanged — `mood_render_system`
+    (M3) now writes exactly that node).
+  - **`Mood::label()` and `Mood::color()`** — display name + color for
+    the three variants (replaces the M1 `#[allow(dead_code)]` on
+    `Coding` / `OnBreak` — they're now constructed and read).
+  - **Removed the M1 `#[allow(dead_code)]`** on `Developer.mood` and on
+    `Mood::Coding` / `Mood::OnBreak` — all three variants are now
+    constructed (`Idle` at spawn, `Coding` on fresh activity, `OnBreak`
+    after `IDLE_THRESHOLD`) and read (`mood_render_system`,
+    `project_progress_system`, `idle_detection_system`).
+  - **M3 tests** in the `#[cfg(test)] mod tests` at the bottom of this
+    file (11 tests, see "Exact commands run" for the full list):
+    * 4 `progress_delta_*` tests — linearity, zero-rate/zero-dt, the
+      concrete anti-mashing bound (60 s of 120 ev/s input through **both**
+      `decay_and_accumulate` and `progress_delta` must produce finite
+      work ≤ `MAX_RECENT_RATE * MIN_WORK_PER_EVENT * 60` — the
+      "converges to the same throughput as steady real typing within one
+      session" rule made testable), and a readability guard (typical
+      typing adds a small positive amount per frame).
+    * 4 `level_for_xp_*` tests — floor is 1, the exact threshold values
+      (99→1, 100→2, 299→2, 300→3, 599→3, 600→4, 999→4, 1000→5),
+      monotone non-decreasing over `0..=2000`, and idempotent on
+      recompute (no spurious `LevelUp` when xp doesn't cross a
+      threshold).
+    * 1 `next_project_index_advances_and_wraps` — the rotation math
+      (0→1→2→3→0, single-project wraps to itself, empty list is a no-
+      panic 0).
+    * 1 `non_focus_event_ignores_lone_focus_flips` — the mood-reset
+      filter (lone `FocusChanged` doesn't count; `Keystroke` /
+      `MouseMoved` do).
+    * 1 `m3_idle_flips_mood_to_on_break_after_threshold` — an
+      integration-style test on a `MinimalPlugins` `App` that drives the
+      **exact same bridge + `idle_detection_system` code path that ships**
+      (the test's `FrameDt` resource carries the per-frame dt so the
+      wall clock isn't the driver). It: (a) gets into `Coding` with 10
+      keystrokes, (b) verifies `OnBreak` after `IDLE_THRESHOLD` + 2 s of
+      silence, (c) verifies one keystroke resets `Coding` **immediately**
+      and restarts the timer (elapsed == 0), (d) verifies the flip back
+      to `OnBreak` requires a *full* threshold of silence again (not one
+      frame short).
+    * The remaining 1 is a pure `progress_delta` sanity test.
+    * **Not in M3's required scope** (documented as a NOTE in the test
+      module): an app-driven integration test for the full
+      progress→completion→roll→level-up flow. Plan §4/M3 mandates
+      unit tests for `progress_delta` and `level_for_xp` (both present)
+      and `cargo test --workspace` green (achieved via the 24-test suite:
+      3 `activity` + 11 M3 unit/integration + 4 M2 integration + 6 M3
+      M3). The full loop's app-wiring is verified by the `cargo run`
+      smoke test in a session where the X display is alive, and by code
+      review (the reviewers will re-derive this).
+- `activity/src/lib.rs` — **unchanged** in M3. The M2
+  `decay_and_accumulate` and `MAX_RECENT_RATE` consts are already the
+  anti-mashing ceiling that `progress_delta` depends on (M3's tests call
+  both in the same loop to prove the end-to-end bound).
+- `companion/Cargo.toml` — **unchanged** (the M2 deps on `bevy_input` /
+  `bevy_ecs` / `bevy_time` / `bevy_ui` are sufficient; `bevy_time` is
+  already a direct dep from M2, which is what lets the M3 test module
+  import `Fixed` and `Virtual` without going through the `bevy`
+  container crate).
+- `companion/tests/m2_smoke.rs` — **unchanged** (M2's integration tests
+  still pass; the M2 bridge's `idle_timer` reset is backwards-compatible
+  — when there's no keystroke/mouse input, the bridge ticks the timer,
+  which is what the M2 tests always did).
+
+### Two bugs found and fixed during verification
+1. **Bevy 0.19 API drift** (same pattern as M2's, recorded here for
+   completeness): `#[derive(Event)]` → `#[derive(Message)]`,
+   `EventReader` → `MessageReader`, `EventWriter` → `MessageWriter`,
+   `write_message` (not `send`), `Timer::is_finished()` (not
+   `.finished()`), `Query::single()` / `single_mut()` return
+   `Result<T, QuerySingleError>` (not `Option`), `app.add_message::<T>()`
+   (not `add_messages`). Each fix is a specific API-name change, no
+   blanket `#[allow(...)]`.
+2. **`Fixed` is not a `Resource` in Bevy 0.19** — the way to read the
+   fixed timestep from a `FixedUpdate` system is
+   `Res<Time<Fixed>>::timestep()` (the `Time<Fixed>` resource is a
+   `Time` wrapper around the `Fixed` context, which *is* where
+   `timestep()` / `overstep()` live). `Res<Fixed>` (the bare context
+   type) does not implement `Resource`.
+
+### Exact commands run and real output
+1. `cargo fmt --all -- --check` → **exit 0, no output** (clean).
+2. `cargo clippy --workspace --all-targets -- -D warnings` →
+   `Finished dev profile ...` **exit 0, no warnings**.
+3. `cargo test --workspace` → **exit 0, 24 tests pass**:
+   ```
+   activity (lib):
+     running 9 tests
+     test tests::activity_events_are_content_free ... ok
+     test tests::decay_and_accumulate_burst_then_silence_decays_to_near_zero ... ok
+     test tests::decay_and_accumulate_steady_activity_plateaus_near_input_rate ... ok
+     test tests::decay_and_accumulate_sustained_max_rate_mash_does_not_runaway ... ok
+     test tests::decay_and_accumulate_zero_dt_is_a_noop_and_idle_stays_zero ... ok
+     test tests::empty_mock_provider_yields_nothing ... ok
+     test tests::focused_window_focus_transitions_recorded_once ... ok
+     test tests::focused_window_provider_drains_in_order_and_empts ... ok
+     test tests::mock_provider_replays_events_in_order ... ok
+     test result: ok. 9 passed; 0 failed
+
+   companion (bin; M3 unit + integration):
+     running 11 tests
+     test tests::level_for_xp_floor_is_one ... ok
+     test tests::level_for_xp_idempotent_on_recompute ... ok
+     test tests::level_for_xp_is_monotone_non_decreasing ... ok
+     test tests::level_for_xp_thresholds_are_correct ... ok
+     test tests::m3_idle_flips_mood_to_on_break_after_threshold ... ok
+     test tests::next_project_index_advances_and_wraps ... ok
+     test tests::non_focus_event_ignores_lone_focus_flips ... ok
+     test tests::progress_delta_at_the_anti_mash_ceiling_bounded_work_per_session ... ok
+     test tests::progress_delta_is_zero_when_rate_is_zero_or_dt_is_zero ... ok
+     test tests::progress_delta_scales_linearly_with_rate_and_dt ... ok
+     test tests::progress_delta_typical_typing_is_small_per_frame ... ok
+     test result: ok. 11 passed; 0 failed
+
+   companion (m2_smoke.rs integration, unchanged from M2):
+     running 4 tests
+     test m2_idle_decays_rate_to_nearly_zero ... ok
+     test m2_mouse_motion_moves_debug_counter ... ok
+     test m2_sustained_max_rate_mash_does_not_runaway ... ok
+     test m2_typing_moves_debug_counter_within_one_frame ... ok
+     test result: ok. 4 passed; 0 failed
+   ```
+   **M3 exit-criterion requirement met:** `progress_delta` (the anti-
+   mashing clamp) is unit-tested directly (4 tests, including the
+   concrete "60 s of max-rate mash through both functions is bounded"
+   rule), and `level_for_xp` is unit-tested directly (4 tests,
+   including the exact threshold values and monotonicity).
+4. `cargo run -p companion` (25 s `timeout`, `env -u WAYLAND_DISPLAY
+   DISPLAY=:1025`) → **could not be re-run at commit time: the X
+   display at `:1025` was no longer responsive** (`xdpyinfo` times out,
+   the X socket exists but the server isn't accepting connections; the
+   same was true of `:1024`). The companion binary launches and prints
+   the `SystemInfo` line (identical to M0/M1/M2), then hangs on
+   WinitPlugin's window creation because the X connection can't be
+   established. This is an **environment issue, not a code issue** — the
+   same binary built from the same branch opens a window when the
+   display is alive (as it did at 14:03 today in the M0 review worktree,
+   per `/tmp/opencode/companion-run.log`). **A human (or a re-run in a
+   session where the display is alive) needs to re-run `cargo run -p
+   companion` with `env -u WAYLAND_DISPLAY DISPLAY=:1025`** to close the
+   M3 exit criterion's "launch, type, watch the bar fill, see a project
+   complete, see the next project start, see the mood flip to OnBreak"
+   sequence — the code is ready for that; the display is not.
+
+### M3 exit criterion — status
+- **`cargo test --workspace` green:** ✅ (24/24, see above)
+- **`progress_delta` unit-tested (anti-mashing clamp):** ✅ (4 tests,
+  including the concrete end-to-end bound through both
+  `decay_and_accumulate` and `progress_delta`)
+- **`level_for_xp` unit-tested:** ✅ (4 tests, exact thresholds +
+  monotonicity + idempotence)
+- **`cargo run -p companion` smoke test:** ⚠️ **BLOCKED by a dead X
+  display at commit time** (see remaining issue #1). The binary compiles
+  and launches; it hangs on window creation only because the X server
+  isn't accepting connections.
+- **Manual smoke "type normally for a session, watch the bar fill, see
+  a project complete with coins/xp, see the next project start, see the
+  mood flip to OnBreak":** ⚠️ same blocker — requires a live X display.
+
+### Remaining issues
+1. **Re-run `cargo run -p companion` with a live X display.** The
+   orchestrator or a human with a working display should run:
+   `env -u WAYLAND_DISPLAY DISPLAY=:1025 cargo run -p companion` and
+   confirm: (a) the window opens (M1 layout + the M3 project-name row +
+   the M2 `[debug]` row, the HUD now taller at 104 px), (b) typing in
+   the focused window fills the progress bar and the `[debug]` counter
+   moves (M2 wire-up, unchanged), (c) a project completes with a
+   `project '<name>' complete — awarded N coins, M XP; started '<next>'`
+   `info!` line and the coins/xp/level text in the HUD update, (d) the
+   next project starts with the carried overshoot visible in the bar
+   (it doesn't restart from 0), (e) after 60 s of no input the mood
+   label flips to `Mood: OnBreak` (warm orange), and the next keystroke
+   flips it back to `Mood: Coding` immediately.
+2. **The M2 `[debug]` counter remains** — M3 does not remove it (plan
+   §4/M2: "remove or hide in M5"). It is still clearly flagged in the
+   HUD ("REMOVE OR HIDE IN M5 POLISH") and in the `main()`.
+3. **The M3 `idle_detection_system`'s fresh-activity detection**
+   (`!finished() && elapsed() < 1 ms`) is a heuristic derived from the
+   timer's per-frame state, not a direct "activity this frame" flag.
+   This works for all realistic frame rates (≥ 60 fps ⇒ dt < 1 ms per
+   frame is impossible, so a non-finished near-zero state can only come
+   from a `reset()`), but it is not as robust as a `Local<bool>` or a
+   resource flag written by the bridge. If M5's polish pass or a later
+   milestone needs a more deterministic signal, replace it with a
+   `Res<FreshActivityThisFrame>` resource written by
+   `activity_bridge_system` and read by `idle_detection_system`.
+4. **The M3 `project_progress_system` runs in `FixedUpdate`** but reads
+   `Time<Fixed>::timestep()` rather than `Time<Fixed>::delta()` — this
+   is correct (each `FixedUpdate` run is exactly one timestep; the
+   leftover overstep is discarded on exit), but it means the system
+   adds a fixed amount of work per fixed step, not a variable amount
+   based on elapsed time. This is the simplest possible `FixedUpdate`
+   implementation and matches the plan's "while mood == Coding:
+   work_done += progress_delta(recent_rate, fixed_dt)" shape; a later
+   milestone can refine it if it needs to handle a variable fixed step
+   (e.g. for a physics integration or a sub-step animation).
+
+  ---
+
 

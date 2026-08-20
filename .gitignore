@@ -1,6 +1,11 @@
 # Rust
 /target/
 **/target/
+# Reviewer agents build into ad-hoc dirs like target-m3-review/ (CARGO_TARGET_DIR
+# overrides) — those are multi-GB and must never be staged. `target/` alone did
+# not match them, and one `git add -A` tried to commit ~9GB of artifacts.
+target-*/
+**/target-*/
 # Cargo.lock is committed deliberately — this workspace builds an application
 # (the companion binary), where a locked dependency tree is the convention.
 

@@ -16,36 +16,61 @@ fleet:
 defaults:
   model: inherit
   capabilities: { read: true }
-  # Two verified-working models across the fleet's tiers. Being listed by
-  # the provider is NOT enough — verify each one actually returns a working
-  # tool_calls response (POST /v1/chat/completions with a tool + tool_choice:
-  # auto and check the response), not just that /v1/models lists it.
-  # Qwen/Qwen3-Omni-30B-A3B-Instruct (a former "smart"-tier pick) failed this
-  # exact check — `"auto" tool choice requires --enable-auto-tool-choice and
-  # --tool-call-parser to be set` — a server-side vLLM deployment gap for
-  # that model specifically, confirmed via `kubectl logs` on the
-  # Qwen3.8-27B-FP8 deployment showing `enable_auto_tool_choice: True,
-  # tool_call_parser: qwen3_coder` was set for THAT deployment but not
-  # Omni's; removed from opencode.jsonc's models map entirely. Also
-  # confirmed broken the same way: microsoft/Fara1.5-27B (same tool_choice
-  # error), openai/gpt-oss-120b (malformed tool output as plain text, not a
-  # tool_calls array), Qwen/Qwen3.6-27B-FP8 (model_not_found through the
-  # gateway despite being one of the deployment's served_model_name aliases).
-  #   smart -> google/gemma-4-31B-it (architect, both reviewers with
-  #                            veto/synthesis power, the merge decider —
-  #                            confirmed working by direct probe)
-  #   fast  -> Qwen3.8-27B    (the implementer, game-engineer — confirmed
-  #                            working both by direct probe and by the
-  #                            deployment's own vLLM startup log)
-  #   cheap -> DeepSeek V4 Flash (pr-reviewer-tests — the model proven
-  #                            reliable across the actual live M0/M1 run)
-  # Reusing a model across tiers is fine (tiers are an intent, not a forced
-  # diversity requirement) — these three are just the full verified-working
-  # roster, one per tier.
+  # Two models, both proven by ACTUAL AGENTIC RUNS in this repo — not by a
+  # synthetic probe. That distinction is the hard-won lesson here: a model
+  # can pass a single-shot tool_calls probe and answer a one-off reasoning
+  # question beautifully, then still fail as an agent, because a multi-turn
+  # loop with real tools is a different capability. Verify a candidate by
+  # letting it complete one real review or milestone end-to-end before
+  # trusting it with a role.
+  # ALL TIERS -> Qwen3.8-27B, because it is currently the only model that is
+  # both proven on real agentic work here (it implemented M2 and M3
+  # end-to-end, 24/24 tests green) AND actually reachable.
+  #
+  # DeepSeek V4 Flash was on smart+cheap and IS CURRENTLY DOWN: POST
+  # /v1/chat/completions returns http_code=000 (no response at all, 30s+
+  # timeouts, reproduced twice) even for a 10-token "say OK", while
+  # GET /v1/models, Qwen3.8-27B, and Nia-1.0 all answer normally in ~1s.
+  # In opencode that surfaces as `AI_APICallError: <none>` (no response body
+  # to report) retrying on a ~4-minute timeout loop, which stalls the whole
+  # fleet. If DeepSeek comes back, prefer restoring it to `cheap`
+  # (pr-reviewer-tests) so the test check runs on a DIFFERENT model than the
+  # implementer — that independence is deliberate and is lost while
+  # everything shares one model. Verify it with a real call before
+  # re-pinning; `/v1/models` listing it proves nothing.
+  #
+  # Untested-as-agent fallback if Qwen3.8 also goes down:
+  # infiniatechnologies/Nia-1.0 responds (~0.9s) and passed a tool_calls
+  # probe, but has never completed a real review or milestone here — treat
+  # as unproven, per the rule above.
+  #
+  # Rejected, with the reason each failed:
+  # - google/gemma-4-31B-it: passed a single-shot probe (1.3s, correct) but
+  #   FAILED AS AN AGENT — both reviewer subagents on it returned "partial
+  #   tool calls only" (empty response) twice each on M2, forcing the
+  #   orchestrator to run those reviews itself. Removed from
+  #   opencode.jsonc's models map too. The probe was measuring the wrong
+  #   thing; this is why the rule above exists.
+  # - Qwen/Qwen3-Omni-30B-A3B-Instruct: `"auto" tool choice requires
+  #   --enable-auto-tool-choice and --tool-call-parser to be set` — a
+  #   server-side vLLM deployment gap for that model (the Qwen3.8-27B-FP8
+  #   deployment has those flags set; Omni's does not).
+  # - microsoft/Fara1.5-27B: same tool_choice error.
+  # - openai/gpt-oss-120b: malformed tool output as plain text, not a
+  #   tool_calls array.
+  # - Qwen/Qwen3.6-27B-FP8: model_not_found through the gateway despite
+  #   being one of the deployment's served_model_name aliases.
+  #
+  # Qwen3.8-27B additionally REQUIRES `chat_template_kwargs:
+  # {enable_thinking: false}` in its ~/.config/opencode/opencode.jsonc model
+  # entry. With thinking on it never stops reasoning: it returns EMPTY
+  # content at every budget tested (2k/3k/4k/8k tokens, all
+  # finish_reason=length) and at 15k the request outlives the gateway's
+  # ~120s ceiling and returns HTTP 524. There is no budget that works.
   opencodeModels:
-    smart: tokenfactory/google/gemma-4-31B-it
+    smart: tokenfactory/Qwen/Qwen3.8-27B
     fast: tokenfactory/Qwen/Qwen3.8-27B
-    cheap: tokenfactory/deepseek-ai/DeepSeek-V4-Flash-0731
+    cheap: tokenfactory/Qwen/Qwen3.8-27B
 
 agents:
   - name: game-architect
