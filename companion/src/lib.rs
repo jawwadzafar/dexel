@@ -27,6 +27,7 @@ use activity::{ActivityEvent, ActivityProvider, FocusedWindowProvider, decay_and
 // "Messages" API replaced `EventReader`); input events live under
 // `bevy::input` (the prelude only re-exports *buttons*/codes, not the
 // input/motion event types).
+use bevy::ecs::hierarchy::ChildSpawnerCommands;
 use bevy::ecs::message::MessageReader;
 use bevy::input::keyboard::KeyboardInput;
 use bevy::input::mouse::MouseMotion;
@@ -396,8 +397,109 @@ fn setup_scene(mut commands: Commands) {
     // A UI camera is required to render UI nodes.
     commands.spawn(Camera2d);
 
-    spawn_desk(&mut commands);
-    spawn_hud(&mut commands);
+    // Spawns the desk root (a full-window flex-column container holding the
+    // desk area) and returns its entity so the caller can parent the HUD
+    // under it.
+    let desk_root = spawn_desk(&mut commands);
+
+    // BUGFIX: the HUD is a CHILD of the desk root, NOT a separate top-level
+    // UI root. The desk root is `flex_direction: Column`, and its desk-area
+    // child `flex_grow`s to fill the remaining height, so the fixed-height
+    // HUD bar — added here, after the desk area — is placed at the bottom of
+    // the window.
+    //
+    // Previously this was `spawn_hud(&mut commands)`, which made the HUD its
+    // own top-level UI root overlapping the full-window desk root at the
+    // top-left; it was never visible because the desk area consumes the
+    // whole window. Parenting it under the desk root is exactly what the
+    // original comments described ("the HUD bar is a sibling in the same
+    // root" / "Flex column so the desk area and the HUD stack vertically").
+    //
+    // `ChildSpawnerCommands` wraps `commands` and stamps every spawn it
+    // performs with `ChildOf(desk_root)`, so `spawn_hud` (which takes a
+    // `&mut ChildSpawnerCommands`) emits the HUD root node as a child of the
+    // desk root without any extra wrapper entity.
+    let mut hud_spawner = ChildSpawnerCommands::new(commands, desk_root);
+    spawn_hud(&mut hud_spawner);
+}
+
+/// Spawns the desk's full-window visual root and its desk-area child
+/// (placeholder room + three placeholder props), and returns the root's
+/// entity so the caller can parent the HUD bar under it.
+fn spawn_desk(commands: &mut Commands) -> Entity {
+    commands
+        .spawn((
+            // The developer character, mood starts Idle (M3's
+            // idle_detection_system drives it after that).
+            Developer { mood: Mood::Idle },
+            // The desk's visual root: a full-window container that the desk
+            // area fills (the HUD bar is a sibling in the same root).
+            Node {
+                width: Val::Percent(100.0),
+                height: Val::Percent(100.0),
+                // Flex column so the desk area and the HUD stack vertically.
+                flex_direction: FlexDirection::Column,
+                ..default()
+            },
+        ))
+        .with_children(|parent| {
+            // Desk area: a placeholder room that fills everything above the
+            // HUD. Colored rects stand in for art (plan §3.3).
+            parent
+                .spawn((
+                    Node {
+                        width: Val::Percent(100.0),
+                        // Flex-grow so the desk takes the remaining height
+                        // above the fixed-height HUD bar.
+                        flex_grow: 1.0,
+                        flex_direction: FlexDirection::Column,
+                        align_items: AlignItems::Center,
+                        justify_content: JustifyContent::Center,
+                        row_gap: px(24.0),
+                        ..default()
+                    },
+                    BackgroundColor(Color::srgb(0.13, 0.15, 0.20)),
+                ))
+                .with_children(|desk| {
+                    // The desk surface: a wide horizontal placeholder slab.
+                    desk.spawn((
+                        Node {
+                            width: px(520.0),
+                            height: px(24.0),
+                            ..default()
+                        },
+                        BackgroundColor(Color::srgb(0.45, 0.32, 0.20)),
+                    ));
+                    // A placeholder "computer" prop next to the developer.
+                    desk.spawn((
+                        Node {
+                            width: px(140.0),
+                            height: px(90.0),
+                            ..default()
+                        },
+                        BackgroundColor(Color::srgb(0.20, 0.22, 0.28)),
+                    ));
+                    // The M5 desk-upgrade prop: a placeholder "plant" that is
+                    // hidden until the wallet crosses [`DESK_UPGRADE_COST`]
+                    // (plan §4/M5 "a coin threshold unlocks a second
+                    // placeholder prop"). Marked `DeskUpgradeProp` so
+                    // `desk_upgrade_system` can toggle its `Visibility`
+                    // component; it spawns `Visibility::Hidden` (the "hidden"
+                    // state — Bevy's render pipeline skips hidden entities,
+                    // so it draws nothing).
+                    desk.spawn((
+                        Node {
+                            width: px(60.0),
+                            height: px(80.0),
+                            ..default()
+                        },
+                        BackgroundColor(Color::srgb(0.25, 0.55, 0.30)),
+                        DeskUpgradeProp,
+                        Visibility::Hidden,
+                    ));
+                });
+        })
+        .id()
 }
 
 /// Forward the window's focus state into the provider (plan §3.1).
@@ -774,82 +876,6 @@ fn desk_upgrade_system(
 // Scene spawners (M1 layout, M3 markers added)
 // ---------------------------------------------------------------------------
 
-/// Spawns the Developer entity and its placeholder desk (unchanged from M1).
-fn spawn_desk(commands: &mut Commands) {
-    commands
-        .spawn((
-            // The developer character, mood starts Idle (M3's
-            // idle_detection_system drives it after that).
-            Developer { mood: Mood::Idle },
-            // The desk's visual root: a full-window container that the desk
-            // area fills (the HUD bar is a sibling in the same root).
-            Node {
-                width: Val::Percent(100.0),
-                height: Val::Percent(100.0),
-                // Flex column so the desk area and the HUD stack vertically.
-                flex_direction: FlexDirection::Column,
-                ..default()
-            },
-        ))
-        .with_children(|parent| {
-            // Desk area: a placeholder room that fills everything above the
-            // HUD. Colored rects stand in for art (plan §3.3).
-            parent
-                .spawn((
-                    Node {
-                        width: Val::Percent(100.0),
-                        // Flex-grow so the desk takes the remaining height
-                        // above the fixed-height HUD bar.
-                        flex_grow: 1.0,
-                        flex_direction: FlexDirection::Column,
-                        align_items: AlignItems::Center,
-                        justify_content: JustifyContent::Center,
-                        row_gap: px(24.0),
-                        ..default()
-                    },
-                    BackgroundColor(Color::srgb(0.13, 0.15, 0.20)),
-                ))
-                .with_children(|desk| {
-                    // The desk surface: a wide horizontal placeholder slab.
-                    desk.spawn((
-                        Node {
-                            width: px(520.0),
-                            height: px(24.0),
-                            ..default()
-                        },
-                        BackgroundColor(Color::srgb(0.45, 0.32, 0.20)),
-                    ));
-                    // A placeholder "computer" prop next to the developer.
-                    desk.spawn((
-                        Node {
-                            width: px(140.0),
-                            height: px(90.0),
-                            ..default()
-                        },
-                        BackgroundColor(Color::srgb(0.20, 0.22, 0.28)),
-                    ));
-                    // The M5 desk-upgrade prop: a placeholder "plant" that is
-                    // hidden until the wallet crosses [`DESK_UPGRADE_COST`]
-                    // (plan §4/M5 "a coin threshold unlocks a second
-                    // placeholder prop"). Marked `DeskUpgradeProp` so
-                    // `desk_upgrade_system` can toggle its `Visibility`
-                    // component; it spawns `Visibility::Hidden` (the "hidden"
-                    // state — Bevy's render pipeline skips hidden entities,
-                    // so it draws nothing).
-                    desk.spawn((
-                        Node {
-                            width: px(60.0),
-                            height: px(80.0),
-                            ..default()
-                        },
-                        BackgroundColor(Color::srgb(0.25, 0.55, 0.30)),
-                        DeskUpgradeProp,
-                        Visibility::Hidden,
-                    ));
-                });
-        });
-}
-
 /// Spawns the HUD bar pinned to the bottom of the window.
 ///
 /// M1's four elements (progress bar, coins, xp/level, mood) plus M3's
@@ -858,8 +884,8 @@ fn spawn_desk(commands: &mut Commands) {
 /// on a dedicated mood-personality row (plan §4/M5). The temporary M2
 /// `[debug]` counter row was removed in M5 (plan §4/M5), so the bar shrank
 /// back from 104 px to 88 px.
-fn spawn_hud(commands: &mut Commands) {
-    commands
+fn spawn_hud(parent: &mut ChildSpawnerCommands) {
+    parent
         .spawn((
             Node {
                 width: Val::Percent(100.0),
@@ -1373,15 +1399,6 @@ pub fn run() {
         )
         .run();
 }
-
-/// Build the exact app [`main`] constructs (same plugins, resources,
-/// messages, state, and system chains), then seed the progression state
-/// before the first frame so a visual capture shows a populated HUD (wallet,
-/// XP/level, and partial project progress) and the M5 desk-plant upgrade
-/// (the wallet seed is expected to be ≥ [`DESK_UPGRADE_COST`]).
-///
-/// The save path is redirected to a temp dir so the probe never reads or
-/// writes the user's real save file.
 
 #[cfg(test)]
 mod tests {
@@ -2518,6 +2535,74 @@ mod tests {
             prop_is_visible(app.world_mut()),
             "a restored wallet of 120 ≥ {DESK_UPGRADE_COST} must show the \
              plant on launch (derived, not separately persisted)"
+        );
+    }
+
+    // ------------------------------------------------------------------
+    // HUD layout regression — the HUD bar must be a CHILD of the desk root
+    // (not its own top-level UI root). The shipping `setup_scene` is driven
+    // here; a test that only asserted the HUD entities *exist* would have
+    // passed while the HUD was invisible, so this asserts the parent/child
+    // *relationship* that the bug broke.
+    // ------------------------------------------------------------------
+
+    /// Returns the two entities the scene must relate: the desk root (the
+    /// `Developer` entity, which carries the root `Node`) and the HUD bar
+    /// root (the only `Node` of size 100% × 88px — the desk area is 100% ×
+    /// flex-grow and the desk root is 100% × 100%, so 88px is unique to the
+    /// HUD).
+    fn scene_entities(world: &mut World) -> (Entity, Option<Entity>) {
+        let desk_root = {
+            let mut q = world.query_filtered::<Entity, With<Developer>>();
+            q.iter(world).next().expect("desk root not spawned")
+        };
+        let hud_root = {
+            let mut q = world.query::<(Entity, &Node)>();
+            q.iter(world)
+                .find(|(_, n)| {
+                    matches!(n.width, Val::Percent(100.0)) && matches!(n.height, Val::Px(88.0))
+                })
+                .map(|(e, _)| e)
+        };
+        (desk_root, hud_root)
+    }
+
+    #[test]
+    fn hud_is_a_child_of_the_desk_root() {
+        let mut app = App::new();
+        app.add_plugins(MinimalPlugins);
+        app.add_systems(Startup, |mut commands: Commands| {
+            commands.spawn(Camera2d);
+            setup_scene(commands);
+        });
+        app.update();
+
+        let world = app.world_mut();
+        let (desk_root, hud_root) = scene_entities(world);
+        let hud_root = hud_root.expect(
+            "the HUD bar root node (100% × 88px) must exist — if it does not, \
+             the HUD is not being spawned at all",
+        );
+        assert_ne!(
+            desk_root, hud_root,
+            "the desk root and the HUD root must be distinct entities"
+        );
+        // The actual relationship the bug broke: the HUD root's `ChildOf`
+        // must point at the desk root. If the HUD is (as before the fix) a
+        // separate top-level UI root, it has NO `ChildOf` and this fails.
+        let hud_parent = world
+            .get::<ChildOf>(hud_root)
+            .map(|c| c.0)
+            .unwrap_or_else(|| {
+                panic!(
+                    "the HUD root has no `ChildOf` — it is a top-level UI root, \
+                 not a child of the desk root (this is the exact bug)"
+                )
+            });
+        assert_eq!(
+            hud_parent, desk_root,
+            "the HUD root's parent must be the desk root (flex-column stacks \
+             it below the desk area); got a different parent"
         );
     }
 }
