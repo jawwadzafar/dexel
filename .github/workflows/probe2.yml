@@ -1,0 +1,10 @@
+name: Probe2
+
+on:
+  workflow_dispatch:
+
+jobs:
+  probe:
+    runs-on: [self-hosted, darkmirror]
+    steps:
+      - run: echo hello-from-runner
