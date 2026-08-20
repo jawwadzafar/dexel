@@ -1400,6 +1400,66 @@ pub fn run() {
         .run();
 }
 
+/// Build the exact app [`run`] constructs, but with the progression state
+/// pre-seeded and the save path redirected to a temp file, so the HUD is
+/// populated from the first frame.
+///
+/// Used by the visual-verification capture (`shotcap`) to run the *real*
+/// scene in-process with a known state — no window-manager or compositor
+/// tooling required: the probe attaches Bevy's `Screenshot` component and
+/// the game writes its own framebuffer to disk.
+pub fn build_app_with_seed(seed_wallet: u64, seed_xp: u32, seed_work_done: f32) -> App {
+    // Redirect save I/O to a temp path (the test seam) so the probe never
+    // reads or writes the user's real save file.
+    let tmp = std::env::temp_dir().join(format!("dev-companion-shotcap-{}", std::process::id()));
+    set_save_path(Some(tmp.join("save.json")));
+
+    let mut app = App::new();
+    app.add_plugins(DefaultPlugins);
+    app.init_resource::<ActivitySource>();
+    app.init_resource::<ActivityMeter>();
+    // Seeded progression state — present before the first frame so the HUD
+    // shows real numbers immediately.
+    app.insert_resource(Wallet(seed_wallet));
+    app.insert_resource(PlayerXp {
+        level: level_for_xp(seed_xp),
+        xp: seed_xp,
+    });
+    app.insert_resource({
+        let mut p = project_at(0);
+        p.work_done = seed_work_done.min(p.total_work);
+        p
+    });
+    app.init_resource::<NextProjectIndex>();
+    app.insert_resource(SaveTimer::new());
+    app.add_message::<ProjectCompleted>();
+    app.add_message::<LevelUp>();
+    app.init_state::<AppState>();
+    app.add_systems(
+        Startup,
+        (setup_scene, load_or_init_save, enter_playing).chain(),
+    );
+    app.add_systems(FixedUpdate, project_progress_system);
+    app.add_systems(
+        Update,
+        (
+            forward_focus_events,
+            forward_keyboard_events,
+            forward_mouse_events,
+            activity_bridge_system,
+            idle_detection_system,
+            desk_upgrade_system,
+            project_completion_system,
+            xp_level_system,
+            mood_render_system,
+            hud_render_system,
+            save_system,
+        )
+            .chain(),
+    );
+    app
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
