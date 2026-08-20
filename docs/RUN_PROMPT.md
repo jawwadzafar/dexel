@@ -33,13 +33,32 @@ orchestrator's own loop rule — check `docs/milestone-log.md`/`docs/pr-log.md`
 for real evidence of progress before assuming a pass is done, never trust an
 agent's self-report alone.
 
-Three models across the fleet's tiers (`fleet.yaml`'s `defaults.opencodeModels`),
-each verified with a real tool-call probe AND a realistic reasoning task
-(not just checked against `/v1/models`):
-- `smart` -> `google/gemma-4-31B-it` (game-architect, pr-reviewer-correctness,
-  pr-reviewer-boundaries, pr-merge-decider). Fast (~1-2s) and answered a real
-  Bevy/clippy bug-finding task correctly and concisely on the first try.
-- `fast` -> `Qwen/Qwen3.8-27B` (game-engineer). **Requires
+Two models across the fleet's tiers (`fleet.yaml`'s `defaults.opencodeModels`),
+both proven by completing real agentic work in this repo — **not** by a
+synthetic probe. That distinction cost us a milestone's worth of retries: a
+model can pass a one-shot tool-call probe and answer a reasoning question
+perfectly, then still fail as an agent, because a multi-turn loop with real
+tools is a different capability. Before trusting a new candidate with a role,
+let it complete one real review or milestone end to end.
+**All tiers currently -> `Qwen/Qwen3.8-27B`** (every agent). It is the only
+model right now that is both proven on real agentic work here and reachable.
+
+**DeepSeek V4 Flash is DOWN** (as of 2026-08-20) and was the cause of the
+`AI_APICallError: <none>` stall: `POST /v1/chat/completions` returns
+`http_code=000` — no response at all, 30s+ timeouts, reproduced twice — even
+for a 10-token "say OK", while `GET /v1/models`, Qwen3.8-27B, and Nia-1.0 all
+answer in ~1s. `<none>` literally means "no response body to report"; opencode
+then retries on a ~4-minute timeout loop and the fleet makes no progress. When
+it recovers, prefer restoring DeepSeek to `cheap` (pr-reviewer-tests) so the
+test check runs on a *different* model than the implementer — that
+independence is deliberate and is lost while everything shares one model.
+Re-verify with a real chat call first; `/v1/models` listing it proves nothing.
+
+Fallback if Qwen3.8 also goes down: `infiniatechnologies/Nia-1.0` responds
+(~0.9s) and passes a tool_calls probe, but has never completed a real review
+or milestone here — unproven as an agent, per the rule above.
+
+Qwen3.8-27B notes (applies to every agent now). **Requires
   `chat_template_kwargs: {"enable_thinking": true→false}` in
   `~/.config/opencode/opencode.jsonc`'s model entry, already set.** Without
   it, this model burns its entire token budget on hidden reasoning and
@@ -58,11 +77,15 @@ each verified with a real tool-call probe AND a realistic reasoning task
   `reasoning_effort: low` is ignored by this vLLM deployment. Don't retry
   this — with thinking disabled it's fast (~4s) and correct. If you ever add
   another Qwen3.x-family model, check for the same issue.
-- `cheap` -> DeepSeek V4 Flash (pr-reviewer-tests). Slower per call (~15s)
-  but the only model with a real proven track record across actual
-  multi-step agentic tool use (all of M0 and the M1 recovery ran on it).
+**`google/gemma-4-31B-it` is rejected — do not reintroduce it.** It passed a
+single-shot probe (1.3s, correct, concise) and was pinned to `smart` on that
+basis. It then FAILED AS AN AGENT: both `pr-reviewer-correctness` and
+`pr-reviewer-boundaries` running on it returned "partial tool calls only"
+(empty response, surfacing as an error with no message) twice each during
+M2, and the orchestrator had to run both reviews itself to get past it.
+Removed from `opencode.jsonc`'s models map as well.
 
-No gpt-oss, no Qwen3-Omni-30B-A3B-Instruct, no Fara1.5-27B, no
+No gemma, no gpt-oss, no Qwen3-Omni-30B-A3B-Instruct, no Fara1.5-27B, no
 Qwen3.6-27B-FP8 — all four confirmed broken (either tool-calling disabled
 server-side, malformed tool output, or the model doesn't exist through the
 gateway despite being listed).

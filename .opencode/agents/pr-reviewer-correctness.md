@@ -2,7 +2,7 @@
 description: Pr Reviewer Correctness of the dev-companion fleet for Rust + Bevy developer companion desktop game. Independently verifies a milestone PR actually does what the plan says it does — re-derives the evidence rather than trusting the PR description or the milestone log's own claims.
 mode: subagent
 temperature: 0.2
-model: tokenfactory/google/gemma-4-31B-it
+model: tokenfactory/Qwen/Qwen3.8-27B
 permission:
   read: allow
   edit:
