@@ -53,6 +53,37 @@ cargo build --release -p companion
 ./target/release/companion
 ```
 
+### Build for multiple architectures (x86_64 + ARM)
+
+`scripts/build.sh` builds release binaries for one or more targets into
+`./build/` (git-ignored):
+
+```bash
+./scripts/build.sh              # x86_64 (native) — always works
+./scripts/build.sh x86_64       # x86_64 only
+./scripts/build.sh all          # x86_64 + aarch64 (ARM)
+./scripts/build.sh arm          # aarch64 (gnu)
+./scripts/build.sh arm-musl     # aarch64 (musl, static)
+```
+
+Binaries land in `build/<target>/companion`.
+
+> **ARM cross-build needs a sysroot.** Bevy links native windowing libraries
+> (wayland, gbm, alsa, x11). Building those for aarch64 from an x86_64 host
+> requires an **aarch64 sysroot** (the target's C libs + headers). Two ways:
+>
+> - **`cross` (Docker) — recommended.** It provisions a real aarch64
+>   toolchain + glibc, so everything resolves:
+>   ```bash
+>   cross build --release --target aarch64-unknown-linux-gnu -p companion
+>   ```
+> - **`scripts/build.sh arm`** with `ARM_SYSROOT=/path/to/aarch64/sysroot`
+>   set (the script wires zig as the C compiler/linker + a pkg-config shim).
+>
+> On a machine with sudo you can generate the sysroot with
+> `cross build` or an aarch64 Docker image. See the header comment in
+> `scripts/build.sh` for details.
+
 ### Seeded / demo save (optional)
 
 The game autosaves every 30 s and restores on launch. To start with a
@@ -149,11 +180,20 @@ cargo run -p companion
 RUST_LOG=debug,wgpu=warn RUST_BACKTRACE=1 cargo run -p companion
 ```
 
-### Release
+### Release / multi-arch
 
 ```bash
-cargo build --release -p companion
+./scripts/build.sh              # x86_64 (native)
+./scripts/build.sh all          # x86_64 + aarch64 (ARM, needs sysroot/cross)
+cross build --release --target aarch64-unknown-linux-gnu -p companion   # ARM via Docker
 ```
+
+### CI / GitHub Actions
+
+`.github/workflows/build.yml` runs fmt/clippy/tests plus builds x86_64 (native)
+and aarch64 (via `cross`) on push/PR and uploads the binaries as artifacts. It
+activates once the repo is public (GitHub Actions is disabled on private repos
+without a paid plan).
 
 ### Visual verification (no compositor / headless CI)
 

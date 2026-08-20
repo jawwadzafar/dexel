@@ -6,6 +6,10 @@
 # not match them, and one `git add -A` tried to commit ~9GB of artifacts.
 target-*/
 **/target-*/
+# Build artifacts from scripts/build.sh (native + cross binaries). The script
+# writes to ./build/<target>/ — never commit the binaries.
+/build/
+
 # Cargo.lock is committed deliberately — this workspace builds an application
 # (the companion binary), where a locked dependency tree is the convention.
 

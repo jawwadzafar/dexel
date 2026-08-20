@@ -1,0 +1,89 @@
+name: Build
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+# NOTE: this repo is currently PRIVATE, and GitHub Actions does not run on
+# private repos without a paid plan. This workflow is wired for the moment the
+# repo goes public (or a GHES / paid plan is added). The equivalent local path
+# is `scripts/build.sh` (native x86_64) or `cross build` (ARM).
+
+# Build native x86_64 and cross aarch64 (ARM) release binaries for Linux.
+#
+# Strategy:
+#   - x86_64: build natively on the runner (fast, reliable).
+#   - aarch64: use `cross` (Docker) — it provides a real aarch64 toolchain +
+#     glibc sysroot, so Bevy's native windowing libs (wayland, gbm, alsa, x11)
+#     resolve correctly. This is the same approach scripts/build.sh documents.
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  test:
+    name: fmt + clippy + tests (host)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: rustfmt
+        run: cargo fmt --all -- --check
+      - name: clippy
+        run: cargo clippy --workspace --all-targets -- -D warnings
+      - name: test
+        run: cargo test --workspace
+
+  build:
+    name: Build (${{ matrix.name }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: x86_64
+            target: x86_64-unknown-linux-gnu
+            cross: false
+          - name: aarch64
+            target: aarch64-unknown-linux-gnu
+            cross: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+
+      # Native build (x86_64).
+      - name: Install native C toolchain (x86_64)
+        if: matrix.cross == false
+        run: sudo apt-get update && sudo apt-get install -y build-essential
+
+      # Cross build (aarch64) via `cross`.
+      - name: Install cross
+        if: matrix.cross == true
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cross
+
+      - name: Build (native)
+        if: matrix.cross == false
+        run: cargo build --release --target ${{ matrix.target }} -p companion
+
+      - name: Build (cross, aarch64)
+        if: matrix.cross == true
+        run: cross build --release --target ${{ matrix.target }} -p companion
+
+      - name: Show artifact
+        run: file target/${{ matrix.target }}/release/companion
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: companion-${{ matrix.name }}
+          path: target/${{ matrix.target }}/release/companion
