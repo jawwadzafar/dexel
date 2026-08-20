@@ -627,12 +627,184 @@ this session rather than left for a fresh session to rediscover cold.
    is correct (each `FixedUpdate` run is exactly one timestep; the
    leftover overstep is discarded on exit), but it means the system
    adds a fixed amount of work per fixed step, not a variable amount
-   based on elapsed time. This is the simplest possible `FixedUpdate`
-   implementation and matches the plan's "while mood == Coding:
-   work_done += progress_delta(recent_rate, fixed_dt)" shape; a later
-   milestone can refine it if it needs to handle a variable fixed step
-   (e.g. for a physics integration or a sub-step animation).
+    based on elapsed time. This is the simplest possible `FixedUpdate`
+    implementation and matches the plan's "while mood == Coding:
+    work_done += progress_delta(recent_rate, fixed_dt)" shape; a later
+    milestone can refine it if it needs to handle a variable fixed step
+    (e.g. for a physics integration or a sub-step animation).
 
-  ---
+   ---
+
+ ## M4 — Persistence
+
+ - **Date:** 2026-08-20
+ - **Branch:** `milestone/m4-persistence`
+ - **Resolved dependency versions:** `serde 1.0.229` (with `derive` feature), `serde_json 1.0.151`, `dirs 6.0.0` — all added to `companion` only (the `activity` crate remains Bevy-free and dependency-free beyond its own scope).
+
+ ### Files changed
+ - `companion/Cargo.toml` — added `serde` (with `derive`), `serde_json`, and `dirs` as dependencies.
+ - `companion/src/main.rs` — the full M4 persistence layer:
+   - **New types (plan §3.4):**
+     - `SaveData { wallet: u64, xp: u32, level: u32, current_project: Option<CurrentProjectSave> }` — `#[derive(Serialize, Deserialize)]`, field names match the plan's literal struct definition.
+     - `CurrentProjectSave { index: usize, work_done: f32 }` — the in-progress project slice. **Design choice (noted per boundary rules):** stores the static-list `index` (not the project name) because M3's `CurrentProject` is always built by `project_at(index)` — name and rewards are recoverable without duplicating data. `work_done` is a plain `f32` so a mid-project quit resumes exactly where the bar was.
+     - `SaveTimer(Timer)` resource — `TimerMode::Repeating`, `SAVE_INTERVAL = 30.0` seconds (plan §3.2/§3.4).
+     - `AppState` enum (`Loading` / `Playing`) — plan §3.2. `load_or_init_save` transitions to `Playing` via `NextState<AppState>` + synchronous `StateTransition` schedule run (Bevy 0.19 API — the plan's `state.set(...)` example is 0.18).
+   - **New plain `fn`s (unit-testable, no Bevy types in signature, plan §3.2 `*`-function rule):**
+     - `save_path() -> PathBuf` — `dirs::data_dir().unwrap().join("dev-companion").join("save.json")` (plan §3.4, verbatim).
+     - `set_save_path(Option<PathBuf>)` — test seam: redirects all save I/O to a temp dir. Only the `#[cfg(test)]` module calls this; the game never does. Backed by a process-global `LazyLock<Mutex<Option<PathBuf>>>` (not a thread-local — `cargo test` runs each test on its own spawned thread, so a thread-local set on the main thread would be invisible to the test body).
+     - `effective_save_path() -> PathBuf` — the path save I/O actually uses (override if set, else the real data dir).
+     - `load_save_file(path) -> Result<Option<SaveData>, String>` — reads + parses the save file. No file → `Ok(None)` (fresh install). Malformed JSON → `Err` (logged by the caller, treated as fresh — a corrupted save must not crash the app).
+     - `write_save_file(path, data) -> Result<(), String>` — serializes `data` to pretty JSON, creates parent dirs as needed.
+     - `save_data_from_resources(wallet, xp, project, index) -> SaveData` — extracts the save data from the live game resources.
+   - **New systems (plan §3.2/§3.4):**
+     - `load_or_init_save` (Startup) — reads the save file if present and populates `Wallet` / `PlayerXp` / `CurrentProject` / `NextProjectIndex` from it. `PlayerXp.level` is recomputed with `level_for_xp(xp)` on restore so a hand-edited (inconsistent) save self-corrects. A corrupted/unreadable save logs a `warn!` and starts fresh (the file is left in place; the next successful autosave overwrites it).
+     - `save_system` (Update, gated by `SaveTimer` + `AppState::Playing`) — when `SaveTimer` fires (every `SAVE_INTERVAL` seconds) serializes the current resources to the save file. Uses `just_finished()` (not `is_finished()`) because Bevy 0.19's `Timer::tick` recomputes the `finished` flag *after* advancing the stopwatch, so a repeating timer whose elapsed already meets its duration stays `finished = false` until the next tick — with a variable (test-driven) `dt` the flag could be observed as never firing.
+     - `enter_playing(world: &mut World)` — sets `NextState<AppState> = Playing` and runs the `StateTransition` schedule synchronously (the plan's `state.set(...)` example is 0.18 API; in 0.19 the transition is queued through `NextState` and applied by the `StateTransition` schedule, which `StatesPlugin` inserts into `MainScheduleOrder` after `PreUpdate`). Running it synchronously in Startup ensures the transition applies before the first Update frame, in both the real app and the test fixtures (where `MainScheduleOrder` is frozen after the first `app.update()`).
+   - **`main()` wiring:** `SaveTimer::new()` inserted at construction. `AppState` initialized via `.init_state::<AppState>()`. The Startup chain is `(setup_scene, load_or_init_save, enter_playing).chain()`. `save_system` appended to the end of the Update chain.
+   - **M4 tests (7 new, in the `#[cfg(test)] mod tests` at the bottom):**
+     * `save_data_round_trip_serialize_deserialize_asserts_equality` — **the plan's M4 exit-criterion round-trip test**: serialize a `SaveData` to JSON, deserialize, assert equality. Independent of the file system. Covers both the `Some(CurrentProjectSave)` and `None` arms.
+     * `save_file_round_trip_write_and_read` — write a `SaveData` to a real temp-dir file, read it back, assert equality.
+     * `save_file_missing_is_fresh_and_malformed_is_an_error` — a missing file is `Ok(None)` (fresh install); malformed JSON and wrong-shape JSON are both `Err` (never crash).
+     * `save_data_from_resources_captures_wallet_xp_level_and_project` — the extraction function captures exactly what the exit criterion names: wallet, xp, level, and the in-progress project (index + work_done).
+     * `load_or_init_save_without_a_file_keeps_fresh_state` — app-driven: `load_or_init_save` on a MinimalPlugins `App` with no save file keeps the in-memory fresh defaults (wallet 0, level 1, project #1 at 0.0 work).
+     * `load_or_init_save_restores_a_partway_project` — app-driven: `load_or_init_save` with a hand-written save file (wallet 65, xp 40, project #2 at 30/100 work) restores all four values correctly.
+     * `save_system_writes_the_live_state_when_the_timer_fires` — app-driven: the **shipping** `save_system` fires when `SaveTimer` elapses (30 s of simulated frames at 32 Hz via `TimeUpdateStrategy::FixedTimesteps(1)`) and writes the current resources to the temp-dir save file. The app runs the full M3 loop (via the shared `build_m3_app` fixture) so the values being saved are the ones the loop itself produced.
+     * `m4_quit_and_relaunch_restores_wallet_xp_level_and_in_progress_project` — **the M4 exit criterion, app-driven**: session 1 runs the full M3 loop (~4.5 s of typing → partway through project #1), the 30 s autosave fires, the app is *dropped* (quit). Session 2: a brand-new `App` is built the way `main()` builds it and `load_or_init_save` runs — wallet / xp / level / index restore exactly; work_done restores in (0, session-end] (the save is a mid-session snapshot at the 30 s mark; the ~4.5 s tail after it added a small amount of work). The project name matches via the saved index.
+     * `timer_just_fires_at_the_interval_under_test_cadence` — focused check of Bevy 0.19's `Timer::tick` + `just_finished` at the exact cadence the app-driven tests use (one 31.25 ms tick per frame, 30 s interval): the interval fires exactly once, at the first tick where elapsed crosses 30 s.
+   - **M3 bug fix (discovered during M4):** `build_m3_app()` registered `project_progress_system` in `FixedUpdate` **twice** (once near the top of the function, once near the bottom). The duplicate silently no-op'd while `Time<Fixed>` never advanced under MinimalPlugins' wall-clock time, but would double the progress the moment the harness (or the shipped app) feeds the fixed clock deterministically. Removed the duplicate.
+   - **M3 test-harness fix:** `step_m3` now advances `Time<Virtual>` by the simulated frame `dt` (in addition to setting `FrameDt`), so `Time<Real>` (and therefore `Time<Fixed>`'s overstep and the generic `Time` resource) advances deterministically. This is what makes `save_system`'s `Res<Time>::delta()` and the 32 Hz `project_progress_system` tick correctly in the app-driven M4 tests.
+   - **`hud_render_system` B0001 fix:** the three `Query<&mut Text, With<_>>` params (coin / xp-level / project-name) triggered a B0001 query-conflict panic at runtime in Bevy 0.19 (the validator doesn't track `With<_>` disjointness across separate params). Merged into a single `ParamSet<(Query<...>, Query<...>, Query<...>)>` with a `#[allow(clippy::type_complexity)]` (the type is inherently complex; factoring into type aliases loses the elided lifetimes the `ParamSet` impl needs).
+
+ ### Bevy 0.19 API drift (recorded for completeness)
+ 1. `State<S>` has no `.is()` method (the plan's §3.2 table was written against 0.18) — use `state.get() == &AppState::Playing`.
+ 2. State transitions are queued through `NextState<S>` (not `state.set(...)`); applied by the `StateTransition` schedule (inserted by `StatesPlugin` into `MainScheduleOrder` after `PreUpdate`). In test fixtures, run the schedule synchronously to avoid the `MainScheduleOrder`-freeze-on-first-update issue.
+ 3. `StatesPlugin` is at `bevy::state::app::StatesPlugin` (not `bevy::state::state::StatesPlugin`).
+ 4. `Timer::tick` recomputes `finished` after advancing the stopwatch — use `just_finished()` for "fire when the interval elapses" semantics.
+ 5. `TimeUpdateStrategy::FixedTimesteps(1)` is the designed test seam for deterministic time advancement in `MinimalPlugins` apps.
+ 6. `MinimalPlugins` does include `TimePlugin` (which installs `time_system` in `First`), so `Res<Time>` is available — but it advances by real wall-clock time unless `TimeUpdateStrategy` is set to `ManualDuration` or `FixedTimesteps`.
+ 7. `ParamSet` in Bevy 0.19 is a tuple-alias type (not a `#[derive(ParamSet)]` macro) — accessed via `.p0()`, `.p1()`, `.p2()`.
+ 8. `Mutex::new` is not const-constructible in Rust 2024 — use `LazyLock<Mutex<...>>` for process-global mutable state.
+ 9. `std::thread::current().id().as_u64()` is unstable — use a process-global atomic counter for unique test suffixes.
+
+ ### Exact commands run and real output
+ 1. `cargo fmt --all -- --check` → **exit 0, no output** (clean).
+ 2. `cargo clippy --workspace --all-targets -- -D warnings` → `Finished dev profile ...` **exit 0, no warnings**.
+ 3. `cargo test --workspace` → **exit 0, 33 tests pass**:
+    ```
+    activity (lib):
+      running 9 tests
+      test result: ok. 9 passed; 0 failed
+
+    companion (bin; M3 + M4 unit/integration):
+      running 20 tests
+      test tests::level_for_xp_floor_is_one ... ok
+      test tests::level_for_xp_idempotent_on_recompute ... ok
+      test tests::level_for_xp_is_monotone_non_decreasing ... ok
+      test tests::level_for_xp_thresholds_are_correct ... ok
+      test tests::load_or_init_save_restores_a_partway_project ... ok
+      test tests::load_or_init_save_without_a_file_keeps_fresh_state ... ok
+      test tests::m3_idle_flips_mood_to_on_break_after_threshold ... ok
+      test tests::m4_quit_and_relaunch_restores_wallet_xp_level_and_in_progress_project ... ok
+      test tests::next_project_index_advances_and_wraps ... ok
+      test tests::non_focus_event_ignores_lone_focus_flips ... ok
+      test tests::progress_delta_at_the_anti_mash_ceiling_bounded_work_per_session ... ok
+      test tests::progress_delta_is_zero_when_rate_is_zero_or_dt_is_zero ... ok
+      test tests::progress_delta_scales_linearly_with_rate_and_dt ... ok
+      test tests::progress_delta_typical_typing_is_small_per_frame ... ok
+      test tests::save_data_from_resources_captures_wallet_xp_level_and_project ... ok
+      test tests::save_data_round_trip_serialize_deserialize_asserts_equality ... ok
+      test tests::save_file_missing_is_fresh_and_malformed_is_an_error ... ok
+      test tests::save_file_round_trip_write_and_read ... ok
+      test tests::save_system_writes_the_live_state_when_the_timer_fires ... ok
+      test tests::timer_just_fires_at_the_interval_under_test_cadence ... ok
+      test result: ok. 20 passed; 0 failed
+
+    companion (m2_smoke.rs integration, unchanged from M2):
+      running 4 tests
+      test result: ok. 4 passed; 0 failed
+    ```
+    **M4 exit-criterion requirement met:** the round-trip unit test
+    (`save_data_round_trip_serialize_deserialize_asserts_equality`) is
+    present and passes, independent of the file system. The "quit,
+    relaunch, values restore" behavior is demonstrated by
+    `m4_quit_and_relaunch_restores_wallet_xp_level_and_in_progress_project`
+    (app-driven, headless-safe).
+ 4. `cargo run -p companion` (35 s `timeout`) → app launched, no panics,
+    no B0001. Real output:
+    ```
+    INFO bevy_diagnostic::system_information_diagnostics_plugin::internal:
+        SystemInfo { os: "Linux (Ubuntu 26.04)", kernel: "7.0.0-29-generic",
+                     cpu: "AMD Ryzen AI 9 HX 370 w/ Radeon 890M", ... }
+    INFO bevy_render::renderer:
+        AdapterInfo { name: "AMD Radeon 890M Graphics (RADV STRIX1)", ...
+                      backend: Vulkan ... }
+    INFO bevy_pbr::cluster: GPU clustering is supported on this device.
+    INFO bevy_render::batching::gpu_preprocessing:
+        GPU preprocessing is fully supported on this device.
+    INFO bevy_winit::system: Creating new window companion (65v0)
+    ERROR sctk_adwaita::config: XDG Settings Portal did not return
+        response in time: timeout: 100ms, key: color-scheme
+    INFO companion: no save at
+        "/home/darkmirror/.local/share/dev-companion/save.json" —
+        starting fresh (wallet 0 · level 1 · 0 XP)
+    INFO companion: autosave: wrote
+        "/home/darkmirror/.local/share/dev-companion/save.json"
+        (wallet 0 · level 1 · 0 XP · project 'Fix login flow' 0.0/50.0)
+    ```
+    Process stayed alive until the 35 s timeout (exit 124 = still
+    running). The `sctk_adwaita` / XDG portal error is the same
+    Linux desktop window-decoration theme noted in M0/M1/M2, unrelated
+    to companion code.
+
+ ### M4 exit criterion — demonstrated
+ - **Round-trip unit test (serialize → deserialize → assert equality,
+   independent of the file system):** ✅
+   `save_data_round_trip_serialize_deserialize_asserts_equality`
+ - **"Get partway through a project, quit, relaunch — wallet, xp, level,
+   and in-progress project all restore":** ✅ demonstrated two ways:
+   1. **App-driven test** (`m4_quit_and_relaunch_restores_wallet_xp_level_
+      and_in_progress_project`): session 1 runs the full M3 loop (~4.5 s
+      of typing → partway through project #1 at ~12 work/50), the 30 s
+      autosave fires, the app is dropped (quit). Session 2: a fresh `App`
+      + `load_or_init_save` restores wallet/xp/level/index exactly and
+      work_done in (0, session-end]. The project name matches via the
+      saved index.
+   2. **Live `cargo run` smoke test** (35 s): the app launched fresh
+      (no save), the 30 s autosave fired and wrote
+      `~/.local/share/dev-companion/save.json` with the correct shape
+      (`{"wallet": 0, "xp": 0, "level": 1, "current_project":
+      {"index": 0, "work_done": 0.0}}`). A second `cargo run` (10 s)
+      logged `restored save: wallet 0 · level 1 · 0 XP · project 'Fix
+      login flow' (0.0/50.0 work)` — the values restored from the file.
+      (The values are all zero because no user input was possible in the
+      headless environment; the `m4_quit_and_relaunch` test covers the
+      non-trivial case with actual progress.)
+ - **`cargo test --workspace` green:** ✅ (33/33)
+
+ ### Remaining issues
+ 1. **Visual smoke test (window + HUD)** — the X display was alive at
+    commit time (the window opened, no B0001, no panics), but the agent
+    cannot see the window's pixels. A human should run `cargo run -p
+    companion` on a normal desktop, type for ~5 s, quit, relaunch, and
+    confirm the progress bar, coins, xp/level, and project name all
+    restore from the previous session.
+ 2. **The M2 `[debug]` counter remains** — M4 does not remove it (plan
+    §4/M2: "remove or hide in M5"). Still clearly flagged.
+ 3. **The `SaveData.level` field is authoritative on the wire but
+    recomputed on load** — `load_or_init_save` sets
+    `PlayerXp.level = level_for_xp(xp.xp)`, ignoring the stored `level`
+    if it's inconsistent. This is intentional (a hand-edited save with
+    a wrong level self-corrects), but the stored `level` field is then
+    redundant with `xp`. The plan's §3.4 struct definition includes both
+    fields, so both are persisted; the recomputation is a defensive
+    choice noted here.
+ 4. **No save-on-exit** — the plan's §3.4 says "Write on a `SaveTimer`
+    (e.g. every 30s) and is acceptable to also add on exit later — not
+    required for v0.1's exit criterion, which only requires periodic
+    autosave + load-on-launch." M4 implements the periodic autosave;
+    save-on-exit is deferred (a `bevy::app::AppExit` event handler or a
+    `CancellationToken`-based shutdown hook would be the natural M5+
+    addition).
+
 
 
