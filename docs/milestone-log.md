@@ -1089,11 +1089,137 @@ this session rather than left for a fresh session to rediscover cold.
      would require extending `SaveData` (e.g. `unlocked_upgrades: Vec<String>`
      of game-defined ids) — explicitly out of scope for v0.1's M5, which only
      needs the "world visibly changes" hook proven.
-  4. **The `mood_render_system` `ParamSet`** is a Bevy 0.19 validator
-     workaround (it does not track `With<_>` disjointness across separate
-     params). If a future Bevy version fixes the validator, the `ParamSet`
-     (and its `#[allow(clippy::type_complexity)]`) could be reverted to two
-     separate `Query` params.
+   4. **The `mood_render_system` `ParamSet`** is a Bevy 0.19 validator
+      workaround (it does not track `With<_>` disjointness across separate
+      params). If a future Bevy version fixes the validator, the `ParamSet`
+      (and its `#[allow(clippy::type_complexity)]`) could be reverted to two
+      separate `Query` params.
+
+---
+
+## BUGFIX — HUD not rendering (human bug report, handoff #10)
+
+- **Date:** 2026-08-20
+- **Branch:** `fix/hud-not-rendering` (branched from `main`)
+- **Commits:** `aeb1906` (lib.rs/main.rs split, as found on disk) + `ead06a2` (the HUD layout fix + regression test)
+
+### Root cause
+
+The HUD bar was entirely invisible in the running game. `setup_scene`
+called `spawn_desk(&mut commands)` and then `spawn_hud(&mut commands)` —
+both spawned from `commands` directly, so each became its **own** top-level
+UI root. The desk root is `100% x 100%` with `flex_direction: Column`, and
+its desk-area child has `flex_grow: 1.0`, so the desk consumes the full
+window height. The HUD root (`100% x 88px`) was a separate root overlapping
+at the top-left, and — because the desk area's `flex_grow` filled the whole
+window — it was never visible. The code's own comments stated the intended
+structure ("the HUD bar is a sibling in the same root" / "Flex column so the
+desk area and the HUD stack vertically"), so this was an
+implementation/intent mismatch, not a design question. Every code reviewer
+(M1–M5) had approved on mechanical evidence (code present, fmt/clippy clean,
+38/38 tests green) because no fleet model could see the screen; a test that
+only asserted the HUD entities were *spawned* would pass while the HUD is
+invisible.
+
+### The fix
+
+The HUD is now a CHILD of the desk root, after the desk area, so the
+desk root's flex-column places it at the bottom of the window.
+Concretely:
+
+- `spawn_desk(&mut Commands)` now returns the desk root's `Entity`
+  (the `Developer` entity, which carries the root `Node`).
+- `setup_scene` binds a `ChildSpawnerCommands` to that entity
+  (`ChildSpawnerCommands::new(commands, desk_root)`) and calls
+  `spawn_hud(&mut hud_spawner)`. Because the spawner stamps every spawn with
+  `ChildOf(desk_root)`, the HUD's root node is parented to the desk root
+  (no extra wrapper entity).
+- `spawn_hud`'s parameter changed from `&mut Commands` to
+  `&mut ChildSpawnerCommands` (a one-word signature change; the body is
+  untouched).
+- Added `hud_is_a_child_of_the_desk_root`, a **layout-relationship** test
+  that drives the real `setup_scene` and asserts the HUD root's `ChildOf`
+  points at the desk root. It fails if the HUD is a separate top-level root
+  (no `ChildOf`) — exactly the bug. An existence-only assertion would have
+  passed while the HUD was invisible.
+
+### Files changed
+- `companion/src/main.rs` — shrunken to a thin entry point
+  (`fn main() { companion::run(); }`). **Split commit `aeb1906`.**
+- `companion/src/lib.rs` — new file holding the full game code (scene,
+  systems, save/load, UI, all `pub fn`s). **Split commit `aeb1906`.** The
+  diff from the old `main.rs` is mechanical: `fn main()` was renamed to
+  `pub fn run()` so the binary can call it; no behavior changes. (An orphan
+  doc comment left by the migration was removed because it tripped
+  clippy's `empty_line_after_doc_comments`.)
+- `companion/src/lib.rs` — the HUD layout fix + regression test.
+  **Fix commit `ead06a2`.**
+
+### Working-tree reconciliation (split)
+The working tree was found mid-migration: `main.rs` shrunken to 8 lines and
+a new untracked `lib.rs` (2523 lines, full game code) on disk, while git
+`main` still held the old 2508-line `main.rs`. Verified the on-disk
+`lib.rs` is the old `main.rs` body with `fn main()` → `pub fn run()` (and an
+orphan doc comment), and that it compiles (`cargo check -p companion`).
+Committed the split as-is in `aeb1906` so the game still compiles and runs,
+before the fix. The split is a prerequisite, not new feature scope.
+
+### Exact commands run and real output
+1. `cargo fmt --all -- --check` → exit 0, no output (clean).
+2. `cargo clippy --workspace --all-targets -- -D warnings` →
+   `Finished dev profile ...` exit 0, **no warnings**.
+3. `cargo test --workspace` → **39 tests pass, 0 failed**:
+   ```
+   running 9 tests      (activity)   test result: ok. 9 passed
+   running 26 tests     (companion)  test result: ok. 26 passed
+   running 4 tests      (m2_smoke)   test result: ok. 4 passed
+   ```
+   **39 = 38 on main + 1 new (`hud_is_a_child_of_the_desk_root`).**
+4. `cargo run -p companion` (manual smoke test) → real output:
+   ```
+   INFO bevy_winit::system: Creating new window companion (65v0)
+   ERROR sctk_adwaita::config: XDG Settings Portal did not return
+       response in time: timeout: 100ms, key: color-scheme
+   INFO companion: restored save: wallet 0 · level 1 · 0 XP · project
+       'Fix login flow' (0.1/50.0 work)
+   ```
+   Process stayed alive until the 12 s `timeout` (exit 124 = still running,
+   no panic). The `sctk_adwaita`/XDG-portal error is the same Linux desktop
+   window-decoration theme noted in M0–M5, unrelated to companion code.
+
+### Visual verification — BLOCKED (no display in-session)
+
+**Status: BLOCKED — the fix is UNVERIFIED on screen.** The layout fix is
+landed and the regression test passes, but it could not be confirmed
+visually this session because there is no usable X display:
+
+- `echo "$DISPLAY"` → empty.
+- `xdpyinfo -display :0 / :1 / :1025` → all fail/timeout (no server).
+- `which Xvfb xvfb-run Xephyr` → none installed.
+- `which import scrot grim gnome-screenshot xwd` → none installed.
+- `Xorg -version` → `Only console users are allowed to run the X server`
+  (cannot start a user-space X server; installing Xvfb/screenshot tools
+  needs sudo, which is disallowed for this run).
+- `scripts/visual-check.py` requires a screenshot input, which cannot be
+  produced without a display + capture tool, so it was not run.
+
+The human's own screenshot evidence (2026-08-20, handoff #10) confirms the
+display CAN work on this machine; the visual step is deferred to the
+visual-verifier, who should launch the game on a live display and run
+`scripts/visual-check.py` on a root-window screenshot. The milestone log
+must carry BLOCKED, not upgrade it to CONFIRMED on the strength of the
+tests.
+
+### Remaining issues
+1. **Visual smoke test (HUD bar visible at the bottom of the window) is
+   BLOCKED** — no display in-session. The visual-verifier must confirm:
+   (a) the HUD bar (progress bar + "Coins: N" + "Lv N · N XP" + "Mood: …"
+   + "Project: …") is visible at the **bottom** of the window, (b) the desk
+   area and its three rects (brown slab, grey computer, green upgrade) are
+   still visible above it, (c) the progress bar and at least one numeric
+   readout (coins or level) are independently nameable by the vision model.
+2. The `mood_render_system` `ParamSet` workaround (carried from M5) is
+   unchanged by this fix.
 
 
 
