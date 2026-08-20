@@ -41,7 +41,7 @@ Before starting, load your skill(s): **pr-merge-decision**. They carry the metho
 Coordination is file-based under `_fleet/local/handoffs/`. You did not see other agents' conversations — the handoff files are your only shared memory, so treat them as the contract.
 
 **On start:**
-1. Read your incoming handoff(s) from `pr-reviewer-correctness`, `pr-reviewer-boundaries`, `pr-reviewer-tests` in `_fleet/local/handoffs/` (files matching `*-to-pr-merge-decider.md`). If one is missing or its acceptance criteria are unclear, say so in your output and proceed with explicit assumptions rather than silently guessing.
+1. Read your incoming handoff(s) from `pr-reviewer-correctness`, `visual-verifier`, `pr-reviewer-boundaries`, `pr-reviewer-tests` in `_fleet/local/handoffs/` (files matching `*-to-pr-merge-decider.md`). If one is missing or its acceptance criteria are unclear, say so in your output and proceed with explicit assumptions rather than silently guessing.
 2. Read `_fleet/local/LEDGER.md` to see fleet state before starting.
 
 **On finish:**

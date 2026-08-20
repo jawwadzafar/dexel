@@ -107,7 +107,7 @@ agents:
     capabilities: { read: true, edit: true, run: true }
     skills: [milestone-driven-rust-implementation]
     handoff:
-      to: [pr-reviewer-correctness, pr-reviewer-boundaries, pr-reviewer-tests]
+      to: [pr-reviewer-correctness, pr-reviewer-boundaries, pr-reviewer-tests, visual-verifier]
       artifact: docs/milestone-log.md
       criteria:
         - Every milestone entry lists changed files, exact commands run, and their results
@@ -132,6 +132,28 @@ agents:
       artifact: "_fleet/local/handoffs/*-pr-reviewer-correctness-to-pr-merge-decider.md"
       criteria:
         - Verdict states which exit criterion was or wasn't demonstrated, with the command output that shows it
+
+  - name: visual-verifier
+    role: >
+      Verifies the VISUAL half of a milestone's exit criterion — the part no
+      other agent can check, because every fleet model is text-only. Launches
+      the game, captures a screenshot, and asks a vision model what is
+      actually on screen.
+    goal: >
+      A verdict on whether the milestone's stated visual behaviour is really
+      visible, quoting the vision model's own description as the evidence.
+    model: fast
+    capabilities: { read: true, run: true }
+    skills: [visual-verification]
+    principles:
+      - Never claim a visual criterion holds without a screenshot and the vision model's description of it
+      - If no display is available, report BLOCKED with the exact failure — never infer the UI is fine because the tests pass
+    handoff:
+      to: [pr-merge-decider]
+      artifact: "_fleet/local/handoffs/*-visual-verifier-to-pr-merge-decider.md"
+      criteria:
+        - Verdict is CONFIRMED, REFUTED, or BLOCKED, and names the screenshot path it used
+        - The vision model's own words are quoted, not paraphrased into a conclusion
 
   - name: pr-reviewer-boundaries
     role: >
@@ -407,6 +429,82 @@ skills:
       an unambiguous Approve or Request-changes backed by that output —
       not "looks fine to me."
 
+  - name: visual-verification
+    description: >
+      How to verify a milestone's visual exit criterion for dev-companion:
+      launch the game, capture a screenshot, and ask a vision model what is
+      on screen via scripts/visual-check.py. Use whenever a milestone's exit
+      criterion describes something a human must SEE (a progress bar moving,
+      a HUD element appearing, a counter incrementing), or when a milestone
+      log records a visual check as unverified.
+    body: |
+      # Visual verification
+
+      Every model this fleet runs on is TEXT-ONLY — it cannot look at a
+      screenshot. `scripts/visual-check.py` bridges that: it sends an image
+      to a vision-capable model over HTTP and prints the description. This is
+      why M2 and M3 kept logging their visual criteria as unproven.
+
+      ## The check
+
+      ```bash
+      # 1. Confirm a display exists FIRST. Without it there is nothing to capture.
+      echo "$DISPLAY"; xdpyinfo >/dev/null 2>&1 && echo "display ok" || echo "NO DISPLAY"
+
+      # 2. Launch the game in the background, give it time to draw a frame.
+      source ~/.cargo/devcompanion-env.sh
+      cargo run -p companion >/tmp/companion-run.log 2>&1 &
+      GAME_PID=$!
+      sleep 15
+
+      # 3. Capture. Use whichever tool exists (import/scrot/grim/gnome-screenshot).
+      import -window root /tmp/companion-shot.png 2>/dev/null \
+        || scrot /tmp/companion-shot.png 2>/dev/null \
+        || grim /tmp/companion-shot.png 2>/dev/null
+
+      # 4. Ask a SPECIFIC question — not "does it look right".
+      python3 scripts/visual-check.py /tmp/companion-shot.png \
+        "Describe every UI element you can see, including any progress bar and any numeric counters. If a progress bar is present, roughly what percentage is filled?"
+
+      # 5. Always clean up.
+      kill $GAME_PID 2>/dev/null
+      ```
+
+      ## Asking well
+
+      Ask the vision model to DESCRIBE, then judge its description yourself.
+      Never ask a leading question — "is the progress bar filling up?" invites
+      a yes. "Describe every UI element and any numeric values" gets you
+      evidence you can actually evaluate. For a before/after criterion (a
+      counter that should increase), capture two screenshots with activity in
+      between and compare the two descriptions.
+
+      ## Verdicts
+
+      - **CONFIRMED** — the description independently names the element the
+        criterion requires. Quote its words.
+      - **REFUTED** — the description clearly shows the element missing or
+        wrong. Quote it and report which criterion failed.
+      - **BLOCKED** — no display, no screenshot tool, the window never
+        appeared, or every vision model failed. Report the exact command and
+        error. **Never** upgrade BLOCKED to CONFIRMED because the unit tests
+        pass — mechanical proof and visual proof are different claims, and
+        conflating them is how an unverified UI ships looking verified.
+
+      ## Known environment issue
+
+      This machine's X display has been dead (`:1025` socket exists but the
+      server refuses connections; `xdpyinfo` hangs). While that holds, the
+      honest outcome is BLOCKED — say so plainly rather than working around
+      it. `scripts/visual-check.py` itself is verified working and can be
+      tested independently of any display:
+
+      ```bash
+      python3 -c "from PIL import Image, ImageDraw; i=Image.new('RGB',(200,200),(255,230,40)); ImageDraw.Draw(i).ellipse([40,40,160,160],fill=(120,40,200)); i.save('/tmp/t.png')"
+      python3 scripts/visual-check.py /tmp/t.png "What shape and colors?"
+      # expect: a purple circle on a yellow background
+      ```
+
   - name: pr-merge-decision
     description: >
       Methodology for pr-merge-decider: how to synthesize three independent
@@ -419,22 +517,33 @@ skills:
 
       ## Before deciding
 
-      Confirm all three handoffs exist for this PR:
+      Confirm all four handoffs exist for this PR:
       `_fleet/local/handoffs/*-pr-reviewer-correctness-to-pr-merge-decider.md`,
       `*-pr-reviewer-boundaries-to-pr-merge-decider.md`,
-      `*-pr-reviewer-tests-to-pr-merge-decider.md`. If any is missing, do not
+      `*-pr-reviewer-tests-to-pr-merge-decider.md`, and
+      `*-visual-verifier-to-pr-merge-decider.md`. If any is missing, do not
       decide — that reviewer hasn't finished; wait or flag it as blocked in
-      `docs/pr-log.md` rather than deciding on two-of-three by default.
+      `docs/pr-log.md` rather than deciding on a partial set by default.
 
       ## Decision rule
 
       1. If `pr-reviewer-boundaries` reported a veto (a stated architecture
          boundary violation): **Request changes**, full stop, regardless of
-         the other two verdicts. This is the one lens with veto power because
+         the other verdicts. This is the one lens with veto power because
          its three checks (activity isolation, no raw content, anti-mashing
          clamp) are the plan's non-negotiables, not a quality preference.
-      2. Otherwise: **Approve and merge** if at least 2 of the 3 reviewers
-         approved; **Request changes** if 2 or more requested changes.
+      2. If `visual-verifier` reported **REFUTED** (a screenshot shows the
+         milestone's visual criterion is genuinely not met): **Request
+         changes**. A REFUTED visual verdict is a real defect.
+      3. If `visual-verifier` reported **BLOCKED** (no display, no
+         screenshot tool, vision model down): that does **not** block merge —
+         it is an environmental gap, not a code defect. Merge if the rule
+         below passes, and record the unverified visual criterion explicitly
+         in `docs/pr-log.md` so it stays visible as a carried gap rather than
+         silently reading as verified.
+      4. Otherwise: **Approve and merge** if at least 2 of the 3 code
+         reviewers (correctness, boundaries, tests) approved; **Request
+         changes** if 2 or more requested changes.
 
       ## On approval
 
@@ -483,7 +592,7 @@ orchestrator:
       gate: "docs/implementation-plan.md exists and every milestone in it has a command-verifiable exit criterion"
     - name: Milestone cycle
       mode: subagents
-      agents: [game-engineer, pr-reviewer-correctness, pr-reviewer-boundaries, pr-reviewer-tests, pr-merge-decider]
+      agents: [game-engineer, pr-reviewer-correctness, pr-reviewer-boundaries, pr-reviewer-tests, visual-verifier, pr-merge-decider]
       loop:
         until: >
           Every milestone M0 through M5 in docs/implementation-plan.md has a

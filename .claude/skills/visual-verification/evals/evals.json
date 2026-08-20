@@ -1,0 +1,11 @@
+{
+  "skill": "visual-verification",
+  "description": "How to verify a milestone's visual exit criterion for dev-companion: launch the game, capture a screenshot, and ask a vision model what is on screen via scripts/visual-check.py. Use whenever a milestone's exit criterion describes something a human must SEE (a progress bar moving, a HUD element appearing, a counter incrementing), or when a milestone log records a visual check as unverified.\n",
+  "should_trigger": [
+    "TODO: a request that must invoke visual-verification"
+  ],
+  "should_not_trigger": [
+    "TODO: a nearby request that must NOT invoke visual-verification (e.g. one belonging to another dev-companion skill)"
+  ],
+  "cases": []
+}

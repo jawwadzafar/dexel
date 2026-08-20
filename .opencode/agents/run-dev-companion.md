@@ -1,5 +1,5 @@
 ---
-description: Orchestrates the dev-companion fleet for Rust + Bevy developer companion desktop game (game-architect, game-engineer, pr-reviewer-correctness, pr-reviewer-boundaries, pr-reviewer-tests, pr-merge-decider). Use for implementing, extending, or re-planning the dev-companion Rust/Bevy game, including re-runs and partial fixes.
+description: Orchestrates the dev-companion fleet for Rust + Bevy developer companion desktop game (game-architect, game-engineer, pr-reviewer-correctness, visual-verifier, pr-reviewer-boundaries, pr-reviewer-tests, pr-merge-decider). Use for implementing, extending, or re-planning the dev-companion Rust/Bevy game, including re-runs and partial fixes.
 mode: primary
 model: tokenfactory/Qwen/Qwen3.8-27B
 permission:
@@ -11,6 +11,7 @@ permission:
     game-architect: allow
     game-engineer: allow
     pr-reviewer-correctness: allow
+    visual-verifier: allow
     pr-reviewer-boundaries: allow
     pr-reviewer-tests: allow
     pr-merge-decider: allow
@@ -21,7 +22,7 @@ permission:
 Orchestrator for the **dev-companion** fleet — Rust + Bevy developer companion desktop game.
 
 - Pattern: **pipeline** · Execution: **subagents**
-- Agents: `game-architect`, `game-engineer`, `pr-reviewer-correctness`, `pr-reviewer-boundaries`, `pr-reviewer-tests`, `pr-merge-decider`
+- Agents: `game-architect`, `game-engineer`, `pr-reviewer-correctness`, `visual-verifier`, `pr-reviewer-boundaries`, `pr-reviewer-tests`, `pr-merge-decider`
 - Workspace: `_fleet/` (handoffs in `_fleet/local/handoffs/`, ledger at `_fleet/local/LEDGER.md`)
 
 ## Phase 0: Context check
@@ -50,12 +51,14 @@ Agents: `game-architect`.
 ### Phase 2: Milestone cycle
 **Execution mode:** subagents
 
-Agents: `game-engineer`, `pr-reviewer-correctness`, `pr-reviewer-boundaries`, `pr-reviewer-tests`, `pr-merge-decider`.
+Agents: `game-engineer`, `pr-reviewer-correctness`, `pr-reviewer-boundaries`, `pr-reviewer-tests`, `visual-verifier`, `pr-merge-decider`.
 - `game-engineer`: Each milestone compiles, passes cargo fmt/clippy/test, passes its manual smoke test, and lands as its own reviewable PR before the next milestone starts.
-. Hands off to `pr-reviewer-correctness`, `pr-reviewer-boundaries`, `pr-reviewer-tests` (artifact: `docs/milestone-log.md`).
+. Hands off to `pr-reviewer-correctness`, `pr-reviewer-boundaries`, `pr-reviewer-tests`, `visual-verifier` (artifact: `docs/milestone-log.md`).
 - `pr-reviewer-correctness`: A verdict on plan/exit-criterion adherence backed by commands this agent ran itself, in its own worktree.. Hands off to `pr-merge-decider` (artifact: `_fleet/local/handoffs/*-pr-reviewer-correctness-to-pr-merge-decider.md`).
 - `pr-reviewer-boundaries`: A verdict on the activity-isolation boundary, no-raw-content-persistence, the anti-mashing clamp, and clippy/style cleanliness.. Hands off to `pr-merge-decider` (artifact: `_fleet/local/handoffs/*-pr-reviewer-boundaries-to-pr-merge-decider.md`).
 - `pr-reviewer-tests`: A verdict on test adequacy and a from-scratch cargo test run, independent of whatever the engineer already ran.. Hands off to `pr-merge-decider` (artifact: `_fleet/local/handoffs/*-pr-reviewer-tests-to-pr-merge-decider.md`).
+- `visual-verifier`: A verdict on whether the milestone's stated visual behaviour is really visible, quoting the vision model's own description as the evidence.
+. Hands off to `pr-merge-decider` (artifact: `_fleet/local/handoffs/*-visual-verifier-to-pr-merge-decider.md`).
 - `pr-merge-decider`: Every milestone PR ends this phase either merged into main with a logged commit SHA, or explicitly left open with every reviewer's required fix stated in one place.
 . Terminal agent — its output is (part of) the final deliverable.
 

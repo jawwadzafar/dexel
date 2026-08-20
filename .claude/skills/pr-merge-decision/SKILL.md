@@ -9,22 +9,33 @@ x-fleetsmith-origin: human
 
 ## Before deciding
 
-Confirm all three handoffs exist for this PR:
+Confirm all four handoffs exist for this PR:
 `_fleet/local/handoffs/*-pr-reviewer-correctness-to-pr-merge-decider.md`,
 `*-pr-reviewer-boundaries-to-pr-merge-decider.md`,
-`*-pr-reviewer-tests-to-pr-merge-decider.md`. If any is missing, do not
+`*-pr-reviewer-tests-to-pr-merge-decider.md`, and
+`*-visual-verifier-to-pr-merge-decider.md`. If any is missing, do not
 decide — that reviewer hasn't finished; wait or flag it as blocked in
-`docs/pr-log.md` rather than deciding on two-of-three by default.
+`docs/pr-log.md` rather than deciding on a partial set by default.
 
 ## Decision rule
 
 1. If `pr-reviewer-boundaries` reported a veto (a stated architecture
    boundary violation): **Request changes**, full stop, regardless of
-   the other two verdicts. This is the one lens with veto power because
+   the other verdicts. This is the one lens with veto power because
    its three checks (activity isolation, no raw content, anti-mashing
    clamp) are the plan's non-negotiables, not a quality preference.
-2. Otherwise: **Approve and merge** if at least 2 of the 3 reviewers
-   approved; **Request changes** if 2 or more requested changes.
+2. If `visual-verifier` reported **REFUTED** (a screenshot shows the
+   milestone's visual criterion is genuinely not met): **Request
+   changes**. A REFUTED visual verdict is a real defect.
+3. If `visual-verifier` reported **BLOCKED** (no display, no
+   screenshot tool, vision model down): that does **not** block merge —
+   it is an environmental gap, not a code defect. Merge if the rule
+   below passes, and record the unverified visual criterion explicitly
+   in `docs/pr-log.md` so it stays visible as a carried gap rather than
+   silently reading as verified.
+4. Otherwise: **Approve and merge** if at least 2 of the 3 code
+   reviewers (correctness, boundaries, tests) approved; **Request
+   changes** if 2 or more requested changes.
 
 ## On approval
 

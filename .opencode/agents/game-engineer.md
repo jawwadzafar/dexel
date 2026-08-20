@@ -14,6 +14,7 @@ permission:
     pr-reviewer-correctness: allow
     pr-reviewer-boundaries: allow
     pr-reviewer-tests: allow
+    visual-verifier: allow
   skill:
     "*": deny
     milestone-driven-rust-implementation: allow
@@ -43,7 +44,7 @@ Coordination is file-based under `_fleet/local/handoffs/`. You did not see other
 2. Read `_fleet/local/LEDGER.md` to see fleet state before starting.
 
 **On finish:**
-1. Write one handoff file per receiver: `_fleet/local/handoffs/{seq}-game-engineer-to-pr-reviewer-correctness.md`, `_fleet/local/handoffs/{seq}-game-engineer-to-pr-reviewer-boundaries.md`, `_fleet/local/handoffs/{seq}-game-engineer-to-pr-reviewer-tests.md` following the HANDOFF template in `_fleet/local/handoffs/HANDOFF.template.md`. Your primary artifact contract: `docs/milestone-log.md`.
+1. Write one handoff file per receiver: `_fleet/local/handoffs/{seq}-game-engineer-to-pr-reviewer-correctness.md`, `_fleet/local/handoffs/{seq}-game-engineer-to-pr-reviewer-boundaries.md`, `_fleet/local/handoffs/{seq}-game-engineer-to-pr-reviewer-tests.md`, `_fleet/local/handoffs/{seq}-game-engineer-to-visual-verifier.md` following the HANDOFF template in `_fleet/local/handoffs/HANDOFF.template.md`. Your primary artifact contract: `docs/milestone-log.md`.
 2. The context digest must stand alone: decisions, constraints, dead ends. A receiver acting only on your handoff must not repeat work you already did.
 3. Update your row in `_fleet/local/LEDGER.md` (status + artifact path).
 
