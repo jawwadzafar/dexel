@@ -2,11 +2,11 @@
 //!
 //! M1: static scene + HUD skeleton. M2: activity wiring — a
 //! `FocusedWindowProvider` is fed by Bevy input event readers (forwarded in,
-//! never read directly by a game system), `activity_bridge_system` drains it
-//! each frame into an `ActivityMeter` resource via `decay_and_accumulate`,
-//! and a **temporary** `[debug]` counter on the HUD shows the raw
-//! activity-event count this session (to be removed/hidden in M5 polish —
-//! see docs/milestone-log.md).
+//! never read directly by a game system) and `activity_bridge_system` drains
+//! it each frame into an `ActivityMeter` resource via `decay_and_accumulate`.
+//! The M2 **temporary** `[debug]` raw-event counter was removed in M5 polish
+//! (plan §4/M2/§4-M5): a raw count contradicts the anti-mashing principle if
+//! a user saw it as the real metric.
 //!
 //! M3: first playable loop — `project_progress_system` /
 //! `project_completion_system` / `xp_level_system` / `idle_detection_system` /
@@ -16,7 +16,11 @@
 //! `level_for_xp` thresholds, and idling past `IDLE_THRESHOLD` flips the mood
 //! to `OnBreak` (see docs/implementation-plan.md §3.2/§4-M3).
 //!
-//! See docs/implementation-plan.md §3.1/§3.2 and §4/M2/M3.
+//! M5: v0.1 polish — the M2 debug counter is gone; a coin-threshold desk
+//! upgrade (a plant prop) makes the world visibly change; an idle/break
+//! personality line ("Maybe we should take a break?") appears when the mood
+//! flips to `OnBreak` and clears when the developer returns to coding.
+//! See docs/implementation-plan.md §3.1/§3.2 and §4/M2/M3/M5.
 
 use activity::{ActivityEvent, ActivityProvider, FocusedWindowProvider, decay_and_accumulate};
 // Bevy 0.19: the event-reading system param is `MessageReader` (the 0.19
@@ -99,14 +103,20 @@ struct XpLevel;
 #[derive(Component)]
 struct ProjectName;
 
-/// Marker on the **temporary M2 debug counter** text (plan §4/M2).
-///
-/// REMOVE OR HIDE IN M5 POLISH: it exists only to prove the activity
-/// wire-up works during M2, not to ship. A raw event count contradicts the
-/// anti-mashing principle (plan §1) if a user ever sees it as the real
-/// metric.
+/// Marker on the placeholder **desk-upgrade prop** the M5 coin-threshold
+/// upgrade spawns (plan §4/M5: "a coin threshold unlocks a second placeholder
+/// prop"). `desk_upgrade_system` inserts/removes this component (rather than
+/// despawning/re-spawning the entity) so the entity's identity is stable and
+/// the prop simply appears/disappears as the wallet crosses the threshold.
 #[derive(Component)]
-struct DebugActivityCount;
+struct DeskUpgradeProp;
+
+/// Marker on the HUD **mood line** text (plan §4/M5 "one or two idle/mood
+/// text lines … for personality, no dialogue system"). `mood_render_system`
+/// writes the mood word to `MoodLabel` and the personality line (only on
+/// `OnBreak`, else empty) to this node.
+#[derive(Component)]
+struct MoodLine;
 
 // ---------------------------------------------------------------------------
 // Resources
@@ -155,11 +165,15 @@ pub const IDLE_THRESHOLD: f32 = 60.0;
 /// same tuning.
 pub const SAVE_INTERVAL: f32 = 30.0;
 
-/// Total raw activity events seen this session — drives *only* the temporary
-/// `[debug]` HUD counter (plan §4/M2). Not part of any game mechanic and
-/// not a `*`-function input; it is a plain session counter.
-#[derive(Resource, Default)]
-struct SessionEventCount(usize);
+/// The wallet value at which the desk plant upgrade unlocks (plan §4/M5:
+/// "a coin threshold unlocks a second placeholder prop"). Named const so the
+/// upgrade system and its unit test share the same tuning.
+///
+/// Tuning: the first two projects award 25 and 40 coins (65 total), so the
+/// plant appears partway through the *third* project ("Add CI cache") on a
+/// fresh run — the "world visibly changes" hook lands a couple of minutes in,
+/// not immediately, and not before the player has seen the base desk.
+pub const DESK_UPGRADE_COST: u64 = 50;
 
 /// The developer's coin purse (plan §3.2). Awarded on project completion by
 /// `xp_level_system`.
@@ -430,21 +444,22 @@ fn forward_mouse_events(
 // ---------------------------------------------------------------------------
 
 /// Drains the provider once per frame, updates `ActivityMeter.recent_rate`
-/// via `decay_and_accumulate`, advances the session event counter, and
-/// handles the idle timer (plan §3.2 / §4/M2): fresh activity **resets**
-/// `idle_timer` (the idle clock starts over); no activity merely ticks the
-/// already-running timer, so `idle_timer.finished()` in
-/// [`idle_detection_system`] fires exactly [`IDLE_THRESHOLD`] seconds after
-/// the *last* activity.
+/// via `decay_and_accumulate`, and handles the idle timer (plan §3.2 /
+/// §4/M2): fresh activity **resets** `idle_timer` (the idle clock starts
+/// over); no activity merely ticks the already-running timer, so
+/// `idle_timer.finished()` in [`idle_detection_system`] fires exactly
+/// [`IDLE_THRESHOLD`] seconds after the *last* activity.
+///
+/// The M2 session event counter is no longer accumulated here — it drove
+/// only the temporary `[debug]` HUD counter, which M5 removed (plan
+/// §4/M5).
 fn activity_bridge_system(
     mut source: ResMut<ActivitySource>,
     mut meter: ResMut<ActivityMeter>,
-    mut session_count: ResMut<SessionEventCount>,
     times: Res<Time>,
 ) {
     let dt = times.delta();
     let events = source.0.poll();
-    session_count.0 += events.len();
     meter.recent_rate = decay_and_accumulate(meter.recent_rate, &events, dt);
     let fresh = non_focus_event(&events);
     if fresh {
@@ -594,17 +609,50 @@ fn xp_level_system(
     }
 }
 
-/// `Developer.mood` → `MoodLabel` text + color (plan §3.2).
+/// The personality line shown for a mood (plan §4/M5: "one or two idle/mood
+/// text lines (e.g. 'Maybe we should take a break?' on entering OnBreak) for
+/// personality, no dialogue system"). `None` = no line (the node renders an
+/// empty string).
+fn mood_line(mood: Mood) -> Option<&'static str> {
+    match mood {
+        Mood::OnBreak => Some("Maybe we should take a break?"),
+        // `Coding` / `Idle` get no line — the mood label itself already
+        // states them, and a per-frame line there would be noise.
+        Mood::Idle | Mood::Coding => None,
+    }
+}
+
+/// `Developer.mood` → `MoodLabel` text + color (plan §3.2), plus the
+/// personality line on the `MoodLine` node (plan §4/M5) — set on `OnBreak`,
+/// cleared for the other moods.
+///
+/// The two `&mut Text` queries (the mood label and the mood line) are merged
+/// into one `ParamSet` because Bevy 0.19's query-state validator does not
+/// track `With<_>` disjointness *across separate params* — two
+/// `Query<&mut Text, With<_>>` params panic with B0001 at runtime even though
+/// the `MoodLabel` and `MoodLine` markers are on disjoint entities (the same
+/// fix M4 applied to `hud_render_system`'s three HUD text queries). A
+/// `ParamSet` proves disjointness within itself.
+#[allow(
+    clippy::type_complexity,
+    reason = "ParamSet of 2 disjoint mood text queries — factoring into type aliases loses the elided lifetimes the ParamSet impl needs"
+)]
 fn mood_render_system(
     developer: Query<&Developer>,
-    mut labels: Query<(&mut Text, &mut TextColor), With<MoodLabel>>,
+    mut texts: ParamSet<(
+        Query<(&mut Text, &mut TextColor), With<MoodLabel>>,
+        Query<&mut Text, With<MoodLine>>,
+    )>,
 ) {
     let Ok(dev) = developer.single() else {
         return;
     };
-    for (mut text, mut color) in &mut labels {
+    for (mut text, mut color) in &mut texts.p0() {
         *text = Text::new(format!("Mood: {}", dev.mood.label()));
         *color = TextColor(dev.mood.color());
+    }
+    for mut line in &mut texts.p1() {
+        *line = Text::new(mood_line(dev.mood).unwrap_or_default());
     }
 }
 
@@ -619,9 +667,8 @@ fn mood_render_system(
 /// * project name from `CurrentProject` (shows which static-list project is
 ///   in progress).
 ///
-/// The temporary M2 `[debug]` row is **not** touched here — it remains
-/// owned by `debug_counter_hud_system` until M5 removes it (plan §4/M2/M5).
-/// The three HUD text queries in [`hud_render_system`], merged into one
+/// The M2 `[debug]` row was removed in M5 (plan §4/M5); the three HUD text
+/// queries in [`hud_render_system`], merged into one
 /// `ParamSet` so Bevy 0.19's query-state validation can prove they're
 /// disjoint (three separate `Query<&mut Text, With<_>>` params trigger a
 /// B0001 panic at runtime — the validator doesn't track `With<_>`
@@ -658,34 +705,68 @@ fn hud_render_system(
     }
 }
 
-/// Write the temporary `[debug]` counter text each frame (plan §4/M2).
+/// The M5 desk upgrade (plan §4/M5: "a coin threshold unlocks a second
+/// placeholder prop … proves the 'world visibly changes' hook without real
+/// art").
 ///
-/// Also logs the counter value when the session count crosses a multiple
-/// of 10 — this is the *observable* signal the M2 smoke test used to prove
-/// the wire-up works, since the window's pixels aren't visible from a
-/// headless `cargo run`. Remove the `info!` together with the counter in
-/// M5 (plan §4/M5).
-fn debug_counter_hud_system(
-    session_count: Res<SessionEventCount>,
-    meter: Res<ActivityMeter>,
-    mut last_logged: Local<usize>,
-    mut debug_query: Query<&mut Text, With<DebugActivityCount>>,
+/// While `Wallet >= [`DESK_UPGRADE_COST`]` the placeholder plant prop on the
+/// desk carries `Visibility::Visible` and is rendered; below the threshold
+/// it carries `Visibility::Hidden` and Bevy's render pipeline skips it (the
+/// "hidden" state). The prop entity is spawned once by [`spawn_desk`] and
+/// kept alive; this system only swaps the `Visibility` *component*
+/// (visible ↔ hidden), so the entity's identity is stable and there is no
+/// spawn/despawn churn.
+///
+/// (Bevy 0.19 note: `Node` — the `bevy_ui` layout component — has no
+/// `visibility` field, and `EntityCommands` has no `despawn_component`;
+/// toggling the `Visibility` *component* via `Command` is the clean,
+/// chainable way to show/hide. Visibility is a standard Bevy concept the
+/// plan §3.3 already relies on for the placeholder `Node` UI, so this adds
+/// no new architecture.)
+///
+/// The upgrade is **non-persistent**: it is derived from the persisted
+/// wallet every frame, so a relaunch whose wallet already meets the
+/// threshold re-unlocks it automatically. This avoids extending the plan
+/// §3.4 `SaveData` shape (the plan's M5 text offers "keep it non-persistent
+/// if simpler") — see the M5 milestone-log entry.
+///
+/// Logs one `info!` per unlock (a `Local<bool>` edge trigger, the same
+/// pattern M2's removed counter log used with `Local<usize>`) so a headless
+/// smoke run leaves an audit trail — the window's pixels aren't visible from
+/// an agent session. A wallet that already meets the threshold at startup
+/// (a restored save) unlocks silently: the plant is simply there, which is
+/// the correct visible behavior for a returning player.
+fn desk_upgrade_system(
+    mut commands: Commands,
+    wallet: Res<Wallet>,
+    mut prop: Query<Entity, With<DeskUpgradeProp>>,
+    mut ever_unlocked: Local<bool>,
 ) {
-    for mut text in &mut debug_query {
-        *text = Text::new(format!(
-            "[debug] activity events (this session): {} · rate {:.1}/s",
-            session_count.0, meter.recent_rate
-        ));
+    let unlocked = wallet.0 >= DESK_UPGRADE_COST;
+    for entity in &mut prop {
+        // The prop entity is always spawned (by `setup_scene`); this query
+        // is empty only in a test fixture that didn't build the desk. Swap
+        // the `Visibility` component to show/hide it. (Commands are applied
+        // at frame end, so the change takes effect on the *next* frame —
+        // deterministic, and exactly what the app-driven test asserts.)
+        commands
+            .entity(entity)
+            .remove::<Visibility>()
+            .insert(if unlocked {
+                Visibility::Visible
+            } else {
+                Visibility::Hidden
+            });
     }
-    // Log every 10 events so a smoke run leaves an unambiguous audit trail
-    // of the counter moving (the window's pixels aren't accessible from a
-    // headless CI / agent session — the log line is).
-    if session_count.0 > *last_logged && session_count.0.is_multiple_of(10) {
+    if unlocked && !*ever_unlocked {
+        *ever_unlocked = true;
         info!(
-            "[debug] activity counter moved: {} events this session (rate {:.1}/s)",
-            session_count.0, meter.recent_rate
+            "desk upgrade unlocked: the desk plant appeared (wallet {} ≥ {} coins)",
+            wallet.0, DESK_UPGRADE_COST
         );
-        *last_logged = session_count.0;
+    }
+    if !unlocked && *ever_unlocked {
+        *ever_unlocked = false;
     }
 }
 
@@ -747,23 +828,42 @@ fn spawn_desk(commands: &mut Commands) {
                         },
                         BackgroundColor(Color::srgb(0.20, 0.22, 0.28)),
                     ));
+                    // The M5 desk-upgrade prop: a placeholder "plant" that is
+                    // hidden until the wallet crosses [`DESK_UPGRADE_COST`]
+                    // (plan §4/M5 "a coin threshold unlocks a second
+                    // placeholder prop"). Marked `DeskUpgradeProp` so
+                    // `desk_upgrade_system` can toggle its `Visibility`
+                    // component; it spawns `Visibility::Hidden` (the "hidden"
+                    // state — Bevy's render pipeline skips hidden entities,
+                    // so it draws nothing).
+                    desk.spawn((
+                        Node {
+                            width: px(60.0),
+                            height: px(80.0),
+                            ..default()
+                        },
+                        BackgroundColor(Color::srgb(0.25, 0.55, 0.30)),
+                        DeskUpgradeProp,
+                        Visibility::Hidden,
+                    ));
                 });
         });
 }
 
 /// Spawns the HUD bar pinned to the bottom of the window.
 ///
-/// M1's four elements plus the temporary M2 `[debug]` row are all present;
-/// M3 adds the `CoinCount` / `XpLevel` / `ProjectName` components on the
-/// three text nodes the real `hud_render_system` updates each frame, and a
-/// project-name row (the static list is part of the loop's visible state,
-/// plan §4/M3).
+/// M1's four elements (progress bar, coins, xp/level, mood) plus M3's
+/// `CoinCount` / `XpLevel` / `ProjectName` components on the three text
+/// nodes the real `hud_render_system` updates, and M5's `MoodLine` component
+/// on a dedicated mood-personality row (plan §4/M5). The temporary M2
+/// `[debug]` counter row was removed in M5 (plan §4/M5), so the bar shrank
+/// back from 104 px to 88 px.
 fn spawn_hud(commands: &mut Commands) {
     commands
         .spawn((
             Node {
                 width: Val::Percent(100.0),
-                height: px(104.0),
+                height: px(88.0),
                 flex_direction: FlexDirection::Column,
                 justify_content: JustifyContent::Center,
                 row_gap: px(4.0),
@@ -841,12 +941,14 @@ fn spawn_hud(commands: &mut Commands) {
                 ProjectName,
             ));
 
-            // --- Temporary M2 debug counter (REMOVE OR HIDE IN M5 POLISH) ---
+            // --- Mood line row (M5: a personality line on OnBreak —
+            //     "Maybe we should take a break?" — cleared otherwise;
+            //     updated by `mood_render_system`, plan §4/M5) ---
             hud.spawn((
-                Text::new("[debug] activity events (this session): 0 · rate 0.0/s"),
+                Text::new(""),
                 TextFont::from_font_size(px(12.0)),
-                TextColor(Color::srgb(0.90, 0.45, 0.45)),
-                DebugActivityCount,
+                TextColor(Color::srgb(0.70, 0.65, 0.50)),
+                MoodLine,
             ));
         });
 }
@@ -1165,7 +1267,6 @@ fn main() {
         // exist before any Update frame runs.
         .init_resource::<ActivitySource>()
         .init_resource::<ActivityMeter>()
-        .init_resource::<SessionEventCount>()
         // M3 progression resources — same rule: present before the first
         // FixedUpdate/Update. `CurrentProject` starts at the first static
         // entry; `NextProjectIndex` mirrors it.
@@ -1200,24 +1301,28 @@ fn main() {
         )
         .add_systems(
             Update,
-            // All six Update systems in ONE explicit chain; intra-chain
-            // order is guaranteed so the data flow holds within a frame
-            // (Bevy 0.19 tuple systems run in unspecified order without
-            // `.chain()` — see M2's bug notes). Order:
+            // All Update systems in ONE explicit chain; intra-chain order is
+            // guaranteed so the data flow holds within a frame (Bevy 0.19
+            // tuple systems run in unspecified order without `.chain()` —
+            // see M2's bug notes). Order:
             //
             //   1. forward_focus_events    (input → provider, plan §3.1)
             //   2. forward_keyboard_events (input → provider)
             //   3. forward_mouse_events    (input → provider)
             //   4. activity_bridge_system  (drain → rate, reset/tick timer)
             //   5. idle_detection_system   (mood ↔ idle, M3)
-            //   6. debug_counter_hud_system (M2, temp — REMOVE IN M5)
+            //   6. desk_upgrade_system     (M5: toggle the plant prop's
+            //                               visibility at the wallet threshold)
             //   7. project_progress_system is FixedUpdate (below)
             //   8. project_completion_system (work_done ≥ total → award, roll)
             //   9. xp_level_system              (coins/xp in, level out)
-            //  10. mood_render_system      (mood → label text/color)
+            //  10. mood_render_system      (mood → label text/color + mood line)
             //  11. hud_render_system       (resources → bar/text, M3 real HUD)
             //  12. save_system (M4) — autosave every SAVE_INTERVAL seconds
             //      when AppState::Playing (plan §3.2/§3.4).
+            //
+            //   (The M2 `debug_counter_hud_system` sat here and was removed in
+            //   M5 — plan §4/M5.)
             (
                 // Forward Bevy input events into the provider — the ONLY
                 // place Bevy input events are read; no game system reads
@@ -1231,9 +1336,15 @@ fn main() {
                 // M3: flip the mood to Coding on fresh activity, to
                 // OnBreak after IDLE_THRESHOLD seconds of silence.
                 idle_detection_system,
-                // Update the temporary [debug] counter text (plan §4/M2,
-                // REMOVE OR HIDE IN M5 POLISH).
-                debug_counter_hud_system,
+                // M5: the desk plant upgrade — show the placeholder prop
+                // once the wallet crosses the coin threshold (plan §4/M5).
+                // Toggles the prop's `Visibility` component via a `Command`
+                // (applied at frame end → visible next frame). Reads only the
+                // `Wallet` resource, which `xp_level_system` (later in the
+                // chain) updates, so an upgrade earned this frame shows next
+                // frame — the deterministic behavior the app-driven test
+                // asserts.
+                desk_upgrade_system,
                 // M3: complete the project when the bar is full and roll
                 // the next one from the static list (plan §3.2).
                 // Runs after project_progress_system (FixedUpdate precedes
@@ -1429,6 +1540,24 @@ mod tests {
             ActivityEvent::FocusChanged(true),
             ActivityEvent::Keystroke
         ]));
+    }
+
+    // ------------------------------------------------------------------
+    // M5 — personality line (plan §4/M5: "one or two idle/mood text lines
+    // for personality, no dialogue system")
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn mood_line_shows_a_break_line_only_on_on_break() {
+        // The plan's own example: "Maybe we should take a break?" on
+        // entering OnBreak. The other moods get no line (empty string).
+        assert_eq!(
+            mood_line(Mood::OnBreak),
+            Some("Maybe we should take a break?"),
+            "OnBreak must carry the personality line"
+        );
+        assert_eq!(mood_line(Mood::Idle), None, "Idle gets no line");
+        assert_eq!(mood_line(Mood::Coding), None, "Coding gets no line");
     }
 
     // ------------------------------------------------------------------
@@ -2150,5 +2279,230 @@ mod tests {
 
         set_save_path(None);
         let _ = fs::remove_dir_all(&dir);
+    }
+
+    // ------------------------------------------------------------------
+    // M4 coverage gaps flagged by the tests reviewer (optional, non-
+    // blocking — picked up in M5).
+    // ------------------------------------------------------------------
+
+    /// App-driven: the `load_or_init_save` **`Err` arm** (a corrupted /
+    /// unreadable save on disk) must keep the in-memory fresh state intact —
+    /// the wallet / level / project must be untouched, and the app must not
+    /// crash. This exercises the `Err(e) => warn!(…)` branch of
+    /// `load_or_init_save` (main.rs ~line 1079), which no prior test reached
+    /// (the malformed-JSON `Err` was covered only at the `load_save_file`
+    /// level, not through the system).
+    #[test]
+    fn load_or_init_save_malformed_save_keeps_fresh_state_without_crashing() {
+        let _guard = save_path_guard(); // serialize the path-sensitive tests
+        let dir = std::env::temp_dir().join(format!(
+            "companion-m5-malformed-{}-{}",
+            std::process::id(),
+            unique_suffix()
+        ));
+        fs::create_dir_all(&dir).expect("temp dir");
+        let path = dir.join("save.json");
+        // A genuinely corrupt file (not valid JSON) → `load_save_file`
+        // returns `Err`, so `load_or_init_save` takes its `Err` arm.
+        fs::write(&path, "{ this is not valid json !!!").expect("write corrupt save");
+        set_save_path(Some(path));
+
+        let mut app = App::new();
+        app.add_plugins(MinimalPlugins);
+        // The in-memory fresh defaults main() inserts at construction.
+        app.insert_resource(Wallet(0));
+        app.insert_resource(PlayerXp::default());
+        app.insert_resource(project_at(0));
+        app.init_resource::<NextProjectIndex>();
+        app.add_systems(Update, load_or_init_save);
+        // Must NOT panic on the Err arm — that is the whole point.
+        app.update();
+
+        // Fresh state preserved (the Err arm keeps the in-memory defaults).
+        assert_eq!(
+            app.world().resource::<Wallet>().0,
+            0,
+            "a corrupted save must not clobber the wallet"
+        );
+        assert_eq!(
+            app.world().resource::<PlayerXp>(),
+            &PlayerXp::default(),
+            "a corrupted save must not clobber xp/level"
+        );
+        assert_eq!(
+            app.world().resource::<CurrentProject>().name,
+            "Fix login flow",
+            "a corrupted save must not clobber the in-progress project"
+        );
+        assert_eq!(
+            app.world().resource::<CurrentProject>().work_done,
+            0.0,
+            "a corrupted save must not clobber work_done"
+        );
+
+        set_save_path(None);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// App-driven: a **corrupted (out-of-range) project index** in a
+    /// *structurally valid* save file must be clamped into range, never
+    /// panic — the `cp.index.min(PROJECT_LIST_LEN - 1)` clamp in
+    /// `load_or_init_save` (main.rs ~line 1062). The M4 tests covered
+    /// `current_project: None` and a valid `Some`, but not an
+    /// out-of-range `index`; this exercises the clamp directly through the
+    /// system.
+    #[test]
+    fn load_or_init_save_clamps_an_out_of_range_project_index() {
+        let _guard = save_path_guard(); // serialize the path-sensitive tests
+        let dir = std::env::temp_dir().join(format!(
+            "companion-m5-clamp-{}-{}",
+            std::process::id(),
+            unique_suffix()
+        ));
+        fs::create_dir_all(&dir).expect("temp dir");
+        let path = dir.join("save.json");
+        // A structurally valid SaveData whose index is far out of range
+        // (the static list has 4 projects, indices 0..=3).
+        let save = SaveData {
+            wallet: 10,
+            xp: 0,
+            level: 1,
+            current_project: Some(CurrentProjectSave {
+                index: 999,
+                work_done: 0.0,
+            }),
+        };
+        write_save_file(&path, &save).expect("seed the (corrupt-index) save");
+        set_save_path(Some(path));
+
+        let mut app = App::new();
+        app.add_plugins(MinimalPlugins);
+        app.insert_resource(Wallet(0));
+        app.insert_resource(PlayerXp::default());
+        app.insert_resource(project_at(0));
+        app.init_resource::<NextProjectIndex>();
+        app.add_systems(Update, load_or_init_save);
+        // Must NOT panic on the out-of-range index — the clamp handles it.
+        app.update();
+
+        let world = app.world();
+        assert_eq!(
+            world.resource::<NextProjectIndex>().0,
+            PROJECT_LIST_LEN - 1,
+            "an out-of-range index must clamp to the last project (index \
+             {}), not panic",
+            PROJECT_LIST_LEN - 1
+        );
+        assert_eq!(
+            world.resource::<CurrentProject>().name,
+            "Write API docs",
+            "the clamped index must land on the last static-list project"
+        );
+        assert_eq!(
+            world.resource::<CurrentProject>().work_done,
+            0.0,
+            "a 0.0 work_done clamps to itself (it is already in range)"
+        );
+
+        set_save_path(None);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    // ------------------------------------------------------------------
+    // M5 — desk upgrade (plan §4/M5: "a coin threshold unlocks a second
+    // placeholder prop"). App-driven through the *shipping*
+    // `desk_upgrade_system`: the plant prop starts hidden, becomes visible
+    // the frame the wallet crosses [`DESK_UPGRADE_COST`], and (with a
+    // restored wallet above the threshold) is visible from the start —
+    // proving the upgrade is derived from the persisted wallet.
+    // ------------------------------------------------------------------
+
+    /// The M5 desk prop, as `setup_scene` spawns it in the real app
+    /// (hidden by default via `Visibility::Hidden`; `desk_upgrade_system`
+    /// swaps it to `Visibility::Visible` when the wallet crosses the
+    /// threshold).
+    fn spawn_desk_prop(commands: &mut Commands) {
+        commands.spawn((
+            Node {
+                width: px(60.0),
+                height: px(80.0),
+                ..default()
+            },
+            BackgroundColor(Color::srgb(0.25, 0.55, 0.30)),
+            DeskUpgradeProp,
+            Visibility::Hidden,
+        ));
+    }
+
+    /// True if the desk prop is currently `Visibility::Visible` (i.e. the
+    /// upgrade is "visible"). `World::query_filtered` takes `&mut World` in
+    /// Bevy 0.19.
+    fn prop_is_visible(world: &mut World) -> bool {
+        let mut q = world.query_filtered::<&Visibility, With<DeskUpgradeProp>>();
+        q.iter(world)
+            .next()
+            .copied()
+            .map(|v| v == Visibility::Visible)
+            .unwrap_or(false)
+    }
+
+    #[test]
+    fn m5_desk_upgrade_shows_plant_when_wallet_crosses_threshold() {
+        let mut app = App::new();
+        app.add_plugins(MinimalPlugins);
+        app.insert_resource(Wallet(0));
+        app.add_systems(Startup, |mut commands: Commands| {
+            spawn_desk_prop(&mut commands)
+        });
+        app.add_systems(Update, desk_upgrade_system);
+
+        // Below the threshold: hidden (Visibility::Hidden).
+        app.update();
+        assert!(
+            !prop_is_visible(app.world_mut()),
+            "wallet 0 < {DESK_UPGRADE_COST}: the plant must be hidden"
+        );
+
+        // Cross the threshold (exactly at DESK_UPGRADE_COST): visible.
+        *app.world_mut().resource_mut::<Wallet>() = Wallet(DESK_UPGRADE_COST);
+        app.update();
+        assert!(
+            prop_is_visible(app.world_mut()),
+            "wallet == {DESK_UPGRADE_COST}: the plant must be visible (the \
+             coin threshold unlocks the prop)"
+        );
+
+        // Above the threshold: still visible.
+        *app.world_mut().resource_mut::<Wallet>() = Wallet(DESK_UPGRADE_COST + 5);
+        app.update();
+        assert!(
+            prop_is_visible(app.world_mut()),
+            "wallet above the threshold: the plant stays visible"
+        );
+    }
+
+    #[test]
+    fn m5_desk_upgrade_restored_wallet_above_threshold_is_visible_on_launch() {
+        // Non-persistence consequence: the upgrade is *derived* from the
+        // persisted wallet, so a relaunch whose wallet already meets the
+        // threshold shows the plant from the first frame (no separate
+        // "bought" flag to persist — the plan §4/M5 "keep it non-persistent
+        // if simpler" choice).
+        let mut app = App::new();
+        app.add_plugins(MinimalPlugins);
+        // A restored save's wallet, above the threshold.
+        app.insert_resource(Wallet(120));
+        app.add_systems(Startup, |mut commands: Commands| {
+            spawn_desk_prop(&mut commands)
+        });
+        app.add_systems(Update, desk_upgrade_system);
+        app.update();
+
+        assert!(
+            prop_is_visible(app.world_mut()),
+            "a restored wallet of 120 ≥ {DESK_UPGRADE_COST} must show the \
+             plant on launch (derived, not separately persisted)"
+        );
     }
 }
