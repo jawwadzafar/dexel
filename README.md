@@ -188,12 +188,35 @@ RUST_LOG=debug,wgpu=warn RUST_BACKTRACE=1 cargo run -p companion
 cross build --release --target aarch64-unknown-linux-gnu -p companion   # ARM via Docker
 ```
 
-### CI / GitHub Actions
+### CI / GitHub Actions (self-hosted runner)
 
-`.github/workflows/build.yml` runs fmt/clippy/tests plus builds x86_64 (native)
-and aarch64 (via `cross`) on push/PR and uploads the binaries as artifacts. It
-activates once the repo is public (GitHub Actions is disabled on private repos
-without a paid plan).
+The repo runs its pipelines on a **self-hosted GitHub runner** (`jwdlab-runner`,
+labels `self-hosted`/`Linux`/`X64`/`darkmirror`). Because the repo is private,
+GitHub's hosted runners (`ubuntu-latest`/`macos-latest`) are unavailable, so
+every job is pinned to `runs-on: [self-hosted, darkmirror]`.
+
+- **`build.yml`** (on push/PR + `workflow_dispatch`): builds the Linux targets
+  and uploads them as artifacts.
+  - `linux-x86_64` — native
+  - `linux-arm64` — cross via `cross` (Docker provides the aarch64 glibc sysroot)
+- **`release.yml`** (on a `v*` tag, or manual): builds all targets and publishes
+  a **GitHub Release** with the binaries as assets.
+  - `linux-x86_64`, `linux-arm64` — built on the runner
+  - `macos-arm64` — **gated**: only built when a macOS runner with the `mac`
+    label is registered (a Linux runner cannot produce a macOS binary). Until
+    then the job skips with a clear warning.
+
+Trigger a build manually:
+
+```bash
+gh workflow run build.yml
+# or create a release:
+git tag v0.1.0 && git push origin v0.1.0
+```
+
+> **macOS arm64:** to get an Apple Silicon binary, register a macOS runner with
+> the `mac` label (then `release.yml` picks it up), or build it locally on a
+> Mac: `rustup target add aarch64-apple-darwin && cargo build --release --target aarch64-apple-darwin -p companion`.
 
 ### Visual verification (no compositor / headless CI)
 

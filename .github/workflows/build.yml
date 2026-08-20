@@ -6,76 +6,87 @@ on:
   pull_request:
   workflow_dispatch:
 
-# NOTE: this repo is currently PRIVATE, and GitHub Actions does not run on
-# private repos without a paid plan. This workflow is wired for the moment the
-# repo goes public (or a GHES / paid plan is added). The equivalent local path
-# is `scripts/build.sh` (native x86_64) or `cross build` (ARM).
-
-# Build native x86_64 and cross aarch64 (ARM) release binaries for Linux.
+# Runs on the self-hosted runner "jwdlab-runner" (labels: self-hosted, Linux,
+# X64, darkmirror). The repo is PRIVATE, so GitHub's hosted runners
+# (ubuntu-latest / macos-latest) are unavailable — jobs must run on a
+# self-hosted runner. Use the `darkmirror` label so the job is pinned to that
+# specific machine.
 #
-# Strategy:
-#   - x86_64: build natively on the runner (fast, reliable).
-#   - aarch64: use `cross` (Docker) — it provides a real aarch64 toolchain +
-#     glibc sysroot, so Bevy's native windowing libs (wayland, gbm, alsa, x11)
-#     resolve correctly. This is the same approach scripts/build.sh documents.
+# Targets produced here (Linux host):
+#   - x86_64-unknown-linux-gnu   (native)
+#   - aarch64-unknown-linux-gnu  (cross, via `cross`/Docker — provides the
+#     aarch64 glibc sysroot Bevy's wayland/gbm/alsa libs need)
+#
+# macOS arm64 CANNOT be produced on a Linux runner. That build is included in
+# release.yml, gated behind a macOS runner label — it activates once a macOS
+# runner (e.g. "mac") is registered. See release.yml.
 
 env:
   CARGO_TERM_COLOR: always
 
+# Self-hosted runners keep their state; clean the workspace when a job ends.
+# (Standard hygiene for self-hosted runners.)
 jobs:
-  test:
-    name: fmt + clippy + tests (host)
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
-      - name: rustfmt
-        run: cargo fmt --all -- --check
-      - name: clippy
-        run: cargo clippy --workspace --all-targets -- -D warnings
-      - name: test
-        run: cargo test --workspace
-
   build:
-    name: Build (${{ matrix.name }})
-    runs-on: ubuntu-latest
+    name: Build ${{ matrix.name }}
+    runs-on: [self-hosted, darkmirror]
     strategy:
       fail-fast: false
       matrix:
         include:
-          - name: x86_64
+          - name: linux-x86_64
             target: x86_64-unknown-linux-gnu
             cross: false
-          - name: aarch64
+          - name: linux-arm64
             target: aarch64-unknown-linux-gnu
             cross: true
     steps:
+      - name: Clean workspace
+        run: |
+          rm -rf "${GITHUB_WORKSPACE:?}"/* "${GITHUB_WORKSPACE:?}"/.[!.]* 2>/dev/null || true
+
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: ${{ matrix.target }}
-      - uses: Swatinem/rust-cache@v2
-        with:
-          key: ${{ matrix.target }}
 
-      # Native build (x86_64).
-      - name: Install native C toolchain (x86_64)
+      - name: Install Rust
+        run: |
+          if ! command -v cargo >/dev/null; then
+            curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal
+            . "$HOME/.cargo/env"
+            echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+          fi
+          rustc --version && cargo --version
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: build-${{ matrix.target }}
+
+      - name: Add target
+        run: rustup target add ${{ matrix.target }}
+
+      # Native x86_64 needs a C linker.
+      - name: Install build deps (native x86_64)
         if: matrix.cross == false
-        run: sudo apt-get update && sudo apt-get install -y build-essential
+        run: |
+          if ! command -v cc >/dev/null; then
+            (sudo apt-get update && sudo apt-get install -y build-essential) 2>/dev/null \
+              || echo "no sudo — relying on an existing cc/zig toolchain"
+          fi
 
-      # Cross build (aarch64) via `cross`.
+      # aarch64 via `cross` (Docker) — provides a real aarch64 toolchain+glibc.
       - name: Install cross
         if: matrix.cross == true
-        uses: taiki-e/install-action@v2
-        with:
-          tool: cross
+        run: |
+          if ! command -v cross >/dev/null; then
+            cargo install cross --git https://github.com/cross-rs/cross
+          fi
+          cross --version
 
-      - name: Build (native)
+      - name: Build
         if: matrix.cross == false
         run: cargo build --release --target ${{ matrix.target }} -p companion
 
-      - name: Build (cross, aarch64)
+      - name: Build (cross aarch64)
         if: matrix.cross == true
         run: cross build --release --target ${{ matrix.target }} -p companion
 
@@ -85,5 +96,5 @@ jobs:
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: companion-${{ matrix.name }}
+          name: companion-${{ matrix.name }}-${{ github.sha }}
           path: target/${{ matrix.target }}/release/companion

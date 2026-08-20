@@ -6,10 +6,11 @@
 # (which is git-ignored; see .gitignore).
 #
 # Targets:
-#   x86_64   -> x86_64-unknown-linux-gnu   (native, always works)
-#   arm      -> aarch64-unknown-linux-gnu  (cross, via zig — needs an aarch64 sysroot)
-#   arm-musl -> aarch64-unknown-linux-musl (cross, via zig — static, needs an aarch64 musl sysroot)
-#   all      -> x86_64 + arm
+#   x86_64   -> x86_64-unknown-linux-gnu     (native, always works)
+#   arm      -> aarch64-unknown-linux-gnu    (cross, via zig — needs an aarch64 sysroot)
+#   arm-musl -> aarch64-unknown-linux-musl   (cross, via zig — static, needs an aarch64 musl sysroot)
+#   mac      -> aarch64-apple-darwin         (ONLY on a macOS host — cross from Linux is unsupported)
+#   all      -> x86_64 + arm (+ mac if on a mac)
 #
 # Usage:
 #   ./scripts/build.sh                 # build x86_64 (native)
@@ -69,7 +70,8 @@ triple_for() {
     x86_64)   echo "x86_64-unknown-linux-gnu" ;;
     arm)      echo "aarch64-unknown-linux-gnu" ;;
     arm-musl) echo "aarch64-unknown-linux-musl" ;;
-    *) echo "unknown target: $1 (expected x86_64, arm, arm-musl, all)" >&2; exit 2 ;;
+    mac)      echo "aarch64-apple-darwin" ;;
+    *) echo "unknown target: $1 (expected x86_64, arm, arm-musl, mac, all)" >&2; exit 2 ;;
   esac
 }
 
@@ -201,7 +203,9 @@ EOF
 }
 
 case "$requested" in
-  all) targets="x86_64 arm" ;;
+  all)
+    if [ "$(uname -s)" = "Darwin" ]; then targets="x86_64 arm mac"; else targets="x86_64 arm"; fi
+    ;;
   *)   targets="$requested" ;;
 esac
 

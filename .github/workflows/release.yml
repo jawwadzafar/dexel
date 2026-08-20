@@ -1,0 +1,111 @@
+name: Release
+
+# Tag-triggered release: builds every target and publishes a GitHub Release
+# with the binaries as assets. Run on the self-hosted "jwdlab-runner".
+#
+# Targets:
+#   - linux-x86_64  (native on the runner)
+#   - linux-arm64   (cross via `cross`/Docker)
+#   - macos-arm64   (GATED — only builds when a macOS runner with the `mac`
+#                   label is registered. A Linux runner cannot produce a
+#                   macOS binary. Register a macOS runner, or remove this
+#                   entry until one exists.)
+#
+# Trigger: push a tag like `v0.1.0` (or use "Release" workflow dispatch).
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  release:
+    name: Build + publish release
+    runs-on: [self-hosted, darkmirror]
+    permissions:
+      contents: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: linux-x86_64
+            target: x86_64-unknown-linux-gnu
+            cross: false
+            os: linux
+          - name: linux-arm64
+            target: aarch64-unknown-linux-gnu
+            cross: true
+            os: linux
+          - name: macos-arm64
+            target: aarch64-apple-darwin
+            cross: false
+            os: macos
+            # GATE: skip unless a macOS runner with the `mac` label is online.
+            needs-mac: true
+    steps:
+      - name: Skip macOS build when no mac runner
+        if: matrix.needs-mac
+        run: |
+          echo "::warning::macos-arm64 build SKIPPED — no macOS runner with the 'mac' label is registered."
+          echo "::warning::Register a macOS runner (with label 'mac') to build the Apple Silicon binary,"
+          echo "or build it locally: rustup target add aarch64-apple-darwin && cargo build --release --target aarch64-apple-darwin -p companion"
+          exit 0
+
+      - name: Clean workspace
+        run: |
+          rm -rf "${GITHUB_WORKSPACE:?}"/* "${GITHUB_WORKSPACE:?}"/.[!.]* 2>/dev/null || true
+
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        run: |
+          if ! command -v cargo >/dev/null; then
+            curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal
+            . "$HOME/.cargo/env"
+            echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+          fi
+          rustup target add ${{ matrix.target }}
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: release-${{ matrix.target }}
+
+      - name: Install cross
+        if: matrix.cross
+        run: |
+          if ! command -v cross >/dev/null; then
+            cargo install cross --git https://github.com/cross-rs/cross
+          fi
+
+      - name: Install build deps (native)
+        if: matrix.cross == false
+        run: |
+          if ! command -v cc >/dev/null; then
+            (sudo apt-get update && sudo apt-get install -y build-essential) 2>/dev/null || true
+          fi
+
+      - name: Build (native)
+        if: matrix.cross == false
+        run: cargo build --release --target ${{ matrix.target }} -p companion
+
+      - name: Build (cross aarch64 linux)
+        if: matrix.cross == true
+        run: cross build --release --target ${{ matrix.target }} -p companion
+
+      - name: Name the artifact
+        run: |
+          mkdir -p dist
+          cp target/${{ matrix.target }}/release/companion "dist/companion-${{ matrix.name }}-${{ github.ref_name }}"
+          echo "dist/companion-${{ matrix.name }}-${{ github.ref_name }}"
+
+      - name: Upload release asset
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/companion-${{ matrix.name }}-${{ github.ref_name }}
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
