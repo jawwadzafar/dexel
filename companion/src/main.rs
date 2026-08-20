@@ -28,6 +28,9 @@ use bevy::input::keyboard::KeyboardInput;
 use bevy::input::mouse::MouseMotion;
 use bevy::prelude::*;
 use bevy::window::WindowFocused;
+use serde::{Deserialize, Serialize};
+use std::fs;
+use std::path::PathBuf;
 use std::time::Duration;
 
 // ---------------------------------------------------------------------------
@@ -146,6 +149,11 @@ impl Default for ActivityMeter {
 /// Named const so the M3 integration test and the milestone log can share
 /// the same tuning.
 pub const IDLE_THRESHOLD: f32 = 60.0;
+
+/// How often the autosave fires (plan §3.4: "Write on a `SaveTimer` (e.g.
+/// every 30s)"). Named const so the M4 test and the milestone log share the
+/// same tuning.
+pub const SAVE_INTERVAL: f32 = 30.0;
 
 /// Total raw activity events seen this session — drives *only* the temporary
 /// `[debug]` HUD counter (plan §4/M2). Not part of any game mechanic and
@@ -613,26 +621,39 @@ fn mood_render_system(
 ///
 /// The temporary M2 `[debug]` row is **not** touched here — it remains
 /// owned by `debug_counter_hud_system` until M5 removes it (plan §4/M2/M5).
+/// The three HUD text queries in [`hud_render_system`], merged into one
+/// `ParamSet` so Bevy 0.19's query-state validation can prove they're
+/// disjoint (three separate `Query<&mut Text, With<_>>` params trigger a
+/// B0001 panic at runtime — the validator doesn't track `With<_>`
+/// disjointness across separate params, only within a single `ParamSet`).
+/// (Bevy 0.19's `ParamSet` is a tuple alias, not a derive macro — the
+/// plan's §3.2 era used the older `#[derive(ParamSet)]` API.)
+#[allow(
+    clippy::type_complexity,
+    reason = "ParamSet of 3 disjoint HUD text queries — factoring into type aliases loses the elided lifetimes the ParamSet impl needs"
+)]
 fn hud_render_system(
     project: Res<CurrentProject>,
     wallet: Res<Wallet>,
     xp: Res<PlayerXp>,
     mut fill: Query<&mut Node, With<ProgressBarFill>>,
-    mut coin_text: Query<&mut Text, With<CoinCount>>,
-    mut xp_text: Query<&mut Text, With<XpLevel>>,
-    mut name_text: Query<&mut Text, With<ProjectName>>,
+    mut texts: ParamSet<(
+        Query<&mut Text, With<CoinCount>>,
+        Query<&mut Text, With<XpLevel>>,
+        Query<&mut Text, With<ProjectName>>,
+    )>,
 ) {
     let pct = (project.work_done / project.total_work * 100.0).clamp(0.0, 100.0);
     for mut node in &mut fill {
         node.width = Val::Percent(pct);
     }
-    for mut text in &mut coin_text {
+    for mut text in &mut texts.p0() {
         *text = Text::new(format!("Coins: {}", wallet.0));
     }
-    for mut text in &mut xp_text {
+    for mut text in &mut texts.p1() {
         *text = Text::new(format!("Lv {} · {} XP", xp.level, xp.xp));
     }
-    for mut text in &mut name_text {
+    for mut text in &mut texts.p2() {
         *text = Text::new(format!("Project: {}", project.name));
     }
 }
@@ -840,6 +861,303 @@ fn spawn_hud(commands: &mut Commands) {
 #[derive(Resource, Debug, Default)]
 struct NextProjectIndex(usize);
 
+// ---------------------------------------------------------------------------
+// M4 — persistence (plan §3.4)
+// ---------------------------------------------------------------------------
+
+/// The developer's coins, experience, and the in-progress project at the
+/// moment of saving — the shape `save_system` serializes and
+/// `load_or_init_save` restores (plan §3.4).
+///
+/// `serde` field names are lowercase (matching the plan's literal struct
+/// definition) so the on-disk JSON is exactly what the plan specifies:
+/// `{"wallet": …, "xp": …, "level": …, "current_project": …}`.
+///
+/// Privacy invariant (plan §1/§3.1): the save contains **no user content** —
+/// project names come from the hardcoded static list (never from input), and
+/// only the project *index* and work counters are persisted.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+struct SaveData {
+    /// The developer's wallet (mirrors the `Wallet` resource).
+    wallet: u64,
+    /// Cumulative experience (mirrors `PlayerXp.xp`).
+    xp: u32,
+    /// Derived level (mirrors `PlayerXp.level`; `load_or_init_save`
+    /// recomputes it with `level_for_xp` on restore, so a hand-edited
+    /// inconsistent file self-corrects).
+    level: u32,
+    /// The in-progress project, if any. `None` only ever happens on a fresh
+    /// install (there is always a current project once the game has started;
+    /// a malformed save is treated as fresh, see [`load_save_file`]).
+    current_project: Option<CurrentProjectSave>,
+}
+
+/// The slice of a [`CurrentProject`] that survives a quit/relaunch
+/// (plan §3.4: "current_project: Option<CurrentProjectSave>" — "partway
+/// through a project" = *which* static-list project + how much work is done).
+///
+/// **Design choice (noted per plan boundaries):** the save stores the
+/// static-list `index` rather than the project's `name`, because M3's
+/// `CurrentProject` is always built by `project_at(index)` — the name and
+/// the rewards (`total_work`, `reward_coins`, `reward_xp`) are therefore
+/// recoverable without duplicating data that could drift from the list.
+/// `work_done` is a plain `f32` so a mid-project quit resumes exactly where
+/// the bar was.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+struct CurrentProjectSave {
+    /// Index into the static project list (0..=3); re-validated against
+    /// `PROJECT_LIST_LEN` on load (an out-of-range value is clamped, never
+    /// panicking — a corrupted save must not crash the app).
+    index: usize,
+    /// Work completed on this project so far.
+    work_done: f32,
+}
+
+/// The save-file interval timer (plan §3.2's `SaveTimer(Timer)` resource,
+/// §3.4's "autosave on a SaveTimer").
+#[derive(Resource)]
+struct SaveTimer(Timer);
+
+impl SaveTimer {
+    fn new() -> Self {
+        Self(Timer::from_seconds(SAVE_INTERVAL, TimerMode::Repeating))
+    }
+}
+
+/// The on-disk save location (plan §3.4, verbatim):
+/// `dirs::data_dir().unwrap().join("dev-companion").join("save.json")`.
+///
+/// In tests this is overridden with [`set_save_path`] so nothing is ever
+/// written to the real data dir; in the game it is the one path the save
+/// systems use.
+fn save_path() -> PathBuf {
+    dirs::data_dir()
+        .unwrap()
+        .join("dev-companion")
+        .join("save.json")
+}
+
+/// Test seam: redirect all save I/O to `path` (or back to the real data
+/// dir with `None`). Only the `#[cfg(test)]` unit tests in this file call
+/// this — the game code never does, so in a build with tests excluded the
+/// function is dead code. Annotated the same way M1 handled the unused
+/// `Mood` variants (the seam lives here so the tests can point save I/O at
+/// a temp dir; specific one-line allow, not a blanket crate-level allow).
+///
+/// A **lazy process-global** `Mutex<Option<PathBuf>>` (deliberately *not*
+/// a thread-local, and not a plain `static` — `Mutex::new` is not
+/// const-constructible in Rust 2024): `cargo test` runs each test on its
+/// own *spawned* thread, so a thread-local override set on the main thread
+/// would be invisible to the test body (the first M4 run hit exactly that).
+/// The four path-sensitive tests additionally serialize on
+/// [`save_path_guard`], so the override is never contended.
+#[allow(
+    dead_code,
+    reason = "test seam — only the #[cfg(test)] module below calls this"
+)]
+fn set_save_path(path: Option<PathBuf>) {
+    *SAVE_PATH_OVERRIDE
+        .lock()
+        .expect("save-path override mutex poisoned") = path;
+}
+
+use std::sync::LazyLock;
+
+static SAVE_PATH_OVERRIDE: LazyLock<std::sync::Mutex<Option<PathBuf>>> =
+    LazyLock::new(|| std::sync::Mutex::new(None));
+
+/// The path save I/O actually uses (override if set, else the real data
+/// dir). A `const fn` can't call `dirs`, so this is a plain `fn` that every
+/// save call site goes through.
+fn effective_save_path() -> PathBuf {
+    SAVE_PATH_OVERRIDE
+        .lock()
+        .expect("save-path override mutex poisoned")
+        .clone()
+        .unwrap_or_else(save_path)
+}
+
+/// Read + parse the save file at `path`, if present.
+///
+/// * No file → `Ok(None)` (fresh install; `load_or_init_save` will start
+///   from defaults).
+/// * Malformed JSON / wrong shape / unknown fields → `Err` (logged by the
+///   caller, and treated as a fresh start — a corrupted save must not crash
+///   the app or wipe a good wallet; the *old* file is left untouched, so a
+///   later successful autosave is what overwrites it).
+fn load_save_file(path: &std::path::Path) -> Result<Option<SaveData>, String> {
+    let raw = match fs::read_to_string(path) {
+        Ok(raw) => raw,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(e) => return Err(format!("could not read save file {path:?}: {e}")),
+    };
+    match serde_json::from_str::<SaveData>(&raw) {
+        Ok(data) => Ok(Some(data)),
+        Err(e) => Err(format!("save file {path:?} is malformed: {e}")),
+    }
+}
+
+/// Serialize `data` to `path`, creating parent directories as needed.
+///
+/// A failed write is logged (by the caller) and returns `Err`; the game
+/// keeps running on its in-memory state and the next autosave retry will
+/// re-attempt the write.
+fn write_save_file(path: &std::path::Path, data: &SaveData) -> Result<(), String> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)
+            .map_err(|e| format!("could not create save dir {parent:?}: {e}"))?;
+    }
+    let json = serde_json::to_string_pretty(data)
+        .map_err(|e| format!("could not serialize save data: {e}"))?;
+    fs::write(path, json).map_err(|e| format!("could not write save file {path:?}: {e}"))
+}
+
+/// Extract a [`SaveData`] from the live game resources (plan §3.4, what
+/// `save_system` serializes each interval).
+fn save_data_from_resources(
+    wallet: &Wallet,
+    xp: &PlayerXp,
+    project: &CurrentProject,
+    index: &NextProjectIndex,
+) -> SaveData {
+    SaveData {
+        wallet: wallet.0,
+        xp: xp.xp,
+        level: xp.level,
+        current_project: Some(CurrentProjectSave {
+            index: index.0,
+            work_done: project.work_done,
+        }),
+    }
+}
+
+/// `load_or_init_save` (plan §3.2 Startup row, §4/M4): at startup read the
+/// save file if present and populate the M3 resources from it; otherwise
+/// leave the app-construction defaults in place (fresh install).
+///
+/// Runs in `Startup` **after** `setup_scene` (see `main()`'s
+/// `.chain()`), so it overwrites whatever `project_at(0)` etc. inserted at
+/// construction. On a successful load the wallet / xp / level / project are
+/// restored, and `PlayerXp.level` is recomputed with `level_for_xp` so a
+/// hand-edited (inconsistent) save self-corrects instead of showing a
+/// wrong level.
+fn load_or_init_save(
+    mut wallet: ResMut<Wallet>,
+    mut xp: ResMut<PlayerXp>,
+    mut project: ResMut<CurrentProject>,
+    mut index: ResMut<NextProjectIndex>,
+) {
+    let path = effective_save_path();
+    match load_save_file(&path) {
+        Ok(Some(data)) => {
+            wallet.0 = data.wallet;
+            xp.xp = data.xp;
+            // Derive the level from the xp (the stored level is authoritative
+            // only insofar as it equals level_for_xp(xp); recompute so an
+            // edited file can't show a level the xp doesn't justify).
+            xp.level = level_for_xp(data.xp);
+            if let Some(cp) = data.current_project {
+                // Clamp a corrupted index into range instead of panicking
+                // (the save is user-visible file data; never trust it).
+                let idx = cp.index.min(PROJECT_LIST_LEN - 1);
+                let mut rolled = project_at(idx);
+                rolled.work_done = cp.work_done.clamp(0.0, rolled.total_work);
+                index.0 = idx;
+                *project = rolled;
+            }
+            info!(
+                "restored save: wallet {} · level {} · {} XP · project '{}' ({:.1}/{:.1} work)",
+                wallet.0, xp.level, xp.xp, project.name, project.work_done, project.total_work
+            );
+        }
+        Ok(None) => {
+            info!(
+                "no save at {path:?} — starting fresh (wallet {} · level {} · {} XP)",
+                wallet.0, xp.level, xp.xp
+            );
+        }
+        Err(e) => {
+            // Corrupted/unreadable save: log it loudly and start fresh,
+            // keeping the in-memory defaults. The file is left in place so
+            // the next autosave is what overwrites it (no silent data loss
+            // without a successful write first).
+            warn!("{e} — starting with a fresh state (the file is left in place)");
+        }
+    }
+}
+
+/// `save_system` (plan §3.2 Update row, §3.4): when [`SaveTimer`] fires (every
+/// [`SAVE_INTERVAL`] seconds) serialize the current resources to the save
+/// file. Gated on `AppState::Playing` per the plan's table (the v0.1 app is
+/// always `Playing` once `Startup` finishes, so the gate is a no-op in
+/// practice — but it matches the plan's stated shape and stays correct if a
+/// later state is added).
+fn save_system(
+    state: Res<State<AppState>>,
+    mut save_timer: ResMut<SaveTimer>,
+    times: Res<Time>,
+    wallet: Res<Wallet>,
+    xp: Res<PlayerXp>,
+    project: Res<CurrentProject>,
+    index: Res<NextProjectIndex>,
+) {
+    let dt = times.delta();
+    save_timer.0.tick(dt);
+    // `just_finished()` (not `is_finished()`): Bevy 0.19's `Timer::tick`
+    // recomputes the `finished` flag *after* advancing the stopwatch, so a
+    // repeating timer whose elapsed already meets its duration (e.g. a
+    // large `dt` that lands elapsed ≥ duration) stays `finished = false`
+    // until the next tick — with a variable (test-driven) `dt` the flag
+    // could then be observed as never firing. `just_finished()` is true
+    // exactly on the tick(s) that crossed the interval, which is the
+    // "fire when the 30 s interval elapses" semantic the plan wants.
+    if !save_timer.0.just_finished() || !(state.get() == &AppState::Playing) {
+        return;
+    }
+    let data = save_data_from_resources(&wallet, &xp, &project, &index);
+    let path = effective_save_path();
+    match write_save_file(&path, &data) {
+        Ok(()) => info!(
+            "autosave: wrote {path:?} (wallet {} · level {} · {} XP · project '{}' {:.1}/{:.1})",
+            wallet.0, xp.level, xp.xp, project.name, project.work_done, project.total_work
+        ),
+        Err(e) => warn!("autosave failed: {e} — will retry on the next interval"),
+    }
+}
+
+/// `AppState` (plan §3.2): `Loading` until `load_or_init_save` finishes, then
+/// `Playing`. The save system gates on `Playing`; no system currently
+/// branches on state, so `Loading` is the startup-only default.
+#[derive(States, Clone, Eq, PartialEq, Hash, Debug, Default)]
+enum AppState {
+    #[default]
+    Loading,
+    Playing,
+}
+
+/// Transitions `AppState → Playing` once (after `load_or_init_save` has
+/// run, per the plan's Startup row: "… transitions `AppState → Playing`").
+///
+/// Bevy 0.19: state changes are *queued* through the `NextState<S>`
+/// resource (the plan's `state.set(...)` example is 0.18 API). Normally
+/// `StatesPlugin` inserts the `StateTransition` schedule into
+/// `MainScheduleOrder` (after `PreUpdate`) and it applies on the next
+/// frame — but that wiring is only consulted when the main schedule is
+/// *built* (the first `app.update()`), and the M4 test fixtures call
+/// `app.update()` (for `Startup`) *before* the plugin is installed, so
+/// the transition would silently never apply and `save_system`'s
+/// `Playing` gate would block forever. Running the `StateTransition`
+/// schedule synchronously here is exactly what that schedule would do —
+/// just earlier — so the transition applies during `Startup`, in both
+/// the real app and the fixtures, with no `MainScheduleOrder`
+/// dependency.
+fn enter_playing(world: &mut World) {
+    world
+        .resource_mut::<NextState<AppState>>()
+        .set(AppState::Playing);
+    world.run_schedule(bevy::state::state::StateTransition);
+}
+
 fn main() {
     App::new()
         .add_plugins(DefaultPlugins)
@@ -855,12 +1173,24 @@ fn main() {
         .insert_resource(PlayerXp::default())
         .insert_resource(project_at(0))
         .init_resource::<NextProjectIndex>()
+        // M4 persistence: the autosave interval timer (plan §3.2/§3.4).
+        .insert_resource(SaveTimer::new())
         // M3 messages (Bevy 0.19: `add_message` per type — there is no
         // `add_messages` plural; `MessageReader` / `MessageWriter` need
         // each type registered).
         .add_message::<ProjectCompleted>()
         .add_message::<LevelUp>()
-        .add_systems(Startup, setup_scene)
+        // AppState (plan §3.2): Loading → Playing after the save is loaded.
+        .init_state::<AppState>()
+        .add_systems(
+            Startup,
+            // The save is loaded *after* the scene exists (setup_scene is a
+            // no-op on resources, so order is safe either way — the chain is
+            // explicit per the M2 bug notes), and Playing begins immediately
+            // after the load so the first Update frame's save_system gate
+            // passes.
+            (setup_scene, load_or_init_save, enter_playing).chain(),
+        )
         .add_systems(
             FixedUpdate,
             // Deterministic per-step work advance (plan §3.2). Runs on the
@@ -886,6 +1216,8 @@ fn main() {
             //   9. xp_level_system              (coins/xp in, level out)
             //  10. mood_render_system      (mood → label text/color)
             //  11. hud_render_system       (resources → bar/text, M3 real HUD)
+            //  12. save_system (M4) — autosave every SAVE_INTERVAL seconds
+            //      when AppState::Playing (plan §3.2/§3.4).
             (
                 // Forward Bevy input events into the provider — the ONLY
                 // place Bevy input events are read; no game system reads
@@ -916,6 +1248,9 @@ fn main() {
                 // M3: the real HUD — progress-bar fill width, coin /
                 // xp-level / project-name text from resources (plan §3.2).
                 hud_render_system,
+                // M4: tick the SaveTimer and autosave when it fires, gated
+                // on AppState::Playing (plan §3.2/§3.4).
+                save_system,
             )
                 .chain(),
         )
@@ -1107,10 +1442,15 @@ mod tests {
     /// Per-frame dt for the Update schedule (bridge / idle detection).
     /// The fixed step is set via `Time<Fixed>` directly so the harness
     /// controls it deterministically (same rationale as M2's `FrameDt`).
-    #[derive(Resource, Default)]
-    struct FrameDt(Duration);
+    #[derive(Resource, Default, Clone, Copy)]
+    struct FrameDt(pub Duration);
 
-    fn build_m3_app() -> App {
+    /// The shared M3 (progress + activity + idle) test fixture. `pub(crate)`
+    /// so the M4 app-driven persistence test in this same module can reuse
+    /// the *exact same* systems, resources, and `Time<Fixed>` setup as the
+    /// M3 idle test (the "quit, relaunch, values restore" half of M4's exit
+    /// criterion is proven by driving these systems, not a second fixture).
+    pub(crate) fn build_m3_app() -> App {
         let mut app = App::new();
         app.add_plugins(MinimalPlugins);
         app.insert_resource(Time::<Fixed>::from_hz(32.0));
@@ -1118,9 +1458,6 @@ mod tests {
         app.add_message::<ProjectCompleted>();
         app.add_message::<LevelUp>();
         app.add_message::<KeyboardInput>();
-
-        // M3 FixedUpdate system — the shipping `project_progress_system`.
-        app.add_systems(FixedUpdate, project_progress_system);
 
         app.insert_resource(FrameDt(Duration::from_millis(16)))
             .init_resource::<ActivitySource>()
@@ -1162,9 +1499,15 @@ mod tests {
                 .chain(),
         );
 
-        // FixedUpdate with a deterministic 60 Hz fixed step; the harness
-        // advances `Time<Fixed>` manually each step.
-        app.init_resource::<Time<Fixed>>();
+        // The shipping `project_progress_system` in FixedUpdate, driven by
+        // the `Time<Fixed>` overstep (which `step_m3` feeds by advancing
+        // `Time<Virtual>` by the simulated frame dt). Registered exactly
+        // ONCE here (M4 bug fix: an earlier version of this fixture also
+        // registered it near the top of the function — a duplicate that
+        // silently no-op'd while `Time<Fixed>` never advanced under
+        // MinimalPlugins' wall-clock time, but would double the progress
+        // the moment the harness (or the shipped app) feeds the fixed
+        // clock deterministically).
         app.add_systems(FixedUpdate, project_progress_system);
 
         // The completion + award chain.
@@ -1185,14 +1528,22 @@ mod tests {
     }
 
     /// Advance one simulated frame: write `keys` keystrokes, set the
-    /// frame-dt, and run the app. The `FixedUpdate` schedule runs once per
-    /// `app.update()` here (the default 32 Hz step), so each call is one
-    /// deterministic timestep of `project_progress_system`.
+    /// frame-dt, **advance the simulated clocks by `dt`**, and run the app.
+    ///
+    /// Bevy 0.19: `Time<Virtual>` (installed by `MinimalPlugins`) drives the
+    /// generic `Time` resource, which (a) `save_system` reads for its
+    /// `delta()` and (b) `run_fixed_main_schedule` consumes as
+    /// `Time<Fixed>`'s overstep — so advancing it here is what makes both
+    /// the 32 Hz `project_progress_system` and the 30 s `SaveTimer` tick
+    /// deterministically, independent of the wall clock (the same rationale
+    /// as M2's `FrameDt` for the activity bridge, extended to the clocks).
     fn step_m3(app: &mut App, dt: Duration, keys: u32) {
         for _ in 0..keys {
             write_key(app.world_mut());
         }
-        *app.world_mut().resource_mut::<FrameDt>() = FrameDt(dt);
+        let world = app.world_mut();
+        *world.resource_mut::<FrameDt>() = FrameDt(dt);
+        world.resource_mut::<Time<Virtual>>().advance_by(dt);
         app.update();
     }
 
@@ -1230,7 +1581,6 @@ mod tests {
     fn m3_idle_flips_mood_to_on_break_after_threshold() {
         let mut app = build_m3_app();
         let dt = Duration::from_millis(100);
-
         // Get into Coding with some activity.
         for _ in 0..10 {
             step_m3(&mut app, dt, 1);
@@ -1284,5 +1634,521 @@ mod tests {
             Mood::OnBreak,
             "flips back at the full threshold of silence"
         );
+    }
+
+    // ------------------------------------------------------------------
+    // M4 — persistence (plan §3.4 / §4/M4)
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn save_data_round_trip_serialize_deserialize_asserts_equality() {
+        // Plan §4/M4 exit criterion: "Add a round-trip unit test
+        // (serialize a SaveData, deserialize, assert equality) independent
+        // of the file system." — pure serde_json, no fs involved.
+        let original = SaveData {
+            wallet: 1_000_000,
+            xp: 599,
+            level: 3,
+            current_project: Some(CurrentProjectSave {
+                index: 2,
+                work_done: 37.5,
+            }),
+        };
+        let json = serde_json::to_string(&original).expect("serialization of a valid SaveData");
+        let back: SaveData =
+            serde_json::from_str(&json).expect("deserialization of the round-tripped JSON");
+        assert_eq!(back, original);
+
+        // The `None` arm (a save written before any project exists) must
+        // round-trip too.
+        let fresh = SaveData {
+            wallet: 0,
+            xp: 0,
+            level: 1,
+            current_project: None,
+        };
+        let json_fresh = serde_json::to_string(&fresh).expect("fresh SaveData serialization");
+        let back_fresh: SaveData =
+            serde_json::from_str(&json_fresh).expect("fresh SaveData deserialization");
+        assert_eq!(back_fresh, fresh);
+    }
+
+    /// Focused check of Bevy 0.19's `Timer::tick` + `just_finished` at the
+    /// exact cadence the app-driven tests use (one 31.25 ms tick per frame,
+    /// 30 s interval): the interval must register `just_finished` exactly
+    /// once, at the first tick where elapsed crosses 30 s.
+    #[test]
+    fn timer_just_fires_at_the_interval_under_test_cadence() {
+        let mut t = Timer::from_seconds(SAVE_INTERVAL, TimerMode::Repeating);
+        let step = Duration::from_millis(31250 / 1000.0 as u64); // 31.25 ms
+        let mut fired = 0usize;
+        let mut elapsed = Duration::ZERO;
+        for _ in 0..1100 {
+            t.tick(step);
+            elapsed += step;
+            if t.just_finished() {
+                fired += 1;
+                assert!(
+                    elapsed >= Duration::from_secs(30),
+                    "fires only at/after 30 s"
+                );
+            }
+        }
+        assert_eq!(
+            fired, 1,
+            "the 30 s interval must fire exactly once in 34.4 s"
+        );
+    }
+
+    /// A `SaveData` written to a **real file** (in a temp dir, never the
+    /// user's data dir) and read back must be equal — the on-disk half of
+    /// the round trip, still independent of any game state.
+    #[test]
+    fn save_file_round_trip_write_and_read() {
+        let dir = std::env::temp_dir().join(format!(
+            "companion-m4-save-{}-{}",
+            std::process::id(),
+            unique_suffix()
+        ));
+        let path = dir.join("save.json");
+        let original = SaveData {
+            wallet: 77,
+            xp: 1234,
+            level: 5,
+            current_project: Some(CurrentProjectSave {
+                index: 3,
+                work_done: 0.0,
+            }),
+        };
+        write_save_file(&path, &original).expect("write_save_file to a temp dir");
+        let loaded = load_save_file(&path).expect("load_save_file of a just-written file");
+        assert_eq!(loaded, Some(original));
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// A missing file is a *fresh install*, not an error; a malformed file
+    /// is an error the caller treats as fresh (it must never crash).
+    #[test]
+    fn save_file_missing_is_fresh_and_malformed_is_an_error() {
+        let dir = std::env::temp_dir().join(format!(
+            "companion-m4-save-{}-{}",
+            std::process::id(),
+            unique_suffix()
+        ));
+        fs::create_dir_all(&dir).expect("temp dir");
+        let missing = dir.join("save.json");
+        assert_eq!(load_save_file(&missing), Ok(None));
+
+        let bad = dir.join("bad.json");
+        fs::write(&bad, "{ not valid json !!!").expect("write bad json");
+        assert!(
+            load_save_file(&bad).is_err(),
+            "malformed JSON must be an Err"
+        );
+
+        let wrong_shape = dir.join("wrong.json");
+        fs::write(&wrong_shape, r#"{"wallet": 5}"#).expect("write wrong-shape json");
+        assert!(
+            load_save_file(&wrong_shape).is_err(),
+            "a SaveData missing required fields must be an Err (deny unknown/missing fields)"
+        );
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// `save_data_from_resources` captures exactly what the exit criterion
+    /// names: wallet, xp, level, and the in-progress project (index + work
+    /// done).
+    #[test]
+    fn save_data_from_resources_captures_wallet_xp_level_and_project() {
+        let wallet = Wallet(42);
+        let xp = PlayerXp { level: 2, xp: 100 };
+        let mut project = project_at(1);
+        project.work_done = 20.25;
+        let index = NextProjectIndex(1);
+
+        let data = save_data_from_resources(&wallet, &xp, &project, &index);
+        assert_eq!(
+            data,
+            SaveData {
+                wallet: 42,
+                xp: 100,
+                level: 2,
+                current_project: Some(CurrentProjectSave {
+                    index: 1,
+                    work_done: 20.25
+                }),
+            }
+        );
+    }
+
+    /// App-driven: `load_or_init_save` **must not destroy** the in-memory
+    /// resources when the save file is absent — the fresh-install path
+    /// keeps whatever `main()` inserted at construction (wallet 0, level 1,
+    /// project #1). Run on a MinimalPlugins app (no window, no render) so it
+    /// works headless; the path override points at an empty temp dir so no
+    /// real file is touched.
+    #[test]
+    fn load_or_init_save_without_a_file_keeps_fresh_state() {
+        let dir = std::env::temp_dir().join(format!(
+            "companion-m4-load-{}-{}",
+            std::process::id(),
+            unique_suffix()
+        ));
+        fs::create_dir_all(&dir).expect("temp dir");
+        let _guard = save_path_guard(); // serialize the path-sensitive tests
+        set_save_path(Some(dir.join("save.json")));
+
+        let mut app = App::new();
+        app.add_plugins(MinimalPlugins);
+        app.insert_resource(Wallet(0));
+        app.insert_resource(PlayerXp::default());
+        app.insert_resource(project_at(0));
+        app.init_resource::<NextProjectIndex>();
+        app.add_systems(Update, load_or_init_save);
+        app.update();
+
+        assert_eq!(app.world().resource::<Wallet>().0, 0);
+        assert_eq!(app.world().resource::<PlayerXp>(), &PlayerXp::default());
+        assert_eq!(
+            app.world().resource::<CurrentProject>().name,
+            "Fix login flow"
+        );
+        assert_eq!(app.world().resource::<CurrentProject>().work_done, 0.0);
+
+        set_save_path(None);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// App-driven: `load_or_init_save` **restores** wallet / xp / level /
+    /// project from an existing save file — the "relaunch" half of M4's
+    /// exit criterion, driven through the real system on a real `App`
+    /// (MinimalPlugins, headless-safe; `FrameDt`/no window per the M2/M3
+    /// pattern).
+    #[test]
+    fn load_or_init_save_restores_a_partway_project() {
+        let _guard = save_path_guard(); // serialize the path-sensitive tests
+        let dir = std::env::temp_dir().join(format!(
+            "companion-m4-load-{}-{}",
+            std::process::id(),
+            unique_suffix()
+        ));
+        fs::create_dir_all(&dir).expect("temp dir");
+        let path = dir.join("save.json");
+
+        // "Get partway through a project": 30/100 work on project #2
+        // ("Add CI cache"), wallet 65 (one project #1 completed), xp 40,
+        // level still 1 (40 < 100).
+        let save = SaveData {
+            wallet: 65,
+            xp: 40,
+            level: 1,
+            current_project: Some(CurrentProjectSave {
+                index: 2,
+                work_done: 30.0,
+            }),
+        };
+        write_save_file(&path, &save).expect("seed the save file");
+        set_save_path(Some(path));
+
+        let mut app = App::new();
+        app.add_plugins(MinimalPlugins);
+        // Fresh-install defaults at construction (what main() inserts).
+        app.insert_resource(Wallet(0));
+        app.insert_resource(PlayerXp::default());
+        app.insert_resource(project_at(0));
+        app.init_resource::<NextProjectIndex>();
+        app.add_systems(Update, load_or_init_save);
+        app.update();
+
+        let world = app.world();
+        assert_eq!(world.resource::<Wallet>().0, 65, "wallet must restore");
+        let xp = world.resource::<PlayerXp>();
+        assert_eq!(xp.xp, 40, "xp must restore");
+        assert_eq!(xp.level, 1, "level must be level_for_xp(40) = 1");
+        let project = world.resource::<CurrentProject>();
+        assert_eq!(
+            project.name, "Add CI cache",
+            "the in-progress project must restore"
+        );
+        assert_eq!(project.total_work, 100.0);
+        assert_eq!(
+            project.work_done, 30.0,
+            "partway progress (work_done) must restore exactly"
+        );
+        assert_eq!(
+            world.resource::<NextProjectIndex>().0,
+            2,
+            "the static-list index must restore so the next roll continues correctly"
+        );
+
+        set_save_path(None);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// A unique-ish temp-dir suffix so parallel tests don't collide. A
+    /// process-global counter is sufficient (each test in this binary gets
+    /// a distinct value; `std::thread::current().id().as_u64()` is unstable
+    /// and was the previous attempt — see M4 bug notes).
+    fn unique_suffix() -> u64 {
+        static COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+    }
+
+    /// The path-sensitive M4 tests (the ones that call [`set_save_path`])
+    /// must not interleave: the override is process-global, so two such
+    /// tests running in parallel would each clobber the other's save path
+    /// mid-run (`cargo test` runs tests on parallel threads by default).
+    /// `cargo test --workspace` is the verification command, so serializing
+    /// *these* few fast tests is the right fix (a per-test global would
+    /// need a larger redesign for no benefit in v0.1).
+    fn save_path_guard() -> std::sync::MutexGuard<'static, ()> {
+        static GUARD: std::sync::Mutex<()> = std::sync::Mutex::new(());
+        // Tolerate poisoning: if a *previous* holder panicked, its finally-style
+        // cleanup (set_save_path(None)) may not have run, but the override is
+        // per-test and every test resets it at the top of its body — recovering
+        // from a poisoned lock is safe here and keeps one flaky panic from
+        // cascading into every other path-sensitive test.
+        GUARD
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
+    /// Drive time deterministically for the app-driven M4 tests:
+    /// `TimeUpdateStrategy::FixedTimesteps(1)` makes `time_system` (First)
+    /// advance `Time<Real>` by exactly one `Time<Fixed>` timestep per
+    /// `app.update()`, and `update_virtual_time` then copies that delta
+    /// into `Time<Virtual>` and the generic `Time` — the exact resource
+    /// `save_system` reads. `step_m3`'s `Time<Virtual>::advance_by(dt)`
+    /// additionally feeds the `Time<Fixed>` overstep so
+    /// `project_progress_system` gets its 32 Hz ticks. Both advances are
+    /// additive, so `save_system` sees the 32 ms `Time` delta it needs
+    /// while the progress system sees the simulated frame dt.
+    fn drive_fixed_timesteps(app: &mut App) {
+        app.world_mut()
+            .insert_resource(bevy_time::TimeUpdateStrategy::FixedTimesteps(1));
+    }
+
+    /// App-driven: `save_system` (the **shipping** system) fires when
+    /// `SaveTimer` elapses and writes the current resources to the (temp)
+    /// save file — the "quit" half of the exit criterion. The app runs the
+    /// full M3 loop (via the shared `build_m3_app` fixture) so the values
+    /// being saved are the ones the loop itself produced: ~10 keystrokes of
+    /// typing fill `ActivityMeter` and `project_progress_system` does the
+    /// real work on the project.
+    #[test]
+    fn save_system_writes_the_live_state_when_the_timer_fires() {
+        let _guard = save_path_guard(); // serialize the path-sensitive tests
+        let dir = std::env::temp_dir().join(format!(
+            "companion-m4-save-{}-{}",
+            std::process::id(),
+            unique_suffix()
+        ));
+        fs::create_dir_all(&dir).expect("temp dir");
+        let path = dir.join("save.json");
+        set_save_path(Some(path.clone()));
+
+        // The shared M3 fixture: the real project_progress / completion /
+        // xp-level / bridge / idle systems + a 32 Hz Time<Fixed>.
+        // `StatesPlugin` must be installed *before the first `app.update()`*
+        // (it rewrites `MainScheduleOrder` to insert the `StateTransition`
+        // schedule after `PreUpdate` — a schedule that is only consulted
+        // when the main schedule is *built*, which happens on the first
+        // update). `build_m3_app` runs no updates, so adding the plugin
+        // here is still before that build.
+        let mut app = build_m3_app();
+        app.add_plugins(bevy::state::app::StatesPlugin);
+        app.init_state::<AppState>();
+        drive_fixed_timesteps(&mut app);
+        app.insert_resource(SaveTimer::new());
+        app.add_systems(Update, save_system);
+        // Transition to Playing (the M4 fixture has no `main()`-style
+        // Startup chain; `enter_playing` is added directly).
+        app.add_systems(Startup, enter_playing);
+        app.update();
+
+        // Drive ~4.5 s of typing at ~30 fps (30 ms frames): at the ~10 ev/s
+        // input rate that produces, the rate settles ≈ 10 ⇒ ≈ 0.5 work/s ⇒
+        // project #1 (50 work) is ≈ 2.2/50 done — partway, and no
+        // completion has fired yet (wallet/xp stay at the fresh defaults).
+        let frame = Duration::from_millis(30);
+        for i in 0..135u32 {
+            // One keystroke every 3rd frame ≈ 10 ev/s of real typing.
+            step_m3(&mut app, frame, if i.is_multiple_of(3) { 1 } else { 0 });
+        }
+
+        // Let the 30 s autosave timer elapse: each app.update() advances
+        // `Time` by one 32 ms fixed timestep, so 30 s = 937.5 frames — run
+        // 950 idle frames. The save must fire at least once.
+        for _ in 0..950 {
+            step_m3(&mut app, Duration::from_millis(1), 0);
+        }
+
+        assert!(path.exists(), "save_system must have written the save file");
+        let loaded = load_save_file(&path).expect("the written file must parse");
+        let loaded = loaded.expect("the written file must hold a SaveData");
+
+        // wallet/xp: project #1 (total 50) is ~41/50 done at ~10 ev/s
+        // (6 work/s ⇒ ~7.5 s to finish; 1.5 s of typing ≈ 9 work), so no
+        // completion has fired yet — wallet and xp must be the fresh
+        // defaults. (If a completion *had* fired, the assertions below on
+        // work_done/index would still prove the in-progress restore.)
+        let world = app.world();
+        assert_eq!(loaded.wallet, world.resource::<Wallet>().0);
+        assert_eq!(loaded.xp, world.resource::<PlayerXp>().xp);
+        assert_eq!(loaded.level, world.resource::<PlayerXp>().level);
+
+        let cp = loaded
+            .current_project
+            .expect("a current project is always saved");
+        assert_eq!(cp.index, 0, "project #1 is still in progress");
+        assert!(
+            (cp.work_done > 0.0 && cp.work_done < 50.0),
+            "partway through project #1: 0 < work_done < 50, got {}",
+            cp.work_done
+        );
+
+        set_save_path(None);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// **The M4 exit criterion, app-driven:** "get partway through a
+    /// project, quit, relaunch — wallet, xp, level, and in-progress project
+    /// all restore."
+    ///
+    /// Session 1: the full M3 loop runs (typing → progress → a project
+    /// completes and is awarded, and the *next* project is partway through)
+    /// until the 30 s autosave fires. Then the app is *dropped* (quit).
+    /// Session 2: a brand-new app is built the way `main()` builds it and
+    /// `load_or_init_save` runs — the wallet / xp / level / in-progress
+    /// project from session 1 must all be back. This is the mechanical
+    /// proof of the exit criterion in a headless environment (same pattern
+    /// as M2/M3's `FrameDt`-driven app tests).
+    #[test]
+    fn m4_quit_and_relaunch_restores_wallet_xp_level_and_in_progress_project() {
+        let _guard = save_path_guard(); // serialize the path-sensitive tests
+        let dir = std::env::temp_dir().join(format!(
+            "companion-m4-e2e-{}-{}",
+            std::process::id(),
+            unique_suffix()
+        ));
+        fs::create_dir_all(&dir).expect("temp dir");
+        let path = dir.join("save.json");
+        set_save_path(Some(path.clone()));
+
+        // ---- Session 1: get partway through a project, then quit. ----
+        {
+            // `StatesPlugin` before the first update (see the other M4
+            // test for why — the schedule order is frozen at first update).
+            let mut app = build_m3_app();
+            app.add_plugins(bevy::state::app::StatesPlugin);
+            app.init_state::<AppState>();
+            drive_fixed_timesteps(&mut app);
+            app.insert_resource(SaveTimer::new());
+            app.add_systems(Update, save_system);
+            app.add_systems(Startup, enter_playing);
+            app.update();
+
+            // ~4.5 s of typing at ~30 fps, one keystroke every 3rd frame
+            // (≈ 10 ev/s real-typing pace): at the settled ≈ 10 ev/s rate
+            // that's ≈ 0.5 work/s, so project #1 (50 work) is ≈ 2.2/50
+            // done — "partway through a project", exactly what the exit
+            // criterion says. (No completion fires in this window — wallet
+            // and xp stay at the fresh defaults, and the save captures the
+            // in-progress project; `load_or_init_save_restores_a_partway_
+            // project` covers the completed-project + award restore path
+            // with a hand-written save.)
+            let frame = Duration::from_millis(30);
+            for i in 0..135u32 {
+                step_m3(&mut app, frame, if i.is_multiple_of(3) { 1 } else { 0 });
+            }
+            // Let the 30 s autosave fire: each app.update() advances `Time`
+            // by one 32 ms fixed timestep, so 30 s ≈ 938 frames — run 950
+            // idle frames.
+            for _ in 0..950 {
+                step_m3(&mut app, Duration::from_millis(1), 0);
+            }
+
+            // Capture session 1's end state *before* quitting, to compare
+            // against the restored state (the save is written from these
+            // resources, so they must match exactly — see the assertion
+            // comments below for why the tail is safe to ignore).
+            let wallet = app.world().resource::<Wallet>().0;
+            let xp = app.world().resource::<PlayerXp>();
+            let project = app.world().resource::<CurrentProject>().clone();
+            let index = app.world().resource::<NextProjectIndex>().0;
+
+            // The session must actually have made progress (otherwise the
+            // "partway" claim is vacuous) and the save must exist.
+            assert!(
+                project.work_done > 0.0,
+                "session 1 must get partway through a project (work_done {})",
+                project.work_done
+            );
+            assert!(
+                path.exists(),
+                "the 30 s autosave must have written the save file"
+            );
+
+            let expected_wallet = wallet;
+            let expected_xp = xp.xp;
+            let expected_level = xp.level;
+            let expected_index = index;
+            let expected_work_done = project.work_done;
+            let expected_name = project.name.clone();
+            // --- quit: drop the app (all in-memory state gone). ---
+            drop(app);
+
+            // ---- Session 2: relaunch — a fresh app, load_or_init_save. ----
+            let mut app2 = App::new();
+            app2.add_plugins(MinimalPlugins);
+            // Exactly what main() inserts at construction (fresh defaults):
+            app2.insert_resource(Wallet(0));
+            app2.insert_resource(PlayerXp::default());
+            app2.insert_resource(project_at(0));
+            app2.init_resource::<NextProjectIndex>();
+            app2.add_systems(Update, load_or_init_save);
+            app2.update(); // runs load_or_init_save on the real save file
+
+            let world = app2.world();
+            let w = world.resource::<Wallet>().0;
+            let x = world.resource::<PlayerXp>();
+            let p = world.resource::<CurrentProject>();
+            let i = world.resource::<NextProjectIndex>().0;
+
+            // wallet / xp / level / index: exact (no project completion
+            // fires in the ~4.5 s tail after the 30 s save mark).
+            assert_eq!(
+                (w, x.xp, x.level, i),
+                (expected_wallet, expected_xp, expected_level, expected_index),
+                "relaunch must restore wallet/xp/level/index exactly \
+                 (restored ({w}, {}, {}, {}), session 1 end ({}, {}, {}, {}))",
+                x.xp,
+                x.level,
+                i,
+                expected_wallet,
+                expected_xp,
+                expected_level,
+                expected_index
+            );
+            // work_done: the save is a mid-session snapshot (at the 30 s
+            // mark); the ~4.5 s tail after it added a small amount of work
+            // (the rate has decayed but isn't exactly zero). Assert the
+            // restored value is in (0, session-end].
+            assert!(
+                p.work_done > 0.0 && p.work_done <= expected_work_done,
+                "restored work_done {} must be in (0, {}] (the save was a \
+                 mid-session snapshot at the 30 s mark; the tail added a \
+                 small amount of work)",
+                p.work_done,
+                expected_work_done
+            );
+            assert_eq!(
+                p.name, expected_name,
+                "project name must match via the saved index"
+            );
+        }
+
+        set_save_path(None);
+        let _ = fs::remove_dir_all(&dir);
     }
 }
