@@ -72,6 +72,79 @@ RAMP: dict[str, tuple[int, int, int]] = {
 }
 RGB_TO_RAMP = {rgb: name for name, rgb in RAMP.items()}
 
+# --------------------------------------------------------------------------
+# Ordered (Bayer) dithering - the hero-fidelity pass's one new technique.
+# --------------------------------------------------------------------------
+#
+# Pixel art gets more APPARENT shades than it has actual colours by
+# interleaving two adjacent palette/ramp entries in a fixed, repeating
+# pattern instead of a flat fill - a checkerboard is the simplest case (50%
+# of each), a 4x4 Bayer matrix gives 16 usable densities. This is still
+# palette/ramp-pure (every emitted pixel is one of the two named colours,
+# nothing new is introduced) and fully deterministic (the matrix is a
+# constant, not RNG), so it does not touch either hard rule. Used for: the
+# room's light falloff and glow pool, the monitor's bezel bevel and screen
+# glow bleed, and the developer's fabric shading/ambient-occlusion - i.e.
+# every "flat blob" the hero pass was asked to fix.
+_BAYER4 = (
+    (0, 8, 2, 10),
+    (12, 4, 14, 6),
+    (3, 11, 1, 9),
+    (15, 7, 13, 5),
+)
+
+
+def bayer_mix(x: int, y: int, ratio: float, lo: str, hi: str) -> str:
+    """Ordered-dither pick between two colour NAMES: `hi` for approximately
+    `ratio` (0..1) of pixels, `lo` for the rest, in a fixed 4x4 repeating
+    pattern - a smooth-reading gradient using only the two colours given."""
+    if ratio <= 0.0:
+        return lo
+    if ratio >= 1.0:
+        return hi
+    return hi if _BAYER4[y % 4][x % 4] < ratio * 16 else lo
+
+
+_RAMP_STEPS = ["ramp1", "ramp2", "ramp3", "ramp4", "ramp5"]
+
+
+def ramp_dither(x: int, y: int, v: float) -> str:
+    """`v` is a continuous position on the 5-step ramp (0.0=ramp1 (deepest
+    fold) .. 4.0=ramp5 (specular)). Returns one ramp step name, ordered-
+    dithered against its neighbour by the fractional part of `v`, so a
+    shading gradient reads as smoother than 5 discrete flat bands while
+    still only ever emitting the 5 ramp colours the palette exemption
+    allows."""
+    v = max(0.0, min(4.0, v))
+    lo = int(v)
+    hi = min(lo + 1, 4)
+    frac = v - lo
+    return bayer_mix(x, y, frac, _RAMP_STEPS[lo], _RAMP_STEPS[hi])
+
+
+def radial_dither_glow(s: "Sprite", cx: float, cy: float, rx: float, ry: float,
+                        x0: int, y0: int, x1: int, y1: int, colour: str,
+                        gain: float = 1.0, gamma: float = 1.0) -> None:
+    """Paint `colour` at a density that falls off radially from (cx, cy),
+    ordered-dithered rather than as a hard-edged rect - this is how the
+    room's glow pool becomes "smooth dithering not a hard blob" while
+    staying strictly within the 18-colour palette (it paints only the one
+    named colour, at varying density, over whatever is already there)."""
+    for y in range(y0, y1 + 1):
+        for x in range(x0, x1 + 1):
+            dx = (x - cx) / rx
+            dy = (y - cy) / ry
+            d = (dx * dx + dy * dy) ** 0.5
+            t = max(0.0, 1.0 - d)
+            if t <= 0.0:
+                continue
+            t = min(1.0, t * gain)
+            if gamma != 1.0:
+                t = t ** gamma
+            thresh = _BAYER4[y % 4][x % 4]
+            if thresh < t * 16:
+                s.dot(x, y, colour)
+
 # The 45-file v2 manifest (docs/art-direction.md, "Sprite manifest v2"), used
 # both to author and to verify. Keep in sync with the doc; the self-check
 # compares against this and the final assets/ directory listing must equal
@@ -290,48 +363,109 @@ def union_mask(*masks: list[list[bool]]) -> list[list[bool]]:
 def build_room_back() -> Sprite:
     """320x200: wall rows 0..132, floor rows 132..200.
 
-    The wall gets a `wall_light` glow pool centred behind the monitor slot
-    (which sits at room x 94..226, centre x=160) with a `lamp` bloom at its
-    core - flat hard-edged bands, per this codebase's house style: every
-    dithered/soft version of "light on a wall" tried in v0.2 was rejected as
-    a rendering artifact (see the removed dither helper's old comment in
-    git history), so v2 keeps the same flat-band language.
+    HERO-FIDELITY REWRITE. The v2.0 version painted the glow as two flat,
+    hard-edged rects, which is exactly the "flat blob" the fidelity pass
+    was asked to fix. v0.2's dithering attempt was rejected for being
+    literal RANDOM noise on a wall - a genuine artifact. This is ordered
+    (Bayer 4x4) dithering instead: a fixed, repeating interleave of two
+    adjacent palette colours, which is the actual pixel-art technique for
+    "more shades than colours" and reads as a smooth gradient, not static.
+    `radial_dither_glow` (module level) implements it once and is reused for
+    every soft-edged glow in this file.
 
-    The floor gets a matching warm patch directly under the pool (so the
-    light reads as falling all the way to the floor, not stopping dead at
-    the desk) and 3 evenly spaced board seams. Rows 132..134 are the desk
-    slab's own cast shadow, load-bearing per the derivation rules: even
-    though the desk slab (drawn in front, in desk_back.png) hides the wall
-    from 74..132, that band is still painted here so a narrower desk later
-    cannot punch a hole through the room.
+    Stated light source (referenced again in the developer sprite below,
+    for one consistent scene): the monitor's glow is the room's only light,
+    centred behind the monitor slot (room x 94..226, centre x=160, roughly
+    y=45). Everything in the room brightens toward that point and dims with
+    distance from it - the wall's overall gradient, the floor patch, and
+    (in the developer) the rim light wrapping the silhouette.
     """
     s = Sprite(320, 200, bg="wall_dark")
+    # Vertical centre sits mid-monitor (monitor spans room y 20..84), NOT
+    # above it - see MONITOR_TOP below for why that matters.
+    GLOW_CX, GLOW_CY = 160.0, 55.0
+    MONITOR_TOP = 20   # room y where the monitor sprite's own opaque bezel
+                        # begins; a hero-pass regression let the glow's
+                        # dithered rim extend to y=10, INTO the visible
+                        # (row 12+) wall band above the monitor, reading as
+                        # a floating cloud of dither dots on the wall (a
+                        # real render, not the neutral mockup, caught this -
+                        # the exact "stray static particles" defect prior
+                        # review passes rejected). Fix: never paint the glow
+                        # above the monitor's own top edge at all - the
+                        # bounding boxes below start at MONITOR_TOP, and the
+                        # radii/gain are tuned so the glow is already at or
+                        # near zero by that row (the clip is a hard
+                        # guarantee either way).
 
     # Ceiling shadow band - the top few rows are always hidden behind the
     # title bar (room rows 0..12), but painting it means a shorter title bar
     # in a future revision cannot expose a flat, undecorated wall edge.
     s.rect(0, 0, 319, 9, "shadow")
 
-    # Glow pool behind the monitor slot (94..226, centre 160): a broad
-    # `wall_light` halo, then a smaller warm `lamp` bloom at its core. Both
-    # bands run the full wall height so the desk slab (which sits in front)
-    # never exposes a seam where the pool would otherwise stop dead.
-    s.rect(112, 16, 208, 131, "wall_light")
-    s.rect(134, 20, 186, 64, "lamp")
+    # Subtle wall texture: a few faint panel seams away from the glow, so
+    # the wall reads as a surface, not a colour field. Kept sparse and off
+    # to the sides so nothing competes with the monitor as the focal point.
+    for x in (18, 46, 274, 302):
+        for y in range(12, 131, 3):          # broken, not a solid line
+            s.dot(x, y, "shadow")
+
+    # Glow pool: two nested radii, `wall_light` broad then `lamp` tight at
+    # the core. `gain` > 1 on both is deliberate and load-bearing - it is
+    # what keeps this a soft-edged BLOB (solid core, a narrow dithered rim,
+    # then untouched flat `wall_dark` beyond it) instead of a low-density
+    # dither spread thinly across the entire wall, which reads as static,
+    # not light (the exact failure the v0.2 "dithered wall" attempt hit).
+    # Most of this blob sits BEHIND the monitor sprite (which is opaque
+    # over its own 132x64 footprint) and is only actually seen beside it
+    # (x<94 or x>226) and, for the smaller/tighter lamp core, not even
+    # there - both radii are sized so the visible side-glow fades out
+    # before reaching MONITOR_TOP.
+    radial_dither_glow(s, GLOW_CX, GLOW_CY, 85, 45, 60, MONITOR_TOP, 260, 131,
+                        "wall_light", gain=2.0)
+    radial_dither_glow(s, GLOW_CX, GLOW_CY, 40, 22, 105, MONITOR_TOP, 215, 95,
+                        "lamp", gain=2.4)
 
     # Floor.
     s.rect(0, 132, 319, 199, "floor")
     # The desk slab's cast shadow onto the floor - 2 rows, full width, this
-    # is the "shadow band" the derivation rules call out by name.
+    # is the "shadow band" the derivation rules call out by name. Kept flat
+    # and exact: it is a functional contact shadow, not a decorative area.
     s.rect(0, 132, 319, 133, "shadow")
-    # A warm patch directly below the glow pool, tying the wall light to the
-    # floor rather than letting it stop dead at the desk edge.
-    s.rect(120, 134, 200, 150, "floor_light")
-    # 3 evenly spaced board seams, full width, hard edges (no dither - see
-    # the class docstring: this is a lesson already learned once in v0.2).
-    for y in (160, 175, 190):
+    # A skirting kick-highlight: the one row where the (occluded, but still
+    # painted per the derivation rules) baseboard would catch light bouncing
+    # off the floor, giving the wall/floor seam a "trim", not just a shadow.
+    s.hline(134, 0, 319, "floor_light")
+
+    # Warm glow patch on the floor, tying the wall light down to the floor
+    # instead of letting it stop dead at the desk edge - dithered, so it
+    # fades rather than ending in a hard rectangle.
+    radial_dither_glow(s, GLOW_CX, 132.0, 60, 20, 60, 135, 260, 152,
+                        "floor_light", gain=2.4)
+
+    # Floorboards: 3 seams, each row band TALLER than the last toward the
+    # bottom of the frame (nearer the viewer) - a cheap but effective
+    # perspective cue for boards receding toward the desk. Each seam is a
+    # groove (`shadow`) then a near-edge highlight (`floor_light`), and each
+    # board gets a couple of short dithered grain streaks so the planks read
+    # as individual boards, not one texture-less brown field.
+    seams = (144, 161, 181)
+    bands = [(134, seams[0])] + [(seams[i], seams[i + 1]) for i in range(len(seams) - 1)] + [(seams[-1], 200)]
+    for y in seams:
         s.hline(y, 0, 319, "shadow")
         s.hline(y + 1, 0, 319, "floor_light")
+    for i, (by0, by1) in enumerate(bands):
+        # Plank seams (vertical), staggered per board row so they don't
+        # line up into one grid - a deterministic stagger, not randomness.
+        step = 34 + i * 6
+        offset = (i * 17) % step
+        for x in range(offset, 320, step):
+            s.vline(x, by0 + 2, by1 - 1, "shadow")
+        # Grain: a short dithered streak near the middle of each plank cell.
+        gy = (by0 + by1) // 2
+        for x in range(offset + 6, 320, step):
+            for gx in range(x, min(x + 10, 319)):
+                s.dot(gx, gy, bayer_mix(gx, gy, 0.35, "floor", "floor_light"))
     return s
 
 
@@ -363,32 +497,87 @@ MONITOR_SCREEN_RECT = (4, 4, 127, 47)   # x0, y0, x1, y1 inclusive -> 124x44
 
 
 def build_monitor() -> Sprite:
-    """132x64: `metal` bezel (4px left/right/top), the exact inner screen
-    rect filled flat `shadow` (no text - the frontend draws that), an 8px
-    chin with one `screen` power LED, and a neck+foot with a `shadow`
-    contact row.
+    """132x64: `metal` bezel (4px left/right/top) with a real beveled edge,
+    the exact inner screen rect filled flat `shadow` (no text - the
+    frontend draws that; UNCHANGED bounds and fill, see below), an 8px chin
+    with one `screen` power LED, and a neck+foot with dimension.
+
+    HERO-FIDELITY REWRITE. Same light source as the rest of the scene (see
+    `build_room_back`): a soft key light from the upper-left, so the bezel
+    gets a highlight on its outer top/left edge and a shadow on its outer
+    right edge - a real bevel, not a flat metal frame. The bezel's INNER
+    edge (the 1px ring touching the screen well) tells a second, opposite
+    story: the screen itself is the room's brightest object, so its glow
+    bleeds onto the inner-right bezel lip while the inner-top/left lip
+    falls into ambient occlusion where the bezel recesses to meet the
+    glass. Both bevels are ordered-dithered (see `bayer_mix`), not flat.
     """
     s = Sprite(132, 64)
     x0, y0, x1, y1 = MONITOR_SCREEN_RECT
     # Bezel block first (top + both sides down to the inner rect's bottom),
     # then the inner rect punches the exact hole the UI text lands in. This
-    # order - and ONLY drawing the inner rect as this one rect call - is what
-    # keeps the rect exact and reviewable as a single line of code.
+    # order - and ONLY drawing the inner rect as this one rect call, with no
+    # further edit to it below - is what keeps the rect exact and
+    # reviewable as a single line of code. Everything after this point only
+    # ever touches bezel pixels OUTSIDE (x0,y0)-(x1,y1).
     s.rect(0, 0, 131, y1, "metal")
     s.rect(x0, y0, x1, y1, "shadow")
-    s.hline(0, 0, 131, "wall_light")       # top bezel catches the room's light
 
-    # Chin: 8px, full width, with the power LED.
+    # Outer bevel, top band (y=0..2, x=4..127): row0 a crisp raised
+    # highlight edge, rows 1-2 a dithered fade back toward flat metal.
+    s.hline(0, 0, 131, "wall_light")
+    for y, ratio in ((1, 0.55), (2, 0.25)):
+        for x in range(x0, x1 + 1):
+            s.dot(x, y, bayer_mix(x, y, ratio, "metal", "wall_light"))
+    # Inner AO ring, top (y=3, the row that actually touches the screen
+    # well): the bezel recessing down to the glass falls into shadow.
+    for x in range(x0, x1 + 1):
+        s.dot(x, 3, bayer_mix(x, 3, 0.55, "metal", "shadow"))
+
+    # Outer bevel, left column (x=0..2): the same upper-left highlight,
+    # fading with depth into the bezel and with distance from the top.
+    for x, ratio in ((0, 0.7), (1, 0.45), (2, 0.2)):
+        for y in range(0, y1 + 1):
+            s.dot(x, y, bayer_mix(x, y, max(0.05, ratio * (1 - y / 80)), "metal", "wall_light"))
+    # Inner AO ring, left (x=3): same occlusion logic as the top ring.
+    for y in range(y0, y1 + 1):
+        s.dot(3, y, bayer_mix(3, y, 0.5, "metal", "shadow"))
+
+    # Outer bevel, right column (x=129..131): the shadow side, away from
+    # the key light - the bevel's far edge falls dark instead of matching
+    # the highlighted left.
+    for x, ratio in ((131, 0.7), (130, 0.4), (129, 0.15)):
+        for y in range(0, y1 + 1):
+            s.dot(x, y, bayer_mix(x, y, ratio, "metal", "shadow"))
+    # Inner glow-bleed ring, right (x=128): the screen is the brightest
+    # thing in the room, so its light spills onto the inner-right lip.
+    for y in range(y0, y1 + 1):
+        s.dot(128, y, bayer_mix(128, y, 0.4, "metal", "screen_dim"))
+
+    # Chin: 8px, full width, with the power LED. A thin highlight ridge
+    # where the bezel steps down to the chin, and a shadow before the neck.
     s.rect(0, y1 + 1, 131, y1 + 8, "metal")
+    for x in range(0, 132):
+        s.dot(x, y1 + 1, bayer_mix(x, y1 + 1, 0.35, "metal", "wall_light"))
+        s.dot(x, y1 + 8, bayer_mix(x, y1 + 8, 0.4, "metal", "shadow"))
     s.rect(64, y1 + 4, 65, y1 + 5, "screen")
 
-    # Neck + foot + contact shadow, the sprite's last 8 rows.
+    # Neck + foot + contact shadow, the sprite's last 8 rows. A side bevel
+    # on the neck (light left, shadow right, matching the bezel) and a
+    # beveled front face on the foot in front of its already-lit top face.
     neck_y0, neck_y1 = y1 + 9, y1 + 12
     foot_y0, foot_y1 = y1 + 13, y1 + 15
     shadow_y = y1 + 16
     s.rect(60, neck_y0, 72, neck_y1, "metal")
+    for y in range(neck_y0, neck_y1 + 1):
+        s.dot(60, y, bayer_mix(60, y, 0.5, "metal", "wall_light"))
+        s.dot(61, y, bayer_mix(61, y, 0.2, "metal", "wall_light"))
+        s.dot(72, y, bayer_mix(72, y, 0.5, "metal", "shadow"))
+        s.dot(71, y, bayer_mix(71, y, 0.2, "metal", "shadow"))
     s.rect(46, foot_y0, 86, foot_y1, "metal")
     s.hline(foot_y0, 46, 86, "screen_dim")     # foot's lit top face, catches the screen glow
+    for x in range(46, 87):
+        s.dot(x, foot_y1, bayer_mix(x, foot_y1, 0.45, "metal", "shadow"))
     s.hline(shadow_y, 36, 96, "shadow")        # contact shadow, wider than the foot
     assert shadow_y == s.h - 1, "monitor's contact shadow must be the sprite's last row"
     return s
@@ -573,34 +762,108 @@ def _dev_fabric_mask(frame: str) -> list[list[bool]]:
     return grid
 
 
-# Ramp shading rule for dev_form: NO seam anywhere (the failure mode this is
-# rewritten away from). A single WIDE (12px), soft, one-ramp-step-darker
-# column under the dome/shoulder centre - a shading AREA, not a 1-2px line -
-# plus a small rounded highlight/shadow rim traced along the dome's own
-# per-row half-width table (so it curves with the dome instead of cutting a
-# straight edge across it). The arm rectangles are always plain `ramp4`: no
-# contrasting tone, so they read as sleeves, never as a separate dark panel.
-_CENTRE_BAND = (38, 50)   # x0, x1 - wide and soft, at most 1 ramp step down
+# Ramp shading rule for dev_form - HERO-FIDELITY REWRITE.
+#
+# The v2.0 version used only 2 of the 5 ramp steps (ramp3/ramp4, plus a
+# handful of manual ramp5 dots) in one flat rim-and-centre-band pattern.
+# This rewrite uses all 5 steps and drives them from one continuous value
+# `v` (0.0 = ramp1, deepest fold .. 4.0 = ramp5, specular), ordered-dithered
+# between its two nearest steps by `ramp_dither` - the "stepped contours,
+# anti-banded with dithering" the fidelity pass asks for, instead of a flat
+# pick per region.
+#
+# ONE stated light direction for the whole sprite (matches the room: the
+# monitor's glow sits beyond the character in screen space, so from the
+# camera - behind the character - the figure is silhouetted against it,
+# rim-lit around the top/left of the dome and shoulder where the glow
+# wraps the edge; a softer ambient key from the upper-left of frame gives
+# the same side a broader highlight, the opposite/right side falls into
+# shadow). This is why every gradient below reads DARKER as x increases
+# past the centreline (cx=44) and brightest right at the outer silhouette
+# edge on the small-x side.
+#
+# The arm rectangles stay close to flat ramp4 (see the module docstring
+# above on the silhouette failures a contrasting arm tone caused) - only a
+# 1px inner seam and a cuff band are added, never a full-arm recolour.
+_CENTRE_BAND = (38, 50)   # x0, x1 - kept as the shoulders' soft centre reference
 
 
 def _dev_ramp_for(x: int, y: int, frame: str, dome_row: dict[int, int]) -> str:
+    """Per-pixel ramp value, v2 (post-hero-pass regression fix).
+
+    The first hero pass swung the base cross-section gradient across
+    almost the FULL 0..4 ramp range (light side near ramp4, shadow side
+    near ramp0), so roughly half the sprite sat at ramp1/ramp2 - fine on
+    the neutral mockup, but multiplied against the game's actual DEFAULT
+    hoodie tint (`indigo` #6a5aa0, see app/internal/game/catalog.go) that
+    crushed to near-black across half the figure: a void, not a shaded
+    garment. Root cause + fix, per the art-direction ramp table itself
+    ("author the large flat areas at step 4 (ramp4/83%), so a tint has
+    HEADROOM for a highlight" - ramp1/ramp2 are for small deliberate deep
+    accents, not a whole shadow HALF): the base cross-section gradient
+    below now stays anchored on ramp4 (v=3.0) and only sways +/-0.9,
+    landing in ramp2..ramp5 - always multiplies to a visibly graduated
+    mid-value garment at the default tint. ramp0/ramp1 are reserved for
+    the small, explicitly localized accents (neck AO, fold creases,
+    shoulder blades) that stack a further, bounded subtraction on top of
+    that anchored base - never the dominant tone of a whole region.
+
+    The rim-light bonus (below) is deliberately strong enough to reach
+    ramp5 (undarkened tint) right at the lit silhouette edge: that edge is
+    what still separates the figure from the wall even at the DARKEST
+    purchasable tint (`slate` #2b2b33, a near-black "Classic Black"),
+    where internal folds necessarily crush since the tint itself is
+    almost black at every ramp step - a solid black hoodie reading mostly
+    as silhouette-plus-rim is the correct pixel-art result there, not a
+    bug to chase further.
+    """
+    cx = 44
+    ddy = DOME_DY[frame]
+    sdy = SHOULDER_DY[frame]
+
     if y in dome_row:
         hw = dome_row[y]
-        cx = 44
-        if x < cx - hw + 4:
-            return "ramp3"        # soft rounded rim, shadow side of the dome
-        return "ramp4"
-    if _CENTRE_BAND[0] <= x <= _CENTRE_BAND[1]:
-        return "ramp3"            # wide soft centre shading, shoulders/lower dome
-    return "ramp4"
+        ry = y - ddy                                  # unshifted dome row, 23..50
+        rel = (x - cx) / hw if hw else 0.0             # -1 (lit rim) .. +1 (shadow rim)
+        edge = hw - abs(x - cx)                        # 0 at the silhouette edge
 
+        v = 3.0 - 0.9 * rel                             # anchored on ramp4, sways +/-0.9
+        if ry in (33, 41):
+            v -= 0.45                                   # two soft fabric fold creases
+        if rel < -0.3 and edge <= 3:
+            v += (4 - edge) * 0.55                      # rim light wrapping the lit side
+        if ry >= 47:
+            v -= 1.0 * min(1.0, (ry - 46) / 4)          # neck AO, dome side
+        return ramp_dither(x, y, v)
 
-_SPECULAR = {
-    "idle": [(41, 24), (42, 24), (43, 24)],
-    "type_a": [(41, 24), (42, 24), (43, 24)],
-    "type_b": [(41, 24), (42, 24), (43, 24)],
-    "sleep": [(41, 27), (42, 27)],
-}
+    x0s, x1s = _SHOULDER_X
+    if x0s <= x <= x1s:
+        sy = y - sdy                                    # unshifted shoulder row
+        rel = (x - cx) / ((x1s - x0s) / 2)
+        v = 3.0 - 0.8 * rel                              # anchored on ramp4, sways +/-0.8
+        if sy <= 54:
+            v -= 1.0 * max(0.0, (54 - sy) / 4)          # neck AO, shoulder side
+        for bx in (cx - 20, cx + 20):                    # shoulder-blade patches
+            if abs(x - bx) <= 7 and 56 <= sy <= 72:
+                d = ((x - bx) ** 2 + (sy - 64) ** 2) ** 0.5
+                if d <= 8:
+                    v -= 0.45 * (1 - d / 8)
+        for fx in (cx - 14, cx, cx + 14):                # drape fold lines, back panel
+            if abs(x - fx) <= 1 and sy >= 60:
+                v -= 0.3
+        if x <= x0s + 2:
+            v += 0.7                                     # rim light down the lit edge
+        v -= 0.3 * (sy - _SHOULDER_Y0) / (DEV_H - _SHOULDER_Y0)   # gentle ambient falloff
+        return ramp_dither(x, y, v)
+
+    # Arms (the only remaining fabric pixels once dome/shoulder are ruled
+    # out): near-flat ramp4, with a thin inner seam and a cuff fold.
+    v = 3.0
+    if x in (25, 62):
+        v -= 0.5                                         # inner sleeve seam
+    if _ARM_UPPER_Y[0] <= y <= _ARM_UPPER_Y[0] + 1:
+        v -= 0.35                                        # cuff fold above the hand
+    return ramp_dither(x, y, v)
 
 
 def build_dev_form(frame: str) -> Sprite:
@@ -610,8 +873,6 @@ def build_dev_form(frame: str) -> Sprite:
     for y, x0, x1 in _dev_rows(frame):
         for x in range(x0, x1 + 1):
             s.dot(x, y, _dev_ramp_for(x, y, frame, dome_row))
-    for x, y in _SPECULAR[frame]:
-        s.dot(x, y, "ramp5")
     return s
 
 
@@ -627,13 +888,28 @@ def _dev_hair_crescent(s: Sprite, frame: str) -> None:
         s.dot(x, y, "hair")
 
 
+def _dev_paint_hand(s: Sprite, x0: int, x1: int, y0: int, y1: int) -> None:
+    """A `skin` cluster with a finger suggestion: 2 thin `shadow` notches
+    across the top (fingertip) row split the ~10px-wide cluster into 3
+    finger-width lobes, the only interior detail the 2-`skin`-cluster
+    budget (art-direction "Character rules") allows at this size. The
+    bottom row(s) stay a solid skin base - the palm resting on the keys."""
+    s.rect(x0, y0, x1, y1, "skin")
+    w = x1 - x0 + 1
+    for i in (1, 2):
+        fx = x0 + (w * i) // 3
+        s.dot(fx, y0, "shadow")
+        if y1 > y0:
+            s.dot(fx, y0 + 1, "shadow")
+
+
 def build_dev_base(frame: str) -> Sprite:
     s = Sprite(DEV_W, DEV_H)
     mask = _dev_fabric_mask(frame)
     outline_from_mask(s, mask, "shadow")
     _dev_hair_crescent(s, frame)
     for x0, x1, y0, y1 in _dev_hand_rects(frame):
-        s.rect(x0, y0, x1, y1, "skin")
+        _dev_paint_hand(s, x0, x1, y0, y1)
     if frame == "sleep":
         # A small `z` above the (now lower) dome's right shoulder - the
         # smallest readable sleep cue at this size. A true zigzag (top bar,
