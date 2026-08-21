@@ -13,6 +13,7 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -38,12 +39,36 @@ const (
 )
 
 func main() {
-	addr := flag.String("addr", "127.0.0.1:8080", "listen address (loopback by default — binding beyond 127.0.0.1/localhost exposes the activity monitor and save to your LAN/tailnet)")
+	addr := flag.String("addr", "127.0.0.1:8080", "listen address (loopback by default — binding beyond 127.0.0.1/localhost exposes the activity monitor and save to your LAN/tailnet); a port of 0 (e.g. 127.0.0.1:0) binds an OS-assigned free port, reported via the DEXEL_LISTENING stdout handshake — see ADR 0015")
 	publicDir := flag.String("public", "./public", "static frontend directory (owned by the frontend agent)")
 	providerKind := flag.String("provider", "auto", `activity provider: "auto" (native for this OS) or "fake"`)
 	fakeScript := flag.String("fake-script", "", "explicit fake-provider script (e.g. type:20s,idle:40s,mouse:15s); overrides DEXEL_FAKE_SCRIPT; implies -provider=fake")
 	insecureOrigin := flag.Bool("insecure-origin", false, "accept WebSocket connections from ANY Origin, skipping same-origin verification entirely — for embedded webviews only (e.g. a file:// or app:// frontend whose Origin header, if any, will never match a loopback host pattern); never enable this if -addr binds beyond 127.0.0.1/localhost")
+	var allowOrigins originList
+	flag.Var(&allowOrigins, "allow-origin", "extra literal WebSocket Origin(s) to accept, beyond the loopback host(s) derived from -addr's resolved port (repeatable, and/or comma-separated within one occurrence); each value is a bare host[:port] (e.g. \"tauri.localhost\") or a full origin URL from which the host is extracted (e.g. \"tauri://localhost\", \"http://tauri.localhost\") — never a wildcard; insurance for a future embedded webview whose Origin header won't match a loopback pattern (ADR 0015/docs/plan/F3-design.md §2,§8); not needed, and unused in Phase 1, when the webview loads this server's own loopback URL")
 	flag.Parse()
+
+	// Bind explicitly (ADR 0015 / docs/plan/F3-design.md §1,§8 T2) rather
+	// than letting http.Server.ListenAndServe do it implicitly, so that
+	// (a) -addr's port can be 0 and the OS-assigned real port is knowable
+	// before anything else needs it (wsOriginPatterns below, the stdout
+	// handshake, the human log line), and (b) a port-already-in-use error
+	// fails loudly right here instead of after the rest of startup runs.
+	ln, err := net.Listen("tcp", *addr)
+	if err != nil {
+		log.Fatalf("listen on %s: %v", *addr, err)
+	}
+	actualAddr := ln.Addr().String()
+
+	// Stdout handshake (ADR 0015 / docs/plan/F3-design.md §1,§8 T2): print
+	// exactly one stable, machine-readable line to STDOUT as soon as the
+	// listener is bound, so a parent process (the future Tauri shell, T1)
+	// can learn the real port from an ephemeral `-addr 127.0.0.1:0` bind
+	// without guessing a port or polling for one. Deliberately independent
+	// of the human-readable "dexel listening on..." log line below (which
+	// goes through the log package, i.e. stderr by default): the parent
+	// parses stdout, a person reads the log.
+	fmt.Println(handshakeLine(actualAddr))
 
 	ensurePublicDirExists(*publicDir)
 	publicOk := publicIndexExists(*publicDir)
@@ -80,7 +105,11 @@ func main() {
 	}
 
 	eng := engine.New(provider)
-	hub := newHub(wsOriginPatterns(*addr), *insecureOrigin)
+	extraOrigins, err := wsExtraOriginPatterns(allowOrigins)
+	if err != nil {
+		log.Fatalf("%v", err)
+	}
+	hub := newHub(append(wsOriginPatterns(actualAddr), extraOrigins...), *insecureOrigin)
 	// Seed the cache a new connection's initial `state` snapshot reads
 	// from — done here, before the HTTP server (and therefore before any
 	// per-connection goroutine) starts, so the very first client to
@@ -96,10 +125,10 @@ func main() {
 	mux.HandleFunc("/api/health", healthHandler(assetsDir, publicOk, buildVersion()))
 	mux.HandleFunc("/ws", hub.handleWS(actions, catalog))
 
-	httpSrv := &http.Server{Addr: *addr, Handler: mux}
+	httpSrv := &http.Server{Handler: mux}
 	go func() {
-		log.Printf("dexel listening on http://%s (serving %s)", *addr, *publicDir)
-		if err := httpSrv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+		log.Printf("dexel listening on http://%s (serving %s)", actualAddr, *publicDir)
+		if err := httpSrv.Serve(ln); err != nil && err != http.ErrServerClosed {
 			log.Fatalf("http server: %v", err)
 		}
 	}()
@@ -251,6 +280,75 @@ func wsOriginPatterns(addr string) []string {
 		log.Fatalf("bad -addr %q: %v (want host:port, e.g. 127.0.0.1:8080)", addr, err)
 	}
 	return []string{"127.0.0.1:" + port, "localhost:" + port}
+}
+
+// handshakeLine formats the one stable, machine-readable line this
+// process prints to stdout once its listener is bound (ADR 0015 /
+// docs/plan/F3-design.md §1,§8 T2): "DEXEL_LISTENING http://<addr>". A
+// future parent process (the Tauri shell's T1) reads this exact prefix
+// off the sidecar's stdout to learn which port an ephemeral
+// `-addr 127.0.0.1:0` bind actually landed on, before it can open a
+// window pointed at this server — so the shape must stay stable; this is
+// factored out purely so the shape itself is unit-testable without
+// spinning up main()'s whole server.
+func handshakeLine(addr string) string {
+	return "DEXEL_LISTENING http://" + addr
+}
+
+// originList is a repeatable flag.Value for -allow-origin: each
+// occurrence (and each comma-separated part within one occurrence)
+// appends to the slice, unlike flag.String which would keep only the
+// last occurrence and silently drop earlier ones.
+type originList []string
+
+func (o *originList) String() string { return strings.Join(*o, ",") }
+
+func (o *originList) Set(value string) error {
+	for _, part := range strings.Split(value, ",") {
+		part = strings.TrimSpace(part)
+		if part != "" {
+			*o = append(*o, part)
+		}
+	}
+	return nil
+}
+
+// wsExtraOriginPatterns converts each -allow-origin flag value into a
+// host pattern to append to wsOriginPatterns's result. nhooyr.io/
+// websocket's OriginPatterns is matched against the parsed Origin
+// header's *host* only (see its accept.go authenticateOrigin), not the
+// full origin string, so a bare "tauri://localhost" would never match
+// anything if appended verbatim — hence each value here may be given
+// either as a bare host[:port] (e.g. "tauri.localhost") or as a full
+// origin URL (e.g. "tauri://localhost", "http://tauri.localhost" — the
+// two real per-platform Tauri v2 origins docs/plan/F3-design.md §2
+// names), from which the host is extracted.
+//
+// This is deliberately tight, additive insurance (§2: "specific literal
+// origins... never *"), not a second -insecure-origin: a wildcard or an
+// unparseable/hostless value is a startup misconfiguration worth failing
+// loudly on, exactly like wsOriginPatterns's own -addr validation, rather
+// than silently degrading the origin check.
+func wsExtraOriginPatterns(origins []string) ([]string, error) {
+	patterns := make([]string, 0, len(origins))
+	for _, o := range origins {
+		host := o
+		if strings.Contains(o, "://") {
+			u, err := url.Parse(o)
+			if err != nil {
+				return nil, fmt.Errorf("bad -allow-origin %q: %w", o, err)
+			}
+			host = u.Host
+		}
+		if host == "" {
+			return nil, fmt.Errorf("bad -allow-origin %q: empty host", o)
+		}
+		if strings.Contains(host, "*") {
+			return nil, fmt.Errorf("bad -allow-origin %q: wildcard origins are never allowed", o)
+		}
+		patterns = append(patterns, host)
+	}
+	return patterns, nil
 }
 
 // selectProvider builds the activity.Provider for this run. -fake-script
