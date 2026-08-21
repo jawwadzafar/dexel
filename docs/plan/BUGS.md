@@ -18,7 +18,15 @@ verified in the REAL running game (render → look → iterate), not in isolatio
   terminal/status text for the same clipping) so no text is cut. Verify in the
   real render that full glyphs/descenders show.
 
-## Art track (tools/gen_assets.py / assets / geometry.ts)
+## Art track (tools/gen_assets.py / assets / geometry.ts) — FIXED 2026-08-22
+
+**Resolved:** root cause was the head sitting above the hard-region line so no
+chair could rise over it — fixed by LOWERING the head (not raising chairs).
+Hood dome dropped ~11px; arms pulled outward with a 4px gap each side (hood +
+2 arms now read as 3 forms); every chair back painted up to the hard-region
+top with always-visible detail markers (mesh/stitch/tufting/glow) so the
+chair-top reads above the head at any tint and stays distinct from the hoodie.
+Overseer-gated across basic/exec/antigrav.
 
 Evidence: in the current hero/scene render the character still doesn't clearly
 read as sitting IN the chair, and several elements blend together.
