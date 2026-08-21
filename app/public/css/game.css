@@ -814,19 +814,25 @@ img, .sprite {
 /* Same mechanics as #store above (native <dialog>, showModal(), the
    shared #scrim) — Phase A1's Analytics track, docs/plan/ROADMAP.md.
    Smaller than #store since it's read-only, two flat lists, no grid/
-   preview: 360x396, centered in the 640x400 viewport. Grew from 272px
-   tall in A1 to fit A2's two extra rows per section (focus sessions,
-   app switches) plus the new coins-today breakdown (§6, A2-design.md);
-   top/height re-centered (was left:140/top:64/height:272 — still
-   centered horizontally, now (400-396)/2=2 vertically) to keep the
-   whole thing inside the fixed 640x400 viewport. */
+   preview: 360x346, centered in the 640x400 viewport.
+   BUG-8: a native dialog:modal is capped by the browser's UA stylesheet
+   at max-height: calc(100% - 6px - 2em) — 362px at this 400px viewport
+   with a 16px root font — so the old 396px-tall modal (top:2, meant to
+   fit snugly under 400px) got silently capped to 362px and the footer
+   plus the last coins-today row scroll-clipped. Fixed by shrinking the
+   modal itself to 346px (well under the 362px cap, not just relying on
+   the cap to save us) via tighter row heights (see .activity-row below,
+   16px -> 12px; still well above the 10px BUG-3 established as the
+   minimum safe line-height for this font/size) and tighter inter-section
+   gaps, and re-centering vertically: (400-346)/2=27, matching the
+   centered convention #history uses below. */
 
 #activity {
   position: fixed;
   left: 140px;
-  top: 2px;
+  top: 27px;
   width: 360px;
-  height: 396px;
+  height: 346px;
   margin: 0;
   padding: 12px;
   border: 4px solid var(--wall-light);
@@ -864,13 +870,15 @@ img, .sprite {
   left: 12px;
   width: 336px;
 }
-/* Each of today/lifetime now carries 7 rows (5 A1 rows + A2's focus
-   sessions/app switches): title(16)+margin(4) + 7*16 = 132px tall. */
-#activity-today { top: 40px; }
-#activity-lifetime { top: 180px; } /* 40 + 132 + 8px gap */
-#activity-coins { top: 316px; } /* 180 + 132 + 4px gap — tightened from 8px
-   to give the coins rows below room (10px each instead of 8px) without
-   overflowing the fixed 396px modal; see the block below for the budget. */
+/* Each of today/lifetime carries 7 rows (5 A1 rows + A2's focus
+   sessions/app switches): title(16)+margin(4) + 7*12 = 104px tall.
+   (BUG-8: row height dropped 16px -> 12px, see .activity-row below, to
+   fit the whole modal under the browser's 362px dialog:modal cap.) */
+#activity-today { top: 36px; } /* 12 (title row) + 16 (its height) + 8px gap */
+#activity-lifetime { top: 148px; } /* 36 + 104 + 8px gap */
+#activity-coins { top: 258px; } /* 148 + 104 + 6px gap — leaves the coins
+   rows below room (10px each) without overflowing the fixed 346px modal;
+   see the block below for the budget. */
 
 .activity-section-title {
   height: 16px;
@@ -882,9 +890,13 @@ img, .sprite {
 }
 
 .activity-row {
+  /* BUG-8: 16px -> 12px so today/lifetime's 7 rows each fit under the
+     browser's dialog:modal height cap; still comfortably above the 10px
+     BUG-3 established as the minimum safe line-height for this 8px
+     pixel font (no glyph clipping). */
   position: relative;
-  height: 16px;
-  line-height: 16px;
+  height: 12px;
+  line-height: 12px;
   font-size: 8px;
   white-space: nowrap;
 }
@@ -901,9 +913,9 @@ img, .sprite {
    per signal, same .label/.value split as .activity-row above (inherits
    .activity-section's left:12/width:336, so values sit flush with the
    TODAY/LIFETIME columns and never crowd the modal's border).
-   Budget inside the fixed 396px modal, footer fixed at top:376px:
-     #activity-coins top(316) + title(16) + title margin(2) + 4*10 rows(40)
-     = 374 -> 2px clear of the footer, no overflow.
+   Budget inside the fixed 346px modal (BUG-8), footer fixed at top:322px:
+     #activity-coins top(258) + title(16) + title margin(2) + 4*10 rows(40)
+     = 316 -> 6px clear of the footer, no overflow.
    Row height went 8px->10px and font 7px->8px (matches TODAY/LIFETIME's
    8px) so this reads as a real section instead of an afterthought; the
    4px inter-section gap above (was 8px) and the 2px title margin (was the
@@ -944,11 +956,15 @@ img, .sprite {
 #activity-help {
   /* BUG-3 audit: bumped to 10px for consistency (was 8px, no
      overflow:hidden here but no headroom-guaranteeing line-height
-     either); #activity's padding-box bottom edge is 388px, so this
-     row's new bottom (376+10=386) still has 2px clear. */
+     either).
+     BUG-8: moved from top:376 to top:322 as part of shrinking the whole
+     modal to 346px so it renders under the browser's dialog:modal
+     max-height cap instead of getting scroll-clipped; #activity's
+     padding-box bottom edge is now 338px (346 - 2*4px border), so this
+     row's bottom (322+10=332) still has 6px clear. */
   position: absolute;
   left: 12px;
-  top: 376px;
+  top: 322px;
   width: 336px;
   height: 10px;
   line-height: 10px;

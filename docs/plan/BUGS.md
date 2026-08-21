@@ -54,7 +54,7 @@ geometry), gated by real in-game renders judged by eye until it clearly reads as
 
 ## Follow-ups found during fixes
 
-- **BUG-8 — Activity modal footer/last row clipped (pre-existing).** `#activity`
+- **BUG-8 — Activity modal footer/last row clipped (pre-existing). FIXED 2026-08-22.** `#activity`
   is declared `height: 396px`, but the browser caps a native `dialog:modal` at
   `max-height: calc(100% - 38px)` = 362px at the game's 400px viewport, so the
   modal's footer and last "coins earned today" row get scroll-clipped. Predates
