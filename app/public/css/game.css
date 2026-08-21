@@ -134,7 +134,19 @@ img, .sprite {
      11 lines at an 8px line-height (88px) — 84 is 4px short of 11*8.
      [DESIGN CALL] height is 88px (11 * 8, no clipped line) rather than the
      literal 84, since clipping the newest (bottom) line would hide the
-     single most important row in the panel; see game.js report notes. */
+     single most important row in the panel; see game.js report notes.
+     BUG-3 audit: unlike #sprint-name/#status-line (which had NO explicit
+     line-height and were clipped by the browser's larger UA-default
+     line-height), #terminal already pins line-height:8px explicitly, and
+     a real in-game render at 8px shows every glyph — including
+     descenders in "warning"/"resolved"/"deps" — fully intact, not
+     clipped. Bumping this to 10px was tried and rejected: 11 lines * 10px
+     = 110px pushes the text 26px past the monitor sprite's actual glass
+     area (assets/monitor.png's dark-fill region is local y[4,48), i.e.
+     scene y[24,68) -> screen-px y[48,136), only 88px tall — a hard
+     pixel-art boundary this UI-only fix must not paint over), so the
+     bottom lines visibly spilled onto the floor tile behind the monitor.
+     Left at 8px/88px: it isn't broken, and growing it breaks the art. */
   position: absolute;
   left: 200px;
   top: 52px;
@@ -220,48 +232,15 @@ img, .sprite {
   z-index: 100;
 }
 
-#title-text {
-  position: absolute;
-  left: 8px;
-  top: 8px;
-  width: 104px;
-  height: 8px;
-  font-size: 8px;
-  color: var(--cream);
-  white-space: nowrap;
-}
-
-#mood-dot {
-  position: absolute;
-  left: 120px;
-  top: 8px;
-  width: 8px;
-  height: 8px;
-  border-radius: 0;
-  background: var(--screen);
-}
-
-/* Title-bar redesign: the coin/level HUD moves next to the wordmark
-   (top-left) and the three separate [A]/[H]/[S] launcher buttons are
-   replaced by a single hamburger (#menu-open, top-right) that opens
-   #menu-panel — see below. #hud-level/#hud-cash keep their ids and
-   left-align now that they sit in the wordmark cluster instead of
-   right-aligned against the titlebar's far edge. */
-#hud-level {
-  position: absolute;
-  left: 136px;
-  top: 8px;
-  width: 40px;
-  height: 8px;
-  font-size: 8px;
-  color: var(--cream);
-  text-align: left;
-  white-space: nowrap;
-}
-
+/* Title-bar redesign (BUG-2): the wordmark and mood dot are gone — the
+   title bar shows ONLY the coin/Dev Cash display, then the level,
+   clustered top-left, coin first. (Mood is still shown via #status-dot
+   in the bottom status panel.) The three separate [A]/[H]/[S] launcher
+   buttons are replaced by a single hamburger (#menu-open, top-right)
+   that opens #menu-panel — see below. */
 #hud-cash {
   position: absolute;
-  left: 184px;
+  left: 8px;
   top: 4px;
   width: 64px;
   height: 16px;
@@ -272,6 +251,18 @@ img, .sprite {
   line-height: 16px;
 }
 #hud-cash .nes-icon { vertical-align: middle; margin-right: 2px; }
+
+#hud-level {
+  position: absolute;
+  left: 80px;
+  top: 8px;
+  width: 40px;
+  height: 8px;
+  font-size: 8px;
+  color: var(--cream);
+  text-align: left;
+  white-space: nowrap;
+}
 
 /* Hamburger button (top-right). Per the A2 lesson (a fancy glyph like ☰
    can render blurry/inconsistent at this app's 1x DPI in the pixel font),
@@ -331,6 +322,23 @@ img, .sprite {
   gap: 4px;
 }
 #menu-panel.visible { display: flex; }
+
+/* BUG-1: a one-line section title above the launcher buttons, styled
+   like the other section titles (.activity-section-title /
+   .history-section-title) — small pixel caps, dim colour, a bottom
+   rule to separate it from the items below. Not a `.menu-item`, so the
+   panel's generic "any click on a .menu-item closes the menu" listener
+   in menu.ts never fires for it. Room is already here for future
+   sections: they're just more `.menu-item` buttons after this title. */
+#menu-panel-title {
+  height: 16px;
+  line-height: 16px;
+  font-size: 8px;
+  color: var(--screen-dim);
+  border-bottom: 2px solid var(--wall-light);
+  white-space: nowrap;
+}
+
 #menu-panel .menu-item {
   /* Deliberately NOT `position: static` here: NES.css's base `.nes-btn`
      rule sets `position: relative` because its `::after` pixel-shadow
@@ -368,11 +376,19 @@ img, .sprite {
 }
 
 #sprint-name {
+  /* BUG-3: was height:8/no explicit line-height — the browser's default
+     line-height (> 8px for this pixel font) overflowed the 8px box and
+     got clipped by overflow:hidden, cutting descenders/bottoms of
+     glyphs (this is the "SPRINT" -> "SPRTNT" bug). 10px fits the full
+     glyph; #panel-sprint has slack below (sprint-bar/-units end well
+     short of the panel's bottom padding edge) so this doesn't overflow
+     the panel. */
   position: absolute;
   left: 6px;
   top: 6px;
   width: 288px;
-  height: 8px;
+  height: 10px;
+  line-height: 10px;
   font-size: 8px;
   white-space: nowrap;
   overflow: hidden;
@@ -389,11 +405,15 @@ img, .sprite {
 }
 
 #sprint-units {
+  /* BUG-3 audit: same 8px-box/default-line-height risk as #sprint-name
+     above — bumped to 10px for consistency even though this box has no
+     overflow:hidden today. */
   position: absolute;
   left: 6px;
   top: 46px;
   width: 288px;
-  height: 8px;
+  height: 10px;
+  line-height: 10px;
   font-size: 8px;
   color: var(--screen-dim);
   white-space: nowrap;
@@ -416,11 +436,14 @@ img, .sprite {
 }
 
 #status-line {
+  /* BUG-3: was height:8/overflow:hidden with no explicit line-height —
+     clipped glyph descenders. Bumped to 10px, same fix as #sprint-name. */
   position: absolute;
   left: 18px;
   top: 6px;
   width: 276px;
-  height: 8px;
+  height: 10px;
+  line-height: 10px;
   font-size: 8px;
   color: var(--cream);
   white-space: nowrap;
@@ -430,7 +453,7 @@ img, .sprite {
 #status-rule {
   position: absolute;
   left: 6px;
-  top: 18px;
+  top: 20px;
   width: 288px;
   height: 1px;
   border: none;
@@ -443,14 +466,15 @@ img, .sprite {
   left: 6px;
   top: 24px;
   width: 288px;
-  height: 32px;
+  height: 30px;
   margin: 0;
   padding: 0;
   list-style: none;
 }
 #ticker li {
-  height: 8px;
-  line-height: 8px;
+  /* BUG-3: same clipped-descender fix as #status-line above. */
+  height: 10px;
+  line-height: 10px;
   font-size: 8px;
   color: var(--screen-dim);
   white-space: nowrap;
@@ -527,11 +551,13 @@ img, .sprite {
 }
 
 #store-cash {
+  /* BUG-3 audit: same 8px-box clipped-glyph risk pattern; bumped to 10px. */
   position: absolute;
   left: 340px;
   top: 32px;
   width: 200px;
-  height: 8px;
+  height: 10px;
+  line-height: 10px;
   font-size: 8px;
   color: var(--gold);
   text-align: right;
@@ -625,11 +651,14 @@ img, .sprite {
 .card .thumb img { width: 100%; height: 100%; object-fit: contain; }
 
 .card .name {
+  /* BUG-3: was height:8/overflow:hidden with no explicit line-height —
+     clipped glyph descenders on item names. Bumped to 10px. */
   position: absolute;
   left: 52px;
   top: 6px;
   width: 174px;
-  height: 8px;
+  height: 10px;
+  line-height: 10px;
   font-size: 8px;
   color: var(--cream);
   white-space: nowrap;
@@ -637,11 +666,13 @@ img, .sprite {
 }
 
 .card .price-state {
+  /* BUG-3 audit: same pattern as .card .name; bumped to 10px. */
   position: absolute;
   left: 52px;
   top: 20px;
   width: 174px;
-  height: 8px;
+  height: 10px;
+  line-height: 10px;
   font-size: 8px;
   color: var(--screen-dim);
   white-space: nowrap;
@@ -738,31 +769,41 @@ img, .sprite {
   font-size: 8px;
 }
 #store-preview-name {
+  /* BUG-3: was height:8/overflow:hidden — clipped glyph descenders.
+     Bumped to 10px; #store-preview-state below still starts at 188px,
+     12px clear of this row's new bottom edge (176+10=186). */
   position: absolute;
   left: 0;
   top: 176px;
   width: 160px;
-  height: 8px;
+  height: 10px;
+  line-height: 10px;
   font-size: 8px;
   color: var(--cream);
   white-space: nowrap;
   overflow: hidden;
 }
 #store-preview-state {
+  /* BUG-3 audit: same pattern; bumped to 10px. */
   position: absolute;
   left: 0;
   top: 188px;
   width: 160px;
-  height: 8px;
+  height: 10px;
+  line-height: 10px;
   font-size: 8px;
   color: var(--cream);
 }
 #store-preview-color {
+  /* BUG-3: was height:8/overflow:hidden — clipped glyph descenders.
+     Bumped to 10px; #store-preview is 212px tall so this row (ends at
+     200+10=210) still has 2px clear of the container's bottom edge. */
   position: absolute;
   left: 0;
   top: 200px;
   width: 160px;
-  height: 8px;
+  height: 10px;
+  line-height: 10px;
   font-size: 8px;
   color: var(--screen-dim);
   white-space: nowrap;
@@ -901,11 +942,16 @@ img, .sprite {
 #activity-coins .activity-section-title { margin-bottom: 2px; }
 
 #activity-help {
+  /* BUG-3 audit: bumped to 10px for consistency (was 8px, no
+     overflow:hidden here but no headroom-guaranteeing line-height
+     either); #activity's padding-box bottom edge is 388px, so this
+     row's new bottom (376+10=386) still has 2px clear. */
   position: absolute;
   left: 12px;
   top: 376px;
   width: 336px;
-  height: 8px;
+  height: 10px;
+  line-height: 10px;
   font-size: 8px;
   color: var(--screen-dim);
   text-align: right;
@@ -1095,11 +1141,15 @@ img, .sprite {
 }
 
 #history-help {
+  /* BUG-3 audit: bumped to 10px for consistency; #history's padding-box
+     bottom edge is 304px, so this row's new bottom (292+10=302) still
+     has 2px clear. */
   position: absolute;
   left: 12px;
   top: 292px;
   width: 536px;
-  height: 8px;
+  height: 10px;
+  line-height: 10px;
   font-size: 8px;
   color: var(--screen-dim);
   text-align: right;

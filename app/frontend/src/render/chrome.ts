@@ -5,7 +5,6 @@ import * as store from '../state/store';
 import { fmtInt, truncate } from '../format';
 import { MOOD_COLOR } from '../geometry';
 
-const moodDot = byId('mood-dot');
 const hudLevel = byId('hud-level');
 const hudCash = byId('hud-cash').querySelector('.value') as HTMLElement;
 const sprintName = byId('sprint-name').querySelector('.value') as HTMLElement;
@@ -18,8 +17,9 @@ const ticker = byId<HTMLUListElement>('ticker');
 export function renderChrome(): void {
   const state = store.getState();
   if (!state) return;
+  // The title bar no longer shows a mood dot (BUG-2) — mood is still
+  // conveyed via #status-dot in the bottom status panel.
   const moodColor = MOOD_COLOR[state.activeState] || MOOD_COLOR.idle;
-  moodDot.style.background = moodColor;
   statusDot.style.background = moodColor;
   hudLevel.textContent = 'LV ' + fmtInt(state.level);
   hudCash.textContent = fmtInt(state.devCash);
