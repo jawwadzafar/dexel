@@ -155,3 +155,41 @@ user hands roadmaps; not pre-scoped here.
 ## Deferred (named so they don't creep)
 Wails floating window; meeting/mic detection; the tint-hex contrast fix
 (slate ~ wall_dark); auto-update/distribution; any Rust revisit.
+
+---
+
+## Night execution pipeline (2026-08-22, autonomous)
+
+User directive: rename done (dexel + Apache-2.0), now "go on into the night and
+keep improving" — execute these one by one, gate each in the real game, commit.
+Repo stays PRIVATE until the user says otherwise.
+
+- **UI-1 — Hamburger menu + coin top-left.** Replace the separate [A]/[H]/[S]
+  launchers with one ☰ menu (top-right) listing all sections; move the coin/Dev
+  Cash display top-left; each menu item opens its existing modal. Structured so
+  future sections (Sessions/Goals) slot in. Frontend only; modals unchanged.
+  Exit: hamburger opens menu, each item opens its box, coin top-left, keyboard
+  shortcuts still work, gated in-game. *(in progress)*
+- **UI-2 — README screenshots + cross-platform build docs.** Re-capture hero +
+  store + history showing the dexel titlebar, the fixed seated chair, and the new
+  hamburger UI; drop into docs/images/. Add build/run instructions for macOS,
+  Linux, Windows (build-from-source now; packaged-app once Tauri lands).
+- **SEC-1 — Save integrity / anti-cheat.** Design pass (ADR) first: split a
+  user-editable CONFIG (e.g. the dexel's name) from PROTECTED game state; sign
+  the economy-critical fields (Dev Cash, owned items, XP, sprint, history) with
+  an HMAC/checksum so hand-editing the JSON to mint money is detected/rejected.
+  Honest about limits (a fully local single-player save can't be perfectly
+  cheat-proof — the goal is to stop casual JSON editing, not a determined
+  reverse-engineer). Then implement + gate.
+- **F3 — Tauri desktop shell.** Design pass first (ADR): wrap the existing Go
+  backend + web frontend in a Tauri window so it runs as a native app, no
+  browser. "Least effort" path: Tauri Rust shell spawns the Go binary as a
+  sidecar; the webview points at the local server. Targets: macOS, Windows,
+  Linux; architectures x86_64 + arm64 (aarch64) wherever the toolchain allows.
+  Release CI build matrix. Then implement + gate.
+- **PRODUCT-EVOLUTION.md** *(design-only, in progress, Opus)* — a coherent
+  phased product vision from the owner's brief (sessions, goals, journeys,
+  long-term progression, world expansion, character life, achievements,
+  personal-journey/history, onboarding/identity; social = future-only). Respects
+  the privacy model + honest mechanics; no AI/LLM/code-reading. Seeds the
+  post-infra roadmap for morning review.
