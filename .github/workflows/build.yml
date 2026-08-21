@@ -12,7 +12,15 @@ on:
 # self-hosted runner. Use the `darkmirror` label so the job is pinned to that
 # specific machine.
 #
-# Targets produced here (Linux host):
+# Two independent jobs live here:
+#   - `build` (below): the LEGACY, frozen Rust/Bevy companion crate under
+#     companion/ (ADR 0011: superseded by the Go+WS backend under app/, kept
+#     buildable only as the one-time legacy-save source the Go backend
+#     imports from — see docs/upgrade-design.md). Not where new work lands.
+#   - `go`: the ACTUAL current backend under app/ — go vet + a raced test
+#     run. This is the job that must be green for any app/ change.
+#
+# Targets produced by `build` (Linux host):
 #   - x86_64-unknown-linux-gnu   (native)
 #   - aarch64-unknown-linux-gnu  (cross, via `cross`/Docker — provides the
 #     aarch64 glibc sysroot Bevy's wayland/gbm/alsa libs need)
@@ -27,8 +35,12 @@ env:
 # Self-hosted runners keep their state; clean the workspace when a job ends.
 # (Standard hygiene for self-hosted runners.)
 jobs:
+  # LEGACY: the frozen Rust/Bevy companion crate (see the file-level comment
+  # above). Kept building so the one-time legacy-save import path
+  # (docs/upgrade-design.md) always has a real binary to produce a save
+  # with; not where new gameplay work happens anymore.
   build:
-    name: Build ${{ matrix.name }}
+    name: "[legacy rust] Build ${{ matrix.name }}"
     runs-on: [self-hosted, darkmirror]
     strategy:
       fail-fast: false
@@ -98,3 +110,42 @@ jobs:
         with:
           name: companion-${{ matrix.name }}-${{ github.sha }}
           path: target/${{ matrix.target }}/release/companion
+
+  # The current backend (ADR 0011): go vet + a raced test run of everything
+  # under app/. CGO is required — internal/store's/handlers' race tests and
+  # (on a real darwin runner) provider_darwin.go's cgo all need a working C
+  # toolchain, which is why this job installs one the same way the rust
+  # `build` job above does (native x86_64 needs a linker too).
+  go:
+    name: Go (vet + race test)
+    runs-on: [self-hosted, darkmirror]
+    env:
+      CGO_ENABLED: "1"
+    steps:
+      - name: Clean workspace
+        run: |
+          rm -rf "${GITHUB_WORKSPACE:?}"/* "${GITHUB_WORKSPACE:?}"/.[!.]* 2>/dev/null || true
+
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.27"
+
+      # -race needs a real C compiler/linker for its runtime; mirrors the
+      # rust job's "Install build deps (native x86_64)" step above.
+      - name: Install build deps (cgo/-race needs a C toolchain)
+        run: |
+          if ! command -v cc >/dev/null; then
+            (sudo apt-get update && sudo apt-get install -y build-essential) 2>/dev/null \
+              || echo "no sudo — relying on an existing cc/zig toolchain"
+          fi
+          go version
+
+      - name: go vet
+        working-directory: app
+        run: go vet ./...
+
+      - name: go test -race
+        working-directory: app
+        run: go test -race ./...

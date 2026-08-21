@@ -2,6 +2,7 @@ package store
 
 import (
 	"encoding/json"
+	"math"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -127,6 +128,9 @@ func LoadLegacy(path string) (*legacySaveData, error) {
 //   - each old track's owned tier grants the migration table's items and
 //     adds max(0, paid-value) to devCash as a refund — so devCash_after >=
 //     devCash_before for every input, by construction (see store_test.go).
+//     The add saturates at math.MaxUint64 rather than wrapping, so a
+//     near-max wallet plus a refund can never overflow into a small
+//     number and violate that same invariant the other way.
 //   - every slot also gets its free tier-0 item, exactly as a fresh
 //     install would.
 //   - equip rule: for each slot, equip the MOST EXPENSIVE owned item (with
@@ -168,7 +172,7 @@ func ImportLegacy(legacy *legacySaveData, catalog []game.CatalogItem) SaveData {
 			ownedItems[id] = true
 		}
 		if row.Paid > row.Value {
-			devCash += row.Paid - row.Value
+			devCash = addSaturatingUint64(devCash, row.Paid-row.Value)
 		}
 	}
 
@@ -250,4 +254,18 @@ func clampInt(v, lo, hi int) int {
 		return hi
 	}
 	return v
+}
+
+// addSaturatingUint64 adds b to a, clamping at math.MaxUint64 instead of
+// wrapping around to a small number on overflow. Used for every refund
+// ImportLegacy adds to devCash so the devCash_after >= devCash_before
+// invariant this whole function exists to guarantee (see ImportLegacy's
+// doc comment) can never be violated by a wallet already near the
+// uint64 ceiling.
+func addSaturatingUint64(a, b uint64) uint64 {
+	sum := a + b
+	if sum < a { // wrapped around past math.MaxUint64
+		return math.MaxUint64
+	}
+	return sum
 }

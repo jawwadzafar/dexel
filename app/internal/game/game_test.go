@@ -305,7 +305,7 @@ func TestTickWrapsSprintRotation(t *testing.T) {
 func TestStoreOpenFreezesWorkAndDevCashAndMood(t *testing.T) {
 	g := New()
 	g.Mood = engine.MoodCoding // pretend we were coding right before opening the store
-	g.OpenStore()
+	g.OpenStore(1)
 
 	startCash := g.DevCash
 	startProgress := g.Progress
@@ -333,7 +333,7 @@ func TestStoreOpenFreezesWorkAndDevCashAndMood(t *testing.T) {
 	// is a pure function of the TickResult it's handed, so simulate "the
 	// engine's baseline already absorbed the shopping keystrokes" by
 	// simply handing a normal, small WorkUnits value post-close.
-	g.CloseStore()
+	g.CloseStore(1)
 	g.Tick(engine.TickResult{Mood: engine.MoodCoding, WorkUnits: 0.5})
 	if g.Progress != startProgress+0.5 {
 		t.Errorf("Progress after closing = %v, want %v (only the post-close tick's work)", g.Progress, startProgress+0.5)

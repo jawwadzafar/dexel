@@ -10,6 +10,7 @@ import (
 	"flag"
 	"fmt"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -36,10 +37,11 @@ const (
 )
 
 func main() {
-	addr := flag.String("addr", ":8080", "listen address")
+	addr := flag.String("addr", "127.0.0.1:8080", "listen address (loopback by default — binding beyond 127.0.0.1/localhost exposes the activity monitor and save to your LAN/tailnet)")
 	publicDir := flag.String("public", "./public", "static frontend directory (owned by the frontend agent)")
 	providerKind := flag.String("provider", "auto", `activity provider: "auto" (native for this OS) or "fake"`)
 	fakeScript := flag.String("fake-script", "", "explicit fake-provider script (e.g. type:20s,idle:40s,mouse:15s); overrides DEVCOMPANION_FAKE_SCRIPT; implies -provider=fake")
+	insecureOrigin := flag.Bool("insecure-origin", false, "accept WebSocket connections from ANY Origin, skipping same-origin verification entirely — for embedded webviews only (e.g. a file:// or app:// frontend whose Origin header, if any, will never match a loopback host pattern); never enable this if -addr binds beyond 127.0.0.1/localhost")
 	flag.Parse()
 
 	ensurePublicDirExists(*publicDir)
@@ -66,7 +68,7 @@ func main() {
 	loadOrImport(g, savePath)
 
 	eng := engine.New(provider)
-	hub := newHub()
+	hub := newHub(wsOriginPatterns(*addr), *insecureOrigin)
 	// Seed the cache a new connection's initial `state` snapshot reads
 	// from — done here, before the HTTP server (and therefore before any
 	// per-connection goroutine) starts, so the very first client to
@@ -84,7 +86,7 @@ func main() {
 
 	httpSrv := &http.Server{Addr: *addr, Handler: mux}
 	go func() {
-		log.Printf("dev-companion listening on http://localhost%s (serving %s)", *addr, *publicDir)
+		log.Printf("dev-companion listening on http://%s (serving %s)", *addr, *publicDir)
 		if err := httpSrv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			log.Fatalf("http server: %v", err)
 		}
@@ -138,7 +140,7 @@ func main() {
 			persist()
 
 		case req := <-actions:
-			mutated, flash := applyAction(g, req.msg)
+			mutated, flash := applyAction(g, req.msg, req.connID)
 			if mutated {
 				hub.broadcastState(g.State())
 			}
@@ -163,8 +165,12 @@ func main() {
 // changed plus the flash it produced (docs/ui-spec.md §6.2: "no dedicated
 // ack... every successful action is answered by an immediate state
 // broadcast plus a flash; every failure by a flash of kind error").
-// STORE_OPEN/STORE_CLOSE mutate state but produce no flash.
-func applyAction(g *game.Game, msg actionMessage) (mutated bool, flash *flashMessage) {
+// STORE_OPEN/STORE_CLOSE mutate state but produce no flash. connID is the
+// sending connection's id (already plumbed through hub.go's
+// actionRequest) — STORE_OPEN/CLOSE key their hold on the work gate by it
+// (game.Game.OpenStore/CloseStore) so one client's close or disconnect can
+// never release a different client's gate.
+func applyAction(g *game.Game, msg actionMessage, connID uint64) (mutated bool, flash *flashMessage) {
 	errFlash := func(err error) *flashMessage {
 		return &flashMessage{Type: "flash", Kind: "error", Text: err.Error()}
 	}
@@ -199,16 +205,40 @@ func applyAction(g *game.Game, msg actionMessage) (mutated bool, flash *flashMes
 		return true, &flashMessage{Type: "flash", Kind: "equip", Text: fmt.Sprintf("Equipped %s!", item.Name)}
 
 	case "STORE_OPEN":
-		g.OpenStore()
+		g.OpenStore(connID)
 		return true, nil
 
 	case "STORE_CLOSE":
-		g.CloseStore()
+		g.CloseStore(connID)
 		return true, nil
 
 	default:
 		return false, errFlash(fmt.Errorf("unknown action %q", msg.Action))
 	}
+}
+
+// wsOriginPatterns derives the WebSocket Origin patterns handleWS should
+// accept from -addr's port (B1: the server used to accept literally any
+// Origin — InsecureSkipVerify: true — which let any web page a user had
+// open in another tab pop a cross-origin WS to this loopback server and
+// read activity state or mutate the save). A same-origin browser tab
+// always sends an Origin that is either empty (accepted unconditionally
+// by nhooyr.io/websocket — see handlers.go) or exactly matches r.Host
+// (also accepted unconditionally); these two patterns exist ONLY to cover
+// the other loopback hostname the frontend might be addressed by when
+// that differs from -addr's own host (127.0.0.1 vs. localhost) — never a
+// non-loopback host, regardless of what -addr itself was bound to,
+// because this process is meant to be reached over loopback only.
+//
+// -addr must have a port (flag.String's default does; a malformed
+// override is a startup misconfiguration worth failing loudly on rather
+// than silently guessing a port that would authorize the wrong Origin).
+func wsOriginPatterns(addr string) []string {
+	_, port, err := net.SplitHostPort(addr)
+	if err != nil {
+		log.Fatalf("bad -addr %q: %v (want host:port, e.g. 127.0.0.1:8080)", addr, err)
+	}
+	return []string{"127.0.0.1:" + port, "localhost:" + port}
 }
 
 // selectProvider builds the activity.Provider for this run. -fake-script

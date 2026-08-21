@@ -31,10 +31,11 @@ const (
 	keyCodeCeiling = 0x100 // mirrors the Rust evdev provider: standard key codes are < 0x100
 )
 
-// linuxSampleInterval: anti-mash coalescing window shared with the darwin
-// provider (ADR 0005's MOUSE_SAMPLE_SECS) — at most one counted keystroke
-// and one flagged mouse-active signal per this window.
-const linuxSampleInterval = 100 * time.Millisecond
+// linuxSampleInterval: alias for the package-wide anti-mash coalescing
+// window (MouseSampleInterval, defined in provider.go) — see that
+// constant's doc comment for why this and the darwin/engine copies were
+// hoisted into one place instead of each declaring their own 100ms.
+const linuxSampleInterval = MouseSampleInterval
 
 // LinuxProvider reads raw evdev nodes directly (no cgo, no library). If the
 // process cannot open any /dev/input/event* node (the 'input' group is

@@ -58,10 +58,29 @@ type Hub struct {
 	conns     map[uint64]*websocket.Conn
 	nextID    uint64
 	lastState game.StateMessage
+
+	// wsOriginPatterns/wsAllowAnyOrigin configure handleWS's WebSocket
+	// origin check (B1: the server used to accept any Origin at all,
+	// which meant any web page a user merely had open could pop a
+	// cross-origin WS to this loopback server and read/mutate the save).
+	// wsOriginPatterns is derived from -addr's port by main.go's
+	// wsOriginPatterns() so a same-origin browser tab always connects
+	// regardless of whether it's addressed via 127.0.0.1 or localhost.
+	// wsAllowAnyOrigin is the explicit -insecure-origin opt-out, default
+	// false — see main.go's flag description for when it's legitimate.
+	wsOriginPatterns []string
+	wsAllowAnyOrigin bool
 }
 
-func newHub() *Hub {
-	return &Hub{conns: map[uint64]*websocket.Conn{}}
+// newHub constructs a Hub that authorizes WebSocket upgrades against
+// originPatterns (see Hub.wsOriginPatterns's doc comment), or against ANY
+// origin if allowAnyOrigin is true (-insecure-origin).
+func newHub(originPatterns []string, allowAnyOrigin bool) *Hub {
+	return &Hub{
+		conns:            map[uint64]*websocket.Conn{},
+		wsOriginPatterns: originPatterns,
+		wsAllowAnyOrigin: allowAnyOrigin,
+	}
 }
 
 func (h *Hub) add(c *websocket.Conn) uint64 {

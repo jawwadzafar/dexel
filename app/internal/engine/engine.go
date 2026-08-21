@@ -42,7 +42,16 @@ const (
 // hand-copied) so the two packages can't silently drift apart. It cannot
 // live in the const block above because time.Duration.Seconds() is not a
 // constant expression.
-const AntiMashSampleInterval = 100 * time.Millisecond
+//
+// This is a re-export of activity.MouseSampleInterval, not an
+// independently chosen value — engine.go, provider_linux.go, and
+// provider_darwin.go each used to declare their own "100ms" constant with
+// no static link between them, so retuning ADR 0005's anti-mash window
+// meant remembering to edit three files in three packages and trusting
+// nobody missed one. activity.MouseSampleInterval (provider.go) is now the
+// single source of truth; this alias exists only so existing callers of
+// engine.AntiMashSampleInterval don't have to change.
+const AntiMashSampleInterval = activity.MouseSampleInterval
 
 // MouseSustainedRate is the equivalent events/sec a continuously mouse-
 // active signal contributes to weighted_rate. It equals the anti-mash

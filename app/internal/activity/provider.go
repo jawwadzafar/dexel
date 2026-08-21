@@ -7,6 +7,19 @@
 // interface.
 package activity
 
+import "time"
+
+// MouseSampleInterval is THE anti-mash coalescing window (ADR 0005's
+// MOUSE_SAMPLE_SECS, applied uniformly to both keystroke and mouse signals
+// per ADR 0011's port): at most one counted keystroke and one flagged
+// mouse-active signal per this window, however fast the input arrives.
+// This is the single source of truth for that value — provider_linux.go,
+// provider_darwin.go, and internal/engine's AntiMashSampleInterval all
+// reference this constant rather than each hardcoding their own 100ms, so
+// the three can never silently drift apart (which is exactly what had
+// happened: three independently-declared 100ms constants, one per file).
+const MouseSampleInterval = 100 * time.Millisecond
+
 // Snapshot is a point-in-time view of system activity, sampled by a
 // Provider. Every field is content-free by construction — counts, a
 // boolean, a duration, and a sanitized/display app identifier. Adding a

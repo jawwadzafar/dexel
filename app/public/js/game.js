@@ -1003,6 +1003,7 @@
   el.store.addEventListener('close', function () {
     el.scrim.classList.remove('visible');
     sendAction({ action: 'STORE_CLOSE' });
+    storeReassertSent = false; // next open starts the B2 reassert guard fresh
   });
   el.storeOpenBtn.addEventListener('click', openStore);
   el.storeClose.addEventListener('click', closeStore);
@@ -1106,6 +1107,14 @@
   var ws = null;
   var reconnectDelay = 500;
   var reconnectTimer = null;
+  // B2 loop guard: true once we've re-sent STORE_OPEN in response to a
+  // `state` snapshot showing storeOpen:false while our modal is still
+  // open, until the server confirms the gate is open again (or we close
+  // the modal ourselves). Without this, EVERY subsequent `state` frame
+  // that still shows storeOpen:false (e.g. while our re-assertion is in
+  // flight, or a stalled ws.send that never reaches the server) would
+  // trigger another STORE_OPEN send, once per ~1s tick, forever.
+  var storeReassertSent = false;
 
   function sendAction(action) {
     if (DEV_MODE) {
@@ -1131,6 +1140,28 @@
         state = msg;
         hideConnOverlay();
         renderAll();
+        // B2 work-gate: the server is the source of truth for storeOpen
+        // (docs/ui-spec.md §5.3's earning gate), but the server's flag is
+        // now scoped per-connection (a refcounted set of connIDs holding
+        // it open, not one global bool). If our own store modal is still
+        // showing but a state snapshot says storeOpen is false — most
+        // likely because our OWN hold hasn't landed yet (e.g. this
+        // snapshot arrived from a fresh reconnect's initial send, before
+        // our re-asserted STORE_OPEN below was applied) — re-assert it
+        // ONCE (storeReassertSent guards against re-sending on every
+        // subsequent tick that still shows storeOpen:false) so the modal
+        // being open and the server's gate can never silently drift
+        // apart, without looping.
+        if (el.store.open) {
+          if (msg.storeOpen === false) {
+            if (!storeReassertSent) {
+              storeReassertSent = true;
+              sendAction({ action: 'STORE_OPEN' });
+            }
+          } else {
+            storeReassertSent = false; // gate confirmed open again
+          }
+        }
         break;
       case 'flash':
         showFlash(msg);
@@ -1150,7 +1181,19 @@
       scheduleReconnect();
       return;
     }
-    ws.addEventListener('open', function () { reconnectDelay = 500; });
+    ws.addEventListener('open', function () {
+      reconnectDelay = 500;
+      // B2: a reconnect (server restart/blip, or this tab's own network
+      // hiccup) gets a brand-new connID server-side — the OLD connID's
+      // store-open hold was already released on disconnect
+      // (handlers.go's defer), so if our store modal is still open
+      // locally, we must re-open it under the new connection or the
+      // work/Dev Cash gate silently comes back "closed" despite the
+      // modal still being up.
+      if (el.store.open) {
+        sendAction({ action: 'STORE_OPEN' });
+      }
+    });
     ws.addEventListener('message', function (ev) {
       try { handleServerMessage(JSON.parse(ev.data)); }
       catch (err) { console.error('bad ws message', err); }

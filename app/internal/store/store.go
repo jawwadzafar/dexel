@@ -6,6 +6,7 @@ package store
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -14,6 +15,10 @@ import (
 
 	"github.com/jawwadzafar/dev-companion/app/internal/game"
 )
+
+// ErrFutureSchema is Load's error (wrapped with detail) when the save
+// file's schema is newer than CurrentSchema — see Load's doc comment.
+var ErrFutureSchema = errors.New("save schema is newer than this build supports")
 
 // EquippedSave is one slot's persisted equip choice.
 type EquippedSave struct {
@@ -218,7 +223,35 @@ func Save(path string, d SaveData) error {
 	if err := os.Rename(tmpPath, path); err != nil {
 		return fmt.Errorf("rename temp save file into place: %w", err)
 	}
+
+	// Belt-and-suspenders durability: a rename's entry into its directory
+	// is itself an unordered write that can still be sitting in volatile
+	// cache when the file's own data is already durable (f.Sync() above
+	// only forced the CONTENT out) — a power cut right after the rename
+	// can leave the directory pointing at nothing, or the old file, even
+	// though the new content was safely on disk. fsync-ing the directory
+	// forces that directory-entry update out too, exactly like the
+	// content sync above. Surfaced as an error like every other step in
+	// this function, even though the rename itself already succeeded and
+	// the caller (main.go's autosave/shutdown persist()) only logs it —
+	// callers that care about durability guarantees should see this the
+	// same way they'd see any other save failure, not have it silently
+	// swallowed inside Save.
+	if dirErr := syncDir(filepath.Dir(path)); dirErr != nil {
+		return fmt.Errorf("save renamed into place but syncing its directory failed (rename may not survive a power cut): %w", dirErr)
+	}
 	return nil
+}
+
+// syncDir opens dir and calls Sync on it, forcing any pending directory-
+// entry metadata (e.g. Save's os.Rename above) out to durable storage.
+func syncDir(dir string) error {
+	d, err := os.Open(dir)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = d.Close() }()
+	return d.Sync()
 }
 
 // Load reads and parses path. A missing file returns (SaveData{}, false,
@@ -227,6 +260,24 @@ func Save(path string, d SaveData) error {
 // reported as "no save" rather than an error the caller must handle —
 // docs/upgrade-design.md: "log once, start fresh... never delete the bad
 // file."
+//
+// A save whose Schema is NEWER than CurrentSchema (i.e. written by a
+// build ahead of this one — the classic "ran an older build once after
+// upgrading" scenario) is handled differently from a malformed file:
+// this build does not understand every field that save might carry, so
+// silently returning (SaveData{}, false, nil) — "no save, start fresh" —
+// would be actively dangerous. main.go's loadOrImport, seeing "no save,"
+// would go on to either start completely fresh OR run the legacy-import
+// path, and either way its very next autosave (or the immediate
+// legacy-import Save call) would overwrite path with a schema-1-shaped
+// rewrite of what used to be newer data — a silent downgrade that
+// destroys progress the moment someone runs an older build once, with no
+// error and no way back. Instead: the original file is renamed to
+// "<path>.future" completely untouched, and Load returns an error (never
+// (_, true, _) for a future schema) so the caller treats this as a load
+// FAILURE, not "no save" — the same way an unreadable file is surfaced —
+// while the future-schema data sits recoverable at its own path rather
+// than being silently clobbered by whatever this older build does next.
 func Load(path string) (SaveData, bool, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -240,6 +291,15 @@ func Load(path string) (SaveData, bool, error) {
 		corruptPath := path + ".corrupt"
 		_ = os.Rename(path, corruptPath)
 		return SaveData{}, false, fmt.Errorf("parse save file (moved to %s): %w", corruptPath, err)
+	}
+	if d.Schema > CurrentSchema {
+		futurePath := path + ".future"
+		if renameErr := os.Rename(path, futurePath); renameErr != nil {
+			return SaveData{}, false, fmt.Errorf("%w: schema %d > this build's %d, and backing up %s to %s failed: %v",
+				ErrFutureSchema, d.Schema, CurrentSchema, path, futurePath, renameErr)
+		}
+		return SaveData{}, false, fmt.Errorf("%w: schema %d > this build's %d; original preserved untouched at %s (NOT loaded, NOT deleted, NOT overwritten)",
+			ErrFutureSchema, d.Schema, CurrentSchema, futurePath)
 	}
 	return d, true, nil
 }

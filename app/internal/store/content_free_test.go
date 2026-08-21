@@ -1,0 +1,103 @@
+package store
+
+import (
+	"reflect"
+	"strings"
+	"testing"
+)
+
+// TestSaveDataIsContentFree is S3's clone of
+// internal/activity/content_free_test.go's TestSnapshotIsContentFree,
+// applied to the thing that actually persists to disk: SaveData is the
+// exact on-disk shape at ~/.config/devcompanion/state.json (store.go's doc
+// comment: "this file contains no user content"). Being content-free
+// upstream (Snapshot, StateMessage) is meaningless if the one thing
+// actually written to a file on the user's disk is free to grow a raw
+// field later. This test enumerates every field by reflection against an
+// explicit allow-list; adding a field to SaveData that isn't on the
+// allow-list, or whose name suggests raw content, fails this test rather
+// than silently shipping a privacy regression into a save file.
+func TestSaveDataIsContentFree(t *testing.T) {
+	allowed := map[string]string{
+		"Schema":           "int",
+		"DevCash":          "uint64",
+		"XP":               "uint64",
+		"Sprint":           "store.SprintSave",
+		"OwnedItems":       "[]string",
+		"OwnedTints":       "[]string",
+		"Equipped":         "map[string]store.EquippedSave",
+		"ImportedFromRust": "bool",
+		"ImportedAt":       "string",
+	}
+
+	// Field/type names whose presence anywhere on SaveData is itself a
+	// violation, independent of the allow-list above (belt and suspenders:
+	// this catches a rename of an allowed field into something that smells
+	// like content).
+	forbiddenSubstrings := []string{
+		"title", "text", "content", "keycode", "key_code", "clipboard",
+		"url", "path", "document", "message", "body", "keyname", "char",
+	}
+
+	typ := reflect.TypeOf(SaveData{})
+	if typ.NumField() != len(allowed) {
+		t.Fatalf("SaveData has %d fields, expected exactly %d (%v) — a field was added or removed without updating this privacy test",
+			typ.NumField(), len(allowed), allowed)
+	}
+
+	for i := 0; i < typ.NumField(); i++ {
+		f := typ.Field(i)
+		wantType, ok := allowed[f.Name]
+		if !ok {
+			t.Errorf("SaveData.%s is not on the content-free allow-list — every field must be justified here", f.Name)
+			continue
+		}
+		if f.Type.String() != wantType {
+			t.Errorf("SaveData.%s has type %s, want %s", f.Name, f.Type.String(), wantType)
+		}
+
+		lower := strings.ToLower(f.Name)
+		for _, bad := range forbiddenSubstrings {
+			if strings.Contains(lower, bad) {
+				t.Errorf("SaveData.%s name contains forbidden substring %q — looks like it could carry content", f.Name, bad)
+			}
+		}
+	}
+}
+
+// TestSprintSaveAndEquippedSaveAreContentFree extends the same guard to
+// SaveData's two nested struct types — the top-level field-count check
+// above only proves those two fields exist with the right named type; it
+// says nothing about what's INSIDE SprintSave/EquippedSave, which could
+// otherwise grow a content field without ever touching SaveData itself.
+func TestSprintSaveAndEquippedSaveAreContentFree(t *testing.T) {
+	allowedSprintSave := map[string]string{
+		"Index":     "int",
+		"UnitsDone": "float64",
+	}
+	allowedEquippedSave := map[string]string{
+		"ItemID": "string",
+		"TintID": "*string",
+	}
+
+	checkExact := func(t *testing.T, typ reflect.Type, allowed map[string]string) {
+		t.Helper()
+		if typ.NumField() != len(allowed) {
+			t.Fatalf("%s has %d fields, expected exactly %d (%v)", typ.Name(), typ.NumField(), len(allowed), allowed)
+		}
+		for i := 0; i < typ.NumField(); i++ {
+			f := typ.Field(i)
+			wantType, ok := allowed[f.Name]
+			if !ok {
+				t.Errorf("%s.%s is not on the content-free allow-list", typ.Name(), f.Name)
+				continue
+			}
+			if f.Type.String() != wantType {
+				t.Errorf("%s.%s has type %s, want %s", typ.Name(), f.Name, f.Type.String(), wantType)
+			}
+		}
+	}
+
+	checkExact(t, reflect.TypeOf(SprintSave{}), allowedSprintSave)
+	checkExact(t, reflect.TypeOf(EquippedSave{}), allowedEquippedSave)
+}
