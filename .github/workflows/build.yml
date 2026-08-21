@@ -12,13 +12,18 @@ on:
 # self-hosted runner. Use the `darkmirror` label so the job is pinned to that
 # specific machine.
 #
-# Two independent jobs live here:
+# Three independent jobs live here:
 #   - `build` (below): the LEGACY, frozen Rust/Bevy companion crate under
 #     companion/ (ADR 0011: superseded by the Go+WS backend under app/, kept
 #     buildable only as the one-time legacy-save source the Go backend
 #     imports from — see docs/upgrade-design.md). Not where new work lands.
 #   - `go`: the ACTUAL current backend under app/ — go vet + a raced test
 #     run. This is the job that must be green for any app/ change.
+#   - `frontend`: the TypeScript source under app/frontend/ (Frontend
+#     architecture track F1, docs/plan/ROADMAP.md) — npm ci, tsc --noEmit,
+#     and a fresh esbuild run diffed against the committed
+#     app/public/js/game.js so the checked-in bundle can never silently
+#     drift from its TS source.
 #
 # Targets produced by `build` (Linux host):
 #   - x86_64-unknown-linux-gnu   (native)
@@ -149,3 +154,43 @@ jobs:
       - name: go test -race
         working-directory: app
         run: go test -race ./...
+
+  # Frontend architecture track F1 (docs/plan/ROADMAP.md): the TypeScript
+  # source under app/frontend/ that builds into app/public/js/game.js (the
+  # bundle the `go` job's binary — and any Go-only user running `go run .`
+  # — actually serves). That bundle is committed deliberately (see
+  # app/frontend/README.md "Why the bundle is committed"), so this job's
+  # real job is to prove it hasn't drifted from source: a fresh `npm run
+  # build` must reproduce the committed file byte-for-byte.
+  frontend:
+    name: Frontend (typecheck + build + drift check)
+    runs-on: [self-hosted, darkmirror]
+    steps:
+      - name: Clean workspace
+        run: |
+          rm -rf "${GITHUB_WORKSPACE:?}"/* "${GITHUB_WORKSPACE:?}"/.[!.]* 2>/dev/null || true
+
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+
+      - name: npm ci
+        working-directory: app/frontend
+        run: npm ci
+
+      - name: tsc --noEmit (strict)
+        working-directory: app/frontend
+        run: npm run typecheck
+
+      - name: Build
+        working-directory: app/frontend
+        run: npm run build
+
+      - name: Assert the committed bundle matches a fresh build
+        run: |
+          if ! git diff --exit-code -- app/public/js/game.js app/public/js/game.js.map; then
+            echo "::error::app/public/js/game.js (and/or its .map) is out of date with app/frontend/src/*.ts — run 'npm run build' in app/frontend/ and commit the result." >&2
+            exit 1
+          fi

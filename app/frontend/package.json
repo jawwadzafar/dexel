@@ -1,0 +1,15 @@
+{
+  "name": "dev-companion-frontend",
+  "private": true,
+  "version": "1.0.0",
+  "description": "TypeScript source for dev-companion's frontend (app/public/js/game.js), built with esbuild. See docs/plan/ROADMAP.md Frontend architecture track F1.",
+  "type": "module",
+  "scripts": {
+    "build": "node build.mjs",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "esbuild": "^0.24.0",
+    "typescript": "^5.6.0"
+  }
+}

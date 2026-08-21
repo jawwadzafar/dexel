@@ -25,3 +25,8 @@ saves/
 
 # Python bytecode cache (visual-check.py gets imported by test probes)
 __pycache__/
+
+# Frontend build tooling (Frontend architecture track F1, docs/plan/ROADMAP.md)
+# — app/frontend/src/*.ts is the source of truth; the compiled bundle it
+# produces is committed at app/public/js/game.js (see app/frontend/README.md).
+app/frontend/node_modules/
