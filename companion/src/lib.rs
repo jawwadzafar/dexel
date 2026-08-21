@@ -79,6 +79,16 @@ fn configured_default_plugins() -> bevy::app::PluginGroupBuilder {
                 title: "dev-companion".into(),
                 resolution: bevy::window::WindowResolution::new(640, 400),
                 resizable: false,
+                // A desktop companion has to stay VISIBLE beside the work it
+                // is reacting to. This is the genre convention (Rusty's
+                // Retirement presents as a desktop overlay; Bongo Cat sits on
+                // the taskbar) and it is load-bearing for the product: a
+                // companion that your editor buries is a companion you never
+                // see react, which removes the entire reason to run it.
+                // Toggle at runtime with F10 — always-on-top is the right
+                // default but the wrong permanent state (screen sharing,
+                // fullscreen video), so it must not be a build-time choice.
+                window_level: bevy::window::WindowLevel::AlwaysOnTop,
                 ..default()
             }),
             ..default()
@@ -642,6 +652,24 @@ fn desk_upgrade_system(
     }
     if !unlocked && *ever_unlocked {
         *ever_unlocked = false;
+    }
+}
+
+/// Toggle always-on-top with F10.
+///
+/// Deliberately a keybinding rather than a setting: the moments you need it
+/// off (screen share, fullscreen video) are momentary, and quitting to edit a
+/// config to get your screen back is a worse experience than the problem.
+fn toggle_always_on_top(keys: Res<ButtonInput<KeyCode>>, mut windows: Query<&mut Window>) {
+    if !keys.just_pressed(KeyCode::F10) {
+        return;
+    }
+    for mut window in &mut windows {
+        window.window_level = match window.window_level {
+            bevy::window::WindowLevel::AlwaysOnTop => bevy::window::WindowLevel::Normal,
+            _ => bevy::window::WindowLevel::AlwaysOnTop,
+        };
+        info!("always-on-top: {:?}", window.window_level);
     }
 }
 
@@ -1482,6 +1510,7 @@ pub fn run() {
                 // OnBreak after IDLE_THRESHOLD seconds of silence.
                 idle_detection_system,
                 desk_upgrade_system,
+                toggle_always_on_top,
                 // M5: the desk plant upgrade — show the placeholder prop
                 // once the wallet crosses the coin threshold (plan §4/M5).
                 // Toggles the prop's `Visibility` component via a `Command`
