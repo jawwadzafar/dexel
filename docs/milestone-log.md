@@ -1295,3 +1295,44 @@ three colored `Node` rectangles and there was no character at all.
   test`) and vision-model (`shotcap` + `visual-check.py`) proof both pass, and
   that combination caught every defect above — but a human glance is still
   worth having before calling v0.2 done.
+
+---
+
+## v0.3 — the product loop: earn, buy, see it change
+
+- **Date:** 2026-08-21
+- **Branch:** `feat/v0.2-art-and-global-input` (continues from the v0.2 entry)
+- **Driven by:** Fable overseer + Sonnet implementation agents + specialist
+  art/detection agents, per-file ownership to avoid clobbering.
+
+### What landed
+- **Upgrade shop** (ADR 0008): 7 tracks / 13 tiers in one data-driven table;
+  Tab strip UI; ownership persisted (`SaveData.upgrades`, serde default so
+  old saves load); the v0.2 auto-unlock plant became a purchase.
+- **14 new sprites** for the tracks, palette-pure and deterministic;
+  monitor upgrades sized to fully cover the base monitor's opaque footprint.
+- **Active-app HUD line** (ADR 0009): "Coding in VS Code" from real
+  foreground-app identity (app class only — titles are structurally
+  unreachable); honest "Working..." when the compositor declines. The
+  generated fiction ("Fix login flow") no longer appears in the UI.
+- **Economy rebalance** (ADR 0005): weighted events, 100ms mouse coalescing,
+  recalibrated ceiling — mouse-only spam is now the slowest path.
+- **Always-on-top + F10** (ADR 0007), global input (ADR 0003), lighting pass
+  and two composition fixes (shelf, cat) — each verified by rendering and
+  LOOKING, which caught every placement bug the tests could not.
+
+### Verification at closeout
+- `cargo test --workspace`: **79 passed, 0 failed** (44 baseline at v0.1).
+- `cargo clippy --workspace --all-targets -- -D warnings`: clean.
+- `cargo check -p companion --no-default-features`: passes (both features
+  degrade gracefully).
+- Render of the everything-owned seeded state: zero missing assets, zero
+  panics, judged by eye — cohesive cozy scene, all purchases visible.
+
+### Carried / known gaps
+- Desk crowding at full ownership (keyboard+mouse+duck+mug share a small
+  tabletop) — acceptable now, revisit if a bigger desk sprite lands.
+- Cat tail-flick animation deferred (frames pre-authored as cat_a/cat_b).
+- Wayland-native focused apps cannot be identified (GNOME denies the API);
+  XWayland apps expected to work — needs one human click-test.
+- No human has yet played the built game with everything owned.
