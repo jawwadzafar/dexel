@@ -182,6 +182,7 @@
     scene: document.getElementById('scene-sprites'),
     terminal: document.getElementById('terminal'),
     connOverlay: document.getElementById('conn-overlay'),
+    assetsErrorOverlay: document.getElementById('assets-error-overlay'),
     moodDot: document.getElementById('mood-dot'),
     hudLevel: document.getElementById('hud-level'),
     hudCash: document.getElementById('hud-cash').querySelector('.value'),
@@ -220,9 +221,17 @@
     if (str.length <= maxLen) return str;
     return str.slice(0, Math.max(0, maxLen - 1)) + '…';
   }
+  // Falls back to white (never black) for an unknown/missing tint id: the
+  // tint mechanism paints .tint-fill with this colour then multiply-blends
+  // the form sprite over it (game.css ".tint-fill"/".tint-shade"), so white
+  // is the multiplicative identity — it leaves the form sprite's own
+  // (undyed/neutral) colours on screen instead of crushing them to black.
+  // A save/state referencing a tint id this client's catalog doesn't know
+  // about (stale client vs. newer server, or a bad devApply payload) must
+  // degrade to "untinted", never to a black silhouette.
   function tintHexFor(tintId) {
     var t = tintsById[tintId];
-    return t ? t.hex : '#000000';
+    return t ? t.hex : '#ffffff';
   }
   // "swatch chip = tint * 0xd4/0xff" (art-direction.md, step-4 base fabric)
   function swatchColor(hex) {
@@ -242,6 +251,22 @@
     var items = catalogBySlot[slotId] || [];
     for (var i = 0; i < items.length; i++) if (items[i].price === 0) return items[i];
     return items[0];
+  }
+
+  // Resolves the item actually equipped in slotId, defensively: an unknown
+  // itemId (a stale save from a newer client version, or a bad devApply
+  // payload — either way, an id this client's loaded catalog doesn't have)
+  // must render the slot's own free default item rather than nothing, so a
+  // scene never goes missing a piece over one bad field. Only warns when
+  // eq.itemId was actually present-but-unrecognised — an absent/undefined
+  // equipped entry is unremarkable (e.g. before the first state arrives).
+  function equippedItemFor(slotId) {
+    var eq = state.equipped && state.equipped[slotId];
+    var item = eq && itemsById[eq.itemId];
+    if (!item && eq && eq.itemId) {
+      console.warn('[dev-companion] unknown item id "' + eq.itemId + '" equipped in slot "' + slotId + '" — rendering the slot default instead');
+    }
+    return item || freeDefaultItem(slotId);
   }
   function selectedTintFor(item) {
     if (!item) return null;
@@ -315,6 +340,11 @@
       var img = plainImg(s.file, s);
       img.style.zIndex = s.z;
       if (s.id) img.id = s.id;
+      // room_back.png is internal/assets' own "does assets/ even exist"
+      // sentinel (see locate.go) — reuse it here as the frontend's sentinel
+      // too: if this one 404s, every sprite in the scene is 404ing, and the
+      // player would otherwise just see a blank room with no explanation.
+      if (s.file === 'room_back.png') img.addEventListener('error', handleSpriteSentinelError);
       el.scene.appendChild(img);
     });
     ['wall', 'plant', 'buddy', 'beverage', 'keyboard', 'mouse'].forEach(function (slot) {
@@ -348,9 +378,8 @@
   function renderSlotSprite(slotId) {
     var holder = sceneNodes[slotId];
     holder.innerHTML = '';
-    var eq = state.equipped[slotId];
-    var item = eq && itemsById[eq.itemId];
-    if (!item || !item.sprite) return; // *_none item: slot stays hidden
+    var item = equippedItemFor(slotId);
+    if (!item || !item.sprite) return; // *_none item (or unresolved default): slot stays hidden
     var img = document.createElement('img');
     img.className = 'layer sprite';
     img.alt = '';
@@ -367,11 +396,11 @@
     var holder = sceneNodes.chair;
     holder.innerHTML = '';
     var eq = state.equipped.chair;
-    var item = eq && itemsById[eq.itemId];
-    if (!item) return;
+    var item = equippedItemFor('chair');
+    if (!item) return; // no chair item at all, not even a free default — nothing to draw
     var rect = CHAIR_RECT[item.id] || CHAIR_RECT.chair_basic;
     positionEl(holder, rect);
-    var tint = buildTintLayer(item.sprite, tintHexFor(eq.tintId || item.defaultTint));
+    var tint = buildTintLayer(item.sprite, tintHexFor((eq && eq.tintId) || item.defaultTint));
     tint.style.zIndex = CHAIR_Z_FORM;
     positionEl(tint, { left: 0, top: 0, w: rect.w, h: rect.h });
     holder.appendChild(tint);
@@ -401,7 +430,7 @@
     holder.innerHTML = '';
     var frame = currentDevFrame();
     var eq = state.equipped.hoodie;
-    var item = eq && itemsById[eq.itemId];
+    var item = equippedItemFor('hoodie');
     var tintHex = tintHexFor((eq && eq.tintId) || (item && item.defaultTint));
 
     var formLayer = buildTintLayer('dev_form_' + frame + '.png', tintHex);
@@ -507,7 +536,10 @@
     el.sprintName.textContent = truncate(state.sprint.name, 28);
     el.sprintBar.max = state.sprint.target;
     el.sprintBar.value = state.sprint.progress;
-    el.sprintUnits.textContent = fmtInt(state.sprint.progress) + ' / ' + fmtInt(state.sprint.target) + ' ' + state.sprint.unitLabel;
+    // unitLabel falls back to "units" — a state missing that field (a
+    // stale server, or a devApply payload that replaced sprint wholesale
+    // without it) must never render the literal string "undefined".
+    el.sprintUnits.textContent = fmtInt(state.sprint.progress) + ' / ' + fmtInt(state.sprint.target) + ' ' + (state.sprint.unitLabel || 'units');
 
     el.statusLine.textContent = truncate(state.activityLine, 34);
 
@@ -1045,6 +1077,30 @@
   function hideConnOverlay() { el.connOverlay.classList.remove('visible'); }
 
   // ---------------------------------------------------------------------
+  // Assets-missing banner — the frontend half of never leaving a blank,
+  // unexplained scene when the server couldn't find assets/ (backend half:
+  // internal/assets.LocateVerbose + GET /api/health, main.go).
+  // ---------------------------------------------------------------------
+  var assetsErrorShown = false;
+  function showAssetsErrorBanner(detail) {
+    if (assetsErrorShown) return; // one banner is enough; don't refetch per failed sprite
+    assetsErrorShown = true;
+    var msg = 'ASSETS NOT FOUND — the server could not locate the assets/ directory. ' +
+      'Run from the repo, or set DEVCOMPANION_ASSETS_DIR.';
+    if (detail) msg += ' (' + detail + ')';
+    el.assetsErrorOverlay.querySelector('span').textContent = msg;
+    el.assetsErrorOverlay.classList.add('visible');
+  }
+  function handleSpriteSentinelError() {
+    if (DEV_MODE) return; // no backend / no /api/health to ask in dev mode
+    fetch('/api/health').then(function (r) { return r.json(); }).then(function (h) {
+      showAssetsErrorBanner('server assetsDir: ' + (h && h.assetsDir ? h.assetsDir : 'null'));
+    }).catch(function () {
+      showAssetsErrorBanner('/api/health unreachable');
+    });
+  }
+
+  // ---------------------------------------------------------------------
   // WebSocket (ui-spec.md §6) — camelCase wire contract, backoff retry.
   // ---------------------------------------------------------------------
   var ws = null;
@@ -1123,8 +1179,33 @@
     // Verification hook: window.devApply(stateJson) merges into the current
     // state and re-renders, so the orchestrator can drive specific states
     // for a screenshot without a running backend. Only defined in dev mode.
+    //
+    // Validates partialState.equipped.*.itemId/tintId against the loaded
+    // catalog before merging: an unknown item id gets dropped (console.warn
+    // says which one and for which slot) so it can't overwrite a
+    // previously-valid slot with a dangling reference, and an unknown tint
+    // id is cleared to null rather than left pointing at nothing. Render
+    // time (equippedItemFor / tintHexFor) already degrades gracefully
+    // either way — this is defense in depth plus a paper trail for whoever
+    // is driving the harness.
     window.devApply = function (partialState) {
-      state = Object.assign({}, state, partialState || {});
+      var incoming = partialState || {};
+      if (incoming.equipped) {
+        Object.keys(incoming.equipped).forEach(function (slotId) {
+          var eq = incoming.equipped[slotId];
+          if (!eq) return;
+          if (eq.itemId && !itemsById[eq.itemId]) {
+            console.warn('[devApply] dropping unknown item id "' + eq.itemId + '" for slot "' + slotId + '" (not in loaded catalog)');
+            delete incoming.equipped[slotId];
+            return;
+          }
+          if (eq.tintId && !tintsById[eq.tintId]) {
+            console.warn('[devApply] clearing unknown tint id "' + eq.tintId + '" for slot "' + slotId + '" (not in loaded catalog)');
+            eq.tintId = null;
+          }
+        });
+      }
+      state = Object.assign({}, state, incoming);
       renderAll();
     };
     window.devCatalog = DEV_CATALOG;

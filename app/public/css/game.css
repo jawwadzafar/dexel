@@ -181,6 +181,32 @@ img, .sprite {
 }
 #conn-overlay.visible { display: flex; }
 
+/* Shown when the room_back.png sentinel sprite fails to load — i.e. the
+   server could not locate assets/ (see internal/assets.LocateVerbose and
+   game.js's handleSpriteSentinelError). Styled like #conn-overlay (same
+   rect, same flex-centred text) but a distinct red so it's never mistaken
+   for the ordinary "still connecting" state, and a higher z-index so it
+   wins if somehow both are visible at once. */
+#assets-error-overlay {
+  position: absolute;
+  left: 0;
+  top: 24px;
+  width: 640px;
+  height: 296px;
+  background: rgba(122, 28, 28, 0.88);
+  display: none;
+  align-items: center;
+  justify-content: center;
+  z-index: 600;
+  color: var(--cream);
+  font-size: 8px;
+  line-height: 1.6;
+  text-align: center;
+  padding: 16px;
+  box-sizing: border-box;
+}
+#assets-error-overlay.visible { display: flex; }
+
 /* ================= Title bar ================= */
 
 #titlebar {

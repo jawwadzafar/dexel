@@ -6,12 +6,15 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"log"
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
+	"runtime/debug"
 	"strings"
 	"syscall"
 	"time"
@@ -40,6 +43,10 @@ func main() {
 	flag.Parse()
 
 	ensurePublicDirExists(*publicDir)
+	publicOk := publicIndexExists(*publicDir)
+	if !publicOk {
+		log.Printf("WARNING: %s has no index.html — the frontend will not load; check -public or the directory this process was launched from", *publicDir)
+	}
 
 	provider, providerDesc := selectProvider(*providerKind, *fakeScript)
 	if err := provider.Start(); err != nil {
@@ -71,7 +78,8 @@ func main() {
 
 	mux := http.NewServeMux()
 	mux.Handle("/", http.FileServer(http.Dir(*publicDir)))
-	registerAssetsRoute(mux)
+	assetsDir := registerAssetsRoute(mux, *publicDir)
+	mux.HandleFunc("/api/health", healthHandler(assetsDir, publicOk, buildVersion()))
 	mux.HandleFunc("/ws", hub.handleWS(actions, catalog))
 
 	httpSrv := &http.Server{Addr: *addr, Handler: mux}
@@ -235,24 +243,66 @@ func selectProvider(kind, fakeScript string) (activity.Provider, string) {
 // stopgap: a symlink checked into git breaks the moment this binary is
 // built and run from anywhere that is not this exact checkout, and a repo
 // symlink is also just one more thing a fresh clone or a zip download can
-// silently fail to preserve. internal/assets.Locate() finds the real
+// silently fail to preserve. internal/assets.LocateVerbose() finds the real
 // directory (env override, then upward from the executable, then upward
-// from cwd — see that package's doc comment for the full lookup order and
-// why both of the latter two are needed).
+// from cwd, then the assets/ directory implied by wherever publicDir itself
+// actually resolved — see that package's doc comment for the full lookup
+// order and internal/assets.LocateVerbose's doc comment for why the
+// public-derived candidate exists: it unifies this route's resolution with
+// "/"'s, so the two static trees can no longer silently disagree about
+// where the checkout root is).
+//
+// Every attempt LocateVerbose made is logged, in order, so a broken lookup
+// (most commonly: $DEVCOMPANION_ASSETS_DIR set to a stale or wrong path,
+// which is trusted verbatim with no existence check) is diagnosable from
+// the log alone instead of just "sprite requests will 404".
 //
 // If assets/ cannot be found, the server still starts (matching the
 // activity-provider failure mode elsewhere in main: never fatal for a
 // missing *optional* signal source) — sprite requests simply 404, the same
 // degraded-but-alive behaviour the DOM/CSS already tolerate per game.js's
-// own comments.
-func registerAssetsRoute(mux *http.ServeMux) {
-	dir, err := assets.Locate()
+// own comments. The frontend's own defence against that silent 404 is a
+// visible in-scene banner (game.js's room_back.png <img> error handler),
+// fed by this function's result via /api/health.
+//
+// Returns the located directory (nil if none was found) for healthHandler.
+func registerAssetsRoute(mux *http.ServeMux, publicDir string) *string {
+	derived := deriveAssetsCandidateFromPublic(publicDir)
+	dir, attempts, err := assets.LocateVerbose(derived)
+	for _, a := range attempts {
+		log.Printf("assets lookup: %s", a.Strategy)
+	}
 	if err != nil {
 		log.Printf("assets route not registered: %v (sprite requests will 404)", err)
-		return
+		return nil
 	}
 	log.Printf("serving /assets/ from %s", dir)
 	mux.Handle("/assets/", http.StripPrefix("/assets/", http.FileServer(http.Dir(dir))))
+	return &dir
+}
+
+// deriveAssetsCandidateFromPublic returns the assets/ directory implied by
+// wherever publicDir actually resolves to on disk. publicDir is normally
+// ".../app/public" (the -public default, "./public", resolved relative to
+// cwd with no upward walk of its own — unlike internal/assets.Locate, so a
+// cwd that isn't exactly app/ silently gets an empty directory from
+// ensurePublicDirExists instead of the real frontend); its grandparent is
+// then the repo root, and "<repo root>/assets" is where the art agent's
+// sprites really live. This gives LocateVerbose one more thing to try
+// beyond the executable/cwd upward walks: whatever base directory main.go
+// is ALREADY trusting for the frontend, so public/ and assets/ are resolved
+// from one consistent base rather than two lookups that can disagree.
+// Returns "" if publicDir itself doesn't resolve to a real directory (no
+// point deriving a candidate from a base that's already broken).
+func deriveAssetsCandidateFromPublic(publicDir string) string {
+	abs, err := filepath.Abs(publicDir)
+	if err != nil {
+		return ""
+	}
+	if info, statErr := os.Stat(abs); statErr != nil || !info.IsDir() {
+		return ""
+	}
+	return filepath.Join(filepath.Dir(filepath.Dir(abs)), "assets")
 }
 
 // ensurePublicDirExists creates an empty ./public (with a .gitkeep) if it
@@ -260,6 +310,12 @@ func registerAssetsRoute(mux *http.ServeMux) {
 // backend only needs the directory to exist so http.FileServer doesn't
 // 404 the whole server at startup; it never writes an index.html or any
 // asset into it.
+//
+// Creating this placeholder is itself a silent-failure hazard: run from the
+// wrong cwd with a relative -public (the default), this quietly manufactures
+// an empty directory that makes "/" 200 with a bare file listing instead of
+// erroring — see publicIndexExists, which main() uses right after this call
+// to detect exactly that case and warn loudly instead of leaving it silent.
 func ensurePublicDirExists(dir string) {
 	if _, err := os.Stat(dir); err == nil {
 		return
@@ -272,6 +328,64 @@ func ensurePublicDirExists(dir string) {
 	if _, err := os.Stat(keep); os.IsNotExist(err) {
 		_ = os.WriteFile(keep, nil, 0o644)
 	}
+}
+
+// publicIndexExists reports whether dir actually holds the frontend's
+// index.html, as opposed to being an empty (possibly just-created by
+// ensurePublicDirExists) directory that http.FileServer would otherwise
+// serve as a silent-but-200 bare file listing.
+func publicIndexExists(dir string) bool {
+	info, err := os.Stat(filepath.Join(dir, "index.html"))
+	return err == nil && !info.IsDir()
+}
+
+// healthResponse is GET /api/health's body: a small, stable, machine-
+// readable summary of the two things known to silently misbehave (the
+// assets/ and public/ lookups) plus a build identifier, so a bug report or
+// an automated check can distinguish "the server is fine, the browser lost
+// the socket" from "the server itself never found its own files".
+type healthResponse struct {
+	AssetsDir *string `json:"assetsDir"` // null if assets.LocateVerbose found nothing
+	PublicOk  bool    `json:"publicOk"`  // true iff <publicDir>/index.html exists
+	Version   string  `json:"version"`
+}
+
+// healthHandler serves the fixed healthResponse computed once at startup
+// (assetsDir/publicOk never change for the life of the process) as JSON.
+func healthHandler(assetsDir *string, publicOk bool, version string) http.HandlerFunc {
+	body, err := json.Marshal(healthResponse{AssetsDir: assetsDir, PublicOk: publicOk, Version: version})
+	if err != nil {
+		log.Fatalf("marshal health response: %v", err) // unreachable: healthResponse always marshals
+	}
+	return func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(body)
+	}
+}
+
+// buildVersion returns the VCS revision this binary was built from (plus a
+// "-dirty" suffix if the working tree had uncommitted changes at build
+// time), via the module build info Go embeds automatically — no ldflags or
+// separate VERSION file required. "unknown" if that information isn't
+// available (e.g. a binary built with GOFLAGS=-buildvcs=false).
+func buildVersion() string {
+	info, ok := debug.ReadBuildInfo()
+	if !ok {
+		return "unknown"
+	}
+	rev, dirty := "unknown", false
+	for _, s := range info.Settings {
+		switch s.Key {
+		case "vcs.revision":
+			rev = s.Value
+		case "vcs.modified":
+			dirty = s.Value == "true"
+		}
+	}
+	if dirty {
+		rev += "-dirty"
+	}
+	return rev
 }
 
 // loadOrImport restores g's persisted state. It is the ONLY place the
