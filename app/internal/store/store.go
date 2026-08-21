@@ -32,6 +32,37 @@ type SprintSave struct {
 	UnitsDone float64 `json:"unitsDone"`
 }
 
+// StatCountersSave is one persisted stats bucket — content-free by
+// construction (Analytics track Phase A1, docs/plan/ROADMAP.md: "counts and
+// durations only"). Deliberately its OWN declaration rather than an import
+// of game.StatCounters: this package "knows about game.Game's public API
+// but nothing about the engine or activity packages" (this file's own doc
+// comment), and every other persisted type here (SprintSave, EquippedSave)
+// already follows that same decoupling even where the shape happens to
+// coincide with a game package type.
+type StatCountersSave struct {
+	Keystrokes         uint64 `json:"keystrokes"`
+	MouseActiveSeconds uint64 `json:"mouseActiveSeconds"`
+	ActiveSeconds      uint64 `json:"activeSeconds"`
+	IdleSeconds        uint64 `json:"idleSeconds"`
+	SprintsCompleted   uint64 `json:"sprintsCompleted"`
+}
+
+// StatsSave is the persisted `stats` object added in schema 2 (see
+// CurrentSchema's doc comment): Date is the local "YYYY-MM-DD" Today was
+// captured for ("" if the game was never ticked before this save), Today
+// is that date's bucket, Lifetime is the running total. A schema-1 file
+// has no "stats" key at all; json.Unmarshal leaves this whole field at its
+// zero value (Date "", both buckets all-zero counters), which Apply then
+// hands to game.Game.RestoreStats — the exact same "no stats recorded yet"
+// state a schema-2 file would represent explicitly, so no separate
+// migration code is needed beyond the schema bump itself.
+type StatsSave struct {
+	Date     string           `json:"date"`
+	Today    StatCountersSave `json:"today"`
+	Lifetime StatCountersSave `json:"lifetime"`
+}
+
 // SaveData is the on-disk shape at ~/.config/devcompanion/state.json,
 // transcribed field-for-field from docs/upgrade-design.md's "Persistence"
 // section. This IS the save format — changing a field name silently
@@ -50,10 +81,26 @@ type SaveData struct {
 	Equipped         map[string]EquippedSave `json:"equipped"`
 	ImportedFromRust bool                    `json:"importedFromRust,omitempty"`
 	ImportedAt       string                  `json:"importedAt,omitempty"` // RFC3339, "" if never imported
+	Stats            StatsSave               `json:"stats"`
 }
 
 // CurrentSchema is the schema version this build writes.
-const CurrentSchema = 1
+//
+// Bumped 1 -> 2 for Analytics track Phase A1 (docs/plan/ROADMAP.md): the
+// new `stats` field above. This is a genuine save-format change, not just
+// an additive JSON key an old build could safely ignore — Load's existing
+// "future schema" guard (see Load's doc comment and ErrFutureSchema) exists
+// specifically so an OLDER build run once against a NEWER save can never
+// silently re-save it minus the fields it doesn't know about; bumping the
+// number is what makes that guard actually fire for this change instead of
+// letting a schema-1-shaped build quietly drop everyone's stats the first
+// time it writes. Migration schema 1 -> 2 needs no dedicated code: a
+// schema-1 file simply has no "stats" key, json.Unmarshal leaves SaveData's
+// Stats field at its zero value (StatsSave{} — empty date, all-zero
+// counters), and Apply hands that straight to game.Game.RestoreStats,
+// which is exactly the right "no stats recorded yet" starting state for a
+// save that predates this feature.
+const CurrentSchema = 2
 
 // DefaultPath returns ~/.config/devcompanion/state.json.
 func DefaultPath() (string, error) {
@@ -92,6 +139,8 @@ func Snapshot(g *game.Game) SaveData {
 	}
 	sort.Strings(tints)
 
+	statsDate, statsToday, statsLifetime := g.StatsSnapshot()
+
 	return SaveData{
 		Schema:           CurrentSchema,
 		DevCash:          g.DevCash,
@@ -102,6 +151,31 @@ func Snapshot(g *game.Game) SaveData {
 		Equipped:         equipped,
 		ImportedFromRust: g.ImportedFromRust,
 		ImportedAt:       g.ImportedAt,
+		Stats: StatsSave{
+			Date:     statsDate,
+			Today:    statCountersToSave(statsToday),
+			Lifetime: statCountersToSave(statsLifetime),
+		},
+	}
+}
+
+func statCountersToSave(c game.StatCounters) StatCountersSave {
+	return StatCountersSave{
+		Keystrokes:         c.Keystrokes,
+		MouseActiveSeconds: c.MouseActiveSeconds,
+		ActiveSeconds:      c.ActiveSeconds,
+		IdleSeconds:        c.IdleSeconds,
+		SprintsCompleted:   c.SprintsCompleted,
+	}
+}
+
+func statCountersFromSave(c StatCountersSave) game.StatCounters {
+	return game.StatCounters{
+		Keystrokes:         c.Keystrokes,
+		MouseActiveSeconds: c.MouseActiveSeconds,
+		ActiveSeconds:      c.ActiveSeconds,
+		IdleSeconds:        c.IdleSeconds,
+		SprintsCompleted:   c.SprintsCompleted,
 	}
 }
 
@@ -119,6 +193,7 @@ func Apply(g *game.Game, d SaveData) {
 	g.RestoreSprint(d.Sprint.Index, d.Sprint.UnitsDone)
 	g.ImportedFromRust = d.ImportedFromRust
 	g.ImportedAt = d.ImportedAt
+	g.RestoreStats(d.Stats.Date, statCountersFromSave(d.Stats.Today), statCountersFromSave(d.Stats.Lifetime))
 
 	g.OwnedItems = map[string]bool{}
 	for _, id := range d.OwnedItems {

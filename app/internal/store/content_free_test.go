@@ -28,6 +28,7 @@ func TestSaveDataIsContentFree(t *testing.T) {
 		"Equipped":         "map[string]store.EquippedSave",
 		"ImportedFromRust": "bool",
 		"ImportedAt":       "string",
+		"Stats":            "store.StatsSave",
 	}
 
 	// Field/type names whose presence anywhere on SaveData is itself a
@@ -100,4 +101,56 @@ func TestSprintSaveAndEquippedSaveAreContentFree(t *testing.T) {
 
 	checkExact(t, reflect.TypeOf(SprintSave{}), allowedSprintSave)
 	checkExact(t, reflect.TypeOf(EquippedSave{}), allowedEquippedSave)
+}
+
+// TestStatsSaveAndStatCountersSaveAreContentFree is Phase A1's (Analytics
+// track, docs/plan/ROADMAP.md) extension of the same structural guard to
+// the schema-2 `stats` field: StatsSave and its nested StatCountersSave
+// must stay exactly a date string plus plain uint64 counts/durations,
+// never grow a raw field, the same way SprintSave/EquippedSave already are
+// above.
+func TestStatsSaveAndStatCountersSaveAreContentFree(t *testing.T) {
+	allowedStatsSave := map[string]string{
+		"Date":     "string",
+		"Today":    "store.StatCountersSave",
+		"Lifetime": "store.StatCountersSave",
+	}
+	allowedStatCountersSave := map[string]string{
+		"Keystrokes":         "uint64",
+		"MouseActiveSeconds": "uint64",
+		"ActiveSeconds":      "uint64",
+		"IdleSeconds":        "uint64",
+		"SprintsCompleted":   "uint64",
+	}
+
+	checkExact := func(t *testing.T, typ reflect.Type, allowed map[string]string) {
+		t.Helper()
+		if typ.NumField() != len(allowed) {
+			t.Fatalf("%s has %d fields, expected exactly %d (%v)", typ.Name(), typ.NumField(), len(allowed), allowed)
+		}
+		for i := 0; i < typ.NumField(); i++ {
+			f := typ.Field(i)
+			wantType, ok := allowed[f.Name]
+			if !ok {
+				t.Errorf("%s.%s is not on the content-free allow-list", typ.Name(), f.Name)
+				continue
+			}
+			if f.Type.String() != wantType {
+				t.Errorf("%s.%s has type %s, want %s", typ.Name(), f.Name, f.Type.String(), wantType)
+			}
+			lower := strings.ToLower(f.Name)
+			forbiddenSubstrings := []string{
+				"title", "text", "content", "keycode", "key_code", "clipboard",
+				"url", "path", "document", "message", "body", "keyname", "char",
+			}
+			for _, bad := range forbiddenSubstrings {
+				if strings.Contains(lower, bad) {
+					t.Errorf("%s.%s name contains forbidden substring %q — looks like it could carry content", typ.Name(), f.Name, bad)
+				}
+			}
+		}
+	}
+
+	checkExact(t, reflect.TypeOf(StatsSave{}), allowedStatsSave)
+	checkExact(t, reflect.TypeOf(StatCountersSave{}), allowedStatCountersSave)
 }

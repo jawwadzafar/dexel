@@ -33,6 +33,7 @@ func TestStateMessageIsContentFree(t *testing.T) {
 		"Equipped":     "map[string]game.EquippedRef",
 		"OwnedItems":   "[]string",
 		"OwnedTints":   "[]string",
+		"Stats":        "game.StatsView",
 	}
 
 	// Field/type names whose presence anywhere on StateMessage is itself a
@@ -109,4 +110,54 @@ func TestSprintViewAndEquippedRefAreContentFree(t *testing.T) {
 
 	checkExact(t, reflect.TypeOf(SprintView{}), allowedSprintView)
 	checkExact(t, reflect.TypeOf(EquippedRef{}), allowedEquippedRef)
+}
+
+// TestStatsViewAndStatCountersAreContentFree is Phase A1's (Analytics
+// track, docs/plan/ROADMAP.md) extension of the same structural guard to
+// StateMessage.Stats: StatsView and its nested StatCounters must stay
+// exactly counts/durations, never grow a raw field, the same way every
+// other wire type in this package is audited.
+func TestStatsViewAndStatCountersAreContentFree(t *testing.T) {
+	allowedStatsView := map[string]string{
+		"Today":    "game.StatCounters",
+		"Lifetime": "game.StatCounters",
+	}
+	allowedStatCounters := map[string]string{
+		"Keystrokes":         "uint64",
+		"MouseActiveSeconds": "uint64",
+		"ActiveSeconds":      "uint64",
+		"IdleSeconds":        "uint64",
+		"SprintsCompleted":   "uint64",
+	}
+
+	checkExact := func(t *testing.T, typ reflect.Type, allowed map[string]string) {
+		t.Helper()
+		if typ.NumField() != len(allowed) {
+			t.Fatalf("%s has %d fields, expected exactly %d (%v)", typ.Name(), typ.NumField(), len(allowed), allowed)
+		}
+		for i := 0; i < typ.NumField(); i++ {
+			f := typ.Field(i)
+			wantType, ok := allowed[f.Name]
+			if !ok {
+				t.Errorf("%s.%s is not on the content-free allow-list", typ.Name(), f.Name)
+				continue
+			}
+			if f.Type.String() != wantType {
+				t.Errorf("%s.%s has type %s, want %s", typ.Name(), f.Name, f.Type.String(), wantType)
+			}
+			lower := strings.ToLower(f.Name)
+			forbiddenSubstrings := []string{
+				"title", "text", "content", "keycode", "key_code", "clipboard",
+				"url", "path", "document", "message", "body", "keyname", "char",
+			}
+			for _, bad := range forbiddenSubstrings {
+				if strings.Contains(lower, bad) {
+					t.Errorf("%s.%s name contains forbidden substring %q — looks like it could carry content", typ.Name(), f.Name, bad)
+				}
+			}
+		}
+	}
+
+	checkExact(t, reflect.TypeOf(StatsView{}), allowedStatsView)
+	checkExact(t, reflect.TypeOf(StatCounters{}), allowedStatCounters)
 }

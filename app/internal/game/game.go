@@ -11,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"sort"
+	"time"
 
 	"github.com/jawwadzafar/dev-companion/app/internal/engine"
 )
@@ -50,6 +51,48 @@ type StateMessage struct {
 	Equipped     map[string]EquippedRef `json:"equipped"`
 	OwnedItems   []string               `json:"ownedItems"`
 	OwnedTints   []string               `json:"ownedTints"`
+	Stats        StatsView              `json:"stats"`
+}
+
+// StatCounters is one bucket's plain activity counts — content-free by
+// construction (docs/plan/ROADMAP.md Analytics track, Phase A1: "counts and
+// durations only... never content"). Every field is a uint64 count of
+// events or elapsed seconds; nothing here can ever hold typed text, a
+// keycode, or a window title. Shared shape for both the `today` and
+// `lifetime` buckets on StatsView (see that type's doc comment) and for
+// Game's own live accumulators below.
+type StatCounters struct {
+	// Keystrokes is the sum of engine.TickResult.KeystrokeDelta across every
+	// tick in the bucket — the same anti-mash-coalesced count the economy
+	// already uses, just summed instead of consumed as a rate.
+	Keystrokes uint64 `json:"keystrokes"`
+	// MouseActiveSeconds counts one second for every tick whose
+	// engine.TickResult.MouseActive was true.
+	MouseActiveSeconds uint64 `json:"mouseActiveSeconds"`
+	// ActiveSeconds counts one second for every tick whose mood was
+	// engine.MoodCoding (a real, recent keystroke — ADR 0010).
+	ActiveSeconds uint64 `json:"activeSeconds"`
+	// IdleSeconds counts one second for every tick whose mood was NOT
+	// engine.MoodCoding (Idle or, only for a globally-honest provider,
+	// OnBreak — ADR 0010's honesty rules already govern which of those two
+	// a given tick can be, so this counter inherits that honesty for free:
+	// a blind provider can still contribute IdleSeconds, just never by way
+	// of a dishonest OnBreak claim).
+	IdleSeconds uint64 `json:"idleSeconds"`
+	// SprintsCompleted counts one for every Tick() call that rolled the
+	// sprint index over (the same `completed` this package already reports
+	// to main.go for the sprint-complete flash).
+	SprintsCompleted uint64 `json:"sprintsCompleted"`
+}
+
+// StatsView is the `stats` object inside a `state` message
+// (docs/plan/ROADMAP.md Analytics track, Phase A1): `today`'s counters (the
+// local-date bucket currently accumulating) plus `lifetime` running totals.
+// Deliberately just these two buckets — a rolling multi-day history is
+// Phase A3's job (ROADMAP.md), not this one.
+type StatsView struct {
+	Today    StatCounters `json:"today"`
+	Lifetime StatCounters `json:"lifetime"`
 }
 
 // Game is the mutable in-memory state one running companion process holds.
@@ -100,6 +143,26 @@ type Game struct {
 	tickerLines    []string // cap 3, newest first
 	terminalPushes uint64
 	terminalLines  []string // cap 11, oldest first, newest last
+
+	// Analytics track Phase A1 (docs/plan/ROADMAP.md): statsDate is the
+	// "YYYY-MM-DD" local date statsToday currently represents ("" before
+	// the first tick/load — see rolloverStatsIfNewDay). statsLifetime never
+	// resets. Accumulated by recordStats on every engine tick, regardless
+	// of StoreOpen — unlike Mood/Progress/DevCash (frozen while shopping
+	// per docs/ui-spec.md §5.3, "the game cannot know [if a keystroke was
+	// aimed at the store], so it must not claim [work]"), these are a
+	// passive tally of the same honest signal Tick() already receives every
+	// call (main.go's own comment: "the engine's own keystroke baseline
+	// keeps advancing" even while the store is open) — analytics, not
+	// economy, so there is no honesty reason to freeze them.
+	statsDate     string
+	statsToday    StatCounters
+	statsLifetime StatCounters
+
+	// now is a test seam (mirrors internal/engine.Engine's own `now` field)
+	// so TestMidnightRollover-style tests can drive statsDate deterministically
+	// instead of depending on the wall clock.
+	now func() time.Time
 }
 
 // New constructs a fresh game against the default catalog, with every
@@ -117,6 +180,7 @@ func New() *Game {
 		OwnedTints:  map[string]bool{},
 		Equipped:    map[string]EquippedRef{},
 		tickerLines: make([]string, 3),
+		now:         time.Now,
 	}
 	g.resetTerminal()
 	g.GrantTierZeroDefaults()
@@ -360,6 +424,11 @@ func (g *Game) StoreOpen() bool {
 // instant the store closes. That is why this method takes an
 // already-computed TickResult rather than owning the decision to sample.
 func (g *Game) Tick(r engine.TickResult) (completed bool) {
+	// recordStats runs unconditionally, BEFORE the StoreOpen gate below —
+	// see statsDate's doc comment on the Game struct for why analytics
+	// isn't frozen the way Mood/Progress/DevCash are.
+	g.recordStats(r)
+
 	if g.StoreOpen() {
 		return false
 	}
@@ -376,8 +445,98 @@ func (g *Game) Tick(r engine.TickResult) (completed bool) {
 		g.sprintIndex = (g.sprintIndex + 1) % len(sprints)
 		g.Progress = overshoot
 		completed = true
+		g.statsToday.SprintsCompleted++
+		g.statsLifetime.SprintsCompleted++
 	}
 	return completed
+}
+
+// recordStats folds one engine.TickResult into the running Analytics Phase
+// A1 counters. Called every tick, independent of StoreOpen: unlike the
+// economy fields Tick() freezes while shopping, these counters are a
+// passive tally of the same already-honest signal the engine hands every
+// call (r.Mood/r.KeystrokeDelta/r.MouseActive are computed fresh every
+// tick — see main.go's comment on why eng.Tick() itself always runs).
+// Using r directly (never g.Mood, which Tick() leaves stale while
+// StoreOpen) is what keeps this honest during a shopping session instead
+// of double-counting or freezing on a frozen mood.
+func (g *Game) recordStats(r engine.TickResult) {
+	g.rolloverStatsIfNewDay()
+
+	g.statsToday.Keystrokes += r.KeystrokeDelta
+	g.statsLifetime.Keystrokes += r.KeystrokeDelta
+
+	if r.MouseActive {
+		g.statsToday.MouseActiveSeconds++
+		g.statsLifetime.MouseActiveSeconds++
+	}
+
+	if r.Mood == engine.MoodCoding {
+		g.statsToday.ActiveSeconds++
+		g.statsLifetime.ActiveSeconds++
+	} else {
+		// Idle or OnBreak both count as "not coding right now" for this
+		// tally; ADR 0010's honesty rules already decided, upstream in the
+		// engine, which of those two moods a blind-vs-global provider is
+		// allowed to report — nothing extra to re-derive here.
+		g.statsToday.IdleSeconds++
+		g.statsLifetime.IdleSeconds++
+	}
+}
+
+// statsDateFormat is the local-date key format for the daily bucket ("today"
+// only — Phase A1 keeps no multi-day history, see StatsView's doc comment).
+const statsDateFormat = "2006-01-02"
+
+// rolloverStatsIfNewDay resets statsToday to zero the moment the local date
+// no longer matches statsDate — called from recordStats (so an in-process
+// midnight crossing rolls over on the very next tick) and from
+// RestoreStats (so a save reopened days later starts today's bucket at
+// zero immediately, rather than waiting up to a second for the first tick).
+// statsLifetime is never touched here. A blind provider's tick still calls
+// this exactly like a global one — it depends only on the wall clock the
+// process itself reads, never on anything the activity source can or can't
+// see, so it stays correct even when Honesty() == HonestyBlind (ADR 0010).
+func (g *Game) rolloverStatsIfNewDay() {
+	today := g.now().Local().Format(statsDateFormat)
+	if g.statsDate == today {
+		return
+	}
+	g.statsDate = today
+	g.statsToday = StatCounters{}
+}
+
+// SetClockForTest overrides the clock rolloverStatsIfNewDay reads (used
+// only for the local-date stats bucketing this file implements) so a test
+// outside this package — internal/store's persistence round-trip tests, in
+// particular — can drive statsDate deterministically instead of depending
+// on the real wall clock. Mirrors the same seam internal/engine.Engine
+// already exposes via its own (unexported, same-package) `now` field;
+// exported here only because store's tests need to reach it from outside.
+// Never call this from non-test code.
+func (g *Game) SetClockForTest(now func() time.Time) {
+	g.now = now
+}
+
+// StatsSnapshot returns the live stats accumulators for internal/store's
+// Snapshot to persist — the local date statsToday was captured for, plus
+// the today/lifetime buckets themselves.
+func (g *Game) StatsSnapshot() (date string, today, lifetime StatCounters) {
+	return g.statsDate, g.statsToday, g.statsLifetime
+}
+
+// RestoreStats sets the persisted stats buckets directly (bypassing the
+// tick-driven accumulation) — used only by internal/store when loading or
+// importing a save. If date is no longer today's local date (the process
+// was last running on an earlier day, however many midnights ago), today's
+// bucket is reset to zero exactly as an in-process midnight rollover would
+// — a save can never resurrect a stale "today" after a real day boundary —
+// while lifetime is always carried forward untouched.
+func (g *Game) RestoreStats(date string, today, lifetime StatCounters) {
+	g.statsDate = date
+	g.statsToday = today
+	g.statsLifetime = lifetime
+	g.rolloverStatsIfNewDay()
 }
 
 // AdvanceTerminal pushes one new #terminal line while coding
@@ -468,5 +627,6 @@ func (g *Game) State() StateMessage {
 		Equipped:    equipped,
 		OwnedItems:  g.ownedItemsSorted(),
 		OwnedTints:  g.ownedTintsSorted(),
+		Stats:       StatsView{Today: g.statsToday, Lifetime: g.statsLifetime},
 	}
 }

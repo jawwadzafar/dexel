@@ -94,6 +94,16 @@ type TickResult struct {
 
 	ActiveApp        string
 	ActiveAppDisplay string
+
+	// KeystrokeDelta/MouseActive are the same raw, already-honest signals
+	// WorkUnits was computed from (this tick's counted keystrokes and
+	// whether mouse activity was flagged), re-exposed for the game layer's
+	// Analytics/Phase A1 daily+lifetime counters (docs/plan/ROADMAP.md
+	// "Analytics track"). They carry no more information than WorkUnits
+	// already implies — content-free counts/bools, nothing new crossing the
+	// engine/game boundary.
+	KeystrokeDelta uint64
+	MouseActive    bool
 }
 
 // Engine samples a Provider once per Tick call (the caller drives the 1s
@@ -150,6 +160,8 @@ func (e *Engine) Tick() TickResult {
 		Honesty:          honesty,
 		ActiveApp:        snap.ActiveApp,
 		ActiveAppDisplay: snap.ActiveAppDisplay,
+		KeystrokeDelta:   keyDelta,
+		MouseActive:      snap.MouseActive,
 	}
 }
 

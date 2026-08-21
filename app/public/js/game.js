@@ -155,7 +155,11 @@
       'bev_mug', 'bev_thermos', 'plant_none', 'wall_bare', 'wall_poster',
       'buddy_none', 'buddy_duck'
     ],
-    ownedTints: ['hoodie_zip:cobalt', 'chair_racer:ember']
+    ownedTints: ['hoodie_zip:cobalt', 'chair_racer:ember'],
+    stats: {
+      today: { keystrokes: 842, mouseActiveSeconds: 96, activeSeconds: 610, idleSeconds: 340, sprintsCompleted: 1 },
+      lifetime: { keystrokes: 58120, mouseActiveSeconds: 7400, activeSeconds: 42300, idleSeconds: 19800, sprintsCompleted: 37 }
+    }
   };
 
   // ---------------------------------------------------------------------
@@ -187,6 +191,19 @@
     hudLevel: document.getElementById('hud-level'),
     hudCash: document.getElementById('hud-cash').querySelector('.value'),
     storeOpenBtn: document.getElementById('store-open'),
+    activityOpenBtn: document.getElementById('activity-open'),
+    activity: document.getElementById('activity'),
+    activityClose: document.getElementById('activity-close'),
+    statTodayKeystrokes: document.getElementById('stat-today-keystrokes'),
+    statTodayMouse: document.getElementById('stat-today-mouse'),
+    statTodayActive: document.getElementById('stat-today-active'),
+    statTodayIdle: document.getElementById('stat-today-idle'),
+    statTodaySprints: document.getElementById('stat-today-sprints'),
+    statLifeKeystrokes: document.getElementById('stat-life-keystrokes'),
+    statLifeMouse: document.getElementById('stat-life-mouse'),
+    statLifeActive: document.getElementById('stat-life-active'),
+    statLifeIdle: document.getElementById('stat-life-idle'),
+    statLifeSprints: document.getElementById('stat-life-sprints'),
     sprintName: document.getElementById('sprint-name').querySelector('.value'),
     sprintBar: document.getElementById('sprint-bar'),
     sprintUnits: document.getElementById('sprint-units'),
@@ -216,6 +233,17 @@
   // Wire numbers arrive as float64; every on-screen numeric render must be an
   // integer (see ui-spec.md's own examples: "4,200 / 5,000", "LV 5", "34 / 75").
   function fmtInt(n) { return String(Math.floor(Number(n) || 0)); }
+  // Renders a whole-seconds duration count from state.stats (Analytics
+  // track Phase A1) as "Xm Ys" (or just "Ys" under a minute) — the wire
+  // sends raw seconds (see docs handed to the overseer for ui-spec.md's
+  // patch), never a pre-formatted string; all formatting happens here.
+  function fmtDuration(totalSeconds) {
+    var s = Math.max(0, Math.floor(Number(totalSeconds) || 0));
+    var m = Math.floor(s / 60);
+    var rem = s % 60;
+    if (m <= 0) return rem + 's';
+    return m + 'm ' + rem + 's';
+  }
   function truncate(str, maxLen) {
     str = str || '';
     if (str.length <= maxLen) return str;
@@ -550,6 +578,29 @@
     }
   }
 
+  // ---------------------------------------------------------------------
+  // Activity modal (Analytics track Phase A1, docs/plan/ROADMAP.md) — a
+  // read-only rendering of state.stats.{today,lifetime}, straight off the
+  // server's `state` broadcast like everything else in this file (no
+  // client-side derivation: the server is the sole source of truth).
+  // ---------------------------------------------------------------------
+  function renderActivity() {
+    if (!state) return;
+    var stats = state.stats || {};
+    var today = stats.today || {};
+    var life = stats.lifetime || {};
+    el.statTodayKeystrokes.textContent = fmtInt(today.keystrokes);
+    el.statTodayMouse.textContent = fmtDuration(today.mouseActiveSeconds);
+    el.statTodayActive.textContent = fmtDuration(today.activeSeconds);
+    el.statTodayIdle.textContent = fmtDuration(today.idleSeconds);
+    el.statTodaySprints.textContent = fmtInt(today.sprintsCompleted);
+    el.statLifeKeystrokes.textContent = fmtInt(life.keystrokes);
+    el.statLifeMouse.textContent = fmtDuration(life.mouseActiveSeconds);
+    el.statLifeActive.textContent = fmtDuration(life.activeSeconds);
+    el.statLifeIdle.textContent = fmtDuration(life.idleSeconds);
+    el.statLifeSprints.textContent = fmtInt(life.sprintsCompleted);
+  }
+
   function renderAll() {
     if (!state) return;
     renderChrome();
@@ -560,6 +611,7 @@
       refreshGridStates();
       updatePreview();
     }
+    if (el.activity.open) renderActivity();
   }
 
   // ---------------------------------------------------------------------
@@ -1014,6 +1066,34 @@
   }
 
   // ---------------------------------------------------------------------
+  // Activity modal open/close (Analytics track Phase A1). Deliberately
+  // sends NO open/close action to the server, unlike STORE_OPEN/CLOSE:
+  // this modal is read-only and gates nothing (no earning to freeze), and
+  // the counts it displays come entirely from the server's own per-tick
+  // sampling of the real, global activity provider — never from anything
+  // this page does. Opening it via the [A] key IS a real keystroke on the
+  // user's system and gets honestly counted like any other keypress
+  // (exactly as pressing [S] to open the store already does today); this
+  // page never simulates or double-counts a keystroke on top of that by
+  // rendering the dialog, so there is no separate inflation risk to gate
+  // against.
+  function openActivity() {
+    if (el.activity.open) return;
+    renderActivity();
+    el.activity.showModal();
+    el.scrim.classList.add('visible');
+  }
+  function closeActivity() {
+    if (!el.activity.open) return;
+    el.activity.close();
+  }
+  el.activity.addEventListener('close', function () {
+    el.scrim.classList.remove('visible');
+  });
+  el.activityOpenBtn.addEventListener('click', openActivity);
+  el.activityClose.addEventListener('click', closeActivity);
+
+  // ---------------------------------------------------------------------
   // Input — keyboard (ui-spec.md §5.2)
   // ---------------------------------------------------------------------
   function moveSelection(delta) {
@@ -1061,9 +1141,15 @@
         case 'Tab': closeStore(); break; // do not preventDefault: leave native focus cycling alone
         default: break; // Esc: native <dialog> behaviour, not intercepted
       }
+    } else if (el.activity.open) {
+      switch (e.key) {
+        case 'a': case 'A': closeActivity(); break;
+        default: break; // Esc: native <dialog> behaviour, not intercepted
+      }
     } else {
       if (e.key === 's' || e.key === 'S') { e.preventDefault(); openStore(); }
       else if (e.key === 'Tab') { e.preventDefault(); openStore(); }
+      else if (e.key === 'a' || e.key === 'A') { e.preventDefault(); openActivity(); }
     }
   });
 

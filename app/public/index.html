@@ -22,6 +22,7 @@
       <span id="mood-dot"></span>
       <span id="hud-level">LV 1</span>
       <span id="hud-cash"><i class="nes-icon coin is-small"></i><span class="value">0</span></span>
+      <button id="activity-open" class="nes-btn">[A] ACTIVITY</button>
       <button id="store-open" class="nes-btn">[S] STORE</button>
     </div>
 
@@ -70,6 +71,31 @@
         <div id="store-preview-state"></div>
         <div id="store-preview-color"></div>
       </div>
+    </dialog>
+
+    <dialog id="activity" class="nes-dialog is-dark">
+      <div id="activity-title">ACTIVITY LOG</div>
+      <button id="activity-close" class="nes-btn">X</button>
+
+      <div class="activity-section" id="activity-today">
+        <div class="activity-section-title">TODAY</div>
+        <div class="activity-row"><span class="label">KEYSTROKES</span><span class="value" id="stat-today-keystrokes">0</span></div>
+        <div class="activity-row"><span class="label">MOUSE ACTIVE</span><span class="value" id="stat-today-mouse">0s</span></div>
+        <div class="activity-row"><span class="label">ACTIVE TIME</span><span class="value" id="stat-today-active">0m 0s</span></div>
+        <div class="activity-row"><span class="label">IDLE TIME</span><span class="value" id="stat-today-idle">0m 0s</span></div>
+        <div class="activity-row"><span class="label">SPRINTS DONE</span><span class="value" id="stat-today-sprints">0</span></div>
+      </div>
+
+      <div class="activity-section" id="activity-lifetime">
+        <div class="activity-section-title">LIFETIME</div>
+        <div class="activity-row"><span class="label">KEYSTROKES</span><span class="value" id="stat-life-keystrokes">0</span></div>
+        <div class="activity-row"><span class="label">MOUSE ACTIVE</span><span class="value" id="stat-life-mouse">0s</span></div>
+        <div class="activity-row"><span class="label">ACTIVE TIME</span><span class="value" id="stat-life-active">0m 0s</span></div>
+        <div class="activity-row"><span class="label">IDLE TIME</span><span class="value" id="stat-life-idle">0m 0s</span></div>
+        <div class="activity-row"><span class="label">SPRINTS DONE</span><span class="value" id="stat-life-sprints">0</span></div>
+      </div>
+
+      <div id="activity-help">A / ESC CLOSE</div>
     </dialog>
 
   </div>
