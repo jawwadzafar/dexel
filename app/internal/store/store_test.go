@@ -1,8 +1,11 @@
 package store
 
 import (
+	"errors"
+	"math"
 	"os"
 	"path/filepath"
+	"reflect"
 	"testing"
 
 	"github.com/jawwadzafar/dev-companion/app/internal/game"
@@ -113,6 +116,72 @@ func TestLoadMalformedFileIsRenamedToCorruptNotDeleted(t *testing.T) {
 	}
 	if _, err := os.Stat(path + ".corrupt"); err != nil {
 		t.Errorf("expected %s.corrupt to exist (never delete the bad file): %v", path, err)
+	}
+}
+
+// TestLoadFutureSchemaIsBackedUpNeverDowngradedInPlace is S4: a save
+// written by a NEWER build (Schema > CurrentSchema) — e.g. someone ran an
+// older binary once after upgrading — must never be silently treated as
+// "no save, start fresh" and then overwritten in place by this older
+// build's next autosave. Load must instead preserve the original bytes
+// untouched at "<path>.future" and return an error (ok=false, err!=nil,
+// wrapping ErrFutureSchema) so the caller surfaces this as a load
+// FAILURE rather than quietly discarding newer data.
+func TestLoadFutureSchemaIsBackedUpNeverDowngradedInPlace(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "state.json")
+
+	future := SaveData{Schema: CurrentSchema + 1, DevCash: 999999}
+	if err := Save(path, future); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	rawBefore, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("ReadFile before Load: %v", err)
+	}
+
+	d, ok, err := Load(path)
+	if err == nil {
+		t.Fatal("expected an error for a future-schema save, got nil")
+	}
+	if !errors.Is(err, ErrFutureSchema) {
+		t.Errorf("Load err = %v, want it to wrap ErrFutureSchema", err)
+	}
+	if ok {
+		t.Error("ok=true for a future-schema save, want false (must not be silently treated as usable)")
+	}
+	if !reflect.DeepEqual(d, SaveData{}) {
+		t.Errorf("d = %+v, want the zero value (future-schema data must never be applied by an older build)", d)
+	}
+
+	// The original must be gone from path (so nothing downstream — an
+	// autosave, a legacy-import Save — can accidentally write a
+	// downgraded schema-1 file OVER the newer one)...
+	if _, statErr := os.Stat(path); !os.IsNotExist(statErr) {
+		t.Error("original future-schema file should have been moved away from path, not left in place")
+	}
+	// ...and preserved byte-for-byte at path+".future", never deleted.
+	rawAfter, err := os.ReadFile(path + ".future")
+	if err != nil {
+		t.Fatalf("expected %s.future to exist (original must be preserved, never deleted): %v", path, err)
+	}
+	if string(rawAfter) != string(rawBefore) {
+		t.Error(".future backup content differs from the original save — it must be preserved byte-for-byte")
+	}
+
+	// Simulate the caller's next step (main.go's loadOrImport falling
+	// through to "start fresh" and eventually autosaving) and confirm it
+	// cannot clobber the backup: writing a fresh, current-schema save to
+	// the same path must never touch path+".future".
+	if err := Save(path, SaveData{Schema: CurrentSchema, DevCash: 1}); err != nil {
+		t.Fatalf("Save (fresh start): %v", err)
+	}
+	rawAfterFreshSave, err := os.ReadFile(path + ".future")
+	if err != nil {
+		t.Fatalf("expected %s.future to still exist after starting fresh: %v", path, err)
+	}
+	if string(rawAfterFreshSave) != string(rawBefore) {
+		t.Error("starting fresh after a future-schema load must not alter the .future backup")
 	}
 }
 
@@ -247,6 +316,16 @@ func TestImportLegacyNeverLosesCurrency(t *testing.T) {
 		{"unknown track ignored", 5, map[string]uint8{"underwater_basket_weaving": 9}},
 		{"tier above known max clamped down", 5, map[string]uint8{"chair": 200}},
 		{"tier zero is a no-op", 5, map[string]uint8{"chair": 0}},
+		// Near-max wallet + every refund-granting track maxed (desk_decor
+		// tier2's +70 and monitor tier2's +550 = +620 total refund):
+		// plain uint64 addition wraps this past math.MaxUint64 back down
+		// to a small number, which — precisely because it's smaller than
+		// wallet — is exactly what this test's own d.DevCash < c.wallet
+		// check below would already have caught. addSaturatingUint64
+		// (legacy.go) must clamp at math.MaxUint64 instead.
+		{"near-max wallet, everything maxed (regression: must saturate, not overflow)", math.MaxUint64 - 100, map[string]uint8{
+			"keyboard": 2, "mouse": 2, "chair": 2, "desk_decor": 2, "wall": 2, "pet": 1, "monitor": 2,
+		}},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -254,6 +333,14 @@ func TestImportLegacyNeverLosesCurrency(t *testing.T) {
 			d := ImportLegacy(legacy, game.DefaultCatalog())
 			if d.DevCash < c.wallet {
 				t.Errorf("devCash_after (%d) < devCash_before (%d)", d.DevCash, c.wallet)
+			}
+			// The near-max-wallet case's refund total (620, from
+			// desk_decor tier2 + monitor tier2) is chosen to exceed the
+			// 100 headroom left below math.MaxUint64 — confirm the sum
+			// actually saturated at the ceiling rather than merely
+			// happening to still be >= wallet by luck.
+			if c.wallet > math.MaxUint64-620 && d.DevCash != math.MaxUint64 {
+				t.Errorf("devCash_after (%d) should have saturated at math.MaxUint64 (%d)", d.DevCash, uint64(math.MaxUint64))
 			}
 		})
 	}

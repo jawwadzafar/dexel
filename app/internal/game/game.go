@@ -76,7 +76,17 @@ type Game struct {
 	OwnedTints map[string]bool        // "<itemId>:<tintId>" -> owned (non-default tints only)
 	Equipped   map[string]EquippedRef // slot -> {itemId, tintId}, always populated
 
-	StoreOpen bool
+	// openStoreConns is the set of connection ids currently holding the
+	// work gate open (docs/ui-spec.md §5.3). Refcounted by connID rather
+	// than a single global bool so that ANY ONE client's STORE_CLOSE or
+	// disconnect only releases ITS OWN hold — it can never release a gate
+	// a different, still-connected client is holding, and a client that
+	// reconnects mid-session (its earlier connID gone, replaced by a new
+	// one) never leaves a stale entry that keeps the gate wedged open
+	// either, because the old connID's entry is removed on disconnect
+	// before the new one ever opens its own. See StoreOpen (the read) and
+	// OpenStore/CloseStore (the writes) below.
+	openStoreConns map[uint64]bool
 
 	// ImportedFromRust/ImportedAt are set once, by the legacy-import path
 	// (internal/store), and carried forward on every subsequent save —
@@ -311,9 +321,31 @@ func (g *Game) EquipItem(slot, itemID string, tintID *string) error {
 
 // OpenStore/CloseStore implement docs/ui-spec.md §5.3's work gate: while
 // the store is open, Tick must accrue no work/Dev Cash and must hold the
-// last mood (see Tick's doc comment).
-func (g *Game) OpenStore()  { g.StoreOpen = true }
-func (g *Game) CloseStore() { g.StoreOpen = false }
+// last mood (see Tick's doc comment). Both are keyed by the calling
+// connection's id (server.go/handlers.go's connID) rather than acting on a
+// single global flag: OpenStore adds connID to the held-open set,
+// CloseStore removes it (a no-op if connID never held it, or already
+// doesn't — this is what makes both an explicit STORE_CLOSE and a
+// disconnect-synthesized one, or a repeat of either, always safe to call).
+// StoreOpen reports the actual gate state derived from that set.
+func (g *Game) OpenStore(connID uint64) {
+	if g.openStoreConns == nil {
+		g.openStoreConns = map[uint64]bool{}
+	}
+	g.openStoreConns[connID] = true
+}
+
+func (g *Game) CloseStore(connID uint64) {
+	delete(g.openStoreConns, connID)
+}
+
+// StoreOpen reports whether ANY connection currently holds the store open
+// — the earning gate Tick checks. Reconnecting after a blip, or a second
+// client closing its own store, can never flip this false while at least
+// one connection still holds it open (see openStoreConns's doc comment).
+func (g *Game) StoreOpen() bool {
+	return len(g.openStoreConns) > 0
+}
 
 // Tick folds one engine.TickResult into game state.
 //
@@ -328,7 +360,7 @@ func (g *Game) CloseStore() { g.StoreOpen = false }
 // instant the store closes. That is why this method takes an
 // already-computed TickResult rather than owning the decision to sample.
 func (g *Game) Tick(r engine.TickResult) (completed bool) {
-	if g.StoreOpen {
+	if g.StoreOpen() {
 		return false
 	}
 	g.Mood = r.Mood
@@ -423,7 +455,7 @@ func (g *Game) State() StateMessage {
 		DevCash:      g.DevCash,
 		Level:        levelForXP(g.XP),
 		XP:           g.XP,
-		StoreOpen:    g.StoreOpen,
+		StoreOpen:    g.StoreOpen(),
 		Sprint: SprintView{
 			Index:     g.sprintIndex,
 			Name:      def.Name,

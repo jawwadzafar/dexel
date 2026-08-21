@@ -68,12 +68,13 @@ const (
 const (
 	// darwinPollInterval: how often we ask CoreGraphics "how long since".
 	darwinPollInterval = 50 * time.Millisecond
-	// darwinSampleInterval: the anti-mash coalescing window (ADR 0005's
-	// MOUSE_SAMPLE_SECS, applied uniformly to both signals per the task
-	// brief — "mirror the Rust calibration: these caps are load-bearing
-	// anti-mashing values"). At most one keystroke and one mouse-active
-	// signal are counted per this window, however fast the input arrives.
-	darwinSampleInterval = 100 * time.Millisecond
+	// darwinSampleInterval: alias for the package-wide anti-mash
+	// coalescing window (MouseSampleInterval, defined in provider.go, same
+	// package — no import needed even though this file is build-tagged
+	// darwin-only). See that constant's doc comment for why this and the
+	// linux/engine copies were hoisted into one place instead of each
+	// declaring their own 100ms.
+	darwinSampleInterval = MouseSampleInterval
 )
 
 // DarwinProvider polls CoreGraphics HID idle timers on a 50ms ticker

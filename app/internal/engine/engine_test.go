@@ -88,6 +88,27 @@ func TestMouseOnlyNeverReachesTheCeilingAlone(t *testing.T) {
 	}
 }
 
+// TestMaxRecentRateIsABackstopNotASilentCap is S2's missing coverage: it
+// asserts MaxRecentRate (15) genuinely sits ABOVE the highest weighted
+// rate a REAL, honestly-coalesced provider could ever hand Tick() —
+// max sustained keystrokes/sec (bounded by activity.MouseSampleInterval's
+// coalescing, one counted keystroke per interval) plus a continuously
+// mouse-active signal (MouseSustainedRate, the same coalescing cap applied
+// to mouse). If MaxRecentRate ever regressed to sit AT or BELOW that real
+// achievable rate, the ceiling would silently become the thing capping
+// ordinary fast-but-honest typing+mousing, rather than existing purely as
+// a backstop against a fabricated/scripted signal claiming a rate no real
+// coalesced provider could produce.
+func TestMaxRecentRateIsABackstopNotASilentCap(t *testing.T) {
+	maxRealKeystrokesPerSecond := 1.0 / activity.MouseSampleInterval.Seconds()
+	maxRealWeightedRate := maxRealKeystrokesPerSecond*KeystrokeWeight + MouseSustainedRate*MouseWeight
+
+	if maxRealWeightedRate >= MaxRecentRate {
+		t.Fatalf("max real achievable weighted rate (%.3f, from %.3f keystrokes/s + mouse) >= MaxRecentRate (%.3f) — the ceiling would silently clamp honest max-speed input instead of only backstopping fabricated rates",
+			maxRealWeightedRate, maxRealKeystrokesPerSecond, MaxRecentRate)
+	}
+}
+
 // TestMoodHonestyTable is the mood table ADR 0010 requires: Coding only
 // from a recent keystroke, OnBreak only from genuine global idleness on a
 // provider that can see it, Idle otherwise — and NEVER OnBreak from a
