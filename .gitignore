@@ -19,3 +19,6 @@ _fleet/local/
 # local save data, if ever written into the repo during dev testing
 saves/
 *.save.json
+
+# personal Claude Code overrides (autopilot permissions) — never committed
+.claude/settings.local.json

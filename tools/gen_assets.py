@@ -78,16 +78,18 @@ SPEC: list[tuple[str, int, int]] = [
 CHARACTERS = ("dev_idle.png", "dev_type_a.png", "dev_type_b.png",
               "dev_coffee.png", "dev_sleep.png")
 
-# 4x4 ordered (Bayer) dither. Two palette colours plus a threshold matrix is
-# how you fade one colour into another without inventing an in-between entry,
-# which the fixed palette does not allow. Ordered rather than random so the
-# output stays byte-identical between runs.
-BAYER4 = (
-    (0, 8, 2, 10),
-    (12, 4, 14, 6),
-    (3, 11, 1, 9),
-    (15, 7, 13, 5),
-)
+# There is deliberately no dither helper here any more. A 4x4 ordered Bayer
+# matrix used to live at this spot, as the way to fade one palette colour into
+# another without inventing an in-between entry, and every single thing it was
+# used for was rejected by a reviewer: the lamp's glow disc ("looks like a
+# clipping error", "particle sparks"), the floor's light spill ("messy and
+# inconsistent ... looks like a rendering artifact"), the rug's woven texture,
+# the desk's tabletop gradient. At this pixel scale a two-colour dither does
+# not read as a gradient, it reads as noise. Light is expressed here as flat
+# runs of a brighter palette entry with hard edges instead - see build_desk,
+# build_lamp and _monitor. Removing the helper rather than merely not calling
+# it is the point: the next person to reach for a soft glow has to re-derive
+# it, and will find this comment first.
 
 
 class Sprite:
@@ -161,13 +163,15 @@ WALL_BOTTOM = 127
 SKIRT_TOP, SKIRT_BOTTOM = 128, 133
 FLOOR_TOP = 134
 
-# Where the desk lamp actually stands, in this sprite's pixel coordinates.
-# companion/src/scene.rs puts the lamp at x = -30 in a 320-wide room whose
-# origin is the centre, so it is at 160 - 30 = 130 here. The previous value
-# (232) was the monitor's x, which is why the wall light used to pool beside
-# the screen instead of behind the lamp.
-LAMP_X = 130
-LAMP_HEAD_Y = 102   # the lamp's shade covers rows ~96-105
+# There is deliberately no LAMP_X here any more either. This file used to hold
+# the lamp's x in room-background pixels so the wall glow could be painted
+# behind it, and that constant went stale twice - once holding the monitor's x
+# (so the glow pooled beside the wrong object) and once holding the lamp's old
+# left-hand position after scene.rs moved it to the right end of the desk. The
+# background cannot know where the props are, because another agent moves them.
+# Every light in this scene is therefore baked into the sprite of the object
+# that emits or receives it, so it travels with that object; the background's
+# only lighting is full-width bands, which cannot go stale.
 
 # Hard horizon where the wall's lit band begins. Set just above the lamp's
 # shade so the lamp sits inside the lit part of the wall - that adjacency is
@@ -176,6 +180,12 @@ LAMP_HEAD_Y = 102   # the lamp's shade covers rows ~96-105
 # dado line; the long dithered fade it replaces read as stipple noise smeared
 # across the whole upper wall.
 WALL_BAND_TOP = 92
+
+# Top row of the window frame. Named because the wall's dark upper band stops
+# one row above it: a band that ran on behind the window would put `shadow`
+# wall against `shadow` sky with only the 3px frame between them, and the
+# window would stop reading as a hole in a wall.
+WINDOW_TOP = 22
 
 # Fixed star field, four to a pane. Hard-coded rather than seeded-random
 # because a literal list is the only version that survives a Python RNG change
@@ -223,6 +233,16 @@ def build_room_bg() -> Sprite:
     s.rect(0, 7, 319, 9, "desk_dark")
     s.hline(7, 0, 319, "desk")          # lit top face of the moulding
     s.hline(10, 0, 319, "shadow")       # the shadow it casts down the wall
+    # Both lights in this room stand on the desk, so the wall gets darker the
+    # further up it you look. That is a third value on the wall - `shadow`
+    # from the cornice down to just above the window - and it is what turns
+    # the wall from one flat field into a graded surface. It is a flat band
+    # with a hard bottom edge, deliberately: every *shaped* attempt at wall
+    # light here (a dithered disc, a low-contrast dome, a sparse spark field)
+    # was read as a bug, because any closed shape on a bare wall reads as an
+    # object. A full-width band cannot be mistaken for an object, and it
+    # stops exactly at the window's top edge so the two never interact.
+    s.rect(0, 11, 319, WINDOW_TOP - 1, "shadow")
 
     _room_window(s)
 
@@ -239,6 +259,14 @@ def build_room_bg() -> Sprite:
     # top-down floor under a side-on desk - plus a dithered light spill on
     # top of it that read as a rendering artifact rather than as light.
     s.rect(0, FLOOR_TOP, 319, 199, "floor")
+    # One board lighter than its neighbours, full width, hard edges on both
+    # sides. This is the floor's share of the same top-to-bottom ramp the wall
+    # has: the board nearest the wall sits in the wall's own shade, the next
+    # one out is in the open and catches the desk lamp. `floor_light` is the
+    # palette's own name for it. NOT a gradient and NOT dithered - the
+    # stippled version of this exact idea is the one reviewers called "messy
+    # and inconsistent ... looks like a rendering artifact".
+    s.rect(0, 149, 319, 165, "floor_light")
     # No extra occlusion band under the skirting. The skirting's own `shadow`
     # bottom row already darkens the joint, and a second two-row band on top
     # of it made a 3px dark strip that anything standing on the floor line
@@ -248,6 +276,11 @@ def build_room_bg() -> Sprite:
     for y in (148, 166, 184):
         s.hline(y, 0, 319, "shadow")
         s.hline(y + 1, 0, 319, "floor_light")
+    # The lit board's own seams are already `shadow`; its far side needs the
+    # highlight row put back on top of the lighter fill so the joint still
+    # reads, and `desk` is the only value lighter than `floor_light` that is
+    # still a wood colour.
+    s.hline(149, 0, 319, "desk")
 
     return s
 
@@ -262,7 +295,7 @@ def _room_window(s: Sprite) -> None:
     four different treatments on four edges, which is why the bottom ledge
     read as a misplaced asset.
     """
-    x0, y0, x1, y1 = 40, 22, 116, 86
+    x0, y0, x1, y1 = 40, WINDOW_TOP, 116, 86
     s.rect(x0, y0, x1, y1, "desk_dark")
     s.outline(x0, y0, x1, y1, "desk")                 # same lit edge all round
     s.rect(x0 + 3, y0 + 3, x1 - 3, y1 - 3, "shadow")  # sky
@@ -299,37 +332,66 @@ def build_desk() -> Sprite:
     appeared to float. Now every part is a flat rectangle seen edge-on, so the
     top row of the sprite *is* the front edge of the tabletop - which is also
     the line scene.rs stands the monitor, lamp and mug on.
+
+    Note the distinction from that old failure, because it is one pixel row
+    wide and easy to undo by accident: the rows below ARE graded light-to-dark
+    now, but they are the graded front EDGE of a tabletop seen end-on, in flat
+    bands. What broke before was a lit top FACE - a visible horizontal
+    surface, which implies a camera looking down at the desk while the
+    character beside it is drawn from the side - plus a dither across it. A
+    value ramp down a vertical face is elevation shading; a value ramp across
+    a horizontal face is a second vanishing point.
     """
     s = Sprite(120, 48)
-    # Tabletop seen edge-on: a band of wood with its lower rows in shade
-    # because the light comes from above, then one occlusion row underneath.
-    # Opaque across the full width down to row 9, because that is what hides
-    # the seated character's lower body (docs/art-direction.md, Layering).
-    s.rect(0, 0, 119, 5, "desk")
-    s.rect(0, 6, 119, 8, "desk_dark")
+    # Tabletop seen edge-on. Rows 0-9 are opaque across the full width because
+    # that is what hides the seated character's lower body
+    # (docs/art-direction.md, Layering), and those ten rows are also where this
+    # sprite does its lighting.
+    #
+    # Rows 0-2 are the part of the tabletop that points at the ceiling, and
+    # both lamps in this room stand on it, so it is the brightest wood in the
+    # room and darkens away from them: `gold`, `pot`, `desk`, `desk_dark`,
+    # `shadow` - five values over ten rows.
+    #
+    # Full width and position-independent on purpose. A *local* warm patch was
+    # tried here and it ends up glowing under an empty stretch of tabletop the
+    # moment scene.rs slides the lamp along; a full-width band cannot go stale
+    # however the props move. What stops it reading as gold trim rather than as
+    # light is that the ramp keeps going underneath it. The lit rows outnumber
+    # the shaded ones four to two, which is also what keeps the band as a whole
+    # clearly lighter than the purple wall it is silhouetted against - a darker
+    # desk was read as blending into the background. This top edge is also the
+    # line every desk prop's contact shadow lands against, which is what ties
+    # those props to the wood rather than to the wall behind them.
+    s.hline(0, 0, 119, "gold")
+    s.rect(0, 1, 119, 2, "pot")
+    s.rect(0, 3, 119, 6, "desk")
+    s.rect(0, 7, 119, 8, "desk_dark")
     s.hline(9, 0, 119, "shadow")
-    # Row 0 is the top edge of the tabletop, i.e. the one line of this sprite
-    # that points at the ceiling. Everything in this room is under a lamp, so
-    # that line is warm: one flat `pot` band with hard edges, full width, so it
-    # cannot be read as a glow at a particular x the way a local lit patch was.
-    # It is also the line every desk prop's contact shadow lands against, which
-    # is what ties the props to the wood instead of to the wall behind them.
-    s.hline(0, 0, 119, "pot")
 
-    # No lit patch is painted here. The warm pool the lamp throws on the wood
-    # lives in the LAST ROW OF lamp.png instead: scene.rs is free to slide the
-    # lamp along the desk, and a pool baked into the desk at a fixed x ends up
-    # glowing under an empty stretch of tabletop the moment it moves.
-
-    # Legs: plain vertical rectangles. The single 1px `shadow` down the right
-    # of each is lighting (the room is lit from the left), not a second
-    # visible face - the moment a leg shows two faces it stops being an
-    # elevation and the projection clash is back.
     for lx in (10, 103):
-        s.rect(lx, 10, lx + 6, 47, "desk_dark")
-        s.vline(lx + 6, 10, 47, "shadow")
-        s.hline(47, lx, lx + 6, "shadow")   # contact with the floor
-
+        # The legs fall off in value from top to bottom, because both lamps in
+        # this room stand on the tabletop above them: `desk` for the stretch
+        # just under the top, `desk_dark` for the rest. Two flat bands, one
+        # hard edge, full width, so it holds wherever scene.rs puts the desk.
+        #
+        # The ramp runs *upward* from `desk_dark` rather than downward into
+        # `shadow`, and that direction is the whole point. The palette has no
+        # brown between `desk_dark` and `shadow`, so a downward ramp is a jump
+        # straight to near-black: it turned the bottom two thirds of each leg
+        # into a black rectangle that read as a hole in the rug, not as a leg
+        # in shadow. Lighting the top of the leg says the same thing about
+        # where the light is and leaves the leg looking like wood.
+        s.rect(lx, 10, lx + 6, 16, "desk")
+        s.rect(lx, 17, lx + 6, 46, "desk_dark")
+        s.vline(lx + 6, 10, 46, "shadow")
+        # Contact shadow: the foot's last row plus two pixels of floor either
+        # side of it, so the dark line is visibly WIDER than the leg. A shadow
+        # exactly as wide as the object it belongs to reads as the object's own
+        # bottom edge; one that spills sideways reads as a shadow, and that is
+        # the whole difference between a desk standing on the floor and a desk
+        # pasted in front of it.
+        s.hline(47, lx - 2, lx + 8, "shadow")
 
     return s
 
@@ -340,12 +402,43 @@ def _monitor(lit: bool) -> Sprite:
     # panel instead of butting against it.
     s.rect(16, 28, 23, 32, "metal")
     s.rect(13, 33, 26, 34, "metal")
-    s.hline(35, 14, 25, "shadow")
     s.vline(23, 28, 32, "shadow")
 
+    # Row 35 is the bottom row of the sprite, and scene.rs stands that row on
+    # the desk's top edge - so it is the only row of this sprite that is in
+    # contact with the tabletop, and therefore the only place the screen's
+    # light can legitimately land on the wood.
+    #
+    # This is where the cool half of the scene's lighting lives. It is NOT in
+    # desk.png: another agent moves the props, and a teal pool baked into the
+    # desk at a fixed x glows under an empty stretch of tabletop the moment the
+    # monitor slides. Baked here it travels with the screen that emits it, and
+    # it is absent from monitor_off.png, which is what makes the mood switch
+    # read as the screen actually going dark rather than merely changing hue.
+    s.hline(35, 13, 26, "shadow")          # the stand's own contact shadow
+    if lit:
+        # The top face of the foot is lit by the panel directly above it. This
+        # matters more than it sounds: without it the pool is two separate
+        # teal blobs with a dark foot between them, and two blobs read as two
+        # objects. With it the light runs unbroken across the whole base.
+        s.hline(33, 13, 26, "screen_dim")
+        # One flat shape in one colour, 34px wide and 4px tall, stepped in by
+        # two pixels a row. Deliberately much wider than it is tall: a tall
+        # narrow version of the same wedge is a cone, and a cone of light drawn
+        # on a wall is the shape reviewers called "a giant mysterious
+        # semi-circle". Flat and wide, hugging the stand, it reads as a pool at
+        # the base of the monitor - which is where the light actually goes.
+        for row, inset in ((32, 8), (33, 6), (34, 4), (35, 3)):
+            s.hline(row, inset, 12, "screen_dim")
+            s.hline(row, 27, 39 - inset, "screen_dim")
+
     s.rect(1, 0, 38, 27, "metal")
-    s.hline(0, 2, 37, "wall_light")        # 1px top highlight gives it form
-    s.vline(0, 1, 26, "wall_light")
+    # The bezel's own lit edges. When the panel is on they pick up its glow
+    # (`screen_dim`), when it is off they pick up nothing but the room
+    # (`wall_light`) - a second, quieter tell that the light source is off.
+    edge = "screen_dim" if lit else "wall_light"
+    s.hline(0, 2, 37, edge)                # 1px top highlight gives it form
+    s.vline(0, 1, 26, edge)
     s.hline(27, 2, 38, "shadow")
     s.vline(39, 1, 27, "shadow")
 
@@ -409,6 +502,10 @@ def build_chair() -> Sprite:
     s.hline(33, 3, 24, "shadow")
     for wx in (3, 12, 21):                 # castors
         s.rect(wx, 34, wx + 3, 35, "shadow")
+    # Contact shadow across the whole footprint and one pixel wider than the
+    # outermost castor, so the chair reads as sitting on the floorboards
+    # instead of hovering a pixel above them.
+    s.hline(35, 2, 25, "shadow")
     return s
 
 
@@ -432,8 +529,23 @@ def _dev_torso(s: Sprite) -> None:
     s.rect(7, 16, 17, 16, "shirt")         # shoulder line
     s.rect(6, 17, 17, 19, "shirt")
     s.rect(6, 20, 16, 31, "shirt")
-    s.vline(6, 19, 31, "shadow")           # back edge, turned from the monitor
+    # The back is turned away from both light sources, so it is not a 1px
+    # outline but a genuine shadow side, two pixels wide. One pixel of shadow
+    # reads as a black keyline drawn round the sprite; two pixels read as the
+    # body being unlit on that side, which is the difference between an
+    # outlined sticker and a figure standing in a room with lamps in it.
+    s.vline(6, 17, 31, "shadow")
+    s.vline(7, 20, 31, "shadow")
     s.rect(12, 16, 15, 16, "cream")        # collar under the chin
+    # Cool rim on the shoulder facing the monitor, one pixel of `screen`.
+    # `screen` rather than `screen_dim` because `screen_dim` and `shirt`
+    # happen to sit at the same luminance, so a rim in it is invisible - a rim
+    # light has to change value, not just hue. It starts at row 17 rather than
+    # row 16: on row 16 it landed immediately beside the cream collar and the
+    # two together read as a necklace. Rows 18-19 are included even though the
+    # arms usually cover them - the arms are drawn after this, so where a
+    # sleeve reaches over the rim the rim correctly vanishes behind it.
+    s.vline(17, 17, 19, "screen")
 
 
 def _dev_head(s: Sprite, dy: int = 0, eyes_closed: bool = False) -> None:
@@ -444,14 +556,35 @@ def _dev_head(s: Sprite, dy: int = 0, eyes_closed: bool = False) -> None:
     s.rect(9, 4 + dy, 16, 4 + dy, "hair")
     s.rect(8, 5 + dy, 17, 7 + dy, "hair")
     s.rect(8, 8 + dy, 9, 11 + dy, "hair")
-    s.rect(11, 3 + dy, 14, 3 + dy, "desk_dark")   # lit crown, light from above
+    # The lamp's bulb sits just above head height and to the right, so the
+    # crown and the whole right edge of the skull take a warm `gold` rim -
+    # the one place a rim can be a full colour rather than a value nudge,
+    # because `hair` is the darkest thing on the sprite. The monitor's cool
+    # light is deliberately NOT put here as well: a teal rim on the hair plus
+    # a teal rim on the shoulder joined up into what read as a headset rather
+    # than as light, so the cool half of the lighting is kept to the pixels
+    # that genuinely point at the panel - the nose, the shoulder edge and the
+    # hands.
+    s.rect(11, 3 + dy, 14, 3 + dy, "gold")        # crown, under the lamp
+    s.dots([(16, 4 + dy), (17, 5 + dy), (17, 6 + dy), (17, 7 + dy)], "gold")
 
     s.rect(10, 8 + dy, 17, 12 + dy, "skin")
     s.rect(11, 13 + dy, 16, 13 + dy, "skin")
     s.rect(12, 14 + dy, 15, 14 + dy, "skin")      # chin
     s.rect(18, 10 + dy, 18, 11 + dy, "skin")      # nose breaks the silhouette
-    s.dot(10, 10 + dy, "pot")                     # ear, right at the hairline
+    # The face in three values instead of one flat fill of `skin`, because a
+    # flat face is the single loudest "nothing in this room is lit" signal on
+    # screen. The palette has no skin_light/skin_dark, so the nearest
+    # legitimate entries stand in - the same substitution the hair and shirt
+    # already use: `cream` for the side turned toward the lamp and the screen,
+    # `skin` as the mid-tone, `pot` for the side turned away from both.
+    # (Kept to x16-17 plus the nose column rather than a rect out to x18: rows
+    # 8, 9 and 12 have nothing at x18, and a rect there would silently widen
+    # the head instead of shading it.)
+    s.rect(16, 8 + dy, 17, 12 + dy, "cream")      # lit side, toward the lamp
+    s.rect(10, 8 + dy, 11, 12 + dy, "pot")        # shadow side, toward the back
     s.dot(11, 13 + dy, "pot")                     # jaw turning away from us
+    s.dot(12, 14 + dy, "pot")
 
     if eyes_closed:
         s.rect(11, 10 + dy, 12, 10 + dy, "hair")
@@ -462,6 +595,16 @@ def _dev_head(s: Sprite, dy: int = 0, eyes_closed: bool = False) -> None:
 
     s.rect(12, 15 + dy, 15, 15 + dy, "skin")      # neck
     s.dot(12, 15 + dy, "pot")
+
+    # The nose is the most forward point of the head and the only part of it
+    # pointing straight at the monitor, so it - and only it - takes the cool
+    # light. Two pixels: `screen` sits within a few points of `skin`'s
+    # luminance, so this reads as a hue shift on the leading edge rather than
+    # as a green stripe. The warm `cream` cheek beside it is the lamp; this is
+    # the screen. Having the two lights land on different pixels of the same
+    # face is what says they are both real.
+    s.dot(18, 10 + dy, "screen")
+    s.dot(18, 11 + dy, "screen")
 
 
 def _far_arm(s: Sprite, dx: int = 0, dy: int = 0) -> None:
@@ -478,6 +621,11 @@ def _far_arm(s: Sprite, dx: int = 0, dy: int = 0) -> None:
     # its underside is the 1px dark line that separates it from the near hand
     # directly below.
     s.hline(20 + dy, 18 + dx, 20 + dx, "shadow")
+    # Cool rim on the knuckles, which face the monitor. Muted (`screen_dim`)
+    # where the near hand's is bright: this hand is the far one, and keeping
+    # its highlight a step down is the same depth trick that makes it `pot`
+    # instead of `skin` in the first place.
+    s.vline(20 + dx, 18 + dy, 19 + dy, "screen_dim")
 
 
 def _near_arm(s: Sprite, dx: int = 0, dy: int = 0, curl: bool = True) -> None:
@@ -492,8 +640,21 @@ def _near_arm(s: Sprite, dx: int = 0, dy: int = 0, curl: bool = True) -> None:
     s.hline(18 + dy, 15 + dx, 17 + dx, "shadow")          # sleeve hem
     s.rect(15 + dx, 19 + dy, 17 + dx, 21 + dy, "skin")    # upper arm
     s.rect(16 + dx, 22 + dy, 18 + dx, 23 + dy, "skin")    # forearm
-    s.rect(19 + dx, 21 + dy if curl else 22 + dy, 21 + dx, 23 + dy, "skin")
+    hand_top = 21 + dy if curl else 22 + dy
+    s.rect(19 + dx, hand_top, 21 + dx, 23 + dy, "skin")
     s.hline(23 + dy, 17 + dx, 21 + dx, "pot")             # underside/fingers
+    # Both lamps in this room are above the desk, so the arm is lit along its
+    # top and shaded along its underside - the one cue that turns a limb from
+    # a flat skin-coloured bar into a round one. `cream` and `pot` stand in
+    # for the skin_light/skin_dark the palette does not have.
+    s.hline(19 + dy, 15 + dx, 17 + dx, "cream")           # top of the upper arm
+    s.hline(22 + dy, 16 + dx, 18 + dx, "cream")           # top of the forearm
+    s.hline(hand_top, 19 + dx, 21 + dx, "cream")          # back of the hand
+    # The fingertips are the closest thing in the room to the screen, so they
+    # get the cool rim: the leading edge of the hand in `screen`. This is the
+    # pixel group that sells the whole idea - the character's hands are lit
+    # teal by the monitor they are typing on.
+    s.vline(21 + dx, hand_top, 22 + dy, "screen")
 
 
 def _typing_arms(s: Sprite, dx: int, dy: int) -> None:
@@ -547,10 +708,19 @@ def build_dev_coffee() -> Sprite:
     s.rect(17, 15, 18, 20, "skin")         # forearm folded up
     s.rect(17, 14, 19, 14, "skin")         # fist under the mug
     s.dot(18, 15, "pot")
+    s.dot(19, 14, "screen")                # knuckle facing the monitor
+    s.hline(19, 15, 17, "cream")           # top of the arm, lit from above
     s.rect(16, 10, 19, 13, "cream")        # mug body
     s.hline(10, 16, 19, "desk_dark")       # coffee surface
     s.vline(19, 11, 13, "pot")             # shaded side
     s.hline(13, 16, 19, "pot")
+    # This pose covers the shoulder rim and most of the face with the raised
+    # arm and the mug, so without these three pixels the coffee frame would be
+    # the one frame in the set with no cool light on it at all - and a light
+    # that switches off when the character takes a break is not a light. The
+    # mug's monitor-facing side and the knuckle beneath it are what is left
+    # pointing at the screen in this pose, so they are what catches it.
+    s.dots([(19, 11), (19, 12)], "screen")
     s.dots([(20, 11), (20, 12)], "cream")  # handle
     s.dots([(17, 8), (18, 6), (17, 4)], "cream")   # steam
     return s
@@ -613,7 +783,11 @@ def build_plant() -> Sprite:
     for x0, y, x1 in body:
         s.hline(y, x0, x1, "pot")
         s.hline(y, x1 - 2, x1, "desk_dark")       # shaded right of the pot
-    s.hline(31, 8, 15, "desk_dark")
+    # Contact shadow on the desk, two pixels wider than the pot's base on each
+    # side. The pot's own bottom row used to be `desk_dark`, which is a
+    # terracotta value and so read as more pot rather than as shadow - the
+    # plant appeared to be stuck onto the desk rather than standing on it.
+    s.hline(31, 6, 17, "shadow")
     return s
 
 
@@ -622,8 +796,12 @@ def build_mug() -> Sprite:
     s.rect(1, 2, 7, 9, "cream")
     s.hline(2, 2, 6, "desk_dark")          # coffee seen through the opening
     s.hline(3, 2, 6, "shadow")
-    s.vline(7, 3, 9, "pot")                # shaded side
-    s.hline(9, 2, 7, "pot")
+    s.vline(7, 3, 8, "pot")                # shaded side
+    s.hline(8, 1, 7, "pot")                # shaded bottom of the china
+    # Contact shadow, one pixel proud of the mug on the near side: this is a
+    # 10px sprite and a 7px mug, so there is room for the shadow to be
+    # visibly wider than the object casting it.
+    s.hline(9, 0, 8, "shadow")
     s.dots([(8, 4), (8, 5), (8, 6)], "cream")   # handle
     s.dot(8, 5, "pot")                     # the hole in the handle
     return s
@@ -640,18 +818,26 @@ def build_books() -> Sprite:
     for x0, y0, x1, cover in volumes:
         y1 = y0 + 4 if cover != "gold" else y0 + 3
         s.rect(x0, y0, x1, y1, cover)
-        # `shadow` where a book casts onto the one below - except on the
-        # bottom volume, whose last row is the stack's contact with the
-        # floor. A `shadow` line there is nearly the floor's own darkest
-        # value, so it read as a gap under the stack rather than as contact;
-        # `desk_dark` is dark enough to ground the books and warm enough to
-        # still read as the shaded bottom edge of a book.
-        s.hline(y1, x0, x1, "desk_dark" if y1 == 23 else "shadow")
+        # `shadow` where a book casts onto the one below. The bottom volume's
+        # last row is the stack's contact with the floor and is re-painted
+        # wider after the loop; see the contact-shadow note below.
+        s.hline(y1, x0, x1, "shadow")
         s.vline(x0, y0, y1 - 1, "shadow")  # spine in shadow
         s.rect(x1 - 3, y0 + 1, x1, y1 - 1, "cream")   # page block
         s.vline(x1 - 3, y0 + 1, y1 - 1, "desk_dark")  # gap before the pages
         # Title dash on the spine face; gold-on-gold would be invisible.
         s.hline(y0, x0 + 1, x1 - 4, "desk_dark" if cover == "gold" else "gold")
+    # Contact shadow, in the sprite's last row because that is the row that
+    # touches the floor. It spans the full 32px, one pixel proud of the bottom
+    # volume on each side, and that overhang is the entire point: a dark line
+    # exactly as wide as the book reads as the book's own bottom edge and the
+    # stack still floats, while a dark line you can see past the book reads as
+    # the book's shadow. (An earlier version put `shadow` here at exactly the
+    # book's width, on top of a separate dark band painted across the floor
+    # under the skirting, and the two together read as a 1px gap under the
+    # stack. That floor band is gone; this row is now the only dark thing at
+    # the stack's base.)
+    s.hline(23, 0, 31, "shadow")
     return s
 
 
@@ -665,22 +851,54 @@ def build_lamp() -> Sprite:
         s.hline(y, x0, x0 + 1, "lamp")     # lit upper-left face
         s.hline(y, x1 - 1, x1, "pot")      # shaded right face
     s.hline(9, 3, 16, "desk_dark")         # under-rim, in its own shadow
-    s.rect(7, 10, 12, 10, "lamp")          # bulb glow spilling out
-    s.rect(9, 11, 10, 11, "lamp")
-    s.dots([(6, 10), (13, 10)], "gold")
+    # The mouth of the shade. This is the one place in the room where the
+    # viewer looks straight at a light source, so it is the brightest thing in
+    # the sprite: `cream` core, `lamp` around it, and two `lamp` pixels poking
+    # one column past the shade's rim on each side - a hard-edged 2px flare,
+    # which is as much bloom as this palette can express without the dithered
+    # disc that reviewers read as a clipping error.
+    s.hline(10, 1, 18, "gold")             # light escaping the whole rim
+    s.hline(10, 5, 14, "lamp")             # bulb glow spilling out
+    s.rect(8, 11, 11, 11, "lamp")
+    s.rect(9, 10, 10, 10, "cream")         # filament core
 
     s.rect(9, 12, 10, 24, "metal")         # post
     s.vline(9, 12, 24, "wall_light")
     s.hline(25, 5, 14, "metal")            # weighted base
     s.hline(26, 4, 15, "metal")
     s.dots([(5, 25), (6, 25)], "wall_light")
+    # The pool rises three rows either side of the base, where nothing blocks
+    # it, stepping out a pixel a row. Stepped, not faded: flat runs of warm
+    # colour with hard edges, because the soft version of this idea - a Bayer
+    # disc of `lamp` yellow - is the one reviewers called particle sparks.
+    #
+    # `lamp` and not `gold`: desk.png's own top row is `gold`, so a gold pool
+    # on a gold tabletop is invisible. `lamp` is the palette's brightest warm
+    # value and the only one left that can be brighter than the surface it is
+    # falling on - which is what a pool of light has to be.
+    # ...and its two hottest pixels are `cream`, the palette's brightest entry,
+    # immediately beside the base where the light has the least distance to
+    # travel. Without them the pool's brightest value is `lamp`, one step off
+    # the tabletop's own `gold`, and at 2x the two are near enough that the
+    # pool stops reading as a hotspot and starts reading as more tabletop.
+    for row, inset in ((24, 2), (25, 1), (26, 0)):
+        s.hline(row, inset, 3, "lamp")
+        s.hline(row, 16, 19 - inset, "lamp")
+    s.dots([(3, 25), (3, 26), (16, 25), (16, 26)], "cream")
     # Bottom row: the pool of light the lamp throws on whatever it stands on.
     # It lives here rather than in desk.png so that it follows the lamp when
     # scene.rs moves it, and it is exactly one row tall - the lamp's bottom
     # edge is flush with the desk's top edge, so one row is all the tabletop
-    # this sprite can reach. `pot` directly beneath the base is the part the
-    # base itself shades.
-    s.hline(27, 1, 18, "gold")
+    # this sprite can reach.
+    #
+    # Three values across that one row, brightest where the light is least
+    # obstructed: `pot` directly beneath the base (the part the base's own
+    # weight shades), `lamp` in the two gaps either side of it where the light
+    # gets straight out, `gold` at the far ends where it is running out. A
+    # flat single-colour line read as a decal; a three-step ramp with hard
+    # edges reads as a pool.
+    s.hline(27, 0, 19, "gold")
+    s.hline(27, 2, 17, "lamp")
     s.hline(27, 5, 14, "pot")
     return s
 
@@ -716,10 +934,15 @@ def build_rug() -> Sprite:
                 if q <= edge:
                     s.dot(x, y, name)
                     break
-            # A dark lower rim so the rug sits on the floor rather than
-            # floating above it: only the near half, because that is the edge
-            # the viewer reads as touching the boards.
-            if q > 0.88 and y > cy:
+            # A dark rim along the NEAR edge only, and only the bottom third
+            # of it. It used to run round the whole lower half, and a dark
+            # arc that long stopped reading as the rug pressing into the
+            # boards and started reading as an outline drawn round a sticker -
+            # `shadow` against `floor` is the highest-contrast edge in the
+            # room. Confined to the bottom, it is a contact shadow; the rest
+            # of the rim is `desk_dark`, which is close enough to the floor's
+            # own value to sit down into it.
+            if q > 0.88 and y >= 26:
                 s.dot(x, y, "shadow")
     return s
 

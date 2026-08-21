@@ -33,7 +33,16 @@ ENDPOINT = "https://tf-stage-api.iamsaif.ai/v1/chat/completions"
 # Verified vision-capable 2026-08-20. First entry that answers wins; the
 # fallback matters because these are staging deployments that go down (a
 # text-only DeepSeek outage already stalled the fleet once).
-MODELS = ["google/gemma-4-31B-it", "Qwen/Qwen3-Omni-30B-A3B-Instruct"]
+#
+# Omni is FIRST, deliberately (reordered 2026-08-21): gemma-4-31B returns
+# canned, image-independent verdicts on open-ended critique prompts — it gave
+# a near-verbatim identical "placeholder art, lamp casts no light" answer
+# five times across different images, including one from BEFORE the lighting
+# existed and a 3x zoomed crop where the light is unmissable, while
+# simultaneously answering closed yes/no questions about the same pixels
+# correctly. Omni's open-ended answers tracked the actual image. If you must
+# use gemma (Omni down), ask closed questions, never open critiques.
+MODELS = ["Qwen/Qwen3-Omni-30B-A3B-Instruct", "google/gemma-4-31B-it"]
 
 
 def api_key() -> str | None:
