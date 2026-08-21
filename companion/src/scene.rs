@@ -2,13 +2,15 @@
 //! placeholder `Node` rects (docs/art-direction.md).
 //!
 //! [`ScenePlugin`] owns everything *world-space* about the scene — the
-//! camera's integer upscale, the back-to-front sprite stack, and the three
+//! camera's integer upscale, the back-to-front sprite stack, and the
 //! per-frame swaps that make the room react to game state:
 //!
 //! * the character's frame follows [`Mood`] (typing loop / idle / coffee),
 //! * the monitor is lit while `Mood::Coding` and dim otherwise,
-//! * the plant appears at exactly the [`DESK_UPGRADE_COST`] wallet threshold
-//!   `desk_upgrade_system` already uses.
+//! * every [`crate::UPGRADE_TRACKS`] track has an anchored slot whose
+//!   `Visibility` [`upgrade_render_system`] derives from `OwnedUpgrades`
+//!   each frame (docs/upgrade-design.md "Scene contract") — the v0.2 plant
+//!   prop is now just `desk_decor` tier 1, rendered through this same path.
 //!
 //! It deliberately owns *nothing* about the HUD: the bottom bar stays in
 //! `lib.rs` as `bevy_ui` `Node`s, which are laid out from the window's
@@ -125,7 +127,6 @@ const SPRITE_DEV_IDLE: &str = "dev_idle.png"; // 24x32
 const SPRITE_DEV_TYPE_A: &str = "dev_type_a.png"; // 24x32
 const SPRITE_DEV_TYPE_B: &str = "dev_type_b.png"; // 24x32
 const SPRITE_DEV_COFFEE: &str = "dev_coffee.png"; // 24x32
-const SPRITE_PLANT: &str = "plant.png"; // 24x32
 const SPRITE_MUG: &str = "mug.png"; // 10x10
 const SPRITE_BOOKS: &str = "books.png"; // 32x24
 const SPRITE_LAMP: &str = "lamp.png"; // 20x28
@@ -136,6 +137,13 @@ const SPRITE_RUG: &str = "rug.png"; // 96x32
 // none of them means "asleep". Loading a handle no system ever reads would
 // be a dead field under `-D warnings` and, worse, would imply a fourth mood
 // exists. When a `Mood::Sleeping` lands, add it to [`CharacterFrames`].
+//
+// The v0.3 upgrade sprites (`keyboard_t1.png`, `plant.png`, `cat.png`, …)
+// are NOT listed here: `crate::UPGRADE_TRACKS` is their one source of truth
+// (docs/upgrade-design.md "Data-driven from one table"), and
+// `spawn_upgrade_slots` loads straight from that table's `sprite` field —
+// duplicating the filenames as consts here would be exactly the drift the
+// table exists to prevent.
 
 // ---------------------------------------------------------------------------
 // Authored sprite sizes (docs/art-direction.md § "Required sprites")
@@ -157,7 +165,33 @@ const LAMP_SIZE: Vec2 = Vec2::new(20.0, 28.0);
 const MUG_SIZE: Vec2 = Vec2::new(10.0, 10.0);
 const BOOKS_SIZE: Vec2 = Vec2::new(32.0, 24.0);
 const RUG_SIZE: Vec2 = Vec2::new(96.0, 32.0);
+/// `desk_decor` tier 1's footprint (docs/upgrade-design.md art manifest:
+/// "plant.png … 24x32" — the v0.2 plant, unchanged).
 const PLANT_SIZE: Vec2 = Vec2::new(24.0, 32.0);
+
+// v0.3 upgrade-slot footprints (docs/upgrade-design.md art manifest). Each
+// track's tiers share ONE footprint here even where the manifest's later
+// tiers differ slightly in size (e.g. `chair_t2` is 2px taller than
+// `chair_t1`) — the anchor is derived once per track/layer, not once per
+// tier, so a later tier centred on it may sit a pixel or two off the exact
+// contact line until the real art lands and the constant is revisited. This
+// is the same tolerance the shipped `monitor_on`/`monitor_off` swap already
+// relies on (both exactly `MONITOR_SIZE`), just extended to tiers that are
+// not authored at matching sizes.
+/// `keyboard_t1.png`/`keyboard_t2.png` — both 20x8 per the manifest, so no
+/// cross-tier approximation applies here.
+const KEYBOARD_SIZE: Vec2 = Vec2::new(20.0, 8.0);
+/// `mouse_t1.png` ("mouse + pad", the larger footprint) — `mouse_t2.png`
+/// (8x6, no pad) is smaller and centres within this same slot.
+const MOUSE_SIZE: Vec2 = Vec2::new(12.0, 8.0);
+/// `duck.png` — the `desk_decor` tier-2 addition that joins the plant
+/// rather than replacing it (see `UpgradeTrackKind::Accumulate`).
+const DUCK_SIZE: Vec2 = Vec2::new(8.0, 8.0);
+/// `poster.png` (tier 1's footprint; `shelf.png` at 40x22 centres on the
+/// same anchor).
+const WALL_SIZE: Vec2 = Vec2::new(24.0, 30.0);
+/// `cat.png`.
+const CAT_SIZE: Vec2 = Vec2::new(20.0, 12.0);
 
 // ---------------------------------------------------------------------------
 // Room geometry
@@ -223,6 +257,22 @@ const Z_LAMP: f32 = 7.0;
 const Z_MUG: f32 = 8.0;
 const Z_PLANT: f32 = 9.0;
 
+// v0.3 upgrade-slot layers. `keyboard`/`mouse`/`duck` are small flat items on
+// the desk, same class as the mug — grouped near it. `wall` sits on the
+// back wall, behind the chair (like the books it's positioned beside).
+// `chair`/`monitor` upgrade overlays sit just in front of the base sprite
+// they visually replace, so buying a tier reads as "the same object,
+// upgraded" rather than a second object appearing beside it. `pet` sits at
+// the rug's near edge — the frontmost surface in the room — so it is drawn
+// frontmost of all.
+const Z_WALL: f32 = 2.5; // beside the books, behind the chair
+const Z_CHAIR_UPGRADE: f32 = 3.5; // over the base chair, still behind the desk/dev
+const Z_MONITOR_UPGRADE: f32 = 6.5; // over the base monitor
+const Z_KEYBOARD: f32 = 8.1;
+const Z_MOUSE: f32 = 8.2;
+const Z_DUCK: f32 = 9.1; // beside the plant, not replacing it
+const Z_CAT: f32 = 10.0;
+
 // ---------------------------------------------------------------------------
 // Composition
 // ---------------------------------------------------------------------------
@@ -282,6 +332,15 @@ const DEV_HANDS_ABOVE_BOTTOM: f32 = 8.0;
 /// resolves in the lamp's favour (`Z_LAMP > Z_DESK`).
 const LAMP_SPILL_ROWS: f32 = 1.0;
 
+/// Rows of contact shadow baked into the bottom of every OTHER on-desk
+/// sprite (monitor, mug, plant, and the v0.3 keyboard/mouse/duck slots) —
+/// the same one-row convention [`LAMP_SPILL_ROWS`] already applies to the
+/// lamp's light spill, just for a contact shadow instead of a light pool.
+/// The lighting pass that baked real shading into these sprites made the
+/// gap visible for the first time: without this sink, that bottom row
+/// renders one pixel ABOVE the tabletop instead of ON it.
+const DESK_CONTACT_SHADOW_ROWS: f32 = 1.0;
+
 /// The desk's surface: the tabletop's front edge (`desk.png` row 0), which is
 /// both the line every object *on* the desk rests on and the line that
 /// occludes the character's lower body (`Z_DESK > Z_DEV`).
@@ -337,8 +396,14 @@ const CHAIR_POS: Vec2 = Vec2::new(DEV_POS.x - 2.0, FLOOR_LINE_Y + CHAIR_SIZE.y /
 /// Monitor centre — bezel and stand standing on the tabletop, to the
 /// character's right (they face right, toward it), far enough right that the
 /// mug fits between them and near enough that the character is clearly working
-/// at *this* screen.
-const MONITOR_POS: Vec2 = Vec2::new(36.0, DESK_TOP_Y + MONITOR_SIZE.y / 2.0);
+/// at *this* screen. Sunk by [`DESK_CONTACT_SHADOW_ROWS`] so its contact
+/// shadow lands on the tabletop rather than floating above it. The v0.3
+/// `monitor` upgrade slot (dual/ultrawide) shares this same centre, drawn
+/// just in front of it (`Z_MONITOR_UPGRADE > Z_MONITOR`).
+const MONITOR_POS: Vec2 = Vec2::new(
+    36.0,
+    DESK_TOP_Y - DESK_CONTACT_SHADOW_ROWS + MONITOR_SIZE.y / 2.0,
+);
 
 /// Desk lamp centre — at the desk's right end, sunk [`LAMP_SPILL_ROWS`] so its
 /// bottom row of spill lands on the tabletop instead of hovering one pixel
@@ -355,11 +420,21 @@ const LAMP_POS: Vec2 = Vec2::new(72.0, DESK_TOP_Y - LAMP_SPILL_ROWS + LAMP_SIZE.
 /// (whose pixels reach x = +4) and the monitor's left edge (x = +16). The
 /// painted mug is narrower than its 10 px canvas, so it clears both by a
 /// pixel or two: close enough to read as *their* mug, touching neither.
-const MUG_POS: Vec2 = Vec2::new(10.0, DESK_TOP_Y + MUG_SIZE.y / 2.0);
+/// Sunk by [`DESK_CONTACT_SHADOW_ROWS`], same reason as the monitor.
+const MUG_POS: Vec2 = Vec2::new(
+    10.0,
+    DESK_TOP_Y - DESK_CONTACT_SHADOW_ROWS + MUG_SIZE.y / 2.0,
+);
 
 /// Book stack centre — standing on the floor line against the wall below the
 /// window, filling the otherwise empty left third of the room.
 const BOOKS_POS: Vec2 = Vec2::new(-104.0, FLOOR_LINE_Y + BOOKS_SIZE.y / 2.0);
+
+/// x of `room_bg.png`'s window's right frame (see [`DESK_POS`]'s own note:
+/// "clear of the window's right frame at -43"). Named so the v0.3 `wall`
+/// slot below can derive its position from it instead of repeating the
+/// magic number.
+const WINDOW_RIGHT_EDGE_X: f32 = -43.0;
 
 /// Rug centre.
 ///
@@ -371,18 +446,81 @@ const BOOKS_POS: Vec2 = Vec2::new(-104.0, FLOOR_LINE_Y + BOOKS_SIZE.y / 2.0);
 /// on a bare band of boards.
 const RUG_POS: Vec2 = Vec2::new(DESK_POS.x, FLOOR_LINE_Y - RUG_SIZE.y / 2.0);
 
-/// Plant centre — the desk upgrade, standing on the tabletop at its left end,
-/// immediately beside the character.
+/// Plant centre — `desk_decor` tier 1, standing on the tabletop at the
+/// desk's left end, immediately beside the character.
 ///
 /// WHY here: it used to sit on the floor to the right of the desk, which was
-/// both wrong (the manifest calls it the *desk* upgrade) and invisible in
+/// both wrong (the manifest calls it a *desk* decoration) and invisible in
 /// practice — green-and-terracotta against brown floorboards with its lower
 /// half behind the HUD bar. The desk's left end is the one stretch of tabletop
 /// with 24 px of clear width whose background is bare wall (the window stops at
-/// x -43), so the plant is silhouetted at the character's eye level: the frame
-/// the wallet crosses [`crate::DESK_UPGRADE_COST`], a new object unmistakably
-/// appears on the desk next to them.
-const PLANT_POS: Vec2 = Vec2::new(-24.0, DESK_TOP_Y + PLANT_SIZE.y / 2.0);
+/// x -43), so the plant is silhouetted at the character's eye level: the
+/// moment it is bought, a new object unmistakably appears on the desk next
+/// to them. Sunk by [`DESK_CONTACT_SHADOW_ROWS`], same reason as the
+/// monitor/mug.
+const PLANT_POS: Vec2 = Vec2::new(
+    -24.0,
+    DESK_TOP_Y - DESK_CONTACT_SHADOW_ROWS + PLANT_SIZE.y / 2.0,
+);
+
+/// Keyboard centre (`keyboard` track) — on the tabletop, directly in front
+/// of the character, matching their own x so it reads as *their* keyboard
+/// rather than a prop set beside them. Sunk like every other on-desk item.
+const KEYBOARD_POS: Vec2 = Vec2::new(
+    DEV_POS.x,
+    DESK_TOP_Y - DESK_CONTACT_SHADOW_ROWS + KEYBOARD_SIZE.y / 2.0,
+);
+
+/// Mouse centre (`mouse` track) — immediately right of the keyboard
+/// (docs/upgrade-design.md: "mouse right of the keyboard"), same sunk
+/// tabletop line. The desk is small and already carries the mug at this
+/// same x band — a player who owns both a keyboard and the pre-existing mug
+/// will see them close together; there is no free stretch of tabletop left
+/// once every upgrade is bought, and rebalancing the whole desk's item
+/// layout is out of scope here (no new art, no repositioning existing
+/// shipped props).
+const MOUSE_POS: Vec2 = Vec2::new(
+    KEYBOARD_POS.x + KEYBOARD_SIZE.x / 2.0 + MOUSE_SIZE.x / 2.0,
+    DESK_TOP_Y - DESK_CONTACT_SHADOW_ROWS + MOUSE_SIZE.y / 2.0,
+);
+
+/// Rubber duck centre (`desk_decor` tier 2) — beside the plant, not
+/// replacing it (`UpgradeTrackKind::Accumulate`): docs/upgrade-design.md
+/// "plant + rubber duck".
+const DUCK_POS: Vec2 = Vec2::new(
+    PLANT_POS.x + PLANT_SIZE.x / 2.0 + DUCK_SIZE.x / 2.0,
+    DESK_TOP_Y - DESK_CONTACT_SHADOW_ROWS + DUCK_SIZE.y / 2.0,
+);
+
+/// Wall-mounted decoration centre (`wall` track: poster, then shelf).
+///
+/// Composition note: the room's left half is otherwise a large bare wall
+/// with only the book stack on it, while everything else in the scene
+/// crowds the right third around the desk. This slot is placed in the gap
+/// between the window's right frame ([`WINDOW_RIGHT_EDGE_X`], -43) and the
+/// seated-character cluster's left edge (the chair's left edge, -22 —
+/// `CHAIR_POS.x - CHAIR_SIZE.x / 2.0`) — bare wall on both sides, and
+/// deliberately in the room's left half rather than added to the already-busy
+/// desk area. x is 11 px right of the window frame (a whole-pixel step into
+/// that ~21 px gap, close to its middle); y matches the top of the book
+/// stack ([`BOOKS_POS`]), the room's one other "furniture height" reference
+/// on that side.
+const WALL_POS: Vec2 = Vec2::new(
+    WINDOW_RIGHT_EDGE_X + 11.0,
+    FLOOR_LINE_Y + BOOKS_SIZE.y + WALL_SIZE.y / 2.0,
+);
+
+/// Sleeping cat centre (`pet` track) — standing on [`FLOOR_LINE_Y`], the
+/// same floor-line convention [`CHAIR_POS`]/[`BOOKS_POS`] already use; the
+/// rug's own back/top edge meets that exact line too (see [`RUG_POS`]), so
+/// resting there is standing on the rug rather than floating above or
+/// sinking through it. `Z_CAT` is the highest z in the room, so it always
+/// draws in front regardless of any x/y overlap with the chair or desk —
+/// the same reasoning that already lets the chair sit on the rug under the
+/// desk without looking wrong. x sits toward the rug's left edge, in the
+/// room's left half, per the same composition note as [`WALL_POS`] — the
+/// rug's own centre is claimed by the desk group.
+const CAT_POS: Vec2 = Vec2::new(-20.0, FLOOR_LINE_Y + CAT_SIZE.y / 2.0);
 
 /// Frames per second of the two-frame typing loop. The manifest's brief is
 /// "4-6 times/sec"; 5 sits in the middle and, being the reciprocal of a
@@ -408,16 +546,22 @@ struct CharacterSprite;
 #[derive(Component)]
 struct MonitorSprite;
 
-/// Marker on the plant sprite — kept for the scene's own layout tests.
-/// Visibility is driven by lib.rs's `desk_upgrade_system` (the plant also
-/// carries `crate::DeskUpgradeProp`): one owner, so the sprite can never
-/// disagree with the HUD about whether the upgrade is affordable.
-///
-/// Previously shown and hidden by
-/// [`plant_visibility_system`] at the same wallet threshold `lib.rs`'s
-/// `desk_upgrade_system` uses for the placeholder prop.
+/// Marker + identity on one `(track, tier)` anchor spawned by
+/// `spawn_upgrade_slots` — one entity per row of `crate::UPGRADE_TRACKS`
+/// (docs/upgrade-design.md "Scene contract"). Never despawned; only its
+/// `Visibility` is toggled by [`upgrade_render_system`], the same
+/// stable-identity pattern the rest of this file uses for state-driven
+/// props (the old `desk_upgrade_system`'s plant prop, `character_anim_
+/// system`'s sprite, `monitor_power_system`'s sprite).
 #[derive(Component)]
-struct PlantSprite;
+struct UpgradeSlot {
+    /// [`crate::UpgradeTrack::id`] — used to look the track back up in
+    /// `crate::UPGRADE_TRACKS` and to query `OwnedUpgrades`.
+    track_id: &'static str,
+    /// 1-based tier this entity represents (`tiers[tier - 1]` in the
+    /// table); there is no tier-0 entity because tier 0 has no sprite.
+    tier: u8,
+}
 
 // ---------------------------------------------------------------------------
 // Resources
@@ -470,8 +614,9 @@ impl Default for TypingAnimation {
 // Plugin
 // ---------------------------------------------------------------------------
 
-/// Renders the room as real pixel-art sprites and keeps three of them in
-/// sync with game state (character frame, monitor power, plant unlock).
+/// Renders the room as real pixel-art sprites and keeps them in sync with
+/// game state (character frame, monitor power, and every v0.3 upgrade
+/// slot's owned-tier visibility).
 ///
 /// Requires the app to have been built with
 /// `ImagePlugin::default_nearest()` — see the `WIRING REQUIRED` block at the
@@ -481,13 +626,14 @@ pub struct ScenePlugin;
 impl Plugin for ScenePlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<TypingAnimation>()
-            .add_systems(Startup, spawn_room)
+            .add_systems(Startup, (spawn_room, spawn_upgrade_slots))
             // PostStartup, not Startup: the camera system needs to know
             // whether lib.rs's `setup_scene` already spawned a `Camera2d`,
             // and two systems in the same schedule have no guaranteed order
             // across plugins. Everything in `Startup` has run by the time
             // `PostStartup` begins.
             .add_systems(PostStartup, setup_pixel_camera)
+            .add_systems(Update, upgrade_render_system)
             .add_systems(
                 Update,
                 // One explicit chain, matching lib.rs's convention: these
@@ -604,20 +750,67 @@ fn spawn_room(mut commands: Commands, assets: Res<AssetServer>) {
         MonitorSprite,
     ));
     commands.insert_resource(monitor);
+}
 
-    // The plant is spawned once and toggled by `Visibility`, never
-    // despawned — the same choice (and the same reasoning about stable
-    // entity identity) as lib.rs's `desk_upgrade_system`. It starts hidden
-    // because a wallet below the threshold is the common case on frame one;
-    // `plant_visibility_system` corrects it immediately for a restored save
-    // that already qualifies.
-    commands.spawn((
-        Sprite::from_image(assets.load(SPRITE_PLANT)),
-        Transform::from_xyz(PLANT_POS.x, PLANT_POS.y, Z_PLANT),
-        Visibility::Hidden,
-        PlantSprite,
-        crate::DeskUpgradeProp,
-    ));
+/// The anchor position + z-layer for one `(track_id, tier_index)` slot
+/// (docs/upgrade-design.md "Scene contract": "one anchor position + z … a
+/// sprite-per-tier lookup"). `tier_index` is 0-based (`0` = tier 1) — needed
+/// only by `desk_decor`, whose two tiers sit at different positions because
+/// tier 2 (the duck) *joins* tier 1 (the plant) rather than replacing it
+/// (`UpgradeTrackKind::Accumulate`); every other track's tiers share one
+/// position because only one is ever visible at a time (`Replace`).
+///
+/// Panics on an unknown `track_id` — this is only ever called from
+/// `spawn_upgrade_slots`, which iterates `crate::UPGRADE_TRACKS` itself, so
+/// an unmatched id here means this function's `match` fell out of sync with
+/// the table, a programming error to catch at once rather than silently
+/// mis-placing a sprite.
+fn upgrade_slot_anchor(track_id: &str, tier_index: usize) -> (Vec2, f32) {
+    match track_id {
+        "keyboard" => (KEYBOARD_POS, Z_KEYBOARD),
+        "mouse" => (MOUSE_POS, Z_MOUSE),
+        "monitor" => (MONITOR_POS, Z_MONITOR_UPGRADE),
+        "chair" => (CHAIR_POS, Z_CHAIR_UPGRADE),
+        "desk_decor" => {
+            if tier_index == 0 {
+                (PLANT_POS, Z_PLANT)
+            } else {
+                (DUCK_POS, Z_DUCK)
+            }
+        }
+        "wall" => (WALL_POS, Z_WALL),
+        "pet" => (CAT_POS, Z_CAT),
+        other => unreachable!("upgrade_slot_anchor: unknown track id {other:?}"),
+    }
+}
+
+/// Spawns one entity per `(track, tier)` row of `crate::UPGRADE_TRACKS` —
+/// docs/upgrade-design.md "Scene contract". Every slot starts
+/// `Visibility::Hidden`; [`upgrade_render_system`] corrects that on the very
+/// next frame from whatever `OwnedUpgrades` says (including a restored save
+/// that already owns tiers, the same "derive from persisted state, don't
+/// special-case a relaunch" rule the old `desk_upgrade_system` used).
+///
+/// Loading a sprite whose PNG does not exist yet (true for all of these at
+/// the time this system was written — the art lands separately) logs a
+/// Bevy asset error and renders nothing; it does not panic, so the game
+/// stays runnable while the art catches up (same rule `spawn_room` already
+/// documents for the original manifest).
+fn spawn_upgrade_slots(mut commands: Commands, assets: Res<AssetServer>) {
+    for track in crate::UPGRADE_TRACKS {
+        for (i, tier) in track.tiers.iter().enumerate() {
+            let (pos, z) = upgrade_slot_anchor(track.id, i);
+            commands.spawn((
+                Sprite::from_image(assets.load(tier.sprite)),
+                Transform::from_xyz(pos.x, pos.y, z),
+                Visibility::Hidden,
+                UpgradeSlot {
+                    track_id: track.id,
+                    tier: (i + 1) as u8,
+                },
+            ));
+        }
+    }
 }
 
 /// A plain, never-changing sprite at a room-space position and layer.
@@ -721,6 +914,39 @@ fn monitor_power_system(
     }
 }
 
+/// `OwnedUpgrades` → every upgrade slot's `Visibility` (docs/upgrade-
+/// design.md "Scene contract"): a `Replace` track shows only its highest
+/// owned tier's slot; an `Accumulate` track (`desk_decor`) shows every slot
+/// up to and including the owned tier. Owning tier 0 (nothing bought)
+/// hides every slot for that track, same as the old `desk_upgrade_system`'s
+/// below-threshold state.
+///
+/// Reads `crate::OwnedUpgrades`/`crate::UPGRADE_TRACKS`/
+/// `crate::UpgradeTrackKind` directly (all private to the crate root, all
+/// visible here the same way `Developer`/`Mood` already are — see this
+/// module's imports note) rather than duplicating any of it in `scene.rs`,
+/// per docs/upgrade-design.md's "one table" principle.
+fn upgrade_render_system(
+    owned: Res<crate::OwnedUpgrades>,
+    mut slots: Query<(&UpgradeSlot, &mut Visibility)>,
+) {
+    for (slot, mut visibility) in &mut slots {
+        let Some(track) = crate::UPGRADE_TRACKS.iter().find(|t| t.id == slot.track_id) else {
+            continue; // unreachable in practice — slots are spawned FROM this table
+        };
+        let owned_tier = owned.tier_of(slot.track_id);
+        let visible = match track.kind {
+            crate::UpgradeTrackKind::Replace => owned_tier == slot.tier,
+            crate::UpgradeTrackKind::Accumulate => owned_tier >= slot.tier,
+        };
+        *visibility = if visible {
+            Visibility::Visible
+        } else {
+            Visibility::Hidden
+        };
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -780,16 +1006,23 @@ mod tests {
     /// an even whole number.
     #[test]
     fn every_prop_rests_on_the_surface_it_belongs_to() {
-        // Standing on the tabletop.
+        // Standing on the tabletop, sunk by DESK_CONTACT_SHADOW_ROWS so each
+        // sprite's own contact-shadow row lands ON the wood rather than
+        // floating one pixel above it (the v0.3 lighting-pass fix, applied
+        // to every on-desk sprite including the new upgrade slots).
         for (name, pos, size) in [
             ("monitor", MONITOR_POS, MONITOR_SIZE),
             ("mug", MUG_POS, MUG_SIZE),
             ("plant", PLANT_POS, PLANT_SIZE),
+            ("keyboard", KEYBOARD_POS, KEYBOARD_SIZE),
+            ("mouse", MOUSE_POS, MOUSE_SIZE),
+            ("duck", DUCK_POS, DUCK_SIZE),
         ] {
             assert_eq!(
                 pos.y - size.y / 2.0,
-                DESK_TOP_Y,
-                "{name} must rest on the tabletop, not hover above it"
+                DESK_TOP_Y - DESK_CONTACT_SHADOW_ROWS,
+                "{name} must rest on the tabletop (sunk by its contact-shadow row), \
+                 not hover above it"
             );
         }
         // The lamp is the one exception, and only by the height of the light
@@ -805,7 +1038,14 @@ mod tests {
         // across the props standing on it.
         const {
             assert!(
-                Z_MONITOR > Z_DESK && Z_LAMP > Z_DESK && Z_MUG > Z_DESK && Z_PLANT > Z_DESK,
+                Z_MONITOR > Z_DESK
+                    && Z_LAMP > Z_DESK
+                    && Z_MUG > Z_DESK
+                    && Z_PLANT > Z_DESK
+                    && Z_KEYBOARD > Z_DESK
+                    && Z_MOUSE > Z_DESK
+                    && Z_DUCK > Z_DESK
+                    && Z_MONITOR_UPGRADE > Z_DESK,
                 "props resting on the desk must draw in front of it"
             )
         };
@@ -814,6 +1054,7 @@ mod tests {
         for (name, pos, size) in [
             ("chair", CHAIR_POS, CHAIR_SIZE),
             ("books", BOOKS_POS, BOOKS_SIZE),
+            ("cat", CAT_POS, CAT_SIZE),
         ] {
             assert_eq!(
                 pos.y - size.y / 2.0,
@@ -821,6 +1062,15 @@ mod tests {
                 "{name} must stand on the floor line"
             );
         }
+
+        // The wall decoration (poster/shelf) hangs at the same height as the
+        // TOP of the book stack — its own "furniture height" reference on
+        // that side of the room, per WALL_POS's own doc comment.
+        assert_eq!(
+            WALL_POS.y - WALL_SIZE.y / 2.0,
+            FLOOR_LINE_Y + BOOKS_SIZE.y,
+            "the wall decoration must hang level with the top of the book stack"
+        );
 
         // The rug *lies on* the floor: its far edge is the floor line and the
         // sprite runs toward the viewer from there, so it is the TOP edge that
@@ -892,6 +1142,11 @@ mod tests {
             ("mug", MUG_POS, MUG_SIZE),
             ("books", BOOKS_POS, BOOKS_SIZE),
             ("plant", PLANT_POS, PLANT_SIZE),
+            ("keyboard", KEYBOARD_POS, KEYBOARD_SIZE),
+            ("mouse", MOUSE_POS, MOUSE_SIZE),
+            ("duck", DUCK_POS, DUCK_SIZE),
+            ("wall", WALL_POS, WALL_SIZE),
+            ("cat", CAT_POS, CAT_SIZE),
         ] {
             assert!(
                 pos.y - size.y / 2.0 >= HUD_TOP_Y,
@@ -928,6 +1183,11 @@ mod tests {
             ("books", BOOKS_POS),
             ("rug", RUG_POS),
             ("plant", PLANT_POS),
+            ("keyboard", KEYBOARD_POS),
+            ("mouse", MOUSE_POS),
+            ("duck", DUCK_POS),
+            ("wall", WALL_POS),
+            ("cat", CAT_POS),
         ] {
             assert_eq!(pos.x, pos.x.trunc(), "{name} x must be a whole pixel");
             assert_eq!(pos.y, pos.y.trunc(), "{name} y must be a whole pixel");
@@ -948,6 +1208,11 @@ mod tests {
             ("books", BOOKS_POS, BOOKS_SIZE),
             ("rug", RUG_POS, RUG_SIZE),
             ("plant", PLANT_POS, PLANT_SIZE),
+            ("keyboard", KEYBOARD_POS, KEYBOARD_SIZE),
+            ("mouse", MOUSE_POS, MOUSE_SIZE),
+            ("duck", DUCK_POS, DUCK_SIZE),
+            ("wall", WALL_POS, WALL_SIZE),
+            ("cat", CAT_POS, CAT_SIZE),
         ] {
             let half = size / 2.0;
             assert!(
@@ -969,5 +1234,146 @@ mod tests {
         let anim = TypingAnimation::default();
         assert_eq!(anim.timer.duration().as_secs_f32(), 1.0 / TYPING_FPS);
         assert!(anim.timer.mode() == TimerMode::Repeating);
+    }
+
+    // ------------------------------------------------------------------
+    // v0.3 — upgrade slot visibility (docs/upgrade-design.md "Scene
+    // contract"), app-driven through the *shipping* `upgrade_render_system`.
+    //
+    // These replace the M5 desk-upgrade tests that used to live in lib.rs
+    // (`m5_desk_upgrade_shows_plant_when_wallet_crosses_threshold` /
+    // `..._restored_wallet_above_threshold_is_visible_on_launch`): same
+    // intent — a visible change driven by persisted state, proven by
+    // stepping the app and asserting `Visibility` — new mechanism (owned
+    // tiers in `OwnedUpgrades`, not a coin threshold on `Wallet`).
+    // ------------------------------------------------------------------
+
+    use std::collections::BTreeMap;
+
+    /// A bare `UpgradeSlot` with no real sprite — these tests exercise only
+    /// `upgrade_render_system`'s `Visibility` logic, not asset loading, so
+    /// `MinimalPlugins` (no `AssetServer`/render pipeline) is enough.
+    fn spawn_bare_slot(commands: &mut Commands, track_id: &'static str, tier: u8) {
+        commands.spawn((Visibility::Hidden, UpgradeSlot { track_id, tier }));
+    }
+
+    /// The `(track_id, tier)` slot's current `Visibility`, or `None` if no
+    /// such slot was spawned (a fixture bug, never an expected test
+    /// outcome). `World::query` takes `&mut World` in Bevy 0.19.
+    fn slot_visibility(world: &mut World, track_id: &str, tier: u8) -> Option<Visibility> {
+        let mut q = world.query::<(&UpgradeSlot, &Visibility)>();
+        q.iter(world)
+            .find(|(slot, _)| slot.track_id == track_id && slot.tier == tier)
+            .map(|(_, v)| *v)
+    }
+
+    #[test]
+    fn keyboard_replace_shows_only_the_highest_owned_tier() {
+        let mut app = App::new();
+        app.add_plugins(MinimalPlugins);
+        app.insert_resource(crate::OwnedUpgrades::default());
+        app.add_systems(Startup, |mut commands: Commands| {
+            spawn_bare_slot(&mut commands, "keyboard", 1);
+            spawn_bare_slot(&mut commands, "keyboard", 2);
+        });
+        app.add_systems(Update, upgrade_render_system);
+
+        // Tier 0 (nothing bought): both hidden.
+        app.update();
+        assert_eq!(
+            slot_visibility(app.world_mut(), "keyboard", 1),
+            Some(Visibility::Hidden)
+        );
+        assert_eq!(
+            slot_visibility(app.world_mut(), "keyboard", 2),
+            Some(Visibility::Hidden)
+        );
+
+        // Buy tier 1: only tier 1 shows.
+        app.world_mut()
+            .resource_mut::<crate::OwnedUpgrades>()
+            .0
+            .insert("keyboard".to_string(), 1);
+        app.update();
+        assert_eq!(
+            slot_visibility(app.world_mut(), "keyboard", 1),
+            Some(Visibility::Visible),
+            "owning tier 1 must show the basic keyboard"
+        );
+        assert_eq!(
+            slot_visibility(app.world_mut(), "keyboard", 2),
+            Some(Visibility::Hidden)
+        );
+
+        // Buy tier 2: tier 1 HIDES (Replace, not stacking) and tier 2 shows.
+        app.world_mut()
+            .resource_mut::<crate::OwnedUpgrades>()
+            .0
+            .insert("keyboard".to_string(), 2);
+        app.update();
+        assert_eq!(
+            slot_visibility(app.world_mut(), "keyboard", 1),
+            Some(Visibility::Hidden),
+            "Replace: buying tier 2 must hide tier 1's sprite, not stack it"
+        );
+        assert_eq!(
+            slot_visibility(app.world_mut(), "keyboard", 2),
+            Some(Visibility::Visible)
+        );
+    }
+
+    #[test]
+    fn desk_decor_accumulate_shows_every_owned_tier_at_once() {
+        // Accumulate (desk_decor only): the duck joins the plant, it does
+        // not replace it — buying tier 2 must leave tier 1 visible too.
+        let mut app = App::new();
+        app.add_plugins(MinimalPlugins);
+        app.insert_resource(crate::OwnedUpgrades::default());
+        app.add_systems(Startup, |mut commands: Commands| {
+            spawn_bare_slot(&mut commands, "desk_decor", 1);
+            spawn_bare_slot(&mut commands, "desk_decor", 2);
+        });
+        app.add_systems(Update, upgrade_render_system);
+
+        app.world_mut()
+            .resource_mut::<crate::OwnedUpgrades>()
+            .0
+            .insert("desk_decor".to_string(), 2);
+        app.update();
+
+        assert_eq!(
+            slot_visibility(app.world_mut(), "desk_decor", 1),
+            Some(Visibility::Visible),
+            "Accumulate: owning tier 2 must still show tier 1 (the plant)"
+        );
+        assert_eq!(
+            slot_visibility(app.world_mut(), "desk_decor", 2),
+            Some(Visibility::Visible),
+            "Accumulate: owning tier 2 must show tier 2 (the duck) too"
+        );
+    }
+
+    #[test]
+    fn upgrade_render_system_restored_ownership_is_visible_on_launch() {
+        // Non-wallet-derived consequence, ported from the old M5 test: a
+        // restored save whose `OwnedUpgrades` already owns a tier must show
+        // it from the very first frame, with no separate "just unlocked"
+        // transition needed.
+        let mut app = App::new();
+        app.add_plugins(MinimalPlugins);
+        let mut owned = BTreeMap::new();
+        owned.insert("pet".to_string(), 1u8);
+        app.insert_resource(crate::OwnedUpgrades(owned));
+        app.add_systems(Startup, |mut commands: Commands| {
+            spawn_bare_slot(&mut commands, "pet", 1);
+        });
+        app.add_systems(Update, upgrade_render_system);
+        app.update();
+
+        assert_eq!(
+            slot_visibility(app.world_mut(), "pet", 1),
+            Some(Visibility::Visible),
+            "a restored OwnedUpgrades that already owns tier 1 must show it on launch"
+        );
     }
 }

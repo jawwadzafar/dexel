@@ -22,3 +22,6 @@ saves/
 
 # personal Claude Code overrides (autopilot permissions) — never committed
 .claude/settings.local.json
+
+# Python bytecode cache (visual-check.py gets imported by test probes)
+__pycache__/
