@@ -43,3 +43,13 @@ Fix approach: BUG-5/6/7 are one coherent redraw of the behind-view seated
 figure + chair relationship (dev sprite + chair sprites + the CHAIR_RECT/DEV_RECT
 geometry), gated by real in-game renders judged by eye until it clearly reads as
 "a hooded person seated in a chair, seen from behind."
+
+## Follow-ups found during fixes
+
+- **BUG-8 — Activity modal footer/last row clipped (pre-existing).** `#activity`
+  is declared `height: 396px`, but the browser caps a native `dialog:modal` at
+  `max-height: calc(100% - 38px)` = 362px at the game's 400px viewport, so the
+  modal's footer and last "coins earned today" row get scroll-clipped. Predates
+  the BUG-1/2/3 fixes (Store/History modals stay under the cap). Fix: shrink the
+  Activity modal to fit ≤362px (tighten row heights / overall height) or
+  restructure so nothing is cut. UI/CSS follow-up.
