@@ -23,13 +23,28 @@
 //! an error rather than panicking when the hook cannot start, so callers fall
 //! back to [`FocusedWindowProvider`]. See the `global_input` module for that
 //! trade-off in full.
+//!
+//! A third signal sits alongside them and deliberately does *not* implement
+//! [`ActivityProvider`]: `ActiveAppWatcher` (behind the **`active-app`**
+//! feature) answers "*where* is the user working?" rather than "how much?", so
+//! the game can label the session "Coding in VS Code" instead of inventing a
+//! project name. It is a pull-based query, not a stream of events, which is
+//! why it is a separate type rather than a fourth [`ActivityEvent`] variant —
+//! and the privacy invariant above applies to it in its strictest form: it
+//! captures the **application identity only** (`code`, `firefox`), never a
+//! window title. See the `active_app` module for how that is enforced
+//! structurally.
 
 use std::collections::VecDeque;
 use std::time::Duration;
 
+#[cfg(feature = "active-app")]
+pub mod active_app;
 #[cfg(feature = "global-input")]
 pub mod global_input;
 
+#[cfg(feature = "active-app")]
+pub use active_app::{ActiveApp, ActiveAppError, ActiveAppWatcher};
 #[cfg(feature = "global-input")]
 pub use global_input::{GlobalInputError, GlobalInputProvider};
 

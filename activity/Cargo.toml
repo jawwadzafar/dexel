@@ -18,6 +18,12 @@ license.workspace = true
 # default build. Enabling it never pulls in Bevy — see the boundary note above.
 global-input = ["dep:evdev"]
 
+# ACTIVE-APPLICATION detection (`ActiveAppWatcher`). OFF by default for the
+# same reason as `global-input`: reading the focused window is per-window-system
+# work with per-compositor availability, and a default build should not even
+# download an X11 protocol crate. Enabling it never pulls in Bevy.
+active-app = ["dep:x11rb"]
+
 # Linux-only backend. `evdev` reads the kernel's /dev/input/event* nodes, which
 # sit below the display server (works under X11, Wayland and a bare TTY) and is
 # pure Rust over libc/nix — no C headers, no pkg-config, no link-time system
@@ -30,3 +36,15 @@ global-input = ["dep:evdev"]
 # the caller falls back to `FocusedWindowProvider`.
 [target.'cfg(target_os = "linux")'.dependencies]
 evdev = { version = "0.13.2", optional = true, default-features = false }
+
+# Linux-only backend for `active-app`. `x11rb` speaks the X11 wire protocol
+# over a plain socket in pure Rust (`RustConnection`) — no libX11, no libxcb,
+# no pkg-config, which matters because this machine has no libx11-dev and no
+# sudo. `default-features = false` drops the crate's `allow-unsafe-code`
+# convenience feature: we make two tiny property requests per second, so the
+# safe-only code path costs nothing measurable and buys a `#![forbid(unsafe)]`
+# dependency. Rationale for choosing X11/XWayland over the GNOME Shell D-Bus
+# route (probed and denied on this machine): activity/src/active_app.rs docs.
+# Declared per-target so enabling `active-app` on macOS/Windows still compiles
+# — `ActiveAppWatcher::new` then returns `UnsupportedPlatform`.
+x11rb = { version = "0.13.2", optional = true, default-features = false }

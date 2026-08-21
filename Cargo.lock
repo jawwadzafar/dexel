@@ -93,6 +93,7 @@ name = "activity"
 version = "0.1.0"
 dependencies = [
  "evdev",
+ "x11rb",
 ]
 
 [[package]]
