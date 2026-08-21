@@ -62,6 +62,48 @@ Native sizes are authored pixel sizes, before integer upscale.
 | `lamp.png` | 20x28 | desk lamp, warm bulb |
 | `rug.png` | 96x32 | oval rug on the floor |
 
+### Upgrade tracks (docs/upgrade-design.md)
+
+Appended rather than merged into the table above so the original 15 rows
+stay untouched. Every sprite below still only paints the 18-colour palette
+above, follows the same no-anti-aliasing/no-resize/no-dither rules, and (for
+anything that rests on the desk or floor) ends in a 1px contact shadow wider
+than the object, per `tools/gen_assets.py`'s lighting-pass convention.
+
+| File | Size | Content |
+|---|---|---|
+| `keyboard_t1.png` | 20x8 | basic grey keyboard, 2 rows of key highlights |
+| `keyboard_t2.png` | 20x8 | mechanical, darker body, 3 per-key RGB accents (`screen`/`gold`/`plant`) |
+| `mouse_t1.png` | 12x8 | dark pad + small mouse on it (pad+mouse combined — see the naming note below) |
+| `mouse_t2.png` | 8x6 | sleeker standalone mouse, one `screen` accent pixel |
+| `monitor_dual.png` | 40x36 | tier-0 monitor's bezel language, twice: a main panel + a second, smaller panel beside it |
+| `monitor_ultra.png` | 56x36 | one wide ultrawide panel, same bezel language (56x36, not the design doc's 56x30 — see the naming note below) |
+| `chair_t1.png` | 28x36 | tier-0 chair silhouette + a headrest block |
+| `chair_t2.png` | 28x38 | taller back, 2 `pot` accent stripes (gaming-chair energy) |
+| `duck.png` | 8x8 | rubber duck: `gold` body, `pot` beak, `shadow` eye |
+| `poster.png` | 24x30 | dark frame, `cream` paper, a taped-on `screen` accent + ragged text-line rows (no legible words) |
+| `shelf.png` | 40x22 | wooden wall shelf, 4 book spines + one `gold` trophy |
+| `cat_a.png` / `cat_b.png` | 20x12 each | sleeping curled cat, `hair` body, frames differ ONLY in tail pixels (flick) |
+| `cat.png` | 20x12 | the `pet` track's shipped static sprite — pinned identical to `cat_a.png`/frame A until the tail-flick animation is wired up |
+
+**Naming/sizing notes for the mechanics side:**
+
+- The design doc writes the mouse tier as "mouse_t1 8x6+pad 12x8". Reconciled
+  as ONE sprite: `mouse_t1.png` is the pad+mouse combo at 12x8, and
+  `mouse_t2.png` is the standalone sleeker mouse at 8x6.
+- `monitor_ultra.png` is 56x36, not the design doc's 56x30. Sprites are
+  centred on their `Transform` in `scene.rs`, and the `monitor` upgrade slot
+  renders at the tier-0 monitor's exact centre, in front of it
+  (`Z_MONITOR_UPGRADE` over `Z_MONITOR`) — a shorter overlay would leave the
+  base `monitor_on`/`monitor_off` sprite's top and bottom rows visible around
+  it. Matching the tier-0 height keeps both tiers' footprints exactly
+  superimposed (verified pixel-for-pixel against `monitor_on.png`); only the
+  width grows, which is the part that should read as "ultrawide".
+- `cat.png` is a 13th file alongside `cat_a.png`/`cat_b.png`: the mechanics
+  side's `pet` slot currently loads one static sprite rather than the
+  two-frame loop, so `cat.png` is generated pinned to frame A. `cat_a.png`/
+  `cat_b.png` stay generated too, ready for when the animation is wired up.
+
 ## Character rules
 
 - Readable at 24x32: big head, simple 2-pixel eyes, no mouth detail.

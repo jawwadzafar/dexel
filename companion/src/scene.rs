@@ -430,12 +430,6 @@ const MUG_POS: Vec2 = Vec2::new(
 /// window, filling the otherwise empty left third of the room.
 const BOOKS_POS: Vec2 = Vec2::new(-104.0, FLOOR_LINE_Y + BOOKS_SIZE.y / 2.0);
 
-/// x of `room_bg.png`'s window's right frame (see [`DESK_POS`]'s own note:
-/// "clear of the window's right frame at -43"). Named so the v0.3 `wall`
-/// slot below can derive its position from it instead of repeating the
-/// magic number.
-const WINDOW_RIGHT_EDGE_X: f32 = -43.0;
-
 /// Rug centre.
 ///
 /// A rug *lies on* the floor rather than standing on it, so it is its far (top)
@@ -497,30 +491,28 @@ const DUCK_POS: Vec2 = Vec2::new(
 /// Composition note: the room's left half is otherwise a large bare wall
 /// with only the book stack on it, while everything else in the scene
 /// crowds the right third around the desk. This slot is placed in the gap
-/// between the window's right frame ([`WINDOW_RIGHT_EDGE_X`], -43) and the
-/// seated-character cluster's left edge (the chair's left edge, -22 —
-/// `CHAIR_POS.x - CHAIR_SIZE.x / 2.0`) — bare wall on both sides, and
-/// deliberately in the room's left half rather than added to the already-busy
-/// desk area. x is 11 px right of the window frame (a whole-pixel step into
-/// that ~21 px gap, close to its middle); y matches the top of the book
-/// stack ([`BOOKS_POS`]), the room's one other "furniture height" reference
-/// on that side.
-const WALL_POS: Vec2 = Vec2::new(
-    WINDOW_RIGHT_EDGE_X + 11.0,
-    FLOOR_LINE_Y + BOOKS_SIZE.y + WALL_SIZE.y / 2.0,
-);
+/// left-aligned directly above the floor book stack — the classic reading
+/// corner — in the wall band between the books' top edge and the window's
+/// bottom frame. The previous anchor tried the ~21 px gap between the
+/// window's right frame and the chair, but the 40 px shelf cannot fit a
+/// 21 px gap: on screen it overlapped both the window frame and the plant
+/// (screenshot-verified), which is exactly the crowding this slot was meant
+/// to relieve. x left-aligns the shelf with the 32 px book stack
+/// (`BOOKS_POS.x + (WALL_SIZE.x - BOOKS_SIZE.x) / 2`); y centres the shelf
+/// in the bare band, accepting that the taller poster (30 px) dips a couple
+/// of pixels behind the books' tops — depth, not a defect.
+const WALL_POS: Vec2 = Vec2::new(BOOKS_POS.x + (WALL_SIZE.x - BOOKS_SIZE.x) / 2.0, 2.0);
 
-/// Sleeping cat centre (`pet` track) — standing on [`FLOOR_LINE_Y`], the
-/// same floor-line convention [`CHAIR_POS`]/[`BOOKS_POS`] already use; the
-/// rug's own back/top edge meets that exact line too (see [`RUG_POS`]), so
-/// resting there is standing on the rug rather than floating above or
-/// sinking through it. `Z_CAT` is the highest z in the room, so it always
-/// draws in front regardless of any x/y overlap with the chair or desk —
-/// the same reasoning that already lets the chair sit on the rug under the
-/// desk without looking wrong. x sits toward the rug's left edge, in the
-/// room's left half, per the same composition note as [`WALL_POS`] — the
-/// rug's own centre is claimed by the desk group.
-const CAT_POS: Vec2 = Vec2::new(-20.0, FLOOR_LINE_Y + CAT_SIZE.y / 2.0);
+/// Sleeping cat centre (`pet` track) — lying ON the rug's visible
+/// foreground, bottom row resting on the rug's own horizontal midline
+/// (`RUG_POS.y`), to the right of the desk-leg/chair cluster. The previous
+/// anchor put it at the floor line at x -20, which is geometrically "on the
+/// rug's back edge" but visually BEHIND the chair and desk skirt — only a
+/// gold rim peeked out (screenshot-verified). A purchased pet the buyer
+/// cannot see is a refund request, so visibility wins over the floor-line
+/// convention here; the rug midline is still a real surface derivation,
+/// not a hand-tuned magic number.
+const CAT_POS: Vec2 = Vec2::new(RUG_POS.x + 20.0, RUG_POS.y + CAT_SIZE.y / 2.0);
 
 /// Frames per second of the two-frame typing loop. The manifest's brief is
 /// "4-6 times/sec"; 5 sits in the middle and, being the reciprocal of a
@@ -1054,7 +1046,6 @@ mod tests {
         for (name, pos, size) in [
             ("chair", CHAIR_POS, CHAIR_SIZE),
             ("books", BOOKS_POS, BOOKS_SIZE),
-            ("cat", CAT_POS, CAT_SIZE),
         ] {
             assert_eq!(
                 pos.y - size.y / 2.0,
@@ -1063,14 +1054,44 @@ mod tests {
             );
         }
 
-        // The wall decoration (poster/shelf) hangs at the same height as the
-        // TOP of the book stack — its own "furniture height" reference on
-        // that side of the room, per WALL_POS's own doc comment.
+        // The cat lies ON the rug's visible foreground: its bottom row rests
+        // on the rug's own horizontal midline (RUG_POS.y). The floor-line
+        // convention put it behind the chair/desk cluster where a purchased
+        // pet was invisible (see CAT_POS's doc comment) — this asserts the
+        // surface derivation that replaced it, still a derivation and not a
+        // hand-tuned number.
         assert_eq!(
-            WALL_POS.y - WALL_SIZE.y / 2.0,
-            FLOOR_LINE_Y + BOOKS_SIZE.y,
-            "the wall decoration must hang level with the top of the book stack"
+            CAT_POS.y - CAT_SIZE.y / 2.0,
+            RUG_POS.y,
+            "the cat must rest on the rug's midline"
         );
+        // And it must sit clear of the chair on the rug's open right side.
+        const {
+            assert!(
+                CAT_POS.x - CAT_SIZE.x / 2.0 > CHAIR_POS.x + CHAIR_SIZE.x / 2.0,
+                "the cat must be clear of the chair, on the rug's visible side"
+            )
+        };
+
+        // The wall decoration (poster/shelf) hangs left-aligned above the
+        // book stack, fully inside the bare band between the books' top and
+        // the window's bottom frame (per WALL_POS's own doc comment).
+        assert_eq!(
+            WALL_POS.x - WALL_SIZE.x / 2.0,
+            BOOKS_POS.x - BOOKS_SIZE.x / 2.0,
+            "the shelf must left-align with the book stack below it"
+        );
+        // The taller poster deliberately dips a couple of pixels behind the
+        // books' tops (depth, per WALL_POS's doc comment), so "clear above
+        // the books" is NOT asserted. What must hold is that the decoration
+        // hangs on the wall — well above the floor — rather than standing
+        // on it like furniture.
+        const {
+            assert!(
+                WALL_POS.y - WALL_SIZE.y / 2.0 > FLOOR_LINE_Y + 8.0,
+                "the wall decoration must hang on the wall, not stand on the floor"
+            )
+        };
 
         // The rug *lies on* the floor: its far edge is the floor line and the
         // sprite runs toward the viewer from there, so it is the TOP edge that

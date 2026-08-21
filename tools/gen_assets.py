@@ -73,6 +73,32 @@ SPEC: list[tuple[str, int, int]] = [
     ("books.png", 32, 24),
     ("lamp.png", 20, 28),
     ("rug.png", 96, 32),
+    # Upgrade tracks (docs/upgrade-design.md, "Art manifest additions"). The
+    # design doc writes the mouse tier as "mouse_t1 8x6+pad 12x8" - reconciled
+    # here as ONE sprite: mouse_t1.png is the pad+mouse combo at 12x8, and
+    # mouse_t2.png is the standalone sleeker mouse at 8x6. See the game-artist
+    # handoff for why (the mechanics agent loads these exact filenames).
+    ("keyboard_t1.png", 20, 8),
+    ("keyboard_t2.png", 20, 8),
+    ("mouse_t1.png", 12, 8),
+    ("mouse_t2.png", 8, 6),
+    ("monitor_dual.png", 40, 36),
+    # 56x36, not the design doc's 56x30 - see build_monitor_ultra()'s
+    # docstring: this overlay must fully cover the tier-0 monitor sprite it
+    # renders in front of, sharing its exact centre, so it keeps that
+    # sprite's height and only widens.
+    ("monitor_ultra.png", 56, 36),
+    ("chair_t1.png", 28, 36),
+    ("chair_t2.png", 28, 38),
+    ("duck.png", 8, 8),
+    ("poster.png", 24, 30),
+    ("shelf.png", 40, 22),
+    ("cat_a.png", 20, 12),
+    ("cat_b.png", 20, 12),
+    # The mechanics agent's `pet` slot loads a single static "cat.png" (the
+    # tail-flick animation is deferred on their side) - pinned identical to
+    # cat_a.png/frame A, see build_cat()'s docstring.
+    ("cat.png", 20, 12),
 ]
 
 CHARACTERS = ("dev_idle.png", "dev_type_a.png", "dev_type_b.png",
@@ -464,6 +490,73 @@ def _monitor(lit: bool) -> Sprite:
         s.dots([(6, 6), (7, 5), (8, 4), (7, 6)], "screen")  # glint on dark glass
         s.dot(35, 25, "shadow")                      # LED off
     return s
+
+
+def _monitor_panel(s: Sprite, x0: int, y0: int, x1: int, y1: int, lines) -> None:
+    """One glowing-teal bezel+screen, in the exact visual language of
+    `_monitor(lit=True)` above: `metal` bezel, a `screen_dim` lit top/left
+    edge and `shadow` bottom/right edge, a `shadow`-inset `screen` face, and a
+    `gold` power LED in the bottom-right corner.
+
+    Factored out for `monitor_dual`/`monitor_ultra`, which each need more
+    than one panel (or one panel at an arbitrary width) sharing that
+    language, rather than re-deriving the bezel by hand per tier and risking
+    the two ever drifting apart. `lines` is a list of `(dy, lo, hi)` code-line
+    segments in face-local coordinates, so callers vary line count/position
+    per panel size without touching the bezel/face construction.
+    """
+    s.rect(x0, y0, x1, y1, "metal")
+    s.hline(y0, x0 + 1, x1 - 1, "screen_dim")
+    s.vline(x0, y0 + 1, y1 - 1, "screen_dim")
+    s.hline(y1, x0 + 1, x1, "shadow")
+    s.vline(x1, y0 + 1, y1, "shadow")
+
+    fx0, fy0, fx1, fy1 = x0 + 3, y0 + 3, x1 - 3, y1 - 5
+    s.rect(fx0, fy0, fx1, fy1, "screen")
+    s.hline(fy0 - 1, fx0, fx1, "shadow")
+    s.vline(fx0 - 1, fy0 - 1, fy1, "shadow")
+    s.hline(fy1 + 1, fx0, fx1 + 1, "shadow")
+    s.vline(fx1 + 1, fy0 - 1, fy1 + 1, "shadow")
+
+    for dy, lo, hi in lines:
+        y = fy0 + dy
+        if y <= fy1:
+            s.hline(y, fx0 + lo, min(fx1, fx0 + hi), "screen_dim")
+    s.dot(x1 - 1, y1 - 1, "gold")   # power LED
+
+
+# The exact opaque footprint of `_monitor(lit=True)`/`_monitor(lit=False)`
+# (both identical in shape), row by row, measured off the rendered sprite
+# rather than re-derived from its drawing code so this cannot drift out of
+# sync with it. `monitor_dual`/`monitor_ultra` render as overlays IN FRONT OF
+# this same sprite at the same anchor (scene.rs, Z_MONITOR_UPGRADE over
+# Z_MONITOR) - an overlay with a transparent gap anywhere in this footprint
+# lets the tier-0 monitor peek out from behind it, so both tiers paint an
+# opaque backing across this exact shape before drawing their own look on
+# top of it.
+_MONITOR_BASE_FOOTPRINT = [
+    (0, 1, 38), (1, 0, 39), (2, 0, 39), (3, 0, 39), (4, 0, 39), (5, 0, 39),
+    (6, 0, 39), (7, 0, 39), (8, 0, 39), (9, 0, 39), (10, 0, 39), (11, 0, 39),
+    (12, 0, 39), (13, 0, 39), (14, 0, 39), (15, 0, 39), (16, 0, 39),
+    (17, 0, 39), (18, 0, 39), (19, 0, 39), (20, 0, 39), (21, 0, 39),
+    (22, 0, 39), (23, 0, 39), (24, 0, 39), (25, 0, 39), (26, 0, 39),
+    (27, 1, 39), (28, 16, 23), (29, 16, 23), (30, 16, 23), (31, 16, 23),
+    (32, 8, 31), (33, 6, 33), (34, 4, 35), (35, 3, 36),
+]
+
+
+def _monitor_base_backing(s: Sprite, dx: int = 0, dy: int = 0) -> None:
+    """Paint `_MONITOR_BASE_FOOTPRINT`, opaque, shifted by (dx, dy).
+
+    Bezel rows in `metal` (matching the base bezel), stand rows in `shadow`
+    (matching the base's own contact-shadow-toned foot) - either colour is
+    fine here since the overlay's own panels/stands paint over almost all of
+    it; only the gaps between them are left showing this backing, which then
+    reads as a shared mounting bar rather than as a hole.
+    """
+    for y, x0, x1 in _MONITOR_BASE_FOOTPRINT:
+        name = "metal" if y <= 27 else "shadow"
+        s.hline(y + dy, x0 + dx, x1 + dx, name)
 
 
 def build_chair() -> Sprite:
@@ -947,6 +1040,361 @@ def build_rug() -> Sprite:
     return s
 
 
+# --------------------------------------------------------------------------
+# Upgrade tracks (docs/upgrade-design.md)
+# --------------------------------------------------------------------------
+#
+# One slot in the scene per track, tiered sprites swapped in as the player
+# buys up. Every sprite below still only paints palette names through the
+# `Sprite` helpers, and every one that sits on the desk or the floor ends in
+# a `shadow` contact-shadow row 1px wider than the object itself, per the
+# lighting-pass convention set by `build_desk`/`build_chair` above. Wall-
+# mounted pieces (`poster`, `shelf`) do not get a floor contact shadow -
+# nothing casts one onto a floor they are not standing on.
+
+def build_keyboard_t1() -> Sprite:
+    """Basic grey keyboard: a flat case with two rows of keycap highlights."""
+    s = Sprite(20, 8)
+    s.rect(1, 1, 18, 5, "metal")
+    s.hline(0, 1, 18, "wall_light")        # lit top edge of the case
+    s.vline(1, 1, 5, "shadow")             # near side, turned away from the lamp
+    s.vline(18, 1, 5, "shadow")
+    s.hline(5, 1, 18, "shadow")            # front face of the case
+    for x in (3, 6, 9, 12, 15):
+        s.dot(x, 2, "wall_light")          # row 1 of keys
+        s.dot(x, 4, "wall_light")          # row 2 of keys
+    s.hline(6, 1, 18, "desk_dark")         # front lip resting on the desk
+    s.hline(7, 0, 19, "shadow")            # contact shadow, wider than the case
+    return s
+
+
+def build_keyboard_t2() -> Sprite:
+    """Mechanical keyboard: darker case, taller keycaps, per-key RGB accents.
+
+    The accents are 3 individual keycaps recoloured, not a stripe under the
+    case - a full-width glow band read as an underlight strip rather than
+    backlit keys, and the art direction explicitly bans a rainbow stripe.
+    """
+    s = Sprite(20, 8)
+    s.rect(1, 0, 18, 5, "shadow")          # darker mechanical case
+    s.hline(0, 1, 18, "metal")             # subtle lit top edge
+    s.vline(18, 0, 5, "metal")
+    for x in (3, 6, 9, 12, 15):
+        s.dot(x, 2, "metal")               # row 1 of keys, tall mechanical caps
+    accents = {6: "screen", 9: "gold", 12: "plant"}
+    for x in (3, 6, 9, 12, 15):
+        s.dot(x, 4, accents.get(x, "metal"))   # row 2, 3 keys lit per-key RGB
+    s.hline(6, 1, 18, "metal")             # front lip
+    s.hline(7, 0, 19, "shadow")            # contact shadow, wider than the case
+    return s
+
+
+def build_mouse_t1() -> Sprite:
+    """Pad + small grey mouse, as one sprite (see the SPEC comment above).
+
+    The mouse's shell is `wall_light`, not `metal`: `metal` sits so close to
+    the pad's `shadow` in value that a first pass here read as a single dark
+    blob at native size - contrast, not more detail, is what a 12x8 sprite
+    needs to read as two objects.
+    """
+    s = Sprite(12, 8)
+    s.rect(1, 4, 10, 6, "shadow")          # dark mousepad
+    s.hline(4, 1, 10, "metal")             # pad's lit top edge
+    s.rect(4, 1, 7, 2, "wall_light")       # mouse shell, lit and pale against the pad
+    s.vline(7, 1, 2, "shadow")             # shaded far flank
+    s.hline(3, 4, 7, "metal")              # underside, in contact with the pad
+    s.hline(7, 0, 11, "shadow")            # contact shadow, wider than the pad
+    return s
+
+
+def build_mouse_t2() -> Sprite:
+    """Sleeker standalone mouse, no pad, one screen-coloured accent pixel.
+
+    Same contrast fix as `mouse_t1`: a pale `wall_light` shell rather than a
+    `metal` one, so it reads against the desk instead of disappearing into
+    its own shadow at this size.
+    """
+    s = Sprite(8, 6)
+    s.rect(1, 1, 6, 3, "wall_light")       # lit, pale shell
+    s.vline(6, 1, 3, "shadow")             # shaded far side
+    s.dot(3, 1, "screen")                  # single RGB accent (scroll wheel glow)
+    s.hline(4, 1, 6, "metal")              # underside
+    s.hline(5, 0, 7, "shadow")             # contact shadow, wider than the mouse
+    return s
+
+
+def build_monitor_dual() -> Sprite:
+    """The tier-0 monitor's bezel language, twice: one main panel and one
+    smaller second panel beside it, both lit, sharing the same desk line.
+
+    Each panel's foot/glow/contact-shadow widens a step at a time exactly as
+    `_monitor`'s single stand does, which is what makes each read as
+    standing on the desk rather than pasted onto it. Same size and same
+    anchor as the tier-0 monitor, so the backing needs no offset.
+    """
+    s = Sprite(40, 36)
+    _monitor_base_backing(s)
+    # Main panel: bezel rows 0-27, face inset from that.
+    _monitor_panel(s, 0, 0, 22, 27, [(2, 1, 11), (5, 1, 8), (8, 1, 13), (11, 1, 6)])
+    s.rect(9, 28, 11, 31, "metal")         # neck
+    s.vline(11, 28, 31, "shadow")
+    s.hline(32, 6, 14, "screen_dim")       # foot's lit top face
+    s.hline(33, 6, 14, "metal")            # foot body
+    s.hline(34, 5, 15, "screen_dim")       # glow pool spilling off the foot
+    s.hline(35, 3, 17, "shadow")           # contact shadow, wider still
+
+    # Second, smaller panel: same bottom bezel line (27) but starts lower, so
+    # it reads as both shorter and narrower than the main panel beside it.
+    _monitor_panel(s, 24, 9, 38, 27, [(2, 1, 6), (5, 1, 4)])
+    s.rect(30, 28, 32, 31, "metal")        # neck
+    s.vline(32, 28, 31, "shadow")
+    s.hline(32, 29, 33, "screen_dim")
+    s.hline(33, 29, 33, "metal")
+    s.hline(34, 28, 34, "screen_dim")
+    s.hline(35, 26, 36, "shadow")
+    return s
+
+
+def build_monitor_ultra() -> Sprite:
+    """One wide ultrawide panel, same bezel language as the other tiers.
+
+    Authored 56x36 rather than the design doc's 56x30: sprites are centred
+    on their `Transform` in scene.rs, and the `monitor` upgrade slot shares
+    the tier-0 monitor's exact centre and z-order (drawn just in front of
+    it) regardless of tier size - a shorter-than-40x36 overlay would leave
+    the base `monitor_on`/`monitor_off` sprite's top and bottom rows peeking
+    out above and below it. Matching the tier-0 height keeps the vertical
+    footprint identical (only the width grows, symmetrically, which is the
+    part that should read as "ultrawide"), so `_monitor_base_backing`'s
+    coverage lines up exactly and nothing behind this overlay can show.
+    This is a sizing reconciliation like the mouse_t1 pad decision - see the
+    handoff report.
+    """
+    s = Sprite(56, 36)
+    _monitor_base_backing(s, dx=8)         # base monitor is 8px narrower, centred
+    _monitor_panel(s, 0, 0, 55, 27,
+                   [(2, 1, 35), (5, 1, 25), (8, 1, 42), (11, 1, 18), (14, 1, 30)])
+    s.rect(25, 28, 29, 31, "metal")        # neck
+    s.vline(29, 28, 31, "shadow")
+    s.hline(32, 18, 36, "screen_dim")      # foot's lit top face
+    s.hline(33, 18, 36, "metal")           # foot body
+    s.hline(34, 15, 39, "screen_dim")      # glow pool
+    s.hline(35, 10, 44, "shadow")          # contact shadow, on the sprite's last row
+    return s
+
+
+def build_chair_t1() -> Sprite:
+    """`build_chair`'s silhouette with a headrest block added above the back.
+
+    The headrest+backrest occupy exactly the row budget the plain backrest
+    used in `build_chair` (rows 1-17); everything from the back-support down
+    is copied unchanged so the seat/post/base/castors stay in the same place
+    a chair tier swap would expect.
+    """
+    s = Sprite(28, 36)
+    s.rect(10, 1, 18, 4, "metal")          # headrest
+    s.rect(12, 2, 16, 3, "desk_dark")
+    s.hline(1, 11, 17, "wall_light")
+    s.vline(10, 1, 4, "wall_light")
+    s.vline(18, 1, 4, "shadow")
+    s.hline(4, 11, 18, "shadow")
+
+    s.rect(7, 5, 21, 17, "metal")          # backrest frame, shortened to make room
+    s.rect(9, 7, 19, 15, "desk_dark")
+    s.hline(5, 8, 20, "wall_light")
+    s.vline(7, 6, 16, "wall_light")
+    s.vline(21, 5, 17, "shadow")
+    s.hline(17, 8, 21, "shadow")
+
+    s.rect(11, 18, 17, 21, "metal")        # back support into the seat
+    s.vline(17, 18, 21, "shadow")
+
+    s.rect(4, 21, 24, 25, "metal")         # seat frame
+    s.rect(6, 22, 22, 24, "desk_dark")     # seat padding
+    s.hline(21, 5, 23, "wall_light")
+    s.hline(25, 4, 24, "shadow")
+
+    s.rect(12, 26, 15, 30, "metal")        # gas post
+    s.vline(15, 26, 30, "shadow")
+    s.vline(12, 26, 30, "wall_light")
+
+    s.hline(31, 8, 19, "metal")            # spider base
+    s.hline(32, 5, 22, "metal")
+    s.hline(33, 3, 24, "shadow")
+    for wx in (3, 12, 21):                 # castors
+        s.rect(wx, 34, wx + 3, 35, "shadow")
+    s.hline(35, 2, 25, "shadow")           # contact shadow, wider than the base
+    return s
+
+
+def build_chair_t2() -> Sprite:
+    """Taller gaming-chair back, 2 `pot` accent stripes down the padding.
+
+    2 rows taller than `chair_t1` (38 vs 36); the extra height goes entirely
+    into the backrest, which is what "gaming chair energy" means here - a
+    tier a player buys should look like it, not just cost more.
+    """
+    s = Sprite(28, 38)
+    s.rect(9, 0, 19, 4, "metal")           # headrest
+    s.rect(11, 1, 17, 3, "desk_dark")
+    s.hline(0, 10, 18, "wall_light")
+    s.vline(9, 0, 4, "wall_light")
+    s.vline(19, 0, 4, "shadow")
+    s.hline(4, 10, 19, "shadow")
+
+    s.rect(7, 5, 21, 21, "metal")          # tall backrest frame
+    s.rect(9, 7, 19, 19, "desk_dark")
+    s.hline(5, 8, 20, "wall_light")
+    s.vline(7, 6, 20, "wall_light")
+    s.vline(21, 5, 21, "shadow")
+    s.hline(21, 8, 21, "shadow")
+    s.vline(12, 7, 19, "pot")              # 2 racing-stripe accents
+    s.vline(16, 7, 19, "pot")
+
+    s.rect(11, 22, 17, 25, "metal")        # back support into the seat
+    s.vline(17, 22, 25, "shadow")
+
+    s.rect(4, 25, 24, 29, "metal")         # seat frame
+    s.rect(6, 26, 22, 28, "desk_dark")     # seat padding
+    s.hline(25, 5, 23, "wall_light")
+    s.hline(29, 4, 24, "shadow")
+
+    s.rect(12, 30, 15, 34, "metal")        # gas post
+    s.vline(15, 30, 34, "shadow")
+    s.vline(12, 30, 34, "wall_light")
+
+    s.hline(35, 8, 19, "metal")            # spider base
+    for wx in (3, 12, 21):                 # castors
+        s.rect(wx, 36, wx + 3, 36, "shadow")
+    s.hline(37, 2, 25, "shadow")           # contact shadow, the sprite's last row
+    return s
+
+
+def build_duck() -> Sprite:
+    """Unmistakable rubber duck: `gold` body, 1px `pot` beak, 1px `shadow` eye."""
+    s = Sprite(8, 8)
+    s.rect(3, 1, 5, 1, "gold")             # head crown
+    s.rect(2, 2, 6, 2, "gold")             # head, widening toward the beak
+    s.rect(1, 3, 6, 6, "gold")             # body
+    s.hline(6, 2, 5, "pot")                # belly shading, underside of the body
+    s.dot(7, 2, "pot")                     # beak
+    s.dot(5, 1, "shadow")                  # eye
+    s.hline(7, 0, 7, "shadow")             # contact shadow, wider than the body
+    return s
+
+
+def build_poster() -> Sprite:
+    """A dark-framed poster: a taped-on screenshot plus ragged paragraph
+    lines that read as text/diagram without spelling anything out.
+
+    Wall-mounted, so it gets no floor contact shadow - see the section note.
+    """
+    s = Sprite(24, 30)
+    s.rect(0, 0, 23, 29, "metal")          # frame
+    s.hline(0, 0, 23, "wall_light")
+    s.vline(0, 0, 29, "wall_light")
+    s.hline(29, 0, 23, "shadow")
+    s.vline(23, 0, 29, "shadow")
+    s.rect(2, 2, 21, 27, "cream")          # paper
+    s.rect(4, 4, 9, 9, "screen")           # the one screen accent: a taped-on screenshot
+    for y, x1 in ((12, 18), (14, 15), (16, 19), (18, 12), (20, 17), (22, 10),
+                  (24, 14)):
+        s.hline(y, 4, x1, "shadow")        # ragged paragraph lines, no legible words
+    return s
+
+
+def build_shelf() -> Sprite:
+    """A wooden wall shelf: a board carrying book spines (books.png's own
+    cover/spine/page-block/title-dash approach, reused at a smaller scale)
+    plus one gold trophy shape.
+
+    Wall-mounted, so the shadow at its base is the board's own cast shadow
+    onto the wall beneath it, not a floor contact shadow - see the section
+    note above.
+    """
+    s = Sprite(40, 22)
+    board_top = 18
+    volumes = ((2, 6, 7, "shirt"), (9, 8, 13, "pot"), (15, 4, 19, "plant"),
+               (21, 9, 24, "gold"))
+    for x0, y0, x1, cover in volumes:
+        y1 = board_top - 1
+        s.rect(x0, y0, x1, y1, cover)
+        s.vline(x0, y0, y1 - 1, "shadow")               # spine in shadow
+        s.rect(x1 - 1, y0 + 1, x1, y1 - 1, "cream")     # page block
+        s.hline(y0, x0 + 1, x1 - 2,
+                "desk_dark" if cover == "gold" else "gold")   # title dash
+
+    s.rect(29, 9, 32, 11, "gold")          # trophy cup
+    s.dot(28, 10, "gold")                  # handles
+    s.dot(33, 10, "gold")
+    s.vline(30, 12, 14, "gold")            # stem
+    s.vline(31, 12, 14, "gold")
+    s.rect(29, 15, 32, board_top - 1, "gold")  # base
+    s.vline(32, 9, 11, "pot")              # shaded side of the cup
+    s.dot(32, board_top - 1, "pot")        # shaded side of the base
+
+    s.hline(board_top, 0, 39, "gold")      # board's own lit top edge
+    s.rect(0, board_top + 1, 39, board_top + 2, "desk")
+    s.hline(21, 0, 39, "shadow")           # the board's cast shadow on the wall
+    return s
+
+
+def build_cat() -> Sprite:
+    """The `pet` track's static sprite. The mechanics side has only wired a
+    tier-swap, not the two-frame tail-flick loop yet, so this is pinned
+    identical to `cat_a.png` (frame A) rather than an independent drawing -
+    two call sites drawing "the same cat" independently is exactly the drift
+    `_build_cat` exists to prevent. `cat_a.png`/`cat_b.png` stay generated
+    too, ready for when the animation lands.
+    """
+    return _build_cat(tail="up")
+
+
+def build_cat_a() -> Sprite:
+    return _build_cat(tail="up")
+
+
+def build_cat_b() -> Sprite:
+    return _build_cat(tail="down")
+
+
+def _build_cat(tail: str) -> Sprite:
+    """Sleeping curled cat. `tail` selects which of the two frames' tail
+    pixels get painted; every other pixel is shared code so the two PNGs
+    cannot drift anywhere except the tail, matching the typing-frame rule.
+
+    `hair` (0x3a2a20) sits close enough in value to `wall_dark` (0x2f2a3d)
+    that a first pass here read as a dark blob rather than a cat at native
+    size - the same rim-light trick `_dev_head`'s hair crown already uses
+    (`gold`, "under the lamp") is applied here too, tracing the top of the
+    curl, so the silhouette reads against the room instead of vanishing
+    into it.
+    """
+    s = Sprite(20, 12)
+    s.dot(5, 3, "pot")                     # ear tips
+    s.dot(8, 3, "pot")
+    s.hline(4, 6, 9, "hair")
+    s.hline(5, 4, 12, "hair")
+    s.hline(6, 3, 13, "hair")
+    s.hline(7, 2, 14, "hair")
+    s.hline(8, 2, 14, "hair")
+    s.hline(9, 3, 13, "hair")
+    s.hline(10, 4, 12, "hair")
+    s.hline(11, 1, 15, "shadow")           # contact shadow, wider than the body
+
+    # Gold rim, lamp-lit from above, tracing the top of the curl only - the
+    # same substitution `_dev_head` makes for the hair crown, kept to the
+    # apex pixels so the body itself stays `hair`-coloured as specified.
+    s.hline(4, 6, 9, "gold")
+    s.dots([(4, 5), (12, 5), (3, 6), (13, 6)], "gold")
+
+    if tail == "up":
+        s.dots([(14, 5), (15, 5), (16, 6), (16, 7), (15, 8)], "hair")
+    else:
+        s.dots([(14, 5), (15, 6), (16, 7), (17, 8), (16, 9)], "hair")
+    return s
+
+
 BUILDERS = {
     "room_bg.png": build_room_bg,
     "desk.png": build_desk,
@@ -963,6 +1411,20 @@ BUILDERS = {
     "books.png": build_books,
     "lamp.png": build_lamp,
     "rug.png": build_rug,
+    "keyboard_t1.png": build_keyboard_t1,
+    "keyboard_t2.png": build_keyboard_t2,
+    "mouse_t1.png": build_mouse_t1,
+    "mouse_t2.png": build_mouse_t2,
+    "monitor_dual.png": build_monitor_dual,
+    "monitor_ultra.png": build_monitor_ultra,
+    "chair_t1.png": build_chair_t1,
+    "chair_t2.png": build_chair_t2,
+    "duck.png": build_duck,
+    "poster.png": build_poster,
+    "shelf.png": build_shelf,
+    "cat_a.png": build_cat_a,
+    "cat_b.png": build_cat_b,
+    "cat.png": build_cat,
 }
 
 
