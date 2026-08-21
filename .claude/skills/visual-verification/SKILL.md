@@ -38,6 +38,14 @@ rather than a fresh one: `DEV_COMPANION_SEED_COINS`,
 photograph the exact condition a criterion describes (e.g. seed coins
 above the desk-upgrade threshold to prove the upgrade appears).
 
+## First: can YOU see?
+
+If you are a model with native vision (a Claude agent), Read the
+screenshot directly and judge it yourself — do not outsource judgment
+you can make better firsthand. The pipeline below is the primary path
+for text-only models (the opencode fleet) and a second opinion for
+everyone else.
+
 ## Judge: ask a vision model, and ask it to be critical
 
 ```bash

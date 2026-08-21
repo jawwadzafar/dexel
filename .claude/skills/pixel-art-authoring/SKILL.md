@@ -52,6 +52,14 @@ python3 scripts/visual-check.py /tmp/shots/shot_5s.png \
   "Describe this game screenshot: scene, character, art style, palette. Be critical — if it looks like placeholder rectangles, say so."
 ```
 
+**If you are a model with native vision (a Claude agent): Read the
+screenshot directly and judge it with your own eyes — that judgment is
+substantially better than the gateway vision models'. Use
+visual-check.py as a cheap second opinion at most, and when it
+contradicts what you can plainly see, trust your eyes and say so.**
+visual-check.py is the primary path only for text-only models (the
+opencode fleet), which cannot look at images at all.
+
 Quote the vision model's verdict in your handoff. A sprite that looks
 fine in isolation can still disappear against the background or sit at
 the wrong scale once composed — only the composed screenshot tells you
