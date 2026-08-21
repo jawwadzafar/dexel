@@ -46,6 +46,28 @@ type StatCountersSave struct {
 	ActiveSeconds      uint64 `json:"activeSeconds"`
 	IdleSeconds        uint64 `json:"idleSeconds"`
 	SprintsCompleted   uint64 `json:"sprintsCompleted"`
+	// FocusSessions and AppSwitches (A2, docs/plan/A2-design.md §5/§7 Task
+	// GO-3) mirror game.StatCounters' fields of the same name, added in
+	// schema 3 (see CurrentSchema's doc comment). A schema-2 file has
+	// neither key; json.Unmarshal leaves them at 0, the correct "none
+	// observed yet" state — additive, non-breaking, same pattern as the
+	// schema 1->2 bump.
+	FocusSessions uint64 `json:"focusSessions"`
+	AppSwitches   uint64 `json:"appSwitches"`
+}
+
+// CoinBreakdownSave is the persisted analogue of game.CoinBreakdown — the
+// per-signal split of today's earned DevCash (A2, docs/plan/A2-design.md
+// §5/§7 Task GO-3), added in schema 3. Every field is a whole-number coin
+// count — content-free by construction, same rule as StatCountersSave.
+// Deliberately its own declaration rather than an import of
+// game.CoinBreakdown, for the same decoupling reason StatCountersSave's
+// doc comment gives.
+type CoinBreakdownSave struct {
+	Keystrokes    uint64 `json:"keystrokes"`
+	Mouse         uint64 `json:"mouse"`
+	FocusSessions uint64 `json:"focusSessions"`
+	AppSwitches   uint64 `json:"appSwitches"`
 }
 
 // StatsSave is the persisted `stats` object added in schema 2 (see
@@ -57,10 +79,18 @@ type StatCountersSave struct {
 // hands to game.Game.RestoreStats — the exact same "no stats recorded yet"
 // state a schema-2 file would represent explicitly, so no separate
 // migration code is needed beyond the schema bump itself.
+//
+// CoinsToday (schema 3, A2 §5/§7 Task GO-3) is the persisted analogue of
+// game.StatsView.CoinsToday — the per-signal coin split earned so far
+// today. It lives on StatsSave (not inside StatCountersSave) for the same
+// reason game.CoinBreakdown is a sibling of StatCounters on StatsView: it
+// isn't a plain activity count, it's a coin count. A schema-2 file has no
+// "coinsToday" key; it defaults to the zero value, same additive pattern.
 type StatsSave struct {
-	Date     string           `json:"date"`
-	Today    StatCountersSave `json:"today"`
-	Lifetime StatCountersSave `json:"lifetime"`
+	Date       string            `json:"date"`
+	Today      StatCountersSave  `json:"today"`
+	Lifetime   StatCountersSave  `json:"lifetime"`
+	CoinsToday CoinBreakdownSave `json:"coinsToday"`
 }
 
 // SaveData is the on-disk shape at ~/.config/devcompanion/state.json,
@@ -100,7 +130,18 @@ type SaveData struct {
 // counters), and Apply hands that straight to game.Game.RestoreStats,
 // which is exactly the right "no stats recorded yet" starting state for a
 // save that predates this feature.
-const CurrentSchema = 2
+//
+// Bumped 2 -> 3 for Analytics track Phase A2 (docs/plan/A2-design.md §7
+// Task GO-3): StatCountersSave gains FocusSessions/AppSwitches and
+// StatsSave gains CoinsToday (CoinBreakdownSave). Same additive-migration
+// reasoning as the 1->2 bump above applies verbatim: a schema-2 file has
+// none of these keys, json.Unmarshal leaves them at their zero value (0
+// counts, an all-zero CoinBreakdownSave), and Apply hands that straight to
+// game.Game.RestoreCoinsToday/RestoreStats — exactly the "nothing observed
+// yet" state a schema-3 file would represent explicitly. No dedicated
+// migration code beyond this bump; existing devCash/xp/owned/equipped and
+// the pre-existing stats counters are read exactly as before.
+const CurrentSchema = 3
 
 // DefaultPath returns ~/.config/devcompanion/state.json.
 func DefaultPath() (string, error) {
@@ -140,6 +181,7 @@ func Snapshot(g *game.Game) SaveData {
 	sort.Strings(tints)
 
 	statsDate, statsToday, statsLifetime := g.StatsSnapshot()
+	coinsToday := g.CoinsTodaySnapshot()
 
 	return SaveData{
 		Schema:           CurrentSchema,
@@ -152,9 +194,10 @@ func Snapshot(g *game.Game) SaveData {
 		ImportedFromRust: g.ImportedFromRust,
 		ImportedAt:       g.ImportedAt,
 		Stats: StatsSave{
-			Date:     statsDate,
-			Today:    statCountersToSave(statsToday),
-			Lifetime: statCountersToSave(statsLifetime),
+			Date:       statsDate,
+			Today:      statCountersToSave(statsToday),
+			Lifetime:   statCountersToSave(statsLifetime),
+			CoinsToday: coinBreakdownToSave(coinsToday),
 		},
 	}
 }
@@ -166,6 +209,8 @@ func statCountersToSave(c game.StatCounters) StatCountersSave {
 		ActiveSeconds:      c.ActiveSeconds,
 		IdleSeconds:        c.IdleSeconds,
 		SprintsCompleted:   c.SprintsCompleted,
+		FocusSessions:      c.FocusSessions,
+		AppSwitches:        c.AppSwitches,
 	}
 }
 
@@ -176,6 +221,26 @@ func statCountersFromSave(c StatCountersSave) game.StatCounters {
 		ActiveSeconds:      c.ActiveSeconds,
 		IdleSeconds:        c.IdleSeconds,
 		SprintsCompleted:   c.SprintsCompleted,
+		FocusSessions:      c.FocusSessions,
+		AppSwitches:        c.AppSwitches,
+	}
+}
+
+func coinBreakdownToSave(c game.CoinBreakdown) CoinBreakdownSave {
+	return CoinBreakdownSave{
+		Keystrokes:    c.Keystrokes,
+		Mouse:         c.Mouse,
+		FocusSessions: c.FocusSessions,
+		AppSwitches:   c.AppSwitches,
+	}
+}
+
+func coinBreakdownFromSave(c CoinBreakdownSave) game.CoinBreakdown {
+	return game.CoinBreakdown{
+		Keystrokes:    c.Keystrokes,
+		Mouse:         c.Mouse,
+		FocusSessions: c.FocusSessions,
+		AppSwitches:   c.AppSwitches,
 	}
 }
 
@@ -193,6 +258,12 @@ func Apply(g *game.Game, d SaveData) {
 	g.RestoreSprint(d.Sprint.Index, d.Sprint.UnitsDone)
 	g.ImportedFromRust = d.ImportedFromRust
 	g.ImportedAt = d.ImportedAt
+	// RestoreCoinsToday MUST run before RestoreStats: RestoreStats' own
+	// rollover check zeroes coinsToday whenever d.Stats.Date turns out
+	// stale, and that check must run strictly AFTER this call for a stale
+	// save's CoinBreakdown to end up correctly zeroed too (see
+	// game.Game.RestoreCoinsToday's doc comment).
+	g.RestoreCoinsToday(coinBreakdownFromSave(d.Stats.CoinsToday))
 	g.RestoreStats(d.Stats.Date, statCountersFromSave(d.Stats.Today), statCountersFromSave(d.Stats.Lifetime))
 
 	g.OwnedItems = map[string]bool{}

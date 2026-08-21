@@ -76,17 +76,37 @@ export interface SprintInfo {
 // Analytics track Phase A1 (docs/plan/ROADMAP.md) — counts and durations
 // only, never content, per ADR 0002/0009. Seconds are whole seconds; the
 // frontend formats them (fmtDuration), never the server.
+//
+// Phase A2 (docs/plan/A2-design.md §6) adds focusSessions/appSwitches.
+// Both optional so a stale (pre-A2) server degrades to 0 rather than
+// failing type-checking or crashing at runtime, matching the existing
+// `stats?` pattern on StateMessage below.
 export interface StatBlock {
   keystrokes: number;
   mouseActiveSeconds: number;
   activeSeconds: number;
   idleSeconds: number;
   sprintsCompleted: number;
+  focusSessions?: number;
+  appSwitches?: number;
+}
+
+// Phase A2 (A2-design.md §6/§5) — coins (DevCash) attributed today, split
+// proportionally across the signal that earned them at sprint-payout time.
+// All whole coin counts; content-free (uint64 on the wire side).
+export interface CoinBreakdown {
+  keystrokes: number;
+  mouse: number;
+  focusSessions: number;
+  appSwitches: number;
 }
 
 export interface Stats {
   today: StatBlock;
   lifetime: StatBlock;
+  // Optional — same stale-server degradation as StatBlock's new fields
+  // above; absent means "no coins attributed yet" (render as 0s).
+  coinsToday?: CoinBreakdown;
 }
 
 export interface StateMessage {

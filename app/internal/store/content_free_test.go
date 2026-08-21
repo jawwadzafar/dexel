@@ -111,9 +111,10 @@ func TestSprintSaveAndEquippedSaveAreContentFree(t *testing.T) {
 // above.
 func TestStatsSaveAndStatCountersSaveAreContentFree(t *testing.T) {
 	allowedStatsSave := map[string]string{
-		"Date":     "string",
-		"Today":    "store.StatCountersSave",
-		"Lifetime": "store.StatCountersSave",
+		"Date":       "string",
+		"Today":      "store.StatCountersSave",
+		"Lifetime":   "store.StatCountersSave",
+		"CoinsToday": "store.CoinBreakdownSave",
 	}
 	allowedStatCountersSave := map[string]string{
 		"Keystrokes":         "uint64",
@@ -121,6 +122,18 @@ func TestStatsSaveAndStatCountersSaveAreContentFree(t *testing.T) {
 		"ActiveSeconds":      "uint64",
 		"IdleSeconds":        "uint64",
 		"SprintsCompleted":   "uint64",
+		"FocusSessions":      "uint64",
+		"AppSwitches":        "uint64",
+	}
+	// CoinBreakdownSave (A2, docs/plan/A2-design.md §5/§7 Task GO-3): the
+	// persisted per-signal coin split. Every field a whole-number coin
+	// count — content-free by construction, same rule as
+	// StatCountersSave above.
+	allowedCoinBreakdownSave := map[string]string{
+		"Keystrokes":    "uint64",
+		"Mouse":         "uint64",
+		"FocusSessions": "uint64",
+		"AppSwitches":   "uint64",
 	}
 
 	checkExact := func(t *testing.T, typ reflect.Type, allowed map[string]string) {
@@ -153,4 +166,5 @@ func TestStatsSaveAndStatCountersSaveAreContentFree(t *testing.T) {
 
 	checkExact(t, reflect.TypeOf(StatsSave{}), allowedStatsSave)
 	checkExact(t, reflect.TypeOf(StatCountersSave{}), allowedStatCountersSave)
+	checkExact(t, reflect.TypeOf(CoinBreakdownSave{}), allowedCoinBreakdownSave)
 }

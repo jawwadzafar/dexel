@@ -724,14 +724,19 @@ img, .sprite {
 /* Same mechanics as #store above (native <dialog>, showModal(), the
    shared #scrim) — Phase A1's Analytics track, docs/plan/ROADMAP.md.
    Smaller than #store since it's read-only, two flat lists, no grid/
-   preview: 360x272, centered in the 640x400 viewport. */
+   preview: 360x396, centered in the 640x400 viewport. Grew from 272px
+   tall in A1 to fit A2's two extra rows per section (focus sessions,
+   app switches) plus the new coins-today breakdown (§6, A2-design.md);
+   top/height re-centered (was left:140/top:64/height:272 — still
+   centered horizontally, now (400-396)/2=2 vertically) to keep the
+   whole thing inside the fixed 640x400 viewport. */
 
 #activity {
   position: fixed;
   left: 140px;
-  top: 64px;
+  top: 2px;
   width: 360px;
-  height: 272px;
+  height: 396px;
   margin: 0;
   padding: 12px;
   border: 4px solid var(--wall-light);
@@ -769,8 +774,13 @@ img, .sprite {
   left: 12px;
   width: 336px;
 }
+/* Each of today/lifetime now carries 7 rows (5 A1 rows + A2's focus
+   sessions/app switches): title(16)+margin(4) + 7*16 = 132px tall. */
 #activity-today { top: 40px; }
-#activity-lifetime { top: 148px; }
+#activity-lifetime { top: 180px; } /* 40 + 132 + 8px gap */
+#activity-coins { top: 316px; } /* 180 + 132 + 4px gap — tightened from 8px
+   to give the coins rows below room (10px each instead of 8px) without
+   overflowing the fixed 396px modal; see the block below for the budget. */
 
 .activity-section-title {
   height: 16px;
@@ -797,10 +807,54 @@ img, .sprite {
   text-align: right;
 }
 
+/* Coins-today breakdown (A2-design.md §6): title + 4 rows of "count -> coins"
+   per signal, same .label/.value split as .activity-row above (inherits
+   .activity-section's left:12/width:336, so values sit flush with the
+   TODAY/LIFETIME columns and never crowd the modal's border).
+   Budget inside the fixed 396px modal, footer fixed at top:376px:
+     #activity-coins top(316) + title(16) + title margin(2) + 4*10 rows(40)
+     = 374 -> 2px clear of the footer, no overflow.
+   Row height went 8px->10px and font 7px->8px (matches TODAY/LIFETIME's
+   8px) so this reads as a real section instead of an afterthought; the
+   4px inter-section gap above (was 8px) and the 2px title margin (was the
+   shared 4px, overridden below) is what paid for the taller rows.
+   Arrow glyph: A2-design.md's example uses a real "→" (U+2192), but at
+   this modal's 1x-DPI shipping resolution that glyph isn't in the pixel
+   font (Press Start 2P has no arrow glyphs) and falls back to a thin
+   system font whose glyph anti-aliases down to an near-invisible dot at
+   7-12px/1x DPI — verified by rendering it in the real running game, not
+   guessed (feature-build-and-verify's whole point). It read exactly like
+   the "·" this task was written to replace. The ASCII "->" below is two
+   glyphs the pixel font actually has, so it renders crisp at any size on
+   this stack — used instead of U+2192 for that reason. */
+.coins-row {
+  position: relative;
+  height: 10px;
+  line-height: 10px;
+  font-size: 8px;
+  white-space: nowrap;
+}
+.coins-row .label { color: var(--screen-dim); }
+.coins-row .value {
+  position: absolute;
+  right: 0;
+  top: 0;
+  color: var(--cream);
+  text-align: right;
+}
+/* The coin amount is the point of this section (A2-design.md §6) — call
+   it out in the same gold used for DevCash elsewhere (hud-cash,
+   store-cash, .kind-purchase/.kind-sprint flashes) rather than a bold
+   weight: Press Start 2P is a single 400-weight face and synthetic bold
+   at 8px reads muddy, so color is the only safe emphasis lever here. */
+.coins-row .value .coin-amt { color: var(--gold); }
+
+#activity-coins .activity-section-title { margin-bottom: 2px; }
+
 #activity-help {
   position: absolute;
   left: 12px;
-  top: 252px;
+  top: 376px;
   width: 336px;
   height: 8px;
   font-size: 8px;

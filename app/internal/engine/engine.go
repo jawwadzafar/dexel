@@ -34,6 +34,30 @@ const (
 	WorkPerUnitRate = 0.008
 )
 
+// A2 economy constants (docs/plan/A2-design.md §4, ADR 0012), kept in this
+// SAME const block as ADR 0005's so all pricing is single-sourced:
+//
+//   - FocusSessionSeconds / FocusGapToleranceSeconds: a sustained-typing
+//     run (keyDelta>0 each tick, gaps no longer than the tolerance) that
+//     reaches FocusSessionSeconds completes a "focus session."
+//   - FocusSessionBonusWork: the fixed work bonus folded into WorkUnits
+//     when a focus session completes. Mouse never sets keyDelta, so mouse
+//     can never trigger this — the mouse<typing invariant holds by
+//     construction (ADR 0005), not by a runtime check.
+//   - AppSwitchWork: Fork B's coin weight per counted app-switch. Default
+//     0.0 (Fork B1 — display-only, earns nothing, economy stays identical
+//     cross-platform since Linux never reports ActiveApp). Set to 0.1 to
+//     flip on Fork B2 (macOS-first capped earning) — a one-constant flip.
+//   - AppSwitchDailyCap: Fork B2's daily cap on counted switches.
+const (
+	FocusSessionSeconds      = 120.0
+	FocusGapToleranceSeconds = 3.0
+	FocusSessionBonusWork    = 2.0
+
+	AppSwitchWork     = 0.0
+	AppSwitchDailyCap = 40
+)
+
 // AntiMashSampleInterval documents the coalescing window the activity
 // providers enforce (ADR 0005's MOUSE_SAMPLE_SECS, applied uniformly to
 // both keystroke and mouse signals per ADR 0011's port). The engine doesn't
@@ -104,6 +128,16 @@ type TickResult struct {
 	// engine/game boundary.
 	KeystrokeDelta uint64
 	MouseActive    bool
+
+	// FocusSessionsCompleted / AppSwitches (A2, docs/plan/A2-design.md §5):
+	// 0/1 this tick. FocusSessionsCompleted counts a sustained-typing run
+	// (§4) crossing FocusSessionSeconds; AppSwitches counts a change in
+	// ActiveApp since the previous tick (0 on Linux, which never sets
+	// ActiveApp — ADR 0009). Both are content-free counts already implied
+	// by data on the boundary (keystroke timing, sanitized app identity);
+	// no new Snapshot field or provider observation backs them.
+	FocusSessionsCompleted uint64
+	AppSwitches            uint64
 }
 
 // Engine samples a Provider once per Tick call (the caller drives the 1s
@@ -115,6 +149,21 @@ type Engine struct {
 	initialized        bool
 	lastKeystrokeCount uint64
 	lastKeystrokeAt    time.Time
+
+	// lastActiveApp is the previous tick's ActiveApp, diffed to derive
+	// AppSwitches (A2 §5) — no new observation, ActiveApp is already on
+	// Snapshot.
+	lastActiveApp string
+
+	// focusRunActive/focusRunStart track the current sustained-typing run
+	// (A2 §4). A run starts on a keyDelta>0 tick and is extended by
+	// subsequent keyDelta>0 ticks as long as the gap since the last
+	// counted keystroke never exceeds FocusGapToleranceSeconds; mouse
+	// activity never touches these fields, so mouse-only play can never
+	// start, extend, or complete a run — the mouse<typing invariant holds
+	// by construction, not by a runtime check.
+	focusRunActive bool
+	focusRunStart  time.Time
 }
 
 // New wires a provider. Call provider.Start() separately — the engine only
@@ -128,19 +177,56 @@ func (e *Engine) Tick() TickResult {
 	snap := e.provider.Snapshot()
 	now := e.now()
 
+	// wasInitialized captures whether a prior tick has already established
+	// baselines, before this tick overwrites them below — both the
+	// keystroke delta and the app-switch diff must contribute nothing on
+	// the first-ever tick (no baseline yet to diff against).
+	wasInitialized := e.initialized
+
 	// Keystroke delta since the previous tick. The first-ever tick has no
 	// baseline, so it must contribute zero work — otherwise a provider that
 	// starts with a nonzero counter (or a restart) would hand out free
 	// work units it never earned.
 	var keyDelta uint64
-	if e.initialized && snap.KeystrokeCount > e.lastKeystrokeCount {
+	if wasInitialized && snap.KeystrokeCount > e.lastKeystrokeCount {
 		keyDelta = snap.KeystrokeCount - e.lastKeystrokeCount
 	}
 	e.lastKeystrokeCount = snap.KeystrokeCount
+
+	// App-switch: diff this tick's (already sanitized, ADR 0009) ActiveApp
+	// against the previous tick's. No new observation — ActiveApp is
+	// already on Snapshot. Reads 0 on Linux, which never sets ActiveApp.
+	var appSwitches uint64
+	if wasInitialized && snap.ActiveApp != e.lastActiveApp {
+		appSwitches = 1
+	}
+	e.lastActiveApp = snap.ActiveApp
+
 	e.initialized = true
 
+	prevKeystrokeAt := e.lastKeystrokeAt
 	if keyDelta > 0 {
 		e.lastKeystrokeAt = now
+	}
+
+	// Focus-session run tracker (A2 §4): a sustained-typing run extends on
+	// any tick with keyDelta>0; a gap longer than
+	// FocusGapToleranceSeconds since the last counted keystroke breaks it.
+	// Mouse never sets keyDelta, so mouse-only play can never start,
+	// extend, or complete a run.
+	var focusSessionsCompleted uint64
+	if keyDelta > 0 {
+		gapExceeded := !prevKeystrokeAt.IsZero() && now.Sub(prevKeystrokeAt).Seconds() > FocusGapToleranceSeconds
+		if !e.focusRunActive || gapExceeded {
+			e.focusRunActive = true
+			e.focusRunStart = now
+		}
+		if now.Sub(e.focusRunStart).Seconds() >= FocusSessionSeconds {
+			focusSessionsCompleted = 1
+			e.focusRunStart = now
+		}
+	} else if e.focusRunActive && !prevKeystrokeAt.IsZero() && now.Sub(prevKeystrokeAt).Seconds() > FocusGapToleranceSeconds {
+		e.focusRunActive = false
 	}
 
 	weightedRate := float64(keyDelta) * KeystrokeWeight
@@ -152,16 +238,24 @@ func (e *Engine) Tick() TickResult {
 	}
 	workUnits := weightedRate * WorkPerUnitRate
 
+	// Fold the A2 contributions into WorkUnits (§4): the focus bonus
+	// (unconditional — it is the shipped earning signal) and Fork-B's
+	// app-switch work, which is a no-op at the default AppSwitchWork=0.0.
+	workUnits += FocusSessionBonusWork * float64(focusSessionsCompleted)
+	workUnits += AppSwitchWork * float64(appSwitches)
+
 	honesty := e.provider.Honesty()
 
 	return TickResult{
-		Mood:             e.mood(snap, honesty, now),
-		WorkUnits:        workUnits,
-		Honesty:          honesty,
-		ActiveApp:        snap.ActiveApp,
-		ActiveAppDisplay: snap.ActiveAppDisplay,
-		KeystrokeDelta:   keyDelta,
-		MouseActive:      snap.MouseActive,
+		Mood:                   e.mood(snap, honesty, now),
+		WorkUnits:              workUnits,
+		Honesty:                honesty,
+		ActiveApp:              snap.ActiveApp,
+		ActiveAppDisplay:       snap.ActiveAppDisplay,
+		KeystrokeDelta:         keyDelta,
+		MouseActive:            snap.MouseActive,
+		FocusSessionsCompleted: focusSessionsCompleted,
+		AppSwitches:            appSwitches,
 	}
 }
 

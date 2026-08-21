@@ -67,6 +67,14 @@ Three phases, each shippable.
   12 coins today").
 - Exit: earning is signal-diverse; anti-mash invariant re-proven; per-signal
   pricing visible and tuned; migration keeps existing balances.
+- **Status: DONE.** Ships focus-session as the new earning signal (+ app-switch
+  tracked/displayed, earns 0 cross-platform; copy/paste deferred behind a
+  permission fork — ADR 0012). Both signals derive from data already on Snapshot
+  (keystroke timing + sanitized ActiveApp) — no new provider observation,
+  content_free_test intact. Coins single-sourced from sprint payout, split
+  proportionally (conservation unit-proven). Schema 2->3, non-destructive.
+  Overseer-verified live: focus sessions increment, breakdown renders + conserves,
+  real save migrates intact, zero console errors.
 
 ### Phase A3 (v1.3) — Analytics over time
 - Daily/weekly history (a rolling window persisted), streaks, simple bar

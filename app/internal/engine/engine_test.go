@@ -178,3 +178,163 @@ func TestFirstTickNeverAwardsFreeWork(t *testing.T) {
 		t.Errorf("first tick awarded %.6f work units from a preexisting counter, want 0", r.WorkUnits)
 	}
 }
+
+// strategyTotals accumulates one simulated strategy's results over the
+// fixed comparison window.
+type strategyTotals struct {
+	work          float64
+	maxTickWork   float64
+	focusSessions uint64
+	keyDelta      uint64
+	appSwitches   uint64
+}
+
+// runStrategy drives a fresh Engine for windowTicks 1-second ticks, one
+// simulated wall-clock second apart (matching the 1s cadence main.go
+// drives in production — see engine.go's Tick doc), feeding genSnap(i)'s
+// Snapshot at tick i.
+func runStrategy(windowTicks int, genSnap func(tick int) activity.Snapshot) strategyTotals {
+	p := &stubProvider{honesty: activity.HonestyGlobal}
+	e := New(p)
+	fakeNow := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
+	e.now = func() time.Time { return fakeNow }
+
+	var totals strategyTotals
+	for i := 0; i < windowTicks; i++ {
+		p.snap = genSnap(i)
+		r := e.Tick()
+		totals.work += r.WorkUnits
+		if r.WorkUnits > totals.maxTickWork {
+			totals.maxTickWork = r.WorkUnits
+		}
+		totals.focusSessions += r.FocusSessionsCompleted
+		totals.keyDelta += r.KeystrokeDelta
+		totals.appSwitches += r.AppSwitches
+		fakeNow = fakeNow.Add(time.Second)
+	}
+	return totals
+}
+
+// TestStrategyComparisonA2 is docs/plan/A2-design.md §4's strategy-
+// comparison table — the test the design doc says implementers MUST add.
+// It extends TestMouseOnlyEarnsLessThanTyping (kept green, unchanged
+// above) to prove the A2 economy stays diversified and anti-mash-safe:
+//   - deepFocus > steadyTypist: the focus-session bonus only ADDS on top
+//     of real typing, it never substitutes for it.
+//   - steadyTypist > mouseOnly: ADR 0005's typing>mouse invariant,
+//     RE-PROVEN under the A2 economy (steadyTypist never completes a
+//     focus session — its 10s-off gaps exceed FocusGapToleranceSeconds
+//     and its 30s-on bursts never reach FocusSessionSeconds — so this
+//     comparison isolates the pre-A2 keystroke-vs-mouse weighting).
+//   - appSwitchMasher == idle == 0: at the shipped default
+//     (AppSwitchWork = 0.0, Fork B1) an app-switch masher earns nothing,
+//     identical to doing nothing at all.
+//   - mouse can never trigger a focus session (mouseOnly.focusSessions
+//     stays 0), proving the mouse<typing invariant holds BY CONSTRUCTION,
+//     not merely by the weight numbers.
+func TestStrategyComparisonA2(t *testing.T) {
+	const windowTicks = 300
+
+	// deepFocus: a realistic 6 keys/s typist, CONTINUOUSLY, for the whole
+	// window — long enough to complete multiple FocusSessionSeconds runs.
+	var deepFocusKeys uint64
+	deepFocus := runStrategy(windowTicks, func(tick int) activity.Snapshot {
+		deepFocusKeys += 6
+		return activity.Snapshot{KeystrokeCount: deepFocusKeys}
+	})
+
+	// steadyTypist: the SAME 6 keys/s rate, but in 30s-on/10s-off cycles.
+	// The 10s gap exceeds FocusGapToleranceSeconds (breaking any run), and
+	// no single on-burst reaches FocusSessionSeconds — so it should never
+	// earn the focus bonus, only the plain keystroke work ADR 0005 already
+	// priced.
+	var steadyKeys uint64
+	steadyTypist := runStrategy(windowTicks, func(tick int) activity.Snapshot {
+		if tick%40 < 30 { // 30 ticks on, 10 ticks off, repeating
+			steadyKeys += 6
+		}
+		return activity.Snapshot{KeystrokeCount: steadyKeys}
+	})
+
+	// mouseOnly: mouse-active every tick, no keys ever — the most
+	// favorable case a mouse-mashing script could achieve (§ existing
+	// TestMouseOnlyEarnsLessThanTyping above).
+	mouseOnly := runStrategy(windowTicks, func(tick int) activity.Snapshot {
+		return activity.Snapshot{MouseActive: true}
+	})
+
+	// appSwitchMasher: ActiveApp changes every single tick, no keys, no
+	// mouse. At the default AppSwitchWork = 0.0 (Fork B1) this must earn
+	// nothing — same as idle.
+	appSwitchMasher := runStrategy(windowTicks, func(tick int) activity.Snapshot {
+		if tick%2 == 0 {
+			return activity.Snapshot{ActiveApp: "app-a"}
+		}
+		return activity.Snapshot{ActiveApp: "app-b"}
+	})
+
+	// idle: nothing happens, ever.
+	idle := runStrategy(windowTicks, func(tick int) activity.Snapshot {
+		return activity.Snapshot{}
+	})
+
+	t.Logf("strategy ordering over %d ticks: deepFocus=%.6f (focusSessions=%d) > steadyTypist=%.6f > mouseOnly=%.6f > appSwitchMasher=%.6f == idle=%.6f",
+		windowTicks, deepFocus.work, deepFocus.focusSessions, steadyTypist.work, mouseOnly.work, appSwitchMasher.work, idle.work)
+
+	// Sanity: the fixture actually exercised what it claims to.
+	if deepFocus.focusSessions == 0 {
+		t.Fatalf("deepFocus completed 0 focus sessions over %d ticks — fixture never exercised the bonus it's meant to test", windowTicks)
+	}
+	if steadyTypist.focusSessions != 0 {
+		t.Errorf("steadyTypist should never complete a focus session (30s-on/10s-off never sustains %gs continuous typing), got %d completed", FocusSessionSeconds, steadyTypist.focusSessions)
+	}
+	if mouseOnly.focusSessions != 0 {
+		t.Errorf("mouseOnly completed %d focus session(s) — mouse must NEVER be able to trigger one (mouse never sets keyDelta)", mouseOnly.focusSessions)
+	}
+
+	// The required ordering, per §4's table.
+	if !(deepFocus.work > steadyTypist.work) {
+		t.Errorf("deepFocus (%.6f) should earn strictly more than steadyTypist (%.6f) — the focus bonus must ADD to real typing", deepFocus.work, steadyTypist.work)
+	}
+	if !(steadyTypist.work > mouseOnly.work) {
+		t.Errorf("steadyTypist (%.6f) should earn strictly more than mouseOnly (%.6f) — ADR 0005's typing>mouse invariant must still hold under the A2 economy", steadyTypist.work, mouseOnly.work)
+	}
+	if appSwitchMasher.work != 0 {
+		t.Errorf("appSwitchMasher should earn exactly 0 at the default AppSwitchWork=0.0 (Fork B1), got %.6f", appSwitchMasher.work)
+	}
+	if idle.work != 0 {
+		t.Errorf("idle should earn exactly 0, got %.6f", idle.work)
+	}
+	if appSwitchMasher.work != idle.work {
+		t.Errorf("appSwitchMasher (%.6f) should equal idle (%.6f) at the default app-switch weight — a switch-masher must not out-earn doing nothing", appSwitchMasher.work, idle.work)
+	}
+
+	// The focus bonus should be visible and self-consistent: deepFocus's
+	// total must equal its plain keystroke work (no mouse/app-switch
+	// contribution in this strategy) plus exactly
+	// completedSessions*FocusSessionBonusWork — proving the bonus really
+	// padded the total rather than the ordering above being an artifact
+	// of the ceiling clamp (6 keys/s is well under MaxRecentRate, so no
+	// clamping occurs here).
+	keystrokeOnlyWork := float64(deepFocus.keyDelta) * KeystrokeWeight * WorkPerUnitRate
+	wantWork := keystrokeOnlyWork + float64(deepFocus.focusSessions)*FocusSessionBonusWork
+	if diff := deepFocus.work - wantWork; diff > 1e-9 || diff < -1e-9 {
+		t.Errorf("deepFocus total work %.6f != keystroke work %.6f + bonus %.6f (%d session(s) * %.2f) = %.6f",
+			deepFocus.work, keystrokeOnlyWork, float64(deepFocus.focusSessions)*FocusSessionBonusWork, deepFocus.focusSessions, FocusSessionBonusWork, wantWork)
+	}
+
+	// No non-focus-completing strategy should ever exceed the pre-A2
+	// per-tick ceiling (MaxRecentRate*WorkPerUnitRate) — only a tick that
+	// completes a focus session may exceed it, and only by the bonus.
+	preA2Ceiling := MaxRecentRate * WorkPerUnitRate
+	for name, s := range map[string]strategyTotals{
+		"steadyTypist":    steadyTypist,
+		"mouseOnly":       mouseOnly,
+		"appSwitchMasher": appSwitchMasher,
+		"idle":            idle,
+	} {
+		if s.maxTickWork > preA2Ceiling+1e-9 {
+			t.Errorf("%s's single-tick work (%.6f) exceeded the pre-A2 ceiling (%.6f) without ever completing a focus session", name, s.maxTickWork, preA2Ceiling)
+		}
+	}
+}

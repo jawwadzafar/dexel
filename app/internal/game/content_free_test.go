@@ -119,8 +119,9 @@ func TestSprintViewAndEquippedRefAreContentFree(t *testing.T) {
 // other wire type in this package is audited.
 func TestStatsViewAndStatCountersAreContentFree(t *testing.T) {
 	allowedStatsView := map[string]string{
-		"Today":    "game.StatCounters",
-		"Lifetime": "game.StatCounters",
+		"Today":      "game.StatCounters",
+		"Lifetime":   "game.StatCounters",
+		"CoinsToday": "game.CoinBreakdown",
 	}
 	allowedStatCounters := map[string]string{
 		"Keystrokes":         "uint64",
@@ -128,6 +129,8 @@ func TestStatsViewAndStatCountersAreContentFree(t *testing.T) {
 		"ActiveSeconds":      "uint64",
 		"IdleSeconds":        "uint64",
 		"SprintsCompleted":   "uint64",
+		"FocusSessions":      "uint64",
+		"AppSwitches":        "uint64",
 	}
 
 	checkExact := func(t *testing.T, typ reflect.Type, allowed map[string]string) {
@@ -160,4 +163,16 @@ func TestStatsViewAndStatCountersAreContentFree(t *testing.T) {
 
 	checkExact(t, reflect.TypeOf(StatsView{}), allowedStatsView)
 	checkExact(t, reflect.TypeOf(StatCounters{}), allowedStatCounters)
+
+	// CoinBreakdown (A2 §5/§6): today's earned DevCash split by signal —
+	// every field a whole-number coin COUNT, never a work float (those
+	// deliberately never cross the wire, see Game's workKeys/workMouse/
+	// workFocus/workSwitch doc comment) and never anything content-like.
+	allowedCoinBreakdown := map[string]string{
+		"Keystrokes":    "uint64",
+		"Mouse":         "uint64",
+		"FocusSessions": "uint64",
+		"AppSwitches":   "uint64",
+	}
+	checkExact(t, reflect.TypeOf(CoinBreakdown{}), allowedCoinBreakdown)
 }

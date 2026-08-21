@@ -617,7 +617,28 @@ second to reflect a click.
     "buddy":    {"itemId": "buddy_duck",    "tintId": null}
   },
   "ownedItems": ["hoodie_classic", "hoodie_zip", "chair_basic", "chair_racer"],
-  "ownedTints": ["hoodie_zip:cobalt", "chair_racer:ember"]
+  "ownedTints": ["hoodie_zip:cobalt", "chair_racer:ember"],
+  "stats": {
+    "today": {
+      "keystrokes": 4210,
+      "mouseActiveSeconds": 812,
+      "activeSeconds": 3040,
+      "idleSeconds": 260,
+      "sprintsCompleted": 3,
+      "focusSessions": 4,
+      "appSwitches": 12
+    },
+    "lifetime": {
+      "keystrokes": 88420,
+      "mouseActiveSeconds": 15810,
+      "activeSeconds": 61200,
+      "idleSeconds": 5100,
+      "sprintsCompleted": 41,
+      "focusSessions": 57,
+      "appSwitches": 205
+    },
+    "coinsToday": {"keystrokes": 6, "mouse": 2, "focusSessions": 4, "appSwitches": 0}
+  }
 }
 ```
 
@@ -644,6 +665,34 @@ Field notes the implementers must not improvise on:
   `docs/upgrade-design.md`).
 * `storeOpen` is echoed back so a second client (or a reconnect) can tell
   progression is paused.
+* `stats.today` / `stats.lifetime` — Analytics track (Phase A1, extended in
+  A2), counts and durations only, never content (ADR 0002/0009). Both are
+  the same `StatBlock` shape. Phase A1 fields: `keystrokes`,
+  `mouseActiveSeconds`, `activeSeconds`, `idleSeconds`, `sprintsCompleted`.
+  Phase A2 adds two more counts to that same shape: `focusSessions` — a
+  completed sustained-typing block (ADR 0012, A2-design.md §3) — and
+  `appSwitches` — a counted foreground-app change; tracked on **macOS only**
+  and always `0` on Linux, shown as-is with no special-casing (no focus
+  detection there, ADR 0009). Seconds are whole seconds; the frontend
+  formats them (`fmtDuration`/`fmtInt`), never the server. `stats` itself
+  stays optional so a pre-A1 server degrades to an all-zero block.
+* `stats.coinsToday` — optional `CoinBreakdown { keystrokes, mouse,
+  focusSessions, appSwitches: number }` (A2, ADR 0012), all whole coin
+  counts, content-free. The DevCash actually attributed to each signal
+  **today**, split proportionally at each sprint payout (A2-design.md §5) so
+  the four numbers always sum to today's earned DevCash. Coins still come
+  from exactly one source, sprint completion (ADR 0008) — this is an
+  attribution view of that one payout, never a second earning path.
+  Optional client-side, matching the rest of `stats`.
+* The Activity modal (`features/activity-modal.ts`) is a read-only render of
+  `stats`: under the existing TODAY/LIFETIME keystroke/mouse/active/idle/
+  sprints rows it adds a **Focus sessions** row (`today.focusSessions` /
+  `lifetime.focusSessions`) and an **App switches** row
+  (`today.appSwitches` / `lifetime.appSwitches`), plus a **"Coins earned
+  today"** block reading `stats.coinsToday` as four
+  `label → count` lines (Keystrokes, Mouse, Focus sessions, App switches).
+  All five/four values render with `fmtInt`; nothing is formatted
+  server-side.
 
 **`flash`** — a transient toast for a discrete event.
 

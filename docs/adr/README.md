@@ -17,3 +17,4 @@ say something different — supersede it with a new one and cross-link.
 | [0009](0009-app-identity-not-titles.md) | Show app identity, never window titles | accepted |
 | [0010](0010-mac-first-honest-mechanics.md) | Mac-first rescue: permissionless global signals, honest moods | accepted |
 | [0011](0011-engine-pivot-to-pdf-native-stack.md) | Engine pivot: ship the PDF design on Go + HTML/NES.css | accepted |
+| [0012](0012-a2-content-free-signal-set-and-permission-fork.md) | A2 signal set: permissionless-derivable only, copy/paste deferred behind a permission fork | accepted |

@@ -83,6 +83,17 @@ type StatCounters struct {
 	// sprint index over (the same `completed` this package already reports
 	// to main.go for the sprint-complete flash).
 	SprintsCompleted uint64 `json:"sprintsCompleted"`
+	// FocusSessions (A2, docs/plan/A2-design.md §5) sums
+	// engine.TickResult.FocusSessionsCompleted across the bucket — a
+	// sustained-typing block reaching engine.FocusSessionSeconds. Ships on
+	// both platforms (ADR 0012).
+	FocusSessions uint64 `json:"focusSessions"`
+	// AppSwitches (A2 §5) sums engine.TickResult.AppSwitches across the
+	// bucket, subject to engine.AppSwitchDailyCap applied HERE at this
+	// daily-aggregation layer (GO-1 deliberately left cap enforcement to
+	// the game layer — see Game.recordStats). Always 0 on Linux, which
+	// never sets ActiveApp (ADR 0009); shown honestly, no special-casing.
+	AppSwitches uint64 `json:"appSwitches"`
 }
 
 // StatsView is the `stats` object inside a `state` message
@@ -93,6 +104,12 @@ type StatCounters struct {
 type StatsView struct {
 	Today    StatCounters `json:"today"`
 	Lifetime StatCounters `json:"lifetime"`
+	// CoinsToday (A2 §5/§6) is the per-signal split of the DevCash earned
+	// so far today, attributed at sprint-payout time (Game.awardCoins) —
+	// see CoinBreakdown's doc comment. Sibling to Today/Lifetime, not
+	// nested inside StatCounters (it isn't a plain activity count, it's a
+	// coin count).
+	CoinsToday CoinBreakdown `json:"coinsToday"`
 }
 
 // Game is the mutable in-memory state one running companion process holds.
@@ -158,6 +175,25 @@ type Game struct {
 	statsDate     string
 	statsToday    StatCounters
 	statsLifetime StatCounters
+
+	// coinsToday is the "today" half of the Analytics stats, but tracks
+	// COIN counts rather than activity counts (A2 §5) — reset alongside
+	// statsToday on a day rollover (rolloverStatsIfNewDay), never touched
+	// by statsLifetime's rules since there is no lifetime coin-breakdown
+	// bucket (docs/plan/A2-design.md §6 only spec's CoinsToday).
+	coinsToday CoinBreakdown
+
+	// workKeys/workMouse/workFocus/workSwitch are the in-memory,
+	// UN-persisted per-signal work accumulators "since the last sprint
+	// award" (docs/plan/A2-design.md §5): every tick that actually
+	// advances Progress (i.e. StoreOpen()==false, mirroring Tick's own
+	// economy gate) also folds its per-signal share into these four
+	// floats via accrueWork. On sprint completion, awardCoins splits that
+	// tick's DevCash proportionally across them and resets all four to
+	// 0. They deliberately never cross the wire or hit disk (§5: "no work
+	// floats ever cross the wire or hit disk") — only the resulting
+	// integer CoinBreakdown does.
+	workKeys, workMouse, workFocus, workSwitch float64
 
 	// now is a test seam (mirrors internal/engine.Engine's own `now` field)
 	// so TestMidnightRollover-style tests can drive statsDate deterministically
@@ -426,8 +462,12 @@ func (g *Game) StoreOpen() bool {
 func (g *Game) Tick(r engine.TickResult) (completed bool) {
 	// recordStats runs unconditionally, BEFORE the StoreOpen gate below —
 	// see statsDate's doc comment on the Game struct for why analytics
-	// isn't frozen the way Mood/Progress/DevCash are.
-	g.recordStats(r)
+	// isn't frozen the way Mood/Progress/DevCash are. Its return value
+	// (whether THIS tick's app-switch, if any, was counted under
+	// engine.AppSwitchDailyCap) still needs to reach accrueWork below, so
+	// the same tick's economy-side work split agrees with what the
+	// analytics layer just counted.
+	switchCounted := g.recordStats(r)
 
 	if g.StoreOpen() {
 		return false
@@ -435,6 +475,14 @@ func (g *Game) Tick(r engine.TickResult) (completed bool) {
 	g.Mood = r.Mood
 	g.ActiveApp = r.ActiveApp
 	g.ActiveAppDisplay = r.ActiveAppDisplay
+
+	// accrueWork must be gated by the SAME StoreOpen check as Progress
+	// itself (unlike recordStats' unconditional analytics tally): a tick
+	// that cannot advance Progress must not be allowed to inflate the
+	// per-signal work accumulators either, or the proportional coin split
+	// at the next payout would attribute coins to work that never
+	// actually earned any.
+	g.accrueWork(r, switchCounted)
 
 	g.Progress += r.WorkUnits
 	def := sprintAt(g.sprintIndex)
@@ -447,8 +495,36 @@ func (g *Game) Tick(r engine.TickResult) (completed bool) {
 		completed = true
 		g.statsToday.SprintsCompleted++
 		g.statsLifetime.SprintsCompleted++
+		g.awardCoins(def.DevCash)
 	}
 	return completed
+}
+
+// accrueWork folds one (economy-eligible, i.e. !StoreOpen) tick's
+// per-signal work contribution into the since-last-payout accumulators —
+// see their doc comment on the Game struct.
+func (g *Game) accrueWork(r engine.TickResult, switchCounted bool) {
+	keyWork, mouseWork, focusWork, switchWork := signalWork(r, switchCounted)
+	g.workKeys += keyWork
+	g.workMouse += mouseWork
+	g.workFocus += focusWork
+	g.workSwitch += switchWork
+}
+
+// awardCoins is coin attribution proper (docs/plan/A2-design.md §5):
+// called exactly once per completed sprint, immediately after def.DevCash
+// is added to g.DevCash, so this is accounting ON TOP OF the single coin
+// source (ADR 0008) — it never mints coins of its own. It splits that
+// same devCash proportionally across the four signals' accrued work
+// since the last payout, adds the integer result into today's running
+// CoinBreakdown, and resets the accumulators for the next sprint.
+func (g *Game) awardCoins(devCash uint64) {
+	breakdown := splitCoinsProportional(devCash, g.workKeys, g.workMouse, g.workFocus, g.workSwitch)
+	g.coinsToday.Keystrokes += breakdown.Keystrokes
+	g.coinsToday.Mouse += breakdown.Mouse
+	g.coinsToday.FocusSessions += breakdown.FocusSessions
+	g.coinsToday.AppSwitches += breakdown.AppSwitches
+	g.workKeys, g.workMouse, g.workFocus, g.workSwitch = 0, 0, 0, 0
 }
 
 // recordStats folds one engine.TickResult into the running Analytics Phase
@@ -460,7 +536,15 @@ func (g *Game) Tick(r engine.TickResult) (completed bool) {
 // Using r directly (never g.Mood, which Tick() leaves stale while
 // StoreOpen) is what keeps this honest during a shopping session instead
 // of double-counting or freezing on a frozen mood.
-func (g *Game) recordStats(r engine.TickResult) {
+// recordStats returns switchCounted: whether THIS tick's app-switch (if
+// any — r.AppSwitches is 0/1) was accepted under engine.AppSwitchDailyCap.
+// The cap is enforced HERE, at this daily-aggregation layer (GO-1's
+// TickResult deliberately leaves it uncapped — see engine.go's doc
+// comment on AppSwitchDailyCap): once statsToday.AppSwitches has already
+// reached the cap, a further switch this same local day is dropped
+// entirely — not counted in today, not in lifetime, and (via the
+// returned bool) not folded into the app-switch work accumulator either.
+func (g *Game) recordStats(r engine.TickResult) (switchCounted bool) {
 	g.rolloverStatsIfNewDay()
 
 	g.statsToday.Keystrokes += r.KeystrokeDelta
@@ -482,6 +566,17 @@ func (g *Game) recordStats(r engine.TickResult) {
 		g.statsToday.IdleSeconds++
 		g.statsLifetime.IdleSeconds++
 	}
+
+	g.statsToday.FocusSessions += r.FocusSessionsCompleted
+	g.statsLifetime.FocusSessions += r.FocusSessionsCompleted
+
+	if r.AppSwitches > 0 && g.statsToday.AppSwitches < engine.AppSwitchDailyCap {
+		g.statsToday.AppSwitches++
+		g.statsLifetime.AppSwitches++
+		switchCounted = true
+	}
+
+	return switchCounted
 }
 
 // statsDateFormat is the local-date key format for the daily bucket ("today"
@@ -504,6 +599,7 @@ func (g *Game) rolloverStatsIfNewDay() {
 	}
 	g.statsDate = today
 	g.statsToday = StatCounters{}
+	g.coinsToday = CoinBreakdown{}
 }
 
 // SetClockForTest overrides the clock rolloverStatsIfNewDay reads (used
@@ -537,6 +633,24 @@ func (g *Game) RestoreStats(date string, today, lifetime StatCounters) {
 	g.statsToday = today
 	g.statsLifetime = lifetime
 	g.rolloverStatsIfNewDay()
+}
+
+// CoinsTodaySnapshot/RestoreCoinsToday are the CoinBreakdown analogue of
+// StatsSnapshot/RestoreStats above, added additively (rather than folded
+// into those two) so this task does not have to change their existing
+// call sites in internal/store — persisting CoinsToday (schema 3's new
+// StatsSave.Today.CoinBreakdown, docs/plan/A2-design.md §5) is Task
+// GO-3's job. Call RestoreCoinsToday BEFORE RestoreStats(date, ...): that
+// ordering matters — RestoreStats' own rollover check zeroes coinsToday
+// whenever `date` turns out stale (running strictly AFTER whatever
+// RestoreCoinsToday just set), so a stale save's CoinBreakdown ends up
+// correctly zeroed too, exactly the same "a save can never resurrect a
+// stale today" rule RestoreStats already applies to StatCounters. Calling
+// it in the other order would let stale coin data survive.
+func (g *Game) CoinsTodaySnapshot() CoinBreakdown { return g.coinsToday }
+
+func (g *Game) RestoreCoinsToday(cb CoinBreakdown) {
+	g.coinsToday = cb
 }
 
 // AdvanceTerminal pushes one new #terminal line while coding
@@ -627,6 +741,6 @@ func (g *Game) State() StateMessage {
 		Equipped:    equipped,
 		OwnedItems:  g.ownedItemsSorted(),
 		OwnedTints:  g.ownedTintsSorted(),
-		Stats:       StatsView{Today: g.statsToday, Lifetime: g.statsLifetime},
+		Stats:       StatsView{Today: g.statsToday, Lifetime: g.statsLifetime, CoinsToday: g.coinsToday},
 	}
 }
