@@ -104,6 +104,8 @@ with Tauri (F3) explicitly later, after the web version is solid.
 - Exit: `go run .` still serves an identical-looking, identical-behaving
   game from the compiled bundle; `tsc --noEmit` clean; the in-game gate
   passes (default + store + activity states unchanged).
+- **Status: DONE (fb2761a).** esbuild+TS pipeline; 1:1 gated port; deterministic
+  bundle; CI drift check. Overseer-verified in the real game.
 
 ### F2 (v1.3-arch) — modular separation of concerns
 - Split the ported TS into industry-standard layers: a RENDER layer (scene
@@ -116,6 +118,11 @@ with Tauri (F3) explicitly later, after the web version is solid.
   pick conventions rather than invent them.
 - Exit: each layer is independently testable; adding a menu touches only a
   feature module + the contract; no cross-layer reach-through.
+- **Status: DONE.** Split into env/dom/format/assets/geometry utils, state/{store,
+  ws-client}, render/{tint,scene,terminal,chrome,overlays,flash}, features/{store-modal,
+  activity-modal,keybindings}, dev/{fixtures,tools}, thin main.ts. tsc clean, deterministic
+  bundle, no cross-layer reach-through. Overseer-verified live: scene, both modals via
+  key+click+Esc, buy->equip round-trip (-120 cash), keystrokes tick live, zero console errors.
 
 ### F3 (later) — Tauri desktop shell
 - Wrap the SAME frontend + Go backend as a native desktop app via Tauri

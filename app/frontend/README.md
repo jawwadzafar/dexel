@@ -1,19 +1,60 @@
 # dev-companion frontend build
 
 TypeScript source for the frontend the Go server serves from `app/public/`
-(docs/plan/ROADMAP.md, Frontend architecture track, phase F1). A mechanical,
+(docs/plan/ROADMAP.md, Frontend architecture track). F1 was a mechanical,
 behaviour-identical port of the former hand-written `app/public/js/game.js`
-— not a redesign (that's F2).
+into one file. F2 (this layout) splits that file into industry-standard
+layers — same behaviour, same DOM/WS contract, no redesign.
 
 ## Layout
 
 - `src/wire.ts` — typed mirror of the WebSocket contract (`docs/ui-spec.md`
   §6 / the Go `StateMessage`/`CatalogMessage` types). Types only, no
-  runtime code.
-- `src/main.ts` — the ported game logic (rendering, the store/activity
-  modals, input, the WS client). One file for F1; F2 splits this into
-  render/data/logic layers.
+  runtime code. Shared by every layer below.
+- `src/env.ts`, `src/dom.ts`, `src/format.ts`, `src/assets.ts`,
+  `src/geometry.ts` — small pure/DOM-agnostic utility modules (env flags,
+  the `byId` lookup helper, number/duration formatting, the asset URL
+  prefix, and the fixed scene geometry from `docs/art-direction.md`).
+  Imported by whichever layer needs them; own no state and send no
+  actions.
+- **DATA/STATE layer** (`src/state/`):
+  - `store.ts` — the central typed state store: the latest
+    `CatalogMessage`/`StateMessage`, derived catalog indices, and pure
+    selectors (`tintHexFor`, `isTintOwned`, `freeDefaultItem`,
+    `equippedItemFor`). Every render and feature module reads this;
+    nothing but the WS client and `dev/dev-tools.ts` writes to it.
+  - `ws-client.ts` — connect/backoff/reconnect, `sendAction`, and the
+    STORE_OPEN re-assert (`setStoreOpenHoldDesired`). Knows the wire
+    contract; knows nothing about modals or the DOM.
+- **RENDER layer** (`src/render/`) — given the current store state,
+  update the DOM each module owns; none of them send a `ClientAction`.
+  - `tint.ts` — the mask+multiply tint mechanism and generic sprite/
+    positioning primitives, reused by the store feature's preview pane.
+  - `scene.ts` — the scene compositor (`#scene-sprites`): slot sprites,
+    the chair, the developer composite, the dev-frame animation timer.
+  - `terminal.ts` — the terminal (`#terminal`) + idle-cursor blink.
+  - `chrome.ts` — titlebar / sprint bar / status line / ticker.
+  - `overlays.ts` — the connection-status overlay and the assets-missing
+    banner.
+  - `flash.ts` — the flash toast + the insufficient-funds flash.
+- **FEATURE/LOGIC layer** (`src/features/`) — each owns its own DOM/UI
+  state, reads the store, and is the only place that sends the
+  `ClientAction`s for that feature.
+  - `store-modal.ts` — the entire store modal: categories, grid, preview
+    pane, keyboard handling, and BUY_ITEM/BUY_TINT/EQUIP_ITEM/
+    STORE_OPEN/STORE_CLOSE.
+  - `activity-modal.ts` — the read-only activity/stats modal.
+  - `keybindings.ts` — global keydown routing ([S]/Tab/[A]), delegating
+    to whichever modal (if any) is open.
+- `src/dev/` — `?dev=1` harness: `dev-fixtures.ts` (hardcoded catalog +
+  state) and `dev-tools.ts` (seeds the store from them and installs
+  `window.devApply`/`window.devCatalog`).
+- `src/main.ts` — thin entry point: wires the three layers together and
+  boots (WS connect, or the dev-mode harness). Owns no DOM, no state.
 - `build.mjs` — the esbuild build script.
+
+Adding a new menu/modal touches only a new file under `src/features/` +
+an extension to `src/wire.ts` — no existing layer needs to change.
 
 ## Build
 
