@@ -300,7 +300,7 @@ mod backend {
     use std::sync::Arc;
     use std::sync::atomic::{AtomicBool, Ordering};
     use std::thread;
-    use std::time::Duration;
+    use std::time::{Duration, Instant};
 
     use evdev::{Device, EventType, InputEvent, KeyCode, RelativeAxisCode};
 
@@ -311,8 +311,9 @@ mod backend {
     /// Roughly one 60 fps frame, for three reasons: it bounds the latency of a
     /// keystroke reaching the game to about one frame (nothing is ever *lost* —
     /// the kernel buffers events until we read them), it bounds how long
-    /// dropping the provider waits for the thread to see the stop flag, and it
-    /// is the window over which mouse motion is coalesced in [`sweep`].
+    /// dropping the provider waits for the thread to see the stop flag.
+    /// (Mouse coalescing is NOT tied to this: it runs on the wall clock at
+    /// [`crate::MOUSE_SAMPLE_SECS`], shared with the game's own input path.)
     const SWEEP_INTERVAL: Duration = Duration::from_millis(16);
 
     /// `input_event.value` for a key *press*.
@@ -360,8 +361,9 @@ mod backend {
         let handle = thread::Builder::new()
             .name("activity-global-input".to_owned())
             .spawn(move || {
+                let mut last_mouse_recorded: Option<Instant> = None;
                 while !stop.load(Ordering::Acquire) {
-                    sweep(&mut devices, &tally);
+                    sweep(&mut devices, &tally, &mut last_mouse_recorded);
                     if devices.is_empty() {
                         // Every device vanished (unplugged, or the session
                         // ended). Nothing left to read, so exit instead of
@@ -392,12 +394,19 @@ mod backend {
     }
 
     /// Drain whatever the kernel has buffered on each device into `tally`.
-    fn sweep(devices: &mut Vec<Device>, tally: &ActivityTally) {
-        // Mouse motion is coalesced to at most one MouseMoved per sweep. A
-        // 1000 Hz gaming mouse emits an EV_REL pair per poll, which would
-        // otherwise pin `recent_rate` at its ceiling and drown out typing.
-        // One per ~frame also matches what `FocusedWindowProvider` sees, since
-        // Bevy reports mouse motion per frame.
+    fn sweep(
+        devices: &mut Vec<Device>,
+        tally: &ActivityTally,
+        last_mouse_recorded: &mut Option<Instant>,
+    ) {
+        // Mouse motion is coalesced on the WALL CLOCK, at most one MouseMoved
+        // per [`crate::MOUSE_SAMPLE_SECS`], carried ACROSS sweeps via
+        // `last_mouse_recorded`. Per-sweep coalescing is not enough: a sweep
+        // is 16 ms, so "once per sweep" is 62.5 ev/s — which pinned
+        // `recent_rate` at its ceiling and let mouse-only wiggling out-earn a
+        // real typist 3:1 on the default build, the exact "bar goes burr"
+        // bug the game-side sampler was added to kill. Both providers now
+        // share the one constant, so they cannot silently disagree again.
         let mut mouse_moved = false;
 
         devices.retain_mut(|device| match device.fetch_events() {
@@ -423,8 +432,20 @@ mod backend {
             Err(_) => false,
         });
 
-        if mouse_moved {
+        if mouse_moved && mouse_sample_elapsed(*last_mouse_recorded, Instant::now()) {
+            *last_mouse_recorded = Some(Instant::now());
             tally.record_mouse_move();
+        }
+    }
+
+    /// Has [`crate::MOUSE_SAMPLE_SECS`] elapsed since the last recorded
+    /// mouse event? Plain `fn` over plain values so the coalescing RATE —
+    /// the thing the blocking review finding was about — is directly
+    /// unit-testable without a hook thread.
+    pub(super) fn mouse_sample_elapsed(last: Option<Instant>, now: Instant) -> bool {
+        match last {
+            None => true,
+            Some(at) => now.duration_since(at).as_secs_f32() >= crate::MOUSE_SAMPLE_SECS,
         }
     }
 
@@ -638,5 +659,36 @@ mod tests {
                 assert!(!err.to_string().is_empty());
             }
         }
+    }
+
+    /// The blocking review finding, as a test: the global path's mouse
+    /// coalescing must run on the wall clock at [`crate::MOUSE_SAMPLE_SECS`],
+    /// NOT once per 16ms sweep. Per-sweep coalescing yields 62.5 ev/s, which
+    /// pins the activity rate at its ceiling and lets mouse-only wiggling
+    /// out-earn a real typist — on the DEFAULT build.
+    #[test]
+    #[cfg(target_os = "linux")] // mouse_sample_elapsed lives in the evdev backend
+    fn mouse_coalescing_is_wall_clock_not_per_sweep() {
+        use super::backend::mouse_sample_elapsed;
+        use std::time::{Duration, Instant};
+
+        let start = Instant::now();
+        // First event always records.
+        assert!(mouse_sample_elapsed(None, start));
+        // One sweep later (16ms) it must NOT record again…
+        assert!(!mouse_sample_elapsed(
+            Some(start),
+            start + Duration::from_millis(16)
+        ));
+        // …nor five sweeps later (80ms)…
+        assert!(!mouse_sample_elapsed(
+            Some(start),
+            start + Duration::from_millis(80)
+        ));
+        // …only once the shared sampling interval has elapsed.
+        assert!(mouse_sample_elapsed(
+            Some(start),
+            start + Duration::from_secs_f32(crate::MOUSE_SAMPLE_SECS)
+        ));
     }
 }

@@ -23,3 +23,14 @@ Three coordinated changes:
 - Lesson recorded: the old "anti-mashing test" passed before AND after a 6x
   rebalance — it tested boundedness, not incentives. Balance claims need
   tests that compare strategies, not just assert finiteness.
+
+## Addendum (same day, post-review)
+
+An Opus review proved the fix above was incomplete: the coalescing lived
+only in the game's Bevy input path, while `GlobalInputProvider` — the
+DEFAULT path — coalesced per 16ms sweep (62.5 ev/s), pinning the rate
+ceiling and letting mouse-only wiggling out-earn a real typist 3:1.
+`MOUSE_SAMPLE_SECS` now lives in the `activity` crate beside `MOUSE_WEIGHT`,
+shared by every provider, and two tests guard the incentive: a wall-clock
+coalescing-rate test on the provider, and a strategy-comparison test
+asserting mouse-only-at-max-rate earns well under a 5-keys/s typist.

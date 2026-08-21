@@ -193,6 +193,17 @@ const WALL_SIZE: Vec2 = Vec2::new(24.0, 30.0);
 /// `cat.png`.
 const CAT_SIZE: Vec2 = Vec2::new(20.0, 12.0);
 
+// --- Per-TIER sprite sizes for upgrade tracks whose tiers ship different
+// PNG dimensions. One size const per track silently mispositioned four
+// tier-2 sprites (review finding: a 1-4px error in a game whose whole
+// contact-shadow mechanism is a deliberate 1px correction). A test parses
+// each tier PNG's IHDR and asserts it matches the size the anchor math
+// assumes, so art and geometry cannot drift apart again.
+const MOUSE_T2_SIZE: Vec2 = Vec2::new(8.0, 6.0);
+const CHAIR_T2_SIZE: Vec2 = Vec2::new(28.0, 38.0);
+const SHELF_SIZE: Vec2 = Vec2::new(40.0, 22.0);
+const MONITOR_ULTRA_SIZE: Vec2 = Vec2::new(56.0, 36.0);
+
 // ---------------------------------------------------------------------------
 // Room geometry
 // ---------------------------------------------------------------------------
@@ -514,6 +525,36 @@ const WALL_POS: Vec2 = Vec2::new(BOOKS_POS.x + (WALL_SIZE.x - BOOKS_SIZE.x) / 2.
 /// not a hand-tuned magic number.
 const CAT_POS: Vec2 = Vec2::new(RUG_POS.x + 20.0, RUG_POS.y + CAT_SIZE.y / 2.0);
 
+/// Tier-2 mouse: same x centre as the pad it replaces, bottom row on the
+/// desk contact line via its OWN 6px height (the shared MOUSE_SIZE put its
+/// bottom 1px above the line, losing the sink the contact shadow needs).
+const MOUSE_T2_POS: Vec2 = Vec2::new(
+    MOUSE_POS.x,
+    DESK_TOP_Y - DESK_CONTACT_SHADOW_ROWS + MOUSE_T2_SIZE.y / 2.0,
+);
+
+/// Tier-2 chair: 2px taller than the base chair, so its centre derives from
+/// its OWN height or it sinks 1px through the floor.
+const CHAIR_T2_POS: Vec2 = Vec2::new(CHAIR_POS.x, FLOOR_LINE_Y + CHAIR_T2_SIZE.y / 2.0);
+
+/// The shelf (wall tier 2): left-aligned with the book stack like the
+/// poster, but via its OWN 40px width, and bottom-aligned with the poster's
+/// bottom so swapping tiers doesn't jump the decoration around the wall.
+const SHELF_POS: Vec2 = Vec2::new(
+    BOOKS_POS.x - BOOKS_SIZE.x / 2.0 + SHELF_SIZE.x / 2.0,
+    (WALL_POS.y - WALL_SIZE.y / 2.0) + SHELF_SIZE.y / 2.0,
+);
+
+/// The ultrawide (monitor tier 2): 16px wider than the base monitor it
+/// covers. Centring it on MONITOR_POS overlapped the lamp by 2px, so its x
+/// is derived from the constraint that actually matters: right edge 2px
+/// clear of the lamp's left edge, via its OWN width. (Full coverage of the
+/// base monitor's footprint is asserted in the tests.)
+const MONITOR_ULTRA_POS: Vec2 = Vec2::new(
+    LAMP_POS.x - LAMP_SIZE.x / 2.0 - 2.0 - MONITOR_ULTRA_SIZE.x / 2.0,
+    MONITOR_POS.y,
+);
+
 /// Frames per second of the two-frame typing loop. The manifest's brief is
 /// "4-6 times/sec"; 5 sits in the middle and, being the reciprocal of a
 /// round 0.2 s, keeps the timer duration exact in binary floating point.
@@ -758,21 +799,20 @@ fn spawn_room(mut commands: Commands, assets: Res<AssetServer>) {
 /// the table, a programming error to catch at once rather than silently
 /// mis-placing a sprite.
 fn upgrade_slot_anchor(track_id: &str, tier_index: usize) -> (Vec2, f32) {
-    match track_id {
-        "keyboard" => (KEYBOARD_POS, Z_KEYBOARD),
-        "mouse" => (MOUSE_POS, Z_MOUSE),
-        "monitor" => (MONITOR_POS, Z_MONITOR_UPGRADE),
-        "chair" => (CHAIR_POS, Z_CHAIR_UPGRADE),
-        "desk_decor" => {
-            if tier_index == 0 {
-                (PLANT_POS, Z_PLANT)
-            } else {
-                (DUCK_POS, Z_DUCK)
-            }
-        }
-        "wall" => (WALL_POS, Z_WALL),
-        "pet" => (CAT_POS, Z_CAT),
-        other => unreachable!("upgrade_slot_anchor: unknown track id {other:?}"),
+    match (track_id, tier_index) {
+        ("keyboard", _) => (KEYBOARD_POS, Z_KEYBOARD),
+        ("mouse", 0) => (MOUSE_POS, Z_MOUSE),
+        ("mouse", _) => (MOUSE_T2_POS, Z_MOUSE),
+        ("monitor", 0) => (MONITOR_POS, Z_MONITOR_UPGRADE),
+        ("monitor", _) => (MONITOR_ULTRA_POS, Z_MONITOR_UPGRADE),
+        ("chair", 0) => (CHAIR_POS, Z_CHAIR_UPGRADE),
+        ("chair", _) => (CHAIR_T2_POS, Z_CHAIR_UPGRADE),
+        ("desk_decor", 0) => (PLANT_POS, Z_PLANT),
+        ("desk_decor", _) => (DUCK_POS, Z_DUCK),
+        ("wall", 0) => (WALL_POS, Z_WALL),
+        ("wall", _) => (SHELF_POS, Z_WALL),
+        ("pet", _) => (CAT_POS, Z_CAT),
+        (other, _) => unreachable!("upgrade_slot_anchor: unknown track id {other:?}"),
     }
 }
 
@@ -1396,5 +1436,105 @@ mod tests {
             Some(Visibility::Visible),
             "a restored OwnedUpgrades that already owns tier 1 must show it on launch"
         );
+    }
+
+    /// Review finding: four tier-2 sprites shipped different dimensions than
+    /// the one-per-track size const, so their anchors were 1-4px off — in a
+    /// game whose contact-shadow mechanism is a deliberate 1px correction.
+    /// This parses each tier PNG's actual IHDR and asserts it matches the
+    /// size the anchor math assumes, so art and geometry cannot drift apart
+    /// silently. (It also closes the tautology gap in the rests-on-surface
+    /// test: that test checks derivations against constants; this one checks
+    /// the constants against the shipped pixels.)
+    #[test]
+    fn every_tier_sprite_png_matches_the_size_its_anchor_assumes() {
+        fn png_size(name: &str) -> (u32, u32) {
+            let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../assets/");
+            let bytes = std::fs::read(format!("{path}{name}"))
+                .unwrap_or_else(|e| panic!("missing sprite {name}: {e}"));
+            // PNG layout: 8-byte signature, then the IHDR chunk whose first
+            // eight data bytes are big-endian width and height.
+            let be = |b: &[u8]| u32::from_be_bytes([b[0], b[1], b[2], b[3]]);
+            (be(&bytes[16..20]), be(&bytes[20..24]))
+        }
+        for (sprite, size) in [
+            ("keyboard_t1.png", KEYBOARD_SIZE),
+            ("keyboard_t2.png", KEYBOARD_SIZE),
+            ("mouse_t1.png", MOUSE_SIZE),
+            ("mouse_t2.png", MOUSE_T2_SIZE),
+            ("monitor_dual.png", MONITOR_SIZE),
+            ("monitor_ultra.png", MONITOR_ULTRA_SIZE),
+            ("chair_t1.png", CHAIR_SIZE),
+            ("chair_t2.png", CHAIR_T2_SIZE),
+            ("plant.png", PLANT_SIZE),
+            ("duck.png", DUCK_SIZE),
+            ("poster.png", WALL_SIZE),
+            ("shelf.png", SHELF_SIZE),
+            ("cat.png", CAT_SIZE),
+        ] {
+            let (w, h) = png_size(sprite);
+            assert_eq!(
+                (w as f32, h as f32),
+                (size.x, size.y),
+                "{sprite}: shipped PNG dimensions disagree with the size const \
+                 its anchor is derived from"
+            );
+        }
+    }
+
+    /// Review finding: `upgrade_slot_anchor`'s `unreachable!` is reachable by
+    /// DATA — adding a track row without a match arm panics at Startup with a
+    /// fully green suite. Loop the real table through it so that failure mode
+    /// becomes a test failure instead of a launch crash.
+    #[test]
+    fn every_upgrade_track_row_has_an_anchor() {
+        for track in crate::UPGRADE_TRACKS {
+            for (tier_index, _tier) in track.tiers.iter().enumerate() {
+                let (pos, z) = upgrade_slot_anchor(track.id, tier_index);
+                assert!(pos.x.is_finite() && pos.y.is_finite() && z.is_finite());
+            }
+        }
+    }
+
+    /// Tier-2 geometry that the render depends on, asserted:
+    #[test]
+    fn tier_two_sprites_sit_where_their_own_dimensions_say() {
+        // mouse t2: bottom on the desk contact line via its OWN height
+        assert_eq!(
+            MOUSE_T2_POS.y - MOUSE_T2_SIZE.y / 2.0,
+            DESK_TOP_Y - DESK_CONTACT_SHADOW_ROWS
+        );
+        // chair t2: stands on the floor line via its OWN height
+        assert_eq!(CHAIR_T2_POS.y - CHAIR_T2_SIZE.y / 2.0, FLOOR_LINE_Y);
+        // shelf: left-aligned with the books, bottom-aligned with the poster
+        assert_eq!(
+            SHELF_POS.x - SHELF_SIZE.x / 2.0,
+            BOOKS_POS.x - BOOKS_SIZE.x / 2.0
+        );
+        assert_eq!(
+            SHELF_POS.y - SHELF_SIZE.y / 2.0,
+            WALL_POS.y - WALL_SIZE.y / 2.0
+        );
+        // ultrawide: fully covers the base monitor AND clears the lamp
+        const {
+            assert!(
+                MONITOR_ULTRA_POS.x - MONITOR_ULTRA_SIZE.x / 2.0
+                    <= MONITOR_POS.x - MONITOR_SIZE.x / 2.0,
+                "ultrawide must cover the base monitor's left edge"
+            )
+        };
+        const {
+            assert!(
+                MONITOR_ULTRA_POS.x + MONITOR_ULTRA_SIZE.x / 2.0
+                    >= MONITOR_POS.x + MONITOR_SIZE.x / 2.0,
+                "ultrawide must cover the base monitor's right edge"
+            )
+        };
+        const {
+            assert!(
+                MONITOR_ULTRA_POS.x + MONITOR_ULTRA_SIZE.x / 2.0 < LAMP_POS.x - LAMP_SIZE.x / 2.0,
+                "ultrawide must clear the lamp"
+            )
+        };
     }
 }

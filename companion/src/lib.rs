@@ -32,7 +32,9 @@
 //! now `desk_decor` tier 1 — same sprite, same position, bought instead of
 //! auto-unlocked.
 
-use activity::{ActivityEvent, ActivityProvider, FocusedWindowProvider, decay_and_accumulate};
+use activity::{
+    ActivityEvent, ActivityProvider, FocusedWindowProvider, MOUSE_SAMPLE_SECS, decay_and_accumulate,
+};
 // Bevy 0.19: the event-reading system param is `MessageReader` (the 0.19
 // "Messages" API replaced `EventReader`); input events live under
 // `bevy::input` (the prelude only re-exports *buttons*/codes, not the
@@ -402,16 +404,16 @@ struct LevelUp {
 /// progress_delta(rate, fixed_dt) = rate * MIN_WORK_PER_EVENT * fixed_dt
 /// ```
 ///
-/// with `MIN_WORK_PER_EVENT = 0.05` (tuning const).
+/// with `MIN_WORK_PER_EVENT = 0.008` (tuning const).
 ///
 /// **Anti-mashing rule** (plan §1, made concrete and testable): the input
 /// `rate` is a *decaying* events/second average that the `activity` crate
-/// already clamps to `activity::MAX_RECENT_RATE` (120 ev/s) in
+/// already clamps to `activity::MAX_RECENT_RATE` (15 weight/s) in
 /// `decay_and_accumulate`. Because this function is **linear** in `rate`
 /// (work is added per wall-clock second at a fixed rate proportional to
 /// events/s, not per event), a sustained max-rate mash converges to
 /// `MAX_RECENT_RATE * MIN_WORK_PER_EVENT` work/s — the same throughput as
-/// a steady real-typing session at 120 ev/s would produce within one
+/// a steady real-typing session at the 15 weight/s ceiling would produce within one
 /// session (M2's `decay_and_accumulate_sustained_max_rate_mash_does_not_
 /// runaway` test proves the rate itself converges; this function's linearity
 /// is what carries that bound through to work). Per-frame clamping inside
@@ -429,10 +431,9 @@ pub fn progress_delta(recent_rate: f32, fixed_dt: f32) -> f32 {
 /// constant coefficient — the bound on total work/s comes from
 /// `activity::MAX_RECENT_RATE`, not this value.
 ///
-/// At the 120 ev/s anti-mash ceiling this gives 6.0 work/s — project #1
-/// (`total_work = 50`) completes in ≈ 8.3 s of continuous typing at the
-/// ceiling, which is a readable demo pace for M3's exit criterion without
-/// making the first project feel trivially short.
+/// At the anti-mash ceiling this gives 15 * 0.008 = 0.12 work/s — project
+/// #1 (`total_work = 50`) completes in about 7 minutes flat-out, ~21 min at
+/// a real typist's 5 keys/s (ADR 0005 records the calibration).
 pub const MIN_WORK_PER_EVENT: f32 = 0.008;
 
 /// The level the developer is at for `xp` total experience (plan §3.2,
@@ -1047,12 +1048,6 @@ fn forward_mouse_events(
         *since_last = since_last.min(MOUSE_SAMPLE_SECS);
     }
 }
-
-/// Minimum wall-clock gap between recorded `MouseMoved` events. At 0.1s the
-/// mouse contributes at most 10 events/s, i.e. `10 * MOUSE_WEIGHT = 2.5`
-/// weight/s — deliberately below a real typist's contribution, so moving the
-/// mouse supports progress without ever being the efficient way to earn it.
-pub const MOUSE_SAMPLE_SECS: f32 = 0.1;
 
 // ---------------------------------------------------------------------------
 // Systems — M2 activity bridge (unchanged except `has_activity` is read by
@@ -2204,7 +2199,8 @@ mod tests {
         // pattern as M2's rate test) converges the rate to
         // MAX_RECENT_RATE; `progress_delta` is linear in rate, so the work
         // per simulated second is bounded by MAX_RECENT_RATE *
-        // MIN_WORK_PER_EVENT = 6.0 work/s. Simulate 60 s of that mash
+        // MIN_WORK_PER_EVENT work/s (0.12 at current tuning; the assertion
+        // computes it dynamically). Simulate 60 s of that mash
         // through BOTH functions and assert the total work is within a
         // small tolerance of that bound — i.e. no input pattern can make
         // the progress bar fill faster than a steady 120 ev/s session.
@@ -3494,5 +3490,65 @@ mod tests {
     #[test]
     fn activity_line_none_is_generic_and_never_a_guess() {
         assert_eq!(activity_line(None), "Working...");
+    }
+
+    // ------------------------------------------------------------------
+    // ADR 0005 — incentives, not just boundedness. The old anti-mash test
+    // passed before AND after a 6x rebalance because it only asserted the
+    // total was finite; and a boundedness test also passed while the GLOBAL
+    // input path coalesced mouse motion per 16ms sweep (62.5 ev/s), which
+    // let mouse-only wiggling out-earn a real typist 3:1 on the default
+    // build. This test compares the STRATEGIES, parameterised by the shared
+    // sampling constant, so a provider that re-diverges fails it.
+    // ------------------------------------------------------------------
+
+    /// Simulate `seconds` of wall-clock input at `events_per_sec` of the
+    /// given event kind, through the REAL rate + progress math.
+    fn work_earned(kind: ActivityEvent, events_per_sec: f32, seconds: f32) -> f32 {
+        let frame = Duration::from_millis(16);
+        let frame_secs = frame.as_secs_f32();
+        let mut rate = 0.0f32;
+        let mut work = 0.0f32;
+        let mut carry = 0.0f32;
+        let steps = (seconds / frame_secs) as usize;
+        for _ in 0..steps {
+            carry += events_per_sec * frame_secs;
+            let n = carry as usize;
+            carry -= n as f32;
+            let events = vec![kind; n];
+            rate = decay_and_accumulate(rate, &events, frame);
+            work += progress_delta(rate, frame_secs);
+        }
+        work
+    }
+
+    #[test]
+    fn mouse_only_spam_earns_less_than_real_typing() {
+        // The mouse's maximum possible coalesced rate is one event per
+        // MOUSE_SAMPLE_SECS — on EVERY provider, by shared constant.
+        let mouse_max_rate = 1.0 / MOUSE_SAMPLE_SECS;
+        let mouse = work_earned(ActivityEvent::MouseMoved, mouse_max_rate, 60.0);
+        let typing = work_earned(ActivityEvent::Keystroke, 5.0, 60.0);
+        assert!(
+            mouse < typing,
+            "mouse-only wiggling ({mouse:.3} work/min) must never out-earn a \
+             real typist at 5 keys/s ({typing:.3} work/min) — if this fails, \
+             a provider's coalescing has diverged from MOUSE_SAMPLE_SECS or \
+             the weights were retuned without re-checking incentives"
+        );
+        // And the margin should be a real disincentive, not a rounding win.
+        assert!(
+            mouse < typing * 0.6,
+            "mouse-only should earn well under two-thirds of typing \
+             (got {mouse:.3} vs {typing:.3})"
+        );
+    }
+
+    #[test]
+    fn event_weights_rank_typing_over_mouse_over_focus() {
+        use activity::event_weight;
+        assert_eq!(event_weight(&ActivityEvent::Keystroke), 1.0);
+        assert!(event_weight(&ActivityEvent::MouseMoved) < 0.5);
+        assert_eq!(event_weight(&ActivityEvent::FocusChanged(true)), 0.0);
     }
 }

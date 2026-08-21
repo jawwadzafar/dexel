@@ -123,25 +123,6 @@ impl ActivityProvider for FocusedWindowProvider {
     }
 }
 
-/// One step of the activity-rate decay/accumulation used by
-/// `activity_bridge_system` (plan §3.2).
-///
-/// `recent_rate` is an **exponentially decaying counter expressed in
-/// events/second**: each step adds the raw event count of this frame as a
-/// "new" bucket, then every bucket decays toward zero at
-/// [`DECAY_PER_SECOND`] (1.0 /sample, i.e. ≈ 63% per sample at 1 fps).
-/// Equivalently, a burst of `N` events at rate 0 produces `N` ev/s of rate
-/// immediately, which halves every `1/ln2 ≈ 0.69` samples.
-///
-/// The result is **clamped** to `0.0..=MAX_RECENT_RATE` so a sustained
-/// max-rate mash converges to a finite ceiling instead of running away (the
-/// anti-mashing rule from plan §1). Importantly, adding a *count* per frame
-/// (rather than a per-frame *rate* `count/dt`) is what makes steady input
-/// reach a bounded steady state proportional to the true input rate instead
-/// of pinning the rate at the clamp ceiling.
-///
-/// All arguments are plain values — no Bevy types — so unit tests call this
-/// directly without constructing an `App` (plan §3.2, `*` functions).
 /// How much "evidence of real work" one activity event is worth.
 ///
 /// Typing is the strongest signal we have and is the unit (1.0). Mouse motion
@@ -161,11 +142,45 @@ pub fn event_weight(event: &ActivityEvent) -> f32 {
 /// Mouse motion's weight relative to a keystroke. See [`event_weight`].
 pub const MOUSE_WEIGHT: f32 = 0.25;
 
+/// Minimum wall-clock gap between recorded `MouseMoved` events, for EVERY
+/// provider. At 0.1s the mouse contributes at most 10 events/s, i.e.
+/// `10 * MOUSE_WEIGHT = 2.5` weight/s — deliberately below a real typist's
+/// contribution, so moving the mouse supports progress without ever being
+/// the efficient way to earn it.
+///
+/// This lives HERE, next to [`MOUSE_WEIGHT`], because the two anti-mashing
+/// halves must never diverge again: v0.2 added the 100ms coalescing to the
+/// game's Bevy input path only, while `GlobalInputProvider` kept coalescing
+/// per 16ms sweep — 62.5 ev/s, which pinned `recent_rate` at its ceiling and
+/// let mouse-only wiggling out-earn a real typist 3:1 on the DEFAULT build.
+/// A per-provider constant is an invitation to repeat that; a shared one is
+/// not.
+pub const MOUSE_SAMPLE_SECS: f32 = 0.1;
+
+/// One step of the activity-rate decay/accumulation used by
+/// `activity_bridge_system` (plan §3.2).
+///
+/// `recent_rate` is an **exponentially decaying counter expressed in
+/// events/second**: each step adds the raw event count of this frame as a
+/// "new" bucket, then every bucket decays toward zero at
+/// [`DECAY_PER_SECOND`] (1.0 /sample, i.e. ≈ 63% per sample at 1 fps).
+/// Equivalently, a burst of `N` events at rate 0 produces `N` ev/s of rate
+/// immediately, which halves every `1/ln2 ≈ 0.69` samples.
+///
+/// The result is **clamped** to `0.0..=MAX_RECENT_RATE` so a sustained
+/// max-rate mash converges to a finite ceiling instead of running away (the
+/// anti-mashing rule from plan §1). Importantly, adding a *count* per frame
+/// (rather than a per-frame *rate* `count/dt`) is what makes steady input
+/// reach a bounded steady state proportional to the true input rate instead
+/// of pinning the rate at the clamp ceiling.
+///
+/// All arguments are plain values — no Bevy types — so unit tests call this
+/// directly without constructing an `App` (plan §3.2, `*` functions).
 pub fn decay_and_accumulate(previous_rate: f32, events: &[ActivityEvent], dt: Duration) -> f32 {
     if dt.is_zero() {
         return previous_rate;
     }
-    let dt_secs = dt.as_secs_f32().max(f32::EPSILON); // guard: never divide by 0
+    let dt_secs = dt.as_secs_f32();
     // Sum this frame's events by WEIGHT, not by count. Counting raw events
     // treats one mouse twitch as equal to one keystroke, and a mouse reports
     // motion at 125-1000 Hz while a fast typist manages ~5-10 keys/s — so an
