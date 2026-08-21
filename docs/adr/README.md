@@ -15,3 +15,4 @@ say something different — supersede it with a new one and cross-link.
 | [0007](0007-always-on-top.md) | Always-on-top by default, F10 toggle | accepted |
 | [0008](0008-upgrade-tracks.md) | Upgrades as data-driven tracks, bought not unlocked | accepted |
 | [0009](0009-app-identity-not-titles.md) | Show app identity, never window titles | accepted |
+| [0010](0010-mac-first-honest-mechanics.md) | Mac-first rescue: permissionless global signals, honest moods | accepted |

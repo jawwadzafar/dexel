@@ -7,6 +7,15 @@ brief every time — just point the orchestrator at this file:
 /run-dev-companion read docs/RUN_PROMPT.md and follow it exactly
 ```
 
+## Standing operating rule (user-mandated, permanent)
+
+**The main/overseer session (Fable) ORCHESTRATES ONLY.** All implementation —
+code, art, docs content — is done by parallel subagents (Sonnet for
+implementation volume, Opus for design judgment and review), each with
+exclusive ownership of its files. The overseer reads, briefs, verifies,
+resolves ownership conflicts, and commits. Tiny fixes are not an exception;
+they get batched into agent briefs.
+
 ## The brief
 
 Implement `docs/implementation-plan.md`, milestones M0 through M5, all in one

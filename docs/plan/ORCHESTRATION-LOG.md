@@ -1,0 +1,14 @@
+# Orchestration log — append-only
+
+One line per orchestration event (agent launched/landed, verdicts, commits,
+plan changes). Newest at the bottom. The overseer writes this; the point is
+that any future session can reconstruct WHERE THE PROJECT IS from the repo
+alone. The master plan lives in `v0.4-behind-view-plan.md`.
+
+| When | Event |
+|---|---|
+| 2026-08-19 | v0.1 M0-M5 shipped via opencode fleet (PRs #1-#7, see docs/pr-log.md). |
+| 2026-08-21 | v0.2+v0.3 shipped via PR #8 (pixel art, global input, shop strip, economy fix, active-app line). Opus review caught the global-path 3:1 mouse exploit pre-merge. |
+| 2026-08-21 | macOS field test FAILED mechanics (no capture, dishonest moods, invisible store) → ADR 0010, Go-prototype mined for its proven design. |
+| 2026-08-21 | User's design PDF ingested: behind-view + store modal + own/equip. v0.4 plan written (this dir). Standing rule recorded: overseer orchestrates only; subagents implement. |
+| 2026-08-21 | W1-A (mechanics green-up, Sonnet) and W1-B (PDF→specs, Opus) launched in parallel with disjoint ownership. |
