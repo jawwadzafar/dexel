@@ -34,21 +34,22 @@ package game
 //     buddy_none): sprite/detail/thumb all nil — ui-spec §4.2 renders the
 //     word NOTHING for these instead of a thumbnail/preview image.
 //
-// thumb: "thumb_<id>.png" for every NON-tintable item (verified against
-// real generated files). For the two tintable slots (hoodie, chair),
-// docs/art-direction.md's own thumbnail rule ("For tintable items the
-// thumbnail must be two derived files, thumb_<id>_form.png and
-// thumb_<id>_detail.png, so the store card's thumbnail can use the same
-// CSS tint recipe") produces TWO files per item, which this wire
-// contract's single `thumb` field cannot represent — ui-spec §6.1's own
-// JSON example ("thumb": "thumb_chair_racer.png") elides this. Rather
-// than ship a `thumb` value pointing at a file that does not exist on
-// disk, hoodie/chair items leave Thumb nil; the frontend must derive
-// thumb_<id>_form.png / thumb_<id>_detail.png itself for any item whose
-// slot is tintable (it already reads docs/art-direction.md for the
-// non-catalog developer-composite special case above, so this is the
-// same kind of art-direction-sourced convention, not new information).
-// Flagged prominently in this agent's handoff report.
+// thumb: "thumb_<id>.png" for every NON-tintable item with a real sprite
+// (verified against real generated files); nil for the three "nothing"
+// items. For the two tintable slots (hoodie, chair), docs/art-direction.md's
+// own thumbnail rule ("For tintable items the thumbnail must be two
+// derived files, thumb_<id>_form.png and thumb_<id>_detail.png, so the
+// store card's thumbnail can use the same CSS tint recipe") produces TWO
+// files per item, which the single `thumb` field cannot represent. Rather
+// than leave that convention implicit (the previous version of this file
+// shipped `thumb: nil` for these items and made the frontend derive the
+// two filenames itself from the item id — a silent, undocumented wire
+// contract nobody could see by reading the JSON), those two filenames are
+// now explicit wire fields: `thumbForm`/`thumbDetail`, populated for
+// hoodie/chair items and nil for every other item (which instead uses
+// plain `thumb`). This is the seam this reconciliation pass closes; see
+// this agent's handoff report for the exact proposed docs/ui-spec.md §6.1
+// wording.
 
 // Slot is one of the eight scene positions from docs/ui-spec.md §4.1's
 // category list, in that exact order (the frontend renders slots "in the
@@ -79,6 +80,8 @@ type CatalogItem struct {
 	Sprite      *string `json:"sprite"`
 	Detail      *string `json:"detail"`
 	Thumb       *string `json:"thumb"`
+	ThumbForm   *string `json:"thumbForm"`
+	ThumbDetail *string `json:"thumbDetail"`
 	DefaultTint *string `json:"defaultTint"`
 	Flavor      string  `json:"flavor"`
 }
@@ -141,29 +144,37 @@ var catalogItems = []CatalogItem{
 	// --- Hoodie (tintable) ---
 	{ID: "hoodie_classic", Slot: "hoodie", Name: "Classic Pullover", Price: 0,
 		Sprite: strp("hoodie_classic.png"), Detail: nil, Thumb: nil,
+		ThumbForm: strp("thumb_hoodie_classic_form.png"), ThumbDetail: strp("thumb_hoodie_classic_detail.png"),
 		DefaultTint: strp("indigo"), Flavor: "Drawstrings, one pocket, no opinions."},
 	{ID: "hoodie_zip", Slot: "hoodie", Name: "Zip-Up", Price: 120,
 		Sprite: strp("hoodie_zip.png"), Detail: nil, Thumb: nil,
+		ThumbForm: strp("thumb_hoodie_zip_form.png"), ThumbDetail: strp("thumb_hoodie_zip_detail.png"),
 		DefaultTint: strp("slate"), Flavor: "For when the office is exactly two degrees off."},
 	{ID: "hoodie_tech", Slot: "hoodie", Name: "Techwear", Price: 300,
 		Sprite: strp("hoodie_tech.png"), Detail: nil, Thumb: nil,
+		ThumbForm: strp("thumb_hoodie_tech_form.png"), ThumbDetail: strp("thumb_hoodie_tech_detail.png"),
 		DefaultTint: strp("forest"), Flavor: "Straps that hold nothing. Reflective, though."},
 	{ID: "hoodie_cloak", Slot: "hoodie", Name: "Night Cloak", Price: 500,
 		Sprite: strp("hoodie_cloak.png"), Detail: nil, Thumb: nil,
+		ThumbForm: strp("thumb_hoodie_cloak_form.png"), ThumbDetail: strp("thumb_hoodie_cloak_detail.png"),
 		DefaultTint: strp("neon"), Flavor: "Ships at 3am or not at all."},
 
 	// --- Chair (tintable) ---
 	{ID: "chair_basic", Slot: "chair", Name: "Basic Office", Price: 0,
 		Sprite: strp("chair_basic_form.png"), Detail: strp("chair_basic_detail.png"), Thumb: nil,
+		ThumbForm: strp("thumb_chair_basic_form.png"), ThumbDetail: strp("thumb_chair_basic_detail.png"),
 		DefaultTint: strp("slate"), Flavor: `Adjusts in one axis. That axis is "no".`},
 	{ID: "chair_racer", Slot: "chair", Name: "Racer", Price: 100,
 		Sprite: strp("chair_racer_form.png"), Detail: strp("chair_racer_detail.png"), Thumb: nil,
+		ThumbForm: strp("thumb_chair_racer_form.png"), ThumbDetail: strp("thumb_chair_racer_detail.png"),
 		DefaultTint: strp("ember"), Flavor: "Bolstered wings. Zero laps completed."},
 	{ID: "chair_exec", Slot: "chair", Name: "Executive Leather", Price: 300,
 		Sprite: strp("chair_exec_form.png"), Detail: strp("chair_exec_detail.png"), Thumb: nil,
+		ThumbForm: strp("thumb_chair_exec_form.png"), ThumbDetail: strp("thumb_chair_exec_detail.png"),
 		DefaultTint: strp("ember"), Flavor: "Tufted. Reclines further than the deadline."},
 	{ID: "chair_antigrav", Slot: "chair", Name: "Anti-Gravity", Price: 500,
 		Sprite: strp("chair_antigrav_form.png"), Detail: strp("chair_antigrav_detail.png"), Thumb: nil,
+		ThumbForm: strp("thumb_chair_antigrav_form.png"), ThumbDetail: strp("thumb_chair_antigrav_detail.png"),
 		DefaultTint: strp("cobalt"), Flavor: "Floats. Physics pending review."},
 
 	// --- Keyboard ---

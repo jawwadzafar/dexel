@@ -4,15 +4,12 @@
 // (catalog content), and ADR 0009/0010 (honesty rules).
 //
 // ASSET URL PREFIX: "/assets/<file>" — docs/ui-spec.md and
-// docs/art-direction.md never name an explicit HTTP prefix for the 45
-// sprite PNGs (only that "the Go server will serve them"), so per this
-// task's instruction this frontend uses "/assets/<file>" and documents it
-// here. NOTE for the backend agent: app/main.go's mux currently only
-// registers "/" -> http.FileServer(publicDir); it will need a route such as
-// mux.Handle("/assets/", http.StripPrefix("/assets/", http.FileServer(http.Dir("../assets"))))
-// (or to copy/symlink the art agent's assets/ into app/public/assets/) for
-// these URLs to resolve. Until then, broken sprite icons in the scene band
-// are expected — the DOM/CSS/layout do not depend on the images loading.
+// docs/art-direction.md never name an explicit HTTP prefix for the sprite
+// PNGs (only that "the Go server will serve them"), so this frontend uses
+// "/assets/<file>". app/main.go's mux serves this route for real (a
+// registerAssetsRoute() call that locates the repository's assets/
+// directory via internal/assets.Locate() and mounts
+// http.FileServer(http.Dir(...)) on it) — no symlink, no dev-only stopgap.
 
 (function () {
   'use strict';
@@ -77,15 +74,15 @@
       { id: 'indigo', name: 'Midnight Indigo', hex: '#6a5aa0', price: 40 }
     ],
     items: [
-      { id: 'hoodie_classic', slot: 'hoodie', name: 'Classic Pullover', price: 0, sprite: 'hoodie_classic.png', detail: null, defaultTint: 'indigo', flavor: 'Drawstrings, one pocket, no opinions.' },
-      { id: 'hoodie_zip', slot: 'hoodie', name: 'Zip-Up', price: 120, sprite: 'hoodie_zip.png', detail: null, defaultTint: 'slate', flavor: 'For when the office is exactly two degrees off.' },
-      { id: 'hoodie_tech', slot: 'hoodie', name: 'Techwear', price: 300, sprite: 'hoodie_tech.png', detail: null, defaultTint: 'forest', flavor: 'Straps that hold nothing. Reflective, though.' },
-      { id: 'hoodie_cloak', slot: 'hoodie', name: 'Night Cloak', price: 500, sprite: 'hoodie_cloak.png', detail: null, defaultTint: 'neon', flavor: 'Ships at 3am or not at all.' },
+      { id: 'hoodie_classic', slot: 'hoodie', name: 'Classic Pullover', price: 0, sprite: 'hoodie_classic.png', detail: null, thumbForm: 'thumb_hoodie_classic_form.png', thumbDetail: 'thumb_hoodie_classic_detail.png', defaultTint: 'indigo', flavor: 'Drawstrings, one pocket, no opinions.' },
+      { id: 'hoodie_zip', slot: 'hoodie', name: 'Zip-Up', price: 120, sprite: 'hoodie_zip.png', detail: null, thumbForm: 'thumb_hoodie_zip_form.png', thumbDetail: 'thumb_hoodie_zip_detail.png', defaultTint: 'slate', flavor: 'For when the office is exactly two degrees off.' },
+      { id: 'hoodie_tech', slot: 'hoodie', name: 'Techwear', price: 300, sprite: 'hoodie_tech.png', detail: null, thumbForm: 'thumb_hoodie_tech_form.png', thumbDetail: 'thumb_hoodie_tech_detail.png', defaultTint: 'forest', flavor: 'Straps that hold nothing. Reflective, though.' },
+      { id: 'hoodie_cloak', slot: 'hoodie', name: 'Night Cloak', price: 500, sprite: 'hoodie_cloak.png', detail: null, thumbForm: 'thumb_hoodie_cloak_form.png', thumbDetail: 'thumb_hoodie_cloak_detail.png', defaultTint: 'neon', flavor: 'Ships at 3am or not at all.' },
 
-      { id: 'chair_basic', slot: 'chair', name: 'Basic Office', price: 0, sprite: 'chair_basic_form.png', detail: 'chair_basic_detail.png', defaultTint: 'slate', flavor: 'Adjusts in one axis. That axis is "no".' },
-      { id: 'chair_racer', slot: 'chair', name: 'Racer', price: 100, sprite: 'chair_racer_form.png', detail: 'chair_racer_detail.png', defaultTint: 'ember', flavor: 'Bolstered wings. Zero laps completed.' },
-      { id: 'chair_exec', slot: 'chair', name: 'Executive Leather', price: 300, sprite: 'chair_exec_form.png', detail: 'chair_exec_detail.png', defaultTint: 'ember', flavor: 'Tufted. Reclines further than the deadline.' },
-      { id: 'chair_antigrav', slot: 'chair', name: 'Anti-Gravity', price: 500, sprite: 'chair_antigrav_form.png', detail: 'chair_antigrav_detail.png', defaultTint: 'cobalt', flavor: 'Floats. Physics pending review.' },
+      { id: 'chair_basic', slot: 'chair', name: 'Basic Office', price: 0, sprite: 'chair_basic_form.png', detail: 'chair_basic_detail.png', thumbForm: 'thumb_chair_basic_form.png', thumbDetail: 'thumb_chair_basic_detail.png', defaultTint: 'slate', flavor: 'Adjusts in one axis. That axis is "no".' },
+      { id: 'chair_racer', slot: 'chair', name: 'Racer', price: 100, sprite: 'chair_racer_form.png', detail: 'chair_racer_detail.png', thumbForm: 'thumb_chair_racer_form.png', thumbDetail: 'thumb_chair_racer_detail.png', defaultTint: 'ember', flavor: 'Bolstered wings. Zero laps completed.' },
+      { id: 'chair_exec', slot: 'chair', name: 'Executive Leather', price: 300, sprite: 'chair_exec_form.png', detail: 'chair_exec_detail.png', thumbForm: 'thumb_chair_exec_form.png', thumbDetail: 'thumb_chair_exec_detail.png', defaultTint: 'ember', flavor: 'Tufted. Reclines further than the deadline.' },
+      { id: 'chair_antigrav', slot: 'chair', name: 'Anti-Gravity', price: 500, sprite: 'chair_antigrav_form.png', detail: 'chair_antigrav_detail.png', thumbForm: 'thumb_chair_antigrav_form.png', thumbDetail: 'thumb_chair_antigrav_detail.png', defaultTint: 'cobalt', flavor: 'Floats. Physics pending review.' },
 
       { id: 'kb_membrane', slot: 'keyboard', name: 'Stock Membrane', price: 0, sprite: 'kb_membrane.png', detail: null, defaultTint: null, flavor: 'Came with the machine. Still here.' },
       { id: 'kb_mech', slot: 'keyboard', name: 'Mechanical', price: 60, sprite: 'kb_mech.png', detail: null, defaultTint: null, flavor: 'Audible from the next room. Intentionally.' },
@@ -390,27 +387,12 @@
     }
   }
 
-  // [DESIGN CALL / CROSS-AGENT CONFLICT] The Go backend's catalog.go (as of
-  // this writing) gives hoodie items sprite="<id>_form.png" and
-  // detail="<id>_detail.png", modelling hoodie exactly like chair (a
-  // per-item grayscale form + palette detail pair). But art-direction.md's
-  // 45-file manifest has NO such files — hoodie's only per-item file is a
-  // single palette-pure "<id>.png" style overlay (e.g. "hoodie_zip.png"),
-  // explicitly because the developer is "the one composite that is not a
-  // slot": dev_form_<frame>.png (tinted, frame-keyed, shared by every
-  // hoodie) + hoodie_<style>.png (palette-pure, item-keyed) +
-  // dev_base_<frame>.png (frame-keyed). That is what this renderer builds.
-  // hoodieStyleFile() below deliberately derives the filename as
-  // `item.id + '.png'` instead of trusting item.sprite/item.detail, so this
-  // frontend stays correct against the manifest regardless of that backend
-  // mismatch. Reconciling catalog.go's hoodie sprite/detail fields to match
-  // the manifest (sprite: "<id>.png", detail: null) is recommended.
-  function hoodieStyleFile(item) { return item.id + '.png'; }
-
   // The developer composite is the one non-generic slot (art-direction.md
   // "Scene contract"): dev_form_<frame> (tinted by the hoodie's tint) +
-  // hoodie_<style> (the equipped hoodie item's own palette-pure file) +
-  // dev_base_<frame> (frame-driven, always present).
+  // hoodie_<style> (the equipped hoodie item's own palette-pure file,
+  // trusted straight off item.sprite — the wire already carries the true
+  // single-file filename; see internal/game/catalog.go) + dev_base_<frame>
+  // (frame-driven, always present).
   function renderDev() {
     var holder = sceneNodes.dev;
     holder.innerHTML = '';
@@ -428,7 +410,7 @@
       var style = document.createElement('img');
       style.className = 'layer sprite';
       style.alt = '';
-      style.src = assetUrl(hoodieStyleFile(item));
+      style.src = assetUrl(item.sprite);
       style.style.position = 'absolute';
       style.style.left = '0';
       style.style.top = '0';
@@ -723,31 +705,31 @@
     updateScrollThumb();
   }
 
-  // [DESIGN CALL] ui-spec.md's catalog JSON example gives tintable items a
-  // single "thumb" field (e.g. "thumb_chair_racer.png") — and the real Go
-  // catalog (internal/game/catalog.go) does exactly that, for every item —
-  // but art-direction.md is explicit that a TINTABLE thumbnail must be two
-  // derived files (thumb_<id>_form.png / thumb_<id>_detail.png) so the card
-  // can run the live tint recipe as the player clicks swatches, and the art
-  // agent's generated assets/ confirms this: thumb_hoodie_zip_form.png,
-  // thumb_hoodie_zip_detail.png, thumb_chair_racer_form.png, etc all exist.
-  // So both tintable slots (hoodie, chair) ignore the single "thumb" field
-  // and derive the two-file names from itemId by convention. Non-tintable
-  // slots use the catalog's "thumb" field, falling back to the
-  // "thumb_<id>.png" convention.
+  // Tintable slots (hoodie, chair) get TWO thumbnail files — the store
+  // card's thumbnail runs the live tint recipe as the player clicks
+  // swatches (art-direction.md's tintable-thumbnail rule) — which the
+  // catalog now carries as explicit wire fields, item.thumbForm /
+  // item.thumbDetail (see internal/game/catalog.go and this reconciliation
+  // pass's proposed docs/ui-spec.md §6.1 wording). Falls back to the
+  // thumb_<id>_form.png / thumb_<id>_detail.png naming convention only if
+  // an older backend build hasn't sent those fields yet, so this frontend
+  // degrades gracefully rather than breaking outright against a stale
+  // catalog message.
   function buildThumb(slot, item) {
     if (slot.tintable) {
       if (!item.sprite) { return document.createElement('span'); }
       var tintId = selectedTintFor(item);
+      var formFile = item.thumbForm || ('thumb_' + item.id + '_form.png');
+      var detailFile = item.thumbDetail || ('thumb_' + item.id + '_detail.png');
       var wrap = document.createElement('div');
       wrap.style.position = 'absolute';
       wrap.style.inset = '0';
-      var tint = buildTintLayer('thumb_' + item.id + '_form.png', tintHexFor(tintId));
+      var tint = buildTintLayer(formFile, tintHexFor(tintId));
       tint.style.left = '0'; tint.style.top = '0'; tint.style.width = '100%'; tint.style.height = '100%';
       wrap.appendChild(tint);
       var detail = document.createElement('img');
       detail.alt = '';
-      detail.src = assetUrl('thumb_' + item.id + '_detail.png');
+      detail.src = assetUrl(detailFile);
       detail.style.position = 'absolute';
       detail.style.inset = '0';
       detail.style.width = '100%';
@@ -941,7 +923,7 @@
     formLayer.style.zIndex = 3;
     devHolder.appendChild(formLayer);
     if (hoodieItem) {
-      var styleImg = plainImg(hoodieStyleFile(hoodieItem), { left: 0, top: 0, w: devRect.w, h: devRect.h });
+      var styleImg = plainImg(hoodieItem.sprite, { left: 0, top: 0, w: devRect.w, h: devRect.h });
       styleImg.style.zIndex = 4;
       devHolder.appendChild(styleImg);
     }

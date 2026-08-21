@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/jawwadzafar/dev-companion/app/internal/activity"
+	"github.com/jawwadzafar/dev-companion/app/internal/assets"
 	"github.com/jawwadzafar/dev-companion/app/internal/engine"
 	"github.com/jawwadzafar/dev-companion/app/internal/game"
 	"github.com/jawwadzafar/dev-companion/app/internal/store"
@@ -70,6 +71,7 @@ func main() {
 
 	mux := http.NewServeMux()
 	mux.Handle("/", http.FileServer(http.Dir(*publicDir)))
+	registerAssetsRoute(mux)
 	mux.HandleFunc("/ws", hub.handleWS(actions, catalog))
 
 	httpSrv := &http.Server{Addr: *addr, Handler: mux}
@@ -224,6 +226,33 @@ func selectProvider(kind, fakeScript string) (activity.Provider, string) {
 		log.Fatalf(`unknown -provider %q (want "auto" or "fake")`, kind)
 		return nil, ""
 	}
+}
+
+// registerAssetsRoute serves the repository's assets/ directory (the art
+// agent's sprite/thumbnail PNGs) at "/assets/<file>", the URL prefix
+// game.js's assetUrl() already builds against. This is a real route, not
+// the app/public/assets -> ../../assets symlink an earlier pass used as a
+// stopgap: a symlink checked into git breaks the moment this binary is
+// built and run from anywhere that is not this exact checkout, and a repo
+// symlink is also just one more thing a fresh clone or a zip download can
+// silently fail to preserve. internal/assets.Locate() finds the real
+// directory (env override, then upward from the executable, then upward
+// from cwd — see that package's doc comment for the full lookup order and
+// why both of the latter two are needed).
+//
+// If assets/ cannot be found, the server still starts (matching the
+// activity-provider failure mode elsewhere in main: never fatal for a
+// missing *optional* signal source) — sprite requests simply 404, the same
+// degraded-but-alive behaviour the DOM/CSS already tolerate per game.js's
+// own comments.
+func registerAssetsRoute(mux *http.ServeMux) {
+	dir, err := assets.Locate()
+	if err != nil {
+		log.Printf("assets route not registered: %v (sprite requests will 404)", err)
+		return
+	}
+	log.Printf("serving /assets/ from %s", dir)
+	mux.Handle("/assets/", http.StripPrefix("/assets/", http.FileServer(http.Dir(dir))))
 }
 
 // ensurePublicDirExists creates an empty ./public (with a .gitkeep) if it
