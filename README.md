@@ -46,7 +46,9 @@ frontend over a WebSocket at `http://127.0.0.1:8080`.
 
 ## Quick start
 
-Requires [Go 1.27](https://go.dev/dl/) or newer.
+Requires [Go 1.27](https://go.dev/dl/) or newer. Node/npm are **not**
+needed to run the game — only if you're changing the frontend (see
+[Building from source](#building-from-source) below).
 
 ```bash
 git clone git@github.com:jawwadzafar/dexel.git
@@ -55,31 +57,18 @@ go run .
 ```
 
 Open **http://localhost:8080**. That's it — the compiled frontend bundle is
-committed, so no Node/npm is required just to run the game.
+committed, so `go run .` alone always serves a working game with zero
+Node/npm involved.
 
 By default the server binds to `127.0.0.1:8080` (loopback only). Binding
 `-addr` beyond `127.0.0.1`/`localhost` exposes the activity monitor and your
 save file to your LAN or tailnet — the flag's own help text warns about
 this; leave it at the default unless you specifically intend that.
 
-### macOS
-
-- **No permission prompt.** The activity provider polls
-  `CGEventSourceSecondsSinceLastEventType` — a system timestamp delta, not a
-  keystroke tap — so there is no Accessibility dialog to click through.
-
-### Linux
-
-Same commands. The activity provider reads raw `/dev/input/event*` nodes,
-which needs your user in the `input` group:
-
-```bash
-sudo usermod -aG input "$USER"    # then log out and back in
-```
-
-Without that group membership the server still runs; it just can't see
-global input, so activity only counts while the browser tab itself has
-focus, and the honesty rules above freeze rather than guess at idle time.
+macOS and Linux both run the exact commands above; see
+[Building from source](#building-from-source) for platform setup (Linux
+needs one group membership), what to expect on Windows, building a
+standalone binary, and cross-compiling.
 
 ### Troubleshooting
 
@@ -91,6 +80,95 @@ focus, and the honesty rules above freeze rather than guess at idle time.
 - **Check what the server actually found:** `GET /api/health` returns the
   resolved `assetsDir`, whether `public/index.html` was found, and the
   build version.
+
+## Building from source
+
+### Prerequisites
+
+| Need | Requirement |
+|---|---|
+| Build or run the server | [Go 1.27](https://go.dev/dl/) or newer |
+| Change the frontend | Node + npm (see [`app/frontend/README.md`](app/frontend/README.md)) |
+
+The compiled frontend bundle (`app/public/js/game.js`) is committed to the
+repo, so `go build`/`go run .` alone always produce a working game with
+zero Node/npm involved. Node is only needed if you edit
+`app/frontend/src/*.ts` and want to rebuild that bundle — see
+[Development](#development) below.
+
+### Build a binary
+
+From `app/`:
+
+```bash
+cd app
+go build -o dexel .        # Windows: go build -o dexel.exe .
+./dexel                    # Windows: dexel.exe
+```
+
+Then open **http://localhost:8080**. For iterating on the Go source
+without a separate build step, use `go run .` instead (as in
+[Quick start](#quick-start)) — both accept the same flags, documented in
+[Configuration](#configuration).
+
+### Platform support for activity capture
+
+The server **runs on every platform Go supports**; what differs is
+whether it can see your real typing/mouse activity *globally*, which is
+what advances sprints and drives the honest mood/idle logic:
+
+| Platform | Global activity capture | Setup |
+|---|---|---|
+| macOS | Yes — permissionless | None. Polls `CGEventSourceSecondsSinceLastEventType` (a system timestamp delta, not a keystroke tap), so there's no Accessibility dialog to click through. |
+| Linux | Yes — needs one group membership | Add your user to the `input` group (below); it reads raw `/dev/input/event*` nodes. |
+| Windows (and any other OS) | **No native provider yet** | None available. See below. |
+
+**Linux:** grant access to the raw input devices, then log out and back
+in:
+
+```bash
+sudo usermod -aG input "$USER"    # then log out and back in
+```
+
+Without that group membership the server still runs; it just can't see
+global input, so activity only counts while the browser tab itself has
+focus, and the honesty rules above freeze rather than guess at idle time.
+
+**Windows — be aware of this before you rely on it:** dexel builds and
+runs on Windows and the web UI works fully, but there is currently **no
+native global activity provider** for Windows. It falls back to a
+permanently-blind, zero-signal provider by deliberate design (ADR 0010's
+honesty rules would rather freeze than fabricate activity — see
+[ADR 0010](docs/adr/0010-mac-first-honest-mechanics.md) and
+[ADR 0011](docs/adr/0011-engine-pivot-to-pdf-native-stack.md)). Concretely:
+sprints will **not** advance from real global typing on Windows yet — this
+is stated plainly here so nobody mistakes it for a bug. A native Windows
+provider is future work, not yet started.
+
+### Cross-compiling
+
+Go can cross-compile a binary for another OS/architecture from any host,
+e.g. building a Windows binary from macOS or Linux:
+
+```bash
+GOOS=windows GOARCH=amd64 go build -o dexel.exe .
+GOOS=darwin  GOARCH=arm64 go build -o dexel .
+GOOS=linux   GOARCH=amd64 go build -o dexel .
+```
+
+The caveat: activity capture is OS-native code (see the table above), so a
+cross-built binary only ever gets the provider its *target* OS has — a
+Windows binary cross-built from a Mac still has no native activity
+provider, because none exists yet for Windows.
+
+### Packaged desktop app (planned, not shipped)
+
+A native desktop build via [Tauri](https://tauri.app/) — targeting macOS,
+Windows, and Linux, x86_64 + arm64 — is planned so users won't need a
+terminal or a browser tab at all. It's tracked as F3 in
+[`docs/plan/ROADMAP.md`](docs/plan/ROADMAP.md) and is **not shipped yet**;
+today, running from source (`go run .`) or a `go build` binary as above is
+the only way to run dexel.
 
 ## Controls
 
