@@ -20,11 +20,17 @@ export const SLOT_RECT: Record<string, Rect> = {
   mouse: { left: 224, top: 90, w: 44, h: 24 }
 };
 export const DEV_RECT: Rect = { left: 116, top: 92, w: 88, h: 104 };
+// Chairs are bottom-centre anchored (bottom = room row 200, centre x = 160,
+// matching DEV_RECT's centre) and now rise well up behind the developer's
+// upper body so the seated read is unambiguous: each chair's top reaches the
+// shoulder/head band (near or above DEV_RECT.top=92), with raised backrest
+// corners / bolsters flanking the head above room row 120 and armrests at the
+// sides. Sizes match the sprite canvases in tools/gen_assets.py 1:1.
 export const CHAIR_RECT: Record<string, Rect> = {
-  chair_basic: { w: 136, h: 84, left: 92, top: 116 },
-  chair_racer: { w: 140, h: 88, left: 90, top: 112 },
-  chair_exec: { w: 144, h: 100, left: 88, top: 100 },
-  chair_antigrav: { w: 128, h: 72, left: 96, top: 128 }
+  chair_basic: { w: 144, h: 108, left: 88, top: 92 },
+  chair_racer: { w: 148, h: 112, left: 86, top: 88 },
+  chair_exec: { w: 152, h: 118, left: 84, top: 82 },
+  chair_antigrav: { w: 136, h: 100, left: 92, top: 100 }
 };
 
 export interface SceneryItem extends Rect {

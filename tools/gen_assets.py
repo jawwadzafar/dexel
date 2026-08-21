@@ -297,14 +297,14 @@ SPEC: list[tuple[str, int, int]] = [
     ("hoodie_tech.png", 88, 104),
     ("hoodie_cloak.png", 88, 104),
     # Chair (8), bottom-centre anchored at room row 200 / x=160
-    ("chair_basic_form.png", 136, 84),
-    ("chair_basic_detail.png", 136, 84),
-    ("chair_racer_form.png", 140, 88),
-    ("chair_racer_detail.png", 140, 88),
-    ("chair_exec_form.png", 144, 100),
-    ("chair_exec_detail.png", 144, 100),
-    ("chair_antigrav_form.png", 128, 72),
-    ("chair_antigrav_detail.png", 128, 72),
+    ("chair_basic_form.png", 144, 108),
+    ("chair_basic_detail.png", 144, 108),
+    ("chair_racer_form.png", 148, 112),
+    ("chair_racer_detail.png", 148, 112),
+    ("chair_exec_form.png", 152, 118),
+    ("chair_exec_detail.png", 152, 118),
+    ("chair_antigrav_form.png", 136, 100),
+    ("chair_antigrav_detail.png", 136, 100),
     # Keyboard (4), 96x24 at (112, 90)
     ("kb_membrane.png", 96, 24),
     ("kb_mech.png", 96, 24),
@@ -1200,162 +1200,201 @@ def _chair_star_base(s: Sprite, cx: int, hub_y: int, foot_y: int, spread: int) -
     s.hline(foot_y + 2, feet_x[0] - 4, feet_x[-1] + 4, "shadow")   # contact shadow
 
 
-CHAIR_CX = 68.0        # every chair style's own canvas centreline (width/2)
+# --------------------------------------------------------------------------
+# Chair (8): *_form (ramp, tintable) + *_detail (palette). BEHIND-VIEW SEAT
+# REDESIGN. The prior chairs read as a flat mat around the developer because
+# the sprite never rose behind his upper body: the backrest top sat at or
+# below the head. Every chair below now has (1) a tall backrest slab directly
+# behind the torso, wider than the shoulders so it shows on both sides,
+# (2) two raised upper-back corners / headrest bolsters rising ABOVE the head
+# in the wing zone (the only place room y<120 may be painted, since the hard
+# chair region protects the keyboard across the centre), so the head nestles
+# between them and reads as resting against the seatback, and (3) armrests
+# protruding at the sides at elbow level. Bottom-centre anchored at room row
+# 200 / x=160; each CHAIR_RECT in geometry.ts places the sprite so the
+# backrest reaches up to the shoulder/head band (top near or above the dev's
+# own DEV_RECT.top=92).
+#
+# COORDINATE NOTE: local row r -> room y = (200 - h) + r; local x -> room x =
+# (160 - w/2) + x. The hard region (assert_chair_region) forbids any pixel at
+# local rows < h-80 (room y < 120) inside local x in [w/2-44, w/2+44]
+# (room x in [116, 204]) - so above room y120 only the side "wing" columns
+# outside that band may be painted. Every builder below keeps its raised
+# corners/bolsters strictly outside it; the self-check enforces this.
+
+
+def _chair_seat_well_ao(s: Sprite, cx: float, half: float, x0: int, y: int,
+                         x1: int) -> None:
+    """A one-row dithered AO seam where the seat pan meets the backrest, so
+    the two forms read as a seat tucked under a back, not one flat panel."""
+    for x in range(x0, x1 + 1):
+        rel = max(-1.0, min(1.0, (x - cx) / half)) if half else 0.0
+        s.dot(x, y, ramp_dither(x, y, 3.0 - 0.8 * rel - 0.8))
 
 
 def build_chair_basic_form() -> Sprite:
-    """Mesh task chair. HERO-FIDELITY MATCH: the flat ramp3/ramp4 blocks
-    are replaced with a dithered cross-section gradient (`chair_shade_rect`)
-    anchored on ramp4 (tint headroom - `chair_basic`'s DEFAULT tint is
-    `slate`, the near-black one, so this anchor is what keeps the DEFAULT
-    fresh-player chair a readable mid-value mesh instead of a black void),
-    lit toward x<cx to match the room's one upper-left key light, plus a
-    woven mesh texture (small punctures, one ramp step darker) across the
-    backrest and a soft AO band at the taper into the seat.
-    """
-    s = Sprite(136, 84, palette=RAMP)
-    cx, half = CHAIR_CX, 54.0
-    chair_shade_rect(s, cx, half, 14, 10, 122, 46)          # mesh backrest, rows 10-46
-    # The rounded top of the backrest starts one row BELOW the restricted
-    # zone (y_below=4), not at it: the outline halo added in the detail
-    # layer extends 1px above whatever this shape's topmost row is, and a
-    # rect starting exactly at row 4 would put that halo at row 3, inside
-    # the forbidden band. Starting at row 5 puts the halo at row 4, which is
-    # not restricted.
-    chair_shade_rect(s, cx, half, 20, 5, 116, 9)
-    # Wing tips (rows 0-4): kept 1px inside the hard-region x boundary
-    # (x<24 / x>112), and extended down to row 4 so they meet the backrest
-    # above with no gap.
-    chair_shade_rect(s, cx, half, 14, 0, 22, 4)             # left wing tip
-    chair_shade_rect(s, cx, half, 114, 0, 122, 4)           # right wing tip
-    chair_shade_rect(s, cx, half, 18, 41, 118, 46, extra=0.4)   # taper into the seat, soft AO
-    chair_shade_rect(s, cx, half, 10, 47, 126, 60)          # seat pan, modest wings
-    chair_shade_rect(s, cx, half, 106, 51, 126, 60, extra=0.3)  # seat well AO, far (shadow) corner
-    # Mesh weave: a sparse grid of small punctures, one ramp step darker -
-    # the "seams" a woven back needs to read as fabric, not a flat panel.
-    for wy in range(13, 39, 5):
-        for wx in range(17, 120, 7):
+    """Mesh task chair, behind-view. A tall mesh backrest slab behind the
+    torso with two raised upper-back corners rising above the head, a seat
+    pan tucked beneath it, and armrests protruding at the sides. Dithered
+    cross-section gradient anchored on ramp4 (tint headroom - this chair's
+    DEFAULT tint is `slate`, near-black, so the anchor + rim light are what
+    keep the fresh-player chair a readable mid-value mesh, not a void)."""
+    s = Sprite(144, 108, palette=RAMP)
+    cx, half = 72.0, 68.0
+    # Backrest slab behind the torso+head (rows 30..74 = room y120..164).
+    chair_shade_rect(s, cx, half, 14, 32, 130, 74)             # main back slab
+    chair_shade_rect(s, cx, half, 20, 30, 124, 31)             # rounded top edge
+    # Raised upper-back corners rising ABOVE the head (rows 10..31), kept in
+    # the wing zone (local x <=26 / >=118, since room y<120 there). Edges are
+    # pulled 1px inside the x<28/x>116 boundary so the detail layer's 1px
+    # outline halo (at x27/x117) also stays clear of the hard region.
+    chair_shade_rect(s, cx, half, 14, 10, 26, 31)              # left post
+    chair_shade_rect(s, cx, half, 118, 10, 130, 31)            # right post
+    chair_shade_rect(s, cx, half, 14, 10, 26, 11, extra=0.6)   # post top cap AO
+    chair_shade_rect(s, cx, half, 118, 10, 130, 11, extra=0.6)
+    # Armrests protruding at elbow level (rows 58..76), sticking out past the
+    # slab edges to the sides.
+    chair_shade_rect(s, cx, half, 2, 58, 20, 76)               # left armrest
+    chair_shade_rect(s, cx, half, 124, 58, 142, 76)            # right armrest
+    # Seat pan, tucked under the back (rows 75..88), a touch wider than slab.
+    chair_shade_rect(s, cx, half, 10, 75, 134, 88)
+    chair_shade_rect(s, cx, half, 110, 79, 134, 88, extra=0.3) # seat well AO, far corner
+    _chair_seat_well_ao(s, cx, half, 16, 75, 128)
+    # Mesh weave: a sparse grid of small punctures, one ramp step darker.
+    for wy in range(35, 72, 5):
+        for wx in range(20, 125, 7):
             rel = max(-1.0, min(1.0, (wx - cx) / half))
-            v = 3.0 - 0.8 * rel - 0.7
-            s.dot(wx, wy, ramp_dither(wx, wy, v))
-    chair_rim_light(s)   # tint-crush fix: keeps the lit edge visible even at slate
+            s.dot(wx, wy, ramp_dither(wx, wy, 3.0 - 0.8 * rel - 0.7))
+    chair_rim_light(s)
     return s
 
 
 def build_chair_basic_detail() -> Sprite:
-    s = Sprite(136, 84)
-    bevel_rect(s, 60, 61, 76, 78, "metal", "wall_light", "shadow")   # gas cylinder
-    _chair_star_base(s, 68, 78, 82, 54)
+    s = Sprite(144, 108)
+    bevel_rect(s, 64, 89, 80, 100, "metal", "wall_light", "shadow")   # gas cylinder
+    _chair_star_base(s, 72, 100, 104, 54)
+    bevel_rect(s, 2, 58, 20, 62, "desk_dark", "wall_light", "shadow")   # armrest caps
+    bevel_rect(s, 124, 58, 142, 62, "desk_dark", "wall_light", "shadow")
     fab = build_chair_basic_form()
     outline_from_mask(s, union_mask(fab.mask(), s.mask()), "shadow")
     return s
 
 
 def build_chair_racer_form() -> Sprite:
-    """High bolstered wings (two separate pillars, open gap between them -
-    a racing-seat headrest) that taper inward and MERGE into the "waisted"
-    (narrower-than-the-seat) backrest by row 13, which then broadens again
-    into the lower back. Each step below row 8 widens gradually so the
-    wings are never disconnected from the mass below them - an earlier
-    version jumped straight from two narrow wing blocks to a separate,
-    much-narrower centre panel and left a hole between them that read as
-    two shelf brackets floating above the chair, not a backrest.
-    """
-    s = Sprite(140, 88, palette=RAMP)
-    cx, half = 70.0, 60.0
-    chair_shade_rect(s, cx, half, 8, 0, 24, 8)             # left bolstered wing (y<8, x<26)
-    chair_shade_rect(s, cx, half, 116, 0, 132, 8)          # right bolstered wing (y<8, x>114)
-    taper = [(9, 8, 34, 106, 132), (10, 8, 44, 96, 132), (11, 10, 56, 84, 130),
-              (12, 14, 68, 72, 126)]
-    for y, lx0, lx1, rx0, rx1 in taper:
-        chair_shade_rect(s, cx, half, lx0, y, lx1, y)
-        chair_shade_rect(s, cx, half, rx0, y, rx1, y)
-    chair_shade_rect(s, cx, half, 20, 13, 120, 42)         # waisted back, now one mass
-    chair_shade_rect(s, cx, half, 24, 43, 116, 48, extra=0.4)   # taper into the seat, soft AO
-    chair_shade_rect(s, cx, half, 12, 49, 128, 62)         # seat pan
-    chair_shade_rect(s, cx, half, 98, 53, 128, 62, extra=0.3)   # seat well AO, far corner
-    chair_rim_light(s)   # tint-crush fix: keeps the lit edge visible even at slate
+    """Gaming chair, behind-view. Two TALL bolstered wings rising well above
+    the head (a racing bucket seat's high shoulder bolsters), a waisted
+    backrest between/below them, a seat pan, and armrests. Same ramp4-anchored
+    dithered gradient + rim light as every chair."""
+    s = Sprite(148, 112, palette=RAMP)
+    cx, half = 74.0, 70.0
+    # Tall bolstered wings (rows 4..40) flanking and rising above the head.
+    chair_shade_rect(s, cx, half, 8, 6, 28, 40)               # left bolster
+    chair_shade_rect(s, cx, half, 120, 6, 140, 40)            # right bolster
+    chair_shade_rect(s, cx, half, 8, 6, 28, 7, extra=0.6)     # bolster top cap AO
+    chair_shade_rect(s, cx, half, 120, 6, 140, 7, extra=0.6)
+    # Waisted backrest between the bolsters. Its top row is one below the hard
+    # region (y_below=32) so the detail layer's outline halo at row 32 lands
+    # on the boundary (allowed), not inside it.
+    chair_shade_rect(s, cx, half, 24, 33, 124, 80)            # back mass
+    chair_shade_rect(s, cx, half, 20, 60, 128, 80)            # lower back, broader
+    chair_shade_rect(s, cx, half, 44, 41, 104, 57, extra=0.35)  # waist AO, subtle inset shade
+    # Armrests (rows 62..80).
+    chair_shade_rect(s, cx, half, 2, 62, 22, 80)
+    chair_shade_rect(s, cx, half, 126, 62, 146, 80)
+    # Seat pan (rows 80..94).
+    chair_shade_rect(s, cx, half, 12, 80, 136, 94)
+    chair_shade_rect(s, cx, half, 110, 84, 136, 94, extra=0.3)  # seat well AO
+    _chair_seat_well_ao(s, cx, half, 20, 80, 128)
+    chair_rim_light(s)
     return s
 
 
 def build_chair_racer_detail() -> Sprite:
-    s = Sprite(140, 88)
-    bevel_rect(s, 62, 63, 78, 80, "metal", "wall_light", "shadow")   # gas cylinder
-    _chair_star_base(s, 70, 80, 84, 56)
-    for x0, x1, y0, y1 in ((20, 40, 18, 40), (100, 120, 18, 40)):
-        s.vline(x0 + 3, y0, y1, "cream")               # double stitching, lit side
-        s.vline(x1 - 3, y0, y1, "cream")
+    s = Sprite(148, 112)
+    bevel_rect(s, 66, 95, 82, 106, "metal", "wall_light", "shadow")   # gas cylinder
+    _chair_star_base(s, 74, 106, 110, 58)
+    bevel_rect(s, 2, 62, 22, 66, "desk_dark", "wall_light", "shadow")   # armrest caps
+    bevel_rect(s, 126, 62, 146, 66, "desk_dark", "wall_light", "shadow")
+    for x0, x1 in ((10, 26), (122, 138)):              # double stitching up the bolsters
+        s.vline(x0 + 2, 10, 38, "cream")
+        s.vline(x1 - 2, 10, 38, "cream")
     fab = build_chair_racer_form()
     outline_from_mask(s, union_mask(fab.mask(), s.mask()), "shadow")
     return s
 
 
 def build_chair_exec_form() -> Sprite:
-    """Tufted leather executive chair. HERO-FIDELITY MATCH: dithered
-    cross-section gradient anchored on ramp4 (this style's DEFAULT tint is
-    `ember`, but every chair uses the same tint-headroom anchor so no
-    style is a special case), lit toward x<cx, with a soft AO seam between
-    the two leather panels and at the taper into the seat."""
-    s = Sprite(144, 100, palette=RAMP)
-    cx, half = 72.0, 62.0
-    chair_shade_rect(s, cx, half, 8, 0, 26, 20)             # left headrest wing (y<20, x<28)
-    chair_shade_rect(s, cx, half, 118, 0, 136, 20)          # right headrest wing (y<20, x>116)
-    # Starts one row below the restricted zone (y_below=20) for the same
-    # outline-halo reason as the other two chairs' top transition rows.
-    chair_shade_rect(s, cx, half, 14, 21, 130, 54)          # wide leather panels merge below
-    chair_shade_rect(s, cx, half, 70, 21, 74, 54, extra=0.5)   # seam AO between the two panels
-    chair_shade_rect(s, cx, half, 18, 55, 126, 62, extra=0.4)   # taper into the seat, soft AO
-    chair_shade_rect(s, cx, half, 6, 63, 138, 76)           # seat with wide armrest tops
-    chair_shade_rect(s, cx, half, 110, 67, 138, 76, extra=0.3)  # seat well AO, far corner
-    chair_rim_light(s)   # tint-crush fix: keeps the lit edge visible even at slate
+    """Executive leather chair, behind-view. The tallest back of the four:
+    very tall tufted headrest wings rising high above the head, a wide tufted
+    leather back panel behind the torso, wide padded armrests, and a broad
+    seat. Same ramp4-anchored dithered gradient + rim light."""
+    s = Sprite(152, 118, palette=RAMP)
+    cx, half = 76.0, 72.0
+    # Very tall headrest wings (rows 4..44).
+    chair_shade_rect(s, cx, half, 8, 6, 30, 44)               # left headrest wing
+    chair_shade_rect(s, cx, half, 122, 6, 144, 44)            # right headrest wing
+    chair_shade_rect(s, cx, half, 8, 6, 30, 7, extra=0.6)     # wing top cap AO
+    chair_shade_rect(s, cx, half, 122, 6, 144, 7, extra=0.6)
+    # Wide tufted leather back panel. Top row one below the hard region
+    # (y_below=38) so the detail outline halo at row 38 lands on the boundary.
+    chair_shade_rect(s, cx, half, 14, 39, 138, 86)            # back panel
+    # Wide padded armrests (rows 64..86).
+    chair_shade_rect(s, cx, half, 0, 64, 26, 86)
+    chair_shade_rect(s, cx, half, 126, 64, 152, 86)
+    # Broad seat (rows 86..100).
+    chair_shade_rect(s, cx, half, 6, 86, 146, 100)
+    chair_shade_rect(s, cx, half, 118, 90, 146, 100, extra=0.3)  # seat well AO
+    _chair_seat_well_ao(s, cx, half, 16, 86, 136)
+    chair_rim_light(s)
     return s
 
 
 def build_chair_exec_detail() -> Sprite:
-    s = Sprite(144, 100)
-    s.vline(72, 21, 54, "shadow")                   # seam between the two panels
-    for gy in (28, 38, 48):
-        for gx in (30, 50, 94, 114):
-            s.dot(gx, gy, "gold")                   # button tufting
-    bevel_rect(s, 0, 64, 13, 68, "desk_dark", "wall_light", "shadow")     # armrest tops
-    bevel_rect(s, 131, 64, 143, 68, "desk_dark", "wall_light", "shadow")
-    bevel_rect(s, 64, 77, 80, 92, "metal", "wall_light", "shadow")        # heavier gas cylinder
-    _chair_star_base(s, 72, 92, 96, 60)
+    s = Sprite(152, 118)
+    for gy in (48, 60, 72):                            # button tufting on the back panel
+        for gx in (40, 62, 90, 112):
+            s.dot(gx, gy, "gold")
+    bevel_rect(s, 0, 64, 26, 70, "desk_dark", "wall_light", "shadow")     # padded armrest tops
+    bevel_rect(s, 126, 64, 152, 70, "desk_dark", "wall_light", "shadow")
+    bevel_rect(s, 68, 99, 84, 112, "metal", "wall_light", "shadow")       # heavier gas cylinder
+    _chair_star_base(s, 76, 112, 116, 62)
     fab = build_chair_exec_form()
     outline_from_mask(s, union_mask(fab.mask(), s.mask()), "shadow")
     return s
 
 
 def build_chair_antigrav_form() -> Sprite:
-    """Wingless floating pod shell - no restricted rows at all (the whole
-    canvas already sits below room row 120), so this is a single rounded
-    mass with no wing split needed. Built from 4 stacked, overlapping
-    ellipses (each drawn over the last) rather than rectangular tiers - a
-    stepped rectangular stack reads as a layered cake, not a pod; smoothly
-    overlapping ellipses are the pixel-art way to get a rounded silhouette
-    out of hard-edged fills.
-    """
-    s = Sprite(128, 72, palette=RAMP)
-    chair_cx, half = 64.0, 32.0
-    tiers = [
-        (64, 14, 22, 14, 0.0),    # rounded cap
-        (64, 28, 30, 16, 0.0),    # upper body
-        (64, 42, 32, 16, 0.35),   # mid body, slight AO deepening downward
-        (64, 53, 26, 13, 0.7),    # lower taper, deepest AO before the glow ring
-    ]
-    for ecx, ecy, rx, ry, extra in tiers:
-        chair_shade_ellipse(s, ecx, ecy, rx, ry, chair_cx, half, extra=extra)
-    chair_rim_light(s)   # tint-crush fix: keeps the lit edge visible at any tint
+    """Anti-gravity pod, behind-view. Even though it floats, it still cradles
+    a seated figure: a rounded shell back rises behind the torso with two
+    rounded cradle wings curving up beside the head, over a rounded seat pod.
+    Built from ramp4-anchored rounded fills so the silhouette reads as a
+    curved pod, not a flat lump. Levitation glow ring lives in the detail."""
+    s = Sprite(136, 100, palette=RAMP)
+    cx, half = 68.0, 64.0
+    # Rounded back shell behind the torso. Its centre must not cross the hard
+    # region (y_below=20), so the body top is at row 21 (outline halo at row
+    # 20 = the boundary) and the rounded top narrows the top two rows rather
+    # than bulging a wide ellipse up into the keyboard band.
+    chair_shade_rect(s, cx, half, 10, 23, 126, 70)            # back shell body
+    chair_shade_rect(s, cx, half, 22, 21, 114, 22)            # rounded shell top, inset
+    # Rounded cradle wings curving up beside the head (rows 5..31), in the
+    # wing zone (local x <24 / >112).
+    chair_shade_ellipse(s, 13, 18, 9, 13, cx, half)           # left cradle wing
+    chair_shade_ellipse(s, 123, 18, 9, 13, cx, half)          # right cradle wing
+    # Rounded seat pod (rows 66..94).
+    chair_shade_ellipse(s, 68, 80, 60, 14, cx, half, extra=0.3)
+    _chair_seat_well_ao(s, cx, half, 18, 71, 118)
+    chair_rim_light(s)
     return s
 
 
 def build_chair_antigrav_detail() -> Sprite:
-    s = Sprite(128, 72)
-    s.outline(38, 65, 89, 68, "screen")               # glow ring, levitation tell
-    for x in range(39, 89):
-        s.dot(x, 66, bayer_mix(x, 66, 0.4, "screen", "lamp"))   # dithered glow bleed inside the ring
-    s.dots([(22, 67), (64, 70), (106, 67)], "lamp")   # 3 drifting float motes
-    s.hline(71, 30, 97, "shadow")                     # ground-facing glow shadow
+    s = Sprite(136, 100)
+    s.outline(40, 90, 95, 93, "screen")               # glow ring, levitation tell
+    for x in range(41, 95):
+        s.dot(x, 91, bayer_mix(x, 91, 0.4, "screen", "lamp"))   # dithered glow bleed
+    s.dots([(20, 92), (68, 96), (116, 92)], "lamp")   # 3 drifting float motes
+    s.hline(97, 34, 101, "shadow")                    # ground-facing glow shadow
     fab = build_chair_antigrav_form()
     outline_from_mask(s, union_mask(fab.mask(), s.mask()), "shadow")
     return s
@@ -1852,9 +1891,12 @@ def derive_thumbnail(img: Image.Image) -> Image.Image:
 # lands in the middle of a wide, flat backrest panel and shows neither the
 # wings nor the base - it reads as an unidentifiable rectangle, tinted or
 # not (checked as the real store card would show it: tinted form + detail
-# composited together). chair_antigrav's rounded pod and every hoodie style
-# (whose _form thumb is a recognisable garment silhouette on its own)
-# survived the crop and are NOT overridden.
+# composited together). chair_antigrav now joins them: after the behind-view
+# seat redesign its full sprite grew tall enough (136x100) that the ÷2
+# centre-crop lands in the flat interior of the back shell and shows only an
+# unidentifiable rounded rectangle - so it too is authored directly at 40x40.
+# Every hoodie style (whose _form thumb is a recognisable garment silhouette
+# on its own) still survives the crop and is NOT overridden.
 #
 # These 8 overrides are still procedurally built - by the small, purpose-
 # built icon functions below, each its own miniature chair drawn directly at
@@ -1866,6 +1908,7 @@ THUMB_OVERRIDES: set[str] = {
     "thumb_chair_basic_form.png", "thumb_chair_basic_detail.png",
     "thumb_chair_racer_form.png", "thumb_chair_racer_detail.png",
     "thumb_chair_exec_form.png", "thumb_chair_exec_detail.png",
+    "thumb_chair_antigrav_form.png", "thumb_chair_antigrav_detail.png",
 }
 
 
@@ -1876,10 +1919,16 @@ def _thumb_chair_generic_form(seat_w: int) -> Sprite:
     clear of, since there is no keyboard drawn at this scale)."""
     s = Sprite(40, 40, palette=RAMP)
     half = seat_w // 2
-    s.rect(20 - half, 4, 20 + half, 22, "ramp4")
-    s.rect(20 - half, 4, 20 + half, 8, "ramp3")     # top shading
-    s.rect(20 - half + 2, 23, 20 + half - 2, 27, "ramp3")   # seat
-    s.rect(18, 28, 22, 33, "ramp2")                 # cylinder
+    # Tall backrest with two raised top corners and a head-gap dip between
+    # them - the behind-view seatback the full sprites now show.
+    s.rect(20 - half, 8, 20 + half, 24, "ramp4")             # back slab
+    s.rect(20 - half, 3, 20 - half + 4, 24, "ramp4")         # raised left corner
+    s.rect(20 + half - 4, 3, 20 + half, 24, "ramp4")         # raised right corner
+    s.rect(20 - half, 8, 20 + half, 10, "ramp3")             # top-edge shading
+    s.rect(20 - half - 3, 16, 20 - half - 1, 22, "ramp3")    # left armrest
+    s.rect(20 + half + 1, 16, 20 + half + 3, 22, "ramp3")    # right armrest
+    s.rect(20 - half + 2, 25, 20 + half - 2, 29, "ramp3")    # seat
+    s.rect(18, 30, 22, 35, "ramp2")                          # cylinder
     return s
 
 
@@ -1932,6 +1981,30 @@ def build_thumb_chair_exec_detail() -> Sprite:
     return s
 
 
+def build_thumb_chair_antigrav_form() -> Sprite:
+    """Rounded floating-pod icon: a rounded cradle back with two rounded
+    wings, over a rounded seat pod - the behind-view pod the full sprite
+    shows, drawn directly at 40x40 so the store card reads as a pod, not the
+    featureless interior a centre-crop of the tall full sprite would give."""
+    s = Sprite(40, 40, palette=RAMP)
+    s.ellipse(20, 15, 12, 11, "ramp4")              # rounded back shell
+    s.ellipse(7, 13, 4, 6, "ramp4")                 # left cradle wing
+    s.ellipse(33, 13, 4, 6, "ramp4")                # right cradle wing
+    s.ellipse(20, 8, 10, 4, "ramp3")                # top shading on the shell
+    s.ellipse(20, 27, 14, 6, "ramp3")               # rounded seat pod
+    return s
+
+
+def build_thumb_chair_antigrav_detail() -> Sprite:
+    s = Sprite(40, 40)
+    s.outline(9, 33, 31, 35, "screen")              # levitation glow ring
+    for x in range(10, 31):
+        s.dot(x, 34, bayer_mix(x, 34, 0.4, "screen", "lamp"))
+    fab = build_thumb_chair_antigrav_form()
+    outline_from_mask(s, union_mask(fab.mask(), s.mask()), "shadow")
+    return s
+
+
 THUMB_BUILDERS = {
     "thumb_chair_basic_form.png": build_thumb_chair_basic_form,
     "thumb_chair_basic_detail.png": build_thumb_chair_basic_detail,
@@ -1939,6 +2012,8 @@ THUMB_BUILDERS = {
     "thumb_chair_racer_detail.png": build_thumb_chair_racer_detail,
     "thumb_chair_exec_form.png": build_thumb_chair_exec_form,
     "thumb_chair_exec_detail.png": build_thumb_chair_exec_detail,
+    "thumb_chair_antigrav_form.png": build_thumb_chair_antigrav_form,
+    "thumb_chair_antigrav_detail.png": build_thumb_chair_antigrav_detail,
 }
 assert THUMB_OVERRIDES == set(THUMB_BUILDERS), "override set and its builders drifted apart"
 
@@ -2126,7 +2201,7 @@ def main() -> int:
         print(f"  {thumb_name:<32} <- {sources[0]:<28} {thumb.size[0]}x{thumb.size[1]}")
     ok = ok and override_ok
     print(f"{derived_count} thumbnails derived, {len(THUMB_OVERRIDES)} authored override(s) "
-          "(chair_basic/racer/exec form+detail - see THUMB_OVERRIDES comment)")
+          "(chair_basic/racer/exec/antigrav form+detail - see THUMB_OVERRIDES comment)")
 
     expected = SPEC_NAMES | thumb_names
     removed = cleanup_stale(expected)
