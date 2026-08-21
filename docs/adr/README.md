@@ -18,3 +18,4 @@ say something different — supersede it with a new one and cross-link.
 | [0010](0010-mac-first-honest-mechanics.md) | Mac-first rescue: permissionless global signals, honest moods | accepted |
 | [0011](0011-engine-pivot-to-pdf-native-stack.md) | Engine pivot: ship the PDF design on Go + HTML/NES.css | accepted |
 | [0012](0012-a2-content-free-signal-set-and-permission-fork.md) | A2 signal set: permissionless-derivable only, copy/paste deferred behind a permission fork | accepted |
+| [0013](0013-analytics-over-time-history-streaks-and-charts.md) | Analytics A3 over time: 30-day rolling history, server-side streaks, CSS pixel charts | accepted |

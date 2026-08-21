@@ -122,6 +122,11 @@ func TestStatsViewAndStatCountersAreContentFree(t *testing.T) {
 		"Today":      "game.StatCounters",
 		"Lifetime":   "game.StatCounters",
 		"CoinsToday": "game.CoinBreakdown",
+		// A3 (§5): the dense 30-day wire history + the server-computed
+		// effective streak. See the checkExact blocks below for
+		// DayStat/StreakView's own field-level coverage.
+		"History": "[]game.DayStat",
+		"Streak":  "game.StreakView",
 	}
 	allowedStatCounters := map[string]string{
 		"Keystrokes":         "uint64",
@@ -175,4 +180,35 @@ func TestStatsViewAndStatCountersAreContentFree(t *testing.T) {
 		"AppSwitches":   "uint64",
 	}
 	checkExact(t, reflect.TypeOf(CoinBreakdown{}), allowedCoinBreakdown)
+
+	// A3 (§5) — DayStat: one dense wire history entry. "Date" is a local
+	// "YYYY-MM-DD" calendar date, the exact same content-free class
+	// internal/store's StatsSave.Date already is (a fixed-format
+	// timestamp string, never free text) — allow-listed as plain
+	// "string" exactly like that precedent, not flagged by the
+	// forbidden-substring scan above (which does not (and must not)
+	// treat "date" itself as content-like).
+	allowedDayStat := map[string]string{
+		"Date":                     "string",
+		"Keystrokes":               "uint64",
+		"MouseActiveSeconds":       "uint64",
+		"ActiveSeconds":            "uint64",
+		"IdleSeconds":              "uint64",
+		"SprintsCompleted":         "uint64",
+		"FocusSessions":            "uint64",
+		"AppSwitches":              "uint64",
+		"CoinsEarned":              "uint64",
+		"IsActive":                 "bool",
+		"LongestFocusBlockSeconds": "uint64",
+	}
+	checkExact(t, reflect.TypeOf(DayStat{}), allowedDayStat)
+
+	// A3 (§2/§5) — StreakView: the server-computed effective streak. Two
+	// plain integers, nothing else — no lastActiveDate here (that stays
+	// server-side persisted state, never sent on the wire).
+	allowedStreakView := map[string]string{
+		"Current": "int",
+		"Longest": "int",
+	}
+	checkExact(t, reflect.TypeOf(StreakView{}), allowedStreakView)
 }

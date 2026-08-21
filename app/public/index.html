@@ -23,6 +23,7 @@
       <span id="hud-level">LV 1</span>
       <span id="hud-cash"><i class="nes-icon coin is-small"></i><span class="value">0</span></span>
       <button id="activity-open" class="nes-btn">[A] ACTIVITY</button>
+      <button id="history-open" class="nes-btn">[H] HISTORY</button>
       <button id="store-open" class="nes-btn">[S] STORE</button>
     </div>
 
@@ -108,6 +109,30 @@
       </div>
 
       <div id="activity-help">A / ESC CLOSE</div>
+    </dialog>
+
+    <dialog id="history" class="nes-dialog is-dark">
+      <div id="history-title">HISTORY</div>
+      <button id="history-close" class="nes-btn">X</button>
+
+      <div id="history-streak">
+        <span class="label">CURRENT STREAK: </span><span id="history-streak-current" class="value gold">0</span><span class="label"> DAYS</span>
+        <span class="label" id="history-streak-longest-label">LONGEST: </span><span id="history-streak-longest" class="value">0</span>
+      </div>
+
+      <div id="history-chart-label" class="history-section-title">7 DAY ACTIVITY</div>
+      <div id="history-bars"></div>
+      <div id="history-bar-labels"></div>
+
+      <div id="history-strip-label" class="history-section-title">30 DAY STREAK</div>
+      <div id="history-strip"></div>
+
+      <div id="history-insights">
+        <div id="history-insight-busiest">BUSIEST DAY: NO DATA</div>
+        <div id="history-insight-focus">LONGEST FOCUS: NO DATA</div>
+      </div>
+
+      <div id="history-help">H / ESC CLOSE</div>
     </dialog>
 
   </div>

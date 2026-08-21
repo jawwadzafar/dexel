@@ -338,3 +338,72 @@ func TestStrategyComparisonA2(t *testing.T) {
 		}
 	}
 }
+
+// TestFocusRunSecondsGrowsAndResetsOnBreak is the A3 Fork B / GO-0 coverage
+// (docs/plan/A3-design.md §7 pinned contract): TickResult.FocusRunSeconds
+// must track the length of the CURRENT sustained-typing run — growing tick
+// by tick while typing continues within FocusGapToleranceSeconds, and
+// dropping back to exactly 0 the moment a gap exceeding
+// FocusGapToleranceSeconds breaks the run. It must stay well clear of
+// FocusSessionSeconds so the completion-reset branch (which restarts the
+// run tracker for the NEXT session count) never fires and confuses the
+// growth assertion.
+func TestFocusRunSecondsGrowsAndResetsOnBreak(t *testing.T) {
+	p := &stubProvider{honesty: activity.HonestyGlobal}
+	e := New(p)
+	fakeNow := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
+	e.now = func() time.Time { return fakeNow }
+
+	var keyCount uint64
+	tick := func(typed bool) TickResult {
+		if typed {
+			keyCount++
+		}
+		p.snap = activity.Snapshot{KeystrokeCount: keyCount}
+		r := e.Tick()
+		fakeNow = fakeNow.Add(time.Second)
+		return r
+	}
+
+	// No run yet: idle ticks report FocusRunSeconds == 0.
+	if r := tick(false); r.FocusRunSeconds != 0 {
+		t.Fatalf("idle tick before any typing: FocusRunSeconds = %d, want 0", r.FocusRunSeconds)
+	}
+
+	// A run starts on the first typed tick; FocusRunSeconds must grow by
+	// ~1 each subsequent typed tick (1s apart, well under
+	// FocusGapToleranceSeconds and far short of FocusSessionSeconds).
+	r := tick(true) // run starts this tick
+	if r.FocusRunSeconds != 0 {
+		t.Fatalf("run-start tick: FocusRunSeconds = %d, want 0 (no elapsed time yet)", r.FocusRunSeconds)
+	}
+	const sustainedTicks = 10
+	if sustainedTicks >= int(FocusSessionSeconds) {
+		t.Fatalf("test fixture invalid: sustainedTicks (%d) must stay under FocusSessionSeconds (%g) to avoid the completion-reset branch", sustainedTicks, FocusSessionSeconds)
+	}
+	for i := 1; i <= sustainedTicks; i++ {
+		r = tick(true)
+		if r.FocusRunSeconds != uint64(i) {
+			t.Errorf("sustained-typing tick %d: FocusRunSeconds = %d, want %d", i, r.FocusRunSeconds, i)
+		}
+	}
+
+	// A gap exceeding FocusGapToleranceSeconds breaks the run: advance the
+	// clock past tolerance with no keystroke, then the next tick (typed or
+	// not) must observe the run already broken.
+	fakeNow = fakeNow.Add(time.Duration(FocusGapToleranceSeconds*1000+1) * time.Millisecond)
+	r = tick(false)
+	if r.FocusRunSeconds != 0 {
+		t.Errorf("after a gap > FocusGapToleranceSeconds: FocusRunSeconds = %d, want 0 (run broken)", r.FocusRunSeconds)
+	}
+	if r.FocusSessionsCompleted != 0 {
+		t.Fatalf("test fixture invalid: broke-run tick unexpectedly completed a focus session")
+	}
+
+	// And a fresh typed tick after the break starts a brand-new run at 0,
+	// not a continuation of the old one.
+	r = tick(true)
+	if r.FocusRunSeconds != 0 {
+		t.Errorf("first typed tick after a break: FocusRunSeconds = %d, want 0 (new run, not a continuation)", r.FocusRunSeconds)
+	}
+}

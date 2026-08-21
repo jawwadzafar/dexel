@@ -86,11 +86,59 @@ type CoinBreakdownSave struct {
 // reason game.CoinBreakdown is a sibling of StatCounters on StatsView: it
 // isn't a plain activity count, it's a coin count. A schema-2 file has no
 // "coinsToday" key; it defaults to the zero value, same additive pattern.
+//
+// History/Streak (schema 4, Analytics Phase A3, docs/plan/A3-design.md
+// §4/§7 Task GO-2) are the persisted analogues of game.Game's
+// HistorySnapshot/StreakSnapshot: History is the sparse, oldest-first
+// rolling window of finalized day buckets (at most game.HistoryRetentionDays
+// long); Streak is the cross-window streak state (current/longest/
+// lastActiveDate) that must survive independently of the retained window
+// (see StreakSave's doc comment). A schema-3 file has neither key;
+// json.Unmarshal leaves History nil (an empty slice, len 0) and Streak at
+// its zero value (StreakSave{}, i.e. current 0, longest 0, lastActiveDate
+// "") — the correct "nothing recorded over time yet" state. We
+// deliberately do NOT backfill either from Today/Lifetime: we never had
+// per-day data before this bump, so any backfill would invent days (and a
+// fabricated streak) that never happened.
 type StatsSave struct {
 	Date       string            `json:"date"`
 	Today      StatCountersSave  `json:"today"`
 	Lifetime   StatCountersSave  `json:"lifetime"`
 	CoinsToday CoinBreakdownSave `json:"coinsToday"`
+	History    []DayBucketSave   `json:"history"`
+	Streak     StreakSave        `json:"streak"`
+}
+
+// DayBucketSave is the persisted analogue of game.DayBucket (Analytics
+// Phase A3, docs/plan/A3-design.md §4/§7 Task GO-2) — one finalized day's
+// counters, reusing StatCountersSave verbatim for the seven A1/A2 counts
+// (the existing content-free structural coverage on that type already
+// applies here) plus two new scalar, content-free additions: CoinsEarned
+// (that day's total DevCash split, mirroring CoinBreakdownSave's own
+// per-signal counts) and LongestFocusBlockSeconds (Fork B: a per-day max
+// sustained-typing run duration). Deliberately its own declaration rather
+// than an import of game.DayBucket, for the same decoupling reason
+// StatCountersSave's doc comment gives.
+type DayBucketSave struct {
+	Date                     string           `json:"date"`
+	Counters                 StatCountersSave `json:"counters"`
+	CoinsEarned              uint64           `json:"coinsEarned"`
+	LongestFocusBlockSeconds uint64           `json:"longestFocusBlockSeconds"`
+}
+
+// StreakSave is the persisted analogue of game.StreakView (Analytics
+// Phase A3, docs/plan/A3-design.md §2.2/§4/§7 Task GO-2) — the streak
+// state that must survive PAST the retained history window (a streak can
+// outlive game.HistoryRetentionDays, so it cannot be recomputed from the
+// pruned buckets and must be its own persisted counter). Current is the
+// length of the run ending at LastActiveDate; Longest is the running
+// max, never decreasing; LastActiveDate is the local "YYYY-MM-DD" of the
+// most recently active day ("" if none yet) — the same content-free date
+// class StatsSave.Date already is.
+type StreakSave struct {
+	Current        int    `json:"current"`
+	Longest        int    `json:"longest"`
+	LastActiveDate string `json:"lastActiveDate"`
 }
 
 // SaveData is the on-disk shape at ~/.config/devcompanion/state.json,
@@ -141,7 +189,24 @@ type SaveData struct {
 // yet" state a schema-3 file would represent explicitly. No dedicated
 // migration code beyond this bump; existing devCash/xp/owned/equipped and
 // the pre-existing stats counters are read exactly as before.
-const CurrentSchema = 3
+//
+// Bumped 3 -> 4 for Analytics track Phase A3 (docs/plan/A3-design.md §4/§7
+// Task GO-2): StatsSave gains History ([]DayBucketSave) and Streak
+// (StreakSave). Same additive-migration reasoning as the 1->2 and 2->3
+// bumps above applies verbatim: a schema-3 file has neither key,
+// json.Unmarshal leaves History as an empty (nil) slice and Streak at its
+// zero value (StreakSave{}), and Apply hands those straight to
+// game.Game.RestoreHistory/RestoreStreak — exactly the "no history/streak
+// recorded yet" state a schema-4 file would represent explicitly. We
+// deliberately do NOT backfill history or a streak from the existing
+// Today/Lifetime counters on migration: this build never had per-day
+// data before now, so inventing past days (or a streak built from them)
+// would be dishonest fabrication, not migration. No dedicated migration
+// code beyond this bump; existing devCash/xp/owned/equipped and every
+// pre-existing stats field (today/lifetime/coinsToday) are read exactly
+// as before. ErrFutureSchema is unchanged by this bump: a schema-5 save
+// is still renamed to ".future" and refused, never silently downgraded.
+const CurrentSchema = 4
 
 // DefaultPath returns ~/.config/devcompanion/state.json.
 func DefaultPath() (string, error) {
@@ -183,6 +248,13 @@ func Snapshot(g *game.Game) SaveData {
 	statsDate, statsToday, statsLifetime := g.StatsSnapshot()
 	coinsToday := g.CoinsTodaySnapshot()
 
+	historySnap := g.HistorySnapshot()
+	history := make([]DayBucketSave, len(historySnap))
+	for i, b := range historySnap {
+		history[i] = dayBucketToSave(b)
+	}
+	streakCurrent, streakLongest, streakLastActiveDate := g.StreakSnapshot()
+
 	return SaveData{
 		Schema:           CurrentSchema,
 		DevCash:          g.DevCash,
@@ -198,7 +270,35 @@ func Snapshot(g *game.Game) SaveData {
 			Today:      statCountersToSave(statsToday),
 			Lifetime:   statCountersToSave(statsLifetime),
 			CoinsToday: coinBreakdownToSave(coinsToday),
+			History:    history,
+			Streak: StreakSave{
+				Current:        streakCurrent,
+				Longest:        streakLongest,
+				LastActiveDate: streakLastActiveDate,
+			},
 		},
+	}
+}
+
+// dayBucketToSave/dayBucketFromSave convert between game.DayBucket and its
+// persisted analogue DayBucketSave (Analytics Phase A3, A3-design.md §4),
+// reusing statCountersToSave/statCountersFromSave for the embedded counter
+// bucket.
+func dayBucketToSave(b game.DayBucket) DayBucketSave {
+	return DayBucketSave{
+		Date:                     b.Date,
+		Counters:                 statCountersToSave(b.Counters),
+		CoinsEarned:              b.CoinsEarned,
+		LongestFocusBlockSeconds: b.LongestFocusBlockSeconds,
+	}
+}
+
+func dayBucketFromSave(b DayBucketSave) game.DayBucket {
+	return game.DayBucket{
+		Date:                     b.Date,
+		Counters:                 statCountersFromSave(b.Counters),
+		CoinsEarned:              b.CoinsEarned,
+		LongestFocusBlockSeconds: b.LongestFocusBlockSeconds,
 	}
 }
 
@@ -258,6 +358,23 @@ func Apply(g *game.Game, d SaveData) {
 	g.RestoreSprint(d.Sprint.Index, d.Sprint.UnitsDone)
 	g.ImportedFromRust = d.ImportedFromRust
 	g.ImportedAt = d.ImportedAt
+	// RestoreHistory/RestoreStreak MUST run before RestoreStats (A3,
+	// docs/plan/A3-design.md §4/§7 Task GO-2, extending A2's
+	// RestoreCoinsToday-before-RestoreStats rule below): RestoreStats
+	// triggers rolloverStatsIfNewDay, whose finalizeDay call — fired when
+	// d.Stats.Date is stale — appends to and updates whatever history and
+	// streak are ALREADY in place at that moment. Restoring them first is
+	// what makes a multi-day-gap reload finalize the save's last running
+	// day into the RESTORED history/streak (exactly once — see
+	// game.Game.RestoreHistory's doc comment) rather than into empty ones,
+	// and what makes a same-day reload's early return leave the restored
+	// history/streak untouched.
+	history := make([]game.DayBucket, len(d.Stats.History))
+	for i, b := range d.Stats.History {
+		history[i] = dayBucketFromSave(b)
+	}
+	g.RestoreHistory(history)
+	g.RestoreStreak(d.Stats.Streak.Current, d.Stats.Streak.Longest, d.Stats.Streak.LastActiveDate)
 	// RestoreCoinsToday MUST run before RestoreStats: RestoreStats' own
 	// rollover check zeroes coinsToday whenever d.Stats.Date turns out
 	// stale, and that check must run strictly AFTER this call for a stale

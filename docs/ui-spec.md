@@ -637,10 +637,20 @@ second to reflect a click.
       "focusSessions": 57,
       "appSwitches": 205
     },
-    "coinsToday": {"keystrokes": 6, "mouse": 2, "focusSessions": 4, "appSwitches": 0}
+    "coinsToday": {"keystrokes": 6, "mouse": 2, "focusSessions": 4, "appSwitches": 0},
+    "history": [
+      {"date": "2024-06-01", "keystrokes": 3980, "mouseActiveSeconds": 740, "activeSeconds": 2900, "idleSeconds": 300, "sprintsCompleted": 2, "focusSessions": 3, "appSwitches": 9, "coinsEarned": 41, "isActive": true, "longestFocusBlockSeconds": 1380},
+      "... 28 more DayStat entries, dense and ascending ...",
+      {"date": "2024-06-30", "keystrokes": 4210, "mouseActiveSeconds": 812, "activeSeconds": 3040, "idleSeconds": 260, "sprintsCompleted": 3, "focusSessions": 4, "appSwitches": 12, "coinsEarned": 12, "isActive": true, "longestFocusBlockSeconds": 900}
+    ],
+    "streak": {"current": 6, "longest": 14}
   }
 }
 ```
+
+(`history` is shown abbreviated above — first entry, an elided placeholder,
+last entry — to keep this example readable; the wire always sends exactly 30
+real `DayStat` objects, never a placeholder string.)
 
 Field notes the implementers must not improvise on:
 
@@ -684,6 +694,33 @@ Field notes the implementers must not improvise on:
   from exactly one source, sprint completion (ADR 0008) — this is an
   attribution view of that one payout, never a second earning path.
   Optional client-side, matching the rest of `stats`.
+* `stats.history` — optional `DayStat[]` (A3, ADR 0013). **Server-built and
+  dense**: exactly `HistoryRetentionDays` (**30**) entries, one per local
+  calendar date from `today-29` to `today` inclusive, **ascending**, and the
+  **final entry is today, live** (it grows through the day as `statsToday`
+  does). A date with no recorded activity is zero-filled, never omitted — the
+  array is always date-complete, so the client does no gap/date arithmetic.
+  Each `DayStat` is `{ date, keystrokes, mouseActiveSeconds, activeSeconds,
+  idleSeconds, sprintsCompleted, focusSessions, appSwitches, coinsEarned,
+  isActive, longestFocusBlockSeconds }` — the same seven A1/A2 counters as
+  `stats.today`/`stats.lifetime`, plus `coinsEarned` (that day's total, the
+  same sum `coinsToday`'s four fields add to) and `isActive` (a **bool set by
+  the server**, never re-derived client-side: `activeSeconds >=
+  game.ActiveDayMinSeconds`, default **300s** — the client and the streak
+  banner must agree on one "active day" definition, so the client only
+  renders this flag). `longestFocusBlockSeconds` is Fork B of A3-design.md §0
+  (shipped by default) — the day's longest single sustained-typing run.
+  camelCase throughout; `history` stays optional so a stale (pre-A3) server
+  degrades to "no history" rather than crashing, matching the existing
+  `stats`/`coinsToday` optionality pattern.
+* `stats.streak` — optional `StreakView { current, longest }` (A3, ADR 0013).
+  **Server-computed only** (`internal/game`, A3-design.md §2) — the client
+  renders these two integers verbatim and must never re-derive them from
+  `history`, because a streak can outlive the 30-day retention window that
+  `history` is limited to. `current` is the length of the active-day run
+  ending today (0 once the run is dead — last active day ≥2 calendar days
+  ago); `longest` is the running all-time max and never decreases. Optional
+  client-side, matching the rest of `stats`.
 * The Activity modal (`features/activity-modal.ts`) is a read-only render of
   `stats`: under the existing TODAY/LIFETIME keystroke/mouse/active/idle/
   sprints rows it adds a **Focus sessions** row (`today.focusSessions` /
@@ -693,6 +730,31 @@ Field notes the implementers must not improvise on:
   `label → count` lines (Keystrokes, Mouse, Focus sessions, App switches).
   All five/four values render with `fmtInt`; nothing is formatted
   server-side.
+* The **`[H] HISTORY`** modal (`features/history-modal.ts`, A3, ADR 0013) is
+  a second read-only render, opened the same way `[A]`/`[S]` are — native
+  `<dialog>`, its own titlebar button, the `H` key, `Esc` to close — and
+  gates nothing (no earning to freeze, same as Activity). Rect: `#history`
+  at `left:40 top:44 width:560 height:312` (the store's wide footprint,
+  centered in the 640x400 viewport — charts need horizontal room the
+  360x396 Activity modal does not have). Contents, top to bottom: a
+  **streak banner** (`CURRENT STREAK: N DAYS   LONGEST: M`, both numbers read
+  verbatim from `stats.streak`, `N` in `var(--gold)`); a **7-day bar chart**
+  of the last 7 `stats.history` entries (default metric `activeSeconds`),
+  one CSS bar per day — an integer-`height` `<div>`, flat `background:
+  var(--screen)`, no canvas, so no anti-aliasing mush at this size/DPI (the
+  A2 `→`-glyph lesson) — with ASCII day-initial labels (`M T W T F S S`); a
+  **30-day month strip** of 30 square cells, one per `stats.history` entry,
+  lit `var(--screen)` when that entry's `isActive` is true and
+  `var(--shadow)` when not, today's cell outlined `var(--gold)` — the streak
+  made visible; and two **client-derived insights**, pure `max`-reductions
+  over the already-sent `stats.history` array (the client asserts no state
+  the server did not send, same class as `fmtDuration`): `BUSIEST DAY:
+  <date>` (max `activeSeconds`) and `LONGEST FOCUS: Xm Ys` (max
+  `longestFocusBlockSeconds`; falls back to `BEST FOCUS DAY: <date> (K)`, max
+  `focusSessions`, if Fork B's field is absent). All values render with
+  `fmtInt`/`fmtDuration`; nothing is formatted server-side. `render/*` and
+  `state/store.ts` are untouched — the modal reads `store.getState().stats`
+  directly, exactly as `activity-modal` does.
 
 **`flash`** — a transient toast for a discrete event.
 

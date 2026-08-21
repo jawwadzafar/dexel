@@ -138,6 +138,15 @@ type TickResult struct {
 	// no new Snapshot field or provider observation backs them.
 	FocusSessionsCompleted uint64
 	AppSwitches            uint64
+
+	// FocusRunSeconds (A3 Fork B, docs/plan/A3-design.md §7 pinned contract):
+	// the length, in whole seconds, of the CURRENT sustained-typing run as of
+	// this tick — 0 when no run is active (including the tick a run just
+	// broke). Derived from the same focusRunActive/focusRunStart tracker A2
+	// already maintains for FocusSessionsCompleted; no new state, no new
+	// provider observation, no economy effect. Purely observational, for the
+	// game layer to track a per-day max ("longest focus block").
+	FocusRunSeconds uint64
 }
 
 // Engine samples a Provider once per Tick call (the caller drives the 1s
@@ -246,6 +255,15 @@ func (e *Engine) Tick() TickResult {
 
 	honesty := e.provider.Honesty()
 
+	// FocusRunSeconds (A3 Fork B): the current sustained-typing run's length
+	// as of this tick, read from the tracker's final state above (so it
+	// already reflects this tick's start/extend/break/complete-reset). 0
+	// whenever no run is active, including the tick a run just broke.
+	var focusRunSeconds uint64
+	if e.focusRunActive {
+		focusRunSeconds = uint64(now.Sub(e.focusRunStart).Seconds())
+	}
+
 	return TickResult{
 		Mood:                   e.mood(snap, honesty, now),
 		WorkUnits:              workUnits,
@@ -256,6 +274,7 @@ func (e *Engine) Tick() TickResult {
 		MouseActive:            snap.MouseActive,
 		FocusSessionsCompleted: focusSessionsCompleted,
 		AppSwitches:            appSwitches,
+		FocusRunSeconds:        focusRunSeconds,
 	}
 }
 

@@ -101,12 +101,50 @@ export interface CoinBreakdown {
   appSwitches: number;
 }
 
+// Analytics track Phase A3 (docs/plan/A3-design.md §5) — one dense,
+// zero-filled day entry in the 30-day rolling history window. The server
+// builds this array date-complete (today-(N-1)..today ascending, gaps
+// filled with an all-zero entry for that date) so the client does zero
+// date arithmetic — it only ever indexes/reduces over what's sent. All
+// counts/durations, plus the one calendar date and the one server-decided
+// `isActive` bool (same §2.1 threshold the streak itself uses, so this
+// modal's month-strip coloring and the streak agree on one definition).
+// `longestFocusBlockSeconds` is Fork B (A3-design.md §0) — included by
+// default but optional here since a still-older/degraded server (or a
+// day bucket predating Fork B landing) may omit it per-entry.
+export interface DayStat {
+  date: string;
+  keystrokes: number;
+  mouseActiveSeconds: number;
+  activeSeconds: number;
+  idleSeconds: number;
+  sprintsCompleted: number;
+  focusSessions: number;
+  appSwitches: number;
+  coinsEarned: number;
+  isActive: boolean;
+  longestFocusBlockSeconds?: number;
+}
+
+// Server-computed (A3-design.md §2) — the client renders this verbatim and
+// never re-derives it: a streak depends on persisted cross-window state
+// (lastActiveDate) not reconstructible from the retained 30-day window.
+export interface StreakView {
+  current: number;
+  longest: number;
+}
+
 export interface Stats {
   today: StatBlock;
   lifetime: StatBlock;
   // Optional — same stale-server degradation as StatBlock's new fields
   // above; absent means "no coins attributed yet" (render as 0s).
   coinsToday?: CoinBreakdown;
+  // Phase A3 additions (A3-design.md §5) — both optional so a stale
+  // (pre-A3) server degrades to "no history" (the history modal renders
+  // cleanly with empty/zeroed data) rather than crashing.
+  history?: DayStat[];
+  streak?: StreakView;
 }
 
 export interface StateMessage {

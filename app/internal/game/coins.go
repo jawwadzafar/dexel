@@ -20,6 +20,13 @@ type CoinBreakdown struct {
 	AppSwitches   uint64 `json:"appSwitches"`
 }
 
+// Sum returns the total coins across all four signals — used by A3 (§3.3)
+// to compute a day's coinsEarned at finalize, and by the dense wire
+// history builder (§5) for today's still-accumulating coinsToday.
+func (cb CoinBreakdown) Sum() uint64 {
+	return cb.Keystrokes + cb.Mouse + cb.FocusSessions + cb.AppSwitches
+}
+
 // signalWork decomposes one tick's engine.TickResult into the four
 // signals' individual work contributions, in a way that reproduces
 // engine.Engine.Tick's own math exactly (see engine.go): keystroke and

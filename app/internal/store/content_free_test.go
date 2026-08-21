@@ -115,6 +115,12 @@ func TestStatsSaveAndStatCountersSaveAreContentFree(t *testing.T) {
 		"Today":      "store.StatCountersSave",
 		"Lifetime":   "store.StatCountersSave",
 		"CoinsToday": "store.CoinBreakdownSave",
+		// History/Streak (Analytics Phase A3, docs/plan/A3-design.md
+		// §4/§7 Task GO-2): the persisted rolling history + streak state.
+		// Their own nested field-level coverage is
+		// TestDayBucketSaveAndStreakSaveAreContentFree below.
+		"History": "[]store.DayBucketSave",
+		"Streak":  "store.StreakSave",
 	}
 	allowedStatCountersSave := map[string]string{
 		"Keystrokes":         "uint64",
@@ -167,4 +173,59 @@ func TestStatsSaveAndStatCountersSaveAreContentFree(t *testing.T) {
 	checkExact(t, reflect.TypeOf(StatsSave{}), allowedStatsSave)
 	checkExact(t, reflect.TypeOf(StatCountersSave{}), allowedStatCountersSave)
 	checkExact(t, reflect.TypeOf(CoinBreakdownSave{}), allowedCoinBreakdownSave)
+}
+
+// TestDayBucketSaveAndStreakSaveAreContentFree is Analytics Phase A3's
+// (docs/plan/A3-design.md §4/§7 Task GO-2) extension of the same
+// structural guard to the schema-4 `stats.history`/`stats.streak` nested
+// types: DayBucketSave must stay exactly a calendar date string, a reused
+// StatCountersSave bucket, and two plain uint64 counts/durations;
+// StreakSave must stay exactly two plain ints and one calendar date
+// string — the same content-free class StatsSave.Date already is (see
+// TestStatsSaveAndStatCountersSaveAreContentFree's allow-list comment).
+// Never grow a raw field on either, the same way every other nested save
+// type above is pinned.
+func TestDayBucketSaveAndStreakSaveAreContentFree(t *testing.T) {
+	allowedDayBucketSave := map[string]string{
+		"Date":                     "string",
+		"Counters":                 "store.StatCountersSave",
+		"CoinsEarned":              "uint64",
+		"LongestFocusBlockSeconds": "uint64",
+	}
+	allowedStreakSave := map[string]string{
+		"Current":        "int",
+		"Longest":        "int",
+		"LastActiveDate": "string",
+	}
+
+	checkExact := func(t *testing.T, typ reflect.Type, allowed map[string]string) {
+		t.Helper()
+		if typ.NumField() != len(allowed) {
+			t.Fatalf("%s has %d fields, expected exactly %d (%v)", typ.Name(), typ.NumField(), len(allowed), allowed)
+		}
+		for i := 0; i < typ.NumField(); i++ {
+			f := typ.Field(i)
+			wantType, ok := allowed[f.Name]
+			if !ok {
+				t.Errorf("%s.%s is not on the content-free allow-list", typ.Name(), f.Name)
+				continue
+			}
+			if f.Type.String() != wantType {
+				t.Errorf("%s.%s has type %s, want %s", typ.Name(), f.Name, f.Type.String(), wantType)
+			}
+			lower := strings.ToLower(f.Name)
+			forbiddenSubstrings := []string{
+				"title", "text", "content", "keycode", "key_code", "clipboard",
+				"url", "path", "document", "message", "body", "keyname", "char",
+			}
+			for _, bad := range forbiddenSubstrings {
+				if strings.Contains(lower, bad) {
+					t.Errorf("%s.%s name contains forbidden substring %q — looks like it could carry content", typ.Name(), f.Name, bad)
+				}
+			}
+		}
+	}
+
+	checkExact(t, reflect.TypeOf(DayBucketSave{}), allowedDayBucketSave)
+	checkExact(t, reflect.TypeOf(StreakSave{}), allowedStreakSave)
 }

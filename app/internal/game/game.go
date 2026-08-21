@@ -110,6 +110,17 @@ type StatsView struct {
 	// nested inside StatCounters (it isn't a plain activity count, it's a
 	// coin count).
 	CoinsToday CoinBreakdown `json:"coinsToday"`
+	// History (A3 §5) is the DENSE, zero-filled, date-complete view of the
+	// last game.HistoryRetentionDays local dates, ascending, ending with
+	// TODAY (live — built from statsToday/coinsToday, not a finalized
+	// bucket). Built fresh on every State() call from the sparse persisted
+	// history (see buildHistoryView) — storage stays sparse, the wire is
+	// dense (§3.2/§5).
+	History []DayStat `json:"history"`
+	// Streak (A3 §2) is the server-computed effective streak — see
+	// Game.effectiveStreak. The client renders these two numbers verbatim
+	// and never re-derives them (§2, "the one thing that must be Go").
+	Streak StreakView `json:"streak"`
 }
 
 // Game is the mutable in-memory state one running companion process holds.
@@ -175,6 +186,34 @@ type Game struct {
 	statsDate     string
 	statsToday    StatCounters
 	statsLifetime StatCounters
+
+	// statsFocusBlockMax (A3 Fork B, §3.3) is the max engine.TickResult.
+	// FocusRunSeconds observed so far during the CURRENT statsDate — the
+	// per-day "longest focus block" duration. Reset to 0 alongside
+	// statsToday/coinsToday on every rollover (rolloverStatsIfNewDay),
+	// folded into the finalized DayBucket's LongestFocusBlockSeconds and,
+	// for the still-open today, into today's live DayStat entry (§5).
+	statsFocusBlockMax uint64
+
+	// history is the SPARSE, persisted rolling window (§3.2): one
+	// DayBucket per local day that actually finalized (via finalizeDay at
+	// rolloverStatsIfNewDay), oldest first, length capped at
+	// HistoryRetentionDays. A day the process never ran produces no
+	// bucket — an honest gap, never fabricated. The dense, zero-filled
+	// wire view is built fresh from this on every State() call (see
+	// buildHistoryView).
+	history []DayBucket
+
+	// streakCurrent/streakLongest/streakLastActiveDate are the persisted
+	// streak state (§2.2): current is the run length ending at
+	// lastActiveDate, longest never decreases, lastActiveDate is the most
+	// recent active local date ("" if none ever recorded — fresh or
+	// migrated schema-3 save). Updated only at finalizeDay (§2.3); the
+	// wire's effective streak folds in today's in-progress activity at
+	// read time without mutating these (§2.4, see effectiveStreak).
+	streakCurrent        int
+	streakLongest        int
+	streakLastActiveDate string
 
 	// coinsToday is the "today" half of the Analytics stats, but tracks
 	// COIN counts rather than activity counts (A2 §5) — reset alongside
@@ -570,6 +609,13 @@ func (g *Game) recordStats(r engine.TickResult) (switchCounted bool) {
 	g.statsToday.FocusSessions += r.FocusSessionsCompleted
 	g.statsLifetime.FocusSessions += r.FocusSessionsCompleted
 
+	// A3 Fork B (§3.3): track today's max sustained-typing run length, fed
+	// straight from the engine's own tracker — see statsFocusBlockMax's
+	// doc comment on the Game struct.
+	if r.FocusRunSeconds > g.statsFocusBlockMax {
+		g.statsFocusBlockMax = r.FocusRunSeconds
+	}
+
 	if r.AppSwitches > 0 && g.statsToday.AppSwitches < engine.AppSwitchDailyCap {
 		g.statsToday.AppSwitches++
 		g.statsLifetime.AppSwitches++
@@ -592,14 +638,29 @@ const statsDateFormat = "2006-01-02"
 // this exactly like a global one — it depends only on the wall clock the
 // process itself reads, never on anything the activity source can or can't
 // see, so it stays correct even when Honesty() == HonestyBlind (ADR 0010).
+// rolloverStatsIfNewDay is also A3's (§3.3) single finalize point: the
+// moment the local date changes, the day that just ENDED (g.statsDate, if
+// any — "" before the first tick/load ever ran) is finalized into history
+// + the streak BEFORE today's buckets reset. This fires from both call
+// sites unchanged: an in-process midnight crossing (via recordStats, so
+// the day finalizes on the very next tick) and RestoreStats on load (so a
+// save reopened days later finalizes the single last-running day exactly
+// once — same-day reload takes the early return above and never
+// double-finalizes; a multi-day-gap reload finalizes only that one last
+// day, leaving the intervening never-ran days as honest gaps that break
+// the streak via updateStreak's own gap rule).
 func (g *Game) rolloverStatsIfNewDay() {
 	today := g.now().Local().Format(statsDateFormat)
 	if g.statsDate == today {
 		return
 	}
+	if g.statsDate != "" {
+		g.finalizeDay(g.statsDate, g.statsToday, g.coinsToday, g.statsFocusBlockMax)
+	}
 	g.statsDate = today
 	g.statsToday = StatCounters{}
 	g.coinsToday = CoinBreakdown{}
+	g.statsFocusBlockMax = 0
 }
 
 // SetClockForTest overrides the clock rolloverStatsIfNewDay reads (used
@@ -741,6 +802,12 @@ func (g *Game) State() StateMessage {
 		Equipped:    equipped,
 		OwnedItems:  g.ownedItemsSorted(),
 		OwnedTints:  g.ownedTintsSorted(),
-		Stats:       StatsView{Today: g.statsToday, Lifetime: g.statsLifetime, CoinsToday: g.coinsToday},
+		Stats: StatsView{
+			Today:      g.statsToday,
+			Lifetime:   g.statsLifetime,
+			CoinsToday: g.coinsToday,
+			History:    g.buildHistoryView(),
+			Streak:     g.buildStreakView(),
+		},
 	}
 }

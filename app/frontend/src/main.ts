@@ -9,9 +9,10 @@
 //                   given the current store state, update the DOM each owns;
 //                   none of them send a ClientAction.
 //   - FEATURE/LOGIC: features/store-modal.ts, features/activity-modal.ts,
-//                   features/keybindings.ts — each owns its own DOM/UI
-//                   state, reads the store, and is the only place that
-//                   sends ClientActions for that feature.
+//                   features/history-modal.ts, features/keybindings.ts —
+//                   each owns its own DOM/UI state, reads the store, and
+//                   is the only place that sends ClientActions for that
+//                   feature.
 // The typed wire contract (wire.ts) is shared by every layer. See
 // app/frontend/README.md for the full module map.
 import { DEV_MODE } from './env';
@@ -24,6 +25,7 @@ import { hideConnOverlay, showConnOverlay } from './render/overlays';
 import { showFlash } from './render/flash';
 import * as storeModal from './features/store-modal';
 import * as activityModal from './features/activity-modal';
+import * as historyModal from './features/history-modal';
 import * as keybindings from './features/keybindings';
 import { installDevTools } from './dev/dev-tools';
 
@@ -34,6 +36,7 @@ function renderAll(): void {
   renderScene();
   storeModal.refreshIfOpen();
   activityModal.refreshIfOpen();
+  historyModal.refreshIfOpen();
 }
 
 keybindings.init();

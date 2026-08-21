@@ -82,6 +82,15 @@ Three phases, each shippable.
   insights" derived only from counts (busiest hour, longest focus block).
 - Exit: history renders, streaks compute correctly across day boundaries,
   no content anywhere in the stored history.
+- **Status: DONE.** 30-day rolling history + server-side streaks + a new [H]
+  HISTORY modal with CSS pixel bar charts (busiest-day + longest-focus-block
+  insights). Hourly buckets dropped (privacy: would reconstruct a daily
+  schedule) — busiest DAY instead; longest-focus-block added as one content-free
+  duration (ADR 0013). Schema 3->4, additive, future-schema refusal preserved,
+  finalize-on-reload exactly once. All 8 streak edge cases unit-proven
+  (incl. cross-year/month + streak outliving the 30-day window). Overseer-verified
+  live: crafted schema-4 save renders end-to-end, and the read-time effective
+  streak folded today in live (seeded 5 -> showed 6).
 
 ---
 

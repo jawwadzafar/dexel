@@ -301,6 +301,22 @@ img, .sprite {
   white-space: nowrap;
 }
 
+#history-open {
+  /* Analytics track Phase A3 (docs/plan/A3-design.md §6/§7 Task TS-1) —
+     "[H] HISTORY" is 11 chars * 8px/char = 88px content + 4px border
+     (8px) + this row's "padding 0 4px" (8px) = 104px minimum. #activity-
+     open ends at 136+112=248; #hud-level starts at 456 — this sits in
+     that same gap, 8px clear of #activity-open, well clear of #hud-level. */
+  position: absolute;
+  left: 256px;
+  top: 4px;
+  width: 104px;
+  height: 16px;
+  padding: 0 4px;
+  font-size: 8px;
+  white-space: nowrap;
+}
+
 /* ================= pixel-panel (NOT nes-container) ================= */
 
 .pixel-panel {
@@ -856,6 +872,200 @@ img, .sprite {
   left: 12px;
   top: 376px;
   width: 336px;
+  height: 8px;
+  font-size: 8px;
+  color: var(--screen-dim);
+  text-align: right;
+}
+
+/* ================= history modal ================= */
+/* Analytics track Phase A3 (docs/plan/A3-design.md §6/§7 Task TS-1). Same
+   mechanics as #store/#activity above (native <dialog>, showModal(), the
+   shared #scrim) — read-only, gates nothing (no earning to freeze, same
+   reasoning as #activity). Sized 560x312 per §6.1 ("the store's wide
+   footprint, centered in 640x400": left 40 + width 560 leaves 40px each
+   side; top 44 + height 312 leaves 44px top/bottom).
+
+   Chart tech is CSS block bars, deliberately NOT canvas (§6.2): a bar is
+   a div with an integer-px inline `height` and a flat background colour
+   — every edge lands on a pixel. Canvas fills/text anti-alias at this
+   app's 1x DPI, which is exactly the blur the A2 gate already caught on
+   the "→" glyph (see #activity-coins's comment above) — CSS bars avoid
+   reintroducing that.
+
+   Internal layout budget (padding-box is 560-8=552 wide, 312-8=304 tall;
+   children are positioned relative to that padding edge, left/right
+   margin 12px matching #store/#activity's own convention):
+     streak banner   top:36  h:16          -> ends 52
+     chart label     top:64  h:10          -> ends 74
+     7-day bars      top:80  h:96          -> ends 176
+     bar day labels  top:180 h:10          -> ends 190
+     strip label     top:204 h:10          -> ends 214
+     30-day strip    top:218 h:14          -> ends 232
+     insight row 1   top:252 h:12          -> ends 264
+     insight row 2   top:264 h:12          -> ends 276
+     footer          top:292 h:8           -> ends 300 (4px clear of the
+                                               304px padding-box bottom,
+                                               same margin #activity-help
+                                               leaves below its own text). */
+
+#history {
+  position: fixed;
+  left: 40px;
+  top: 44px;
+  width: 560px;
+  height: 312px;
+  margin: 0;
+  padding: 12px;
+  border: 4px solid var(--wall-light);
+  background: var(--metal);
+  color: var(--cream);
+  z-index: 1000;
+}
+
+#history::backdrop { background: transparent; }
+
+#history-title {
+  position: absolute;
+  left: 12px;
+  top: 12px;
+  width: 480px;
+  height: 16px;
+  font-size: 8px;
+  color: var(--cream);
+  line-height: 16px;
+}
+
+#history-close {
+  position: absolute;
+  left: 524px;
+  top: 12px;
+  width: 16px;
+  height: 16px;
+  padding: 0;
+  font-size: 8px;
+  line-height: 6px;
+}
+
+#history-streak {
+  position: absolute;
+  left: 12px;
+  top: 36px;
+  width: 536px;
+  height: 16px;
+  font-size: 8px;
+  line-height: 16px;
+  white-space: nowrap;
+}
+#history-streak .label { color: var(--screen-dim); }
+#history-streak .value { color: var(--cream); }
+#history-streak .value.gold { color: var(--gold); }
+
+.history-section-title {
+  position: absolute;
+  left: 12px;
+  width: 536px;
+  height: 10px;
+  line-height: 10px;
+  font-size: 8px;
+  color: var(--screen-dim);
+}
+#history-chart-label { top: 64px; }
+#history-strip-label { top: 204px; }
+
+/* 7-day bar chart (primary metric: activeSeconds). Container width is
+   exactly 7 bars * 56px + 6 gaps * 12px = 464px, centered in the 536px
+   content width (left 12 + (536-464)/2 = 48). Bars align to the bottom
+   (align-items: flex-end) and grow upward — height set inline in px by
+   history-modal.ts's renderBars(), never in CSS, since it is a function
+   of that day's value relative to the 7-day window's max. */
+#history-bars {
+  position: absolute;
+  left: 48px;
+  top: 80px;
+  width: 464px;
+  height: 96px;
+  display: flex;
+  align-items: flex-end;
+  gap: 12px;
+}
+.history-bar {
+  width: 56px;
+  flex-shrink: 0;
+  background: var(--screen-dim);
+}
+/* A day whose activeSeconds crossed the server's active-day threshold
+   (A3-design.md §2.1) renders brighter — the same "isActive" the streak
+   and the month-strip below use, so every part of this modal agrees on
+   one definition of "active" (§5's own point). */
+.history-bar.is-active { background: var(--screen); }
+
+#history-bar-labels {
+  position: absolute;
+  left: 48px;
+  top: 180px;
+  width: 464px;
+  height: 10px;
+  display: flex;
+  gap: 12px;
+}
+.history-bar-label {
+  width: 56px;
+  flex-shrink: 0;
+  text-align: center;
+  font-size: 8px;
+  line-height: 10px;
+  color: var(--screen-dim);
+}
+
+/* 30-day month strip (streak/activity heatmap, §6.1 "the streak made
+   visible") — one cell per history entry. 30 cells * 14px + 29 gaps *
+   2px = 478px, centered in the 536px content width (left 12 +
+   (536-478)/2 = 41). overflow:visible so the last (today) cell's 2px
+   gold outline is never clipped by its own container — there is 536-41-
+   478=17px of clear margin to the modal's right edge for it to spill
+   into. */
+#history-strip {
+  position: absolute;
+  left: 41px;
+  top: 218px;
+  width: 478px;
+  height: 14px;
+  display: flex;
+  gap: 2px;
+  overflow: visible;
+}
+.history-cell {
+  width: 14px;
+  height: 14px;
+  flex-shrink: 0;
+  background: var(--shadow);
+}
+.history-cell.is-active { background: var(--screen); }
+.history-cell.is-today { outline: 2px solid var(--gold); }
+
+#history-insights {
+  position: absolute;
+  left: 12px;
+  top: 252px;
+  width: 536px;
+  height: 24px;
+  font-size: 8px;
+}
+#history-insight-busiest, #history-insight-focus {
+  height: 12px;
+  line-height: 12px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--cream);
+}
+
+#history-help {
+  position: absolute;
+  left: 12px;
+  top: 292px;
+  width: 536px;
   height: 8px;
   font-size: 8px;
   color: var(--screen-dim);
