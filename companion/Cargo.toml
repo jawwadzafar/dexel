@@ -22,3 +22,11 @@ bevy_ui = { version = "0.19.1" }
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.151"
 dirs = "6.0.0"
+
+[features]
+# On by default so a plain `cargo run` gets the real product behaviour. This
+# must be a PASS-THROUGH: a bare `features = [...]` on the activity dep would
+# leave `cfg(feature = "global-input")` FALSE inside this crate, so the enum
+# arms below would never compile in.
+default = ["global-input"]
+global-input = ["activity/global-input"]

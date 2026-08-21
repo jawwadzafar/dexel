@@ -9,3 +9,24 @@ license.workspace = true
 # here would break the architecture boundary in docs/implementation-plan.md §3.1.
 
 [dependencies]
+
+[features]
+# OS-global keyboard/mouse monitoring (`GlobalInputProvider`). OFF by default
+# so a plain `cargo build` neither downloads nor compiles an input backend:
+# the hook is platform-specific, needs OS permissions, and is exactly the
+# "highest-risk, most platform-fragile part" the plan (§3.1) kept out of the
+# default build. Enabling it never pulls in Bevy — see the boundary note above.
+global-input = ["dep:evdev"]
+
+# Linux-only backend. `evdev` reads the kernel's /dev/input/event* nodes, which
+# sit below the display server (works under X11, Wayland and a bare TTY) and is
+# pure Rust over libc/nix — no C headers, no pkg-config, no link-time system
+# dependency. It needs read access to those nodes, i.e. the user in the `input`
+# group. `rdev` was evaluated and rejected: its Linux backend is X11 XRecord
+# (blind to Wayland-native apps) and it needs libx11/libxtst dev packages.
+# Rationale in full: activity/src/global_input.rs module docs.
+# Declared per-target so enabling `global-input` on macOS/Windows still
+# compiles — `GlobalInputProvider::new` then returns `UnsupportedPlatform` and
+# the caller falls back to `FocusedWindowProvider`.
+[target.'cfg(target_os = "linux")'.dependencies]
+evdev = { version = "0.13.2", optional = true, default-features = false }

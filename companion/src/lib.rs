@@ -38,6 +38,53 @@ use std::fs;
 use std::path::PathBuf;
 use std::time::Duration;
 
+pub mod scene;
+
+/// `DefaultPlugins` configured for this game, shared by `run()` and
+/// `build_app_with_seed()` so the two entry points can never drift apart.
+///
+/// Three settings here are load-bearing rather than cosmetic:
+///
+/// * `ImagePlugin::default_nearest()` — pixel art MUST be sampled
+///   nearest-neighbour. The default is bilinear, which visibly blurs every
+///   24x32 sprite once it is upscaled (art-direction non-negotiable #1) and
+///   cannot be set from inside a plugin.
+/// * `AssetPlugin.file_path` — an ABSOLUTE path to the workspace `assets/`
+///   dir, derived from this crate's manifest dir at compile time. Bevy's
+///   default resolves `assets` against `CARGO_MANIFEST_DIR` *of the running
+///   package*, so `cargo run -p companion` would look in `companion/assets/`
+///   and `cargo run -p shotcap` in `tools/shotcap/assets/` — two different
+///   wrong places. Pinning it to one absolute path makes every binary in the
+///   workspace agree. A shipped binary has no such dir, so we fall back to a
+///   plain relative `assets` when it is missing.
+/// * `WindowPlugin` — 640x400, which is exactly the 320x200 room at the 2x
+///   integer upscale the camera uses. A desktop companion sits beside your
+///   work; it does not fill the screen.
+fn configured_default_plugins() -> bevy::app::PluginGroupBuilder {
+    const DEV_ASSETS: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../assets");
+    let file_path = if std::path::Path::new(DEV_ASSETS).is_dir() {
+        DEV_ASSETS.to_string()
+    } else {
+        "assets".to_string()
+    };
+
+    DefaultPlugins
+        .set(ImagePlugin::default_nearest())
+        .set(AssetPlugin {
+            file_path,
+            ..default()
+        })
+        .set(WindowPlugin {
+            primary_window: Some(Window {
+                title: "dev-companion".into(),
+                resolution: bevy::window::WindowResolution::new(640, 400),
+                resizable: false,
+                ..default()
+            }),
+            ..default()
+        })
+}
+
 // ---------------------------------------------------------------------------
 // Components / mood
 // ---------------------------------------------------------------------------
@@ -104,14 +151,6 @@ struct XpLevel;
 #[derive(Component)]
 struct ProjectName;
 
-/// Marker on the placeholder **desk-upgrade prop** the M5 coin-threshold
-/// upgrade spawns (plan §4/M5: "a coin threshold unlocks a second placeholder
-/// prop"). `desk_upgrade_system` inserts/removes this component (rather than
-/// despawning/re-spawning the entity) so the entity's identity is stable and
-/// the prop simply appears/disappears as the wallet crosses the threshold.
-#[derive(Component)]
-struct DeskUpgradeProp;
-
 /// Marker on the HUD **mood line** text (plan §4/M5 "one or two idle/mood
 /// text lines … for personality, no dialogue system"). `mood_render_system`
 /// writes the mood word to `MoodLabel` and the personality line (only on
@@ -123,11 +162,70 @@ struct MoodLine;
 // Resources
 // ---------------------------------------------------------------------------
 
-/// The companion crate's activity source (plan §3.1): `FocusedWindowProvider`,
-/// fed by the Bevy input-forwarding systems below. Held as a resource so
-/// Update systems can borrow it.
-#[derive(Resource, Default)]
-struct ActivitySource(FocusedWindowProvider);
+/// The companion crate's activity source (plan §3.1/§A3).
+///
+/// Prefers the OS-global hook and falls back to the focused-window provider.
+/// That order matters: this is a *desktop companion*, so the activity worth
+/// counting happens in the user's editor while this window is unfocused.
+/// v0.1 only had `Focused`, which made the whole premise inert in its real
+/// use case — the companion never progressed while you were actually coding.
+#[derive(Resource)]
+enum ActivitySource {
+    /// Fed by the Bevy input-forwarding systems below (v0.1 behaviour, and
+    /// the fallback when the OS hook is unavailable).
+    Focused(FocusedWindowProvider),
+    /// Fed by its own OS-level thread inside the `activity` crate. The
+    /// forwarding systems must NOT feed this one, or anything typed into the
+    /// game window itself would be counted twice.
+    #[cfg(feature = "global-input")]
+    Global(activity::GlobalInputProvider),
+}
+
+impl Default for ActivitySource {
+    fn default() -> Self {
+        #[cfg(feature = "global-input")]
+        match activity::GlobalInputProvider::new() {
+            Ok(provider) => {
+                info!(
+                    "global input active ({} devices) — activity counts while \
+                     this window is unfocused",
+                    provider.watched_devices()
+                );
+                return Self::Global(provider);
+            }
+            // Not fatal, and deliberately not a panic: the usual cause is
+            // simply that the user is not in the `input` group. Degrade to
+            // the v0.1 behaviour and say so, rather than silently counting
+            // nothing.
+            Err(err) => warn!(
+                "global input unavailable ({err}); counting activity only \
+                 while the game window is focused"
+            ),
+        }
+        Self::Focused(FocusedWindowProvider::default())
+    }
+}
+
+impl ActivitySource {
+    /// Feed in events Bevy observed. A no-op under `Global`, whose own thread
+    /// is already the source of truth.
+    fn record(&mut self, events: impl IntoIterator<Item = ActivityEvent>) {
+        match self {
+            Self::Focused(provider) => provider.record(events),
+            #[cfg(feature = "global-input")]
+            Self::Global(_) => {}
+        }
+    }
+
+    /// Drain whatever has accumulated since the last call.
+    fn poll(&mut self) -> Vec<ActivityEvent> {
+        match self {
+            Self::Focused(provider) => provider.poll(),
+            #[cfg(feature = "global-input")]
+            Self::Global(provider) => provider.poll(),
+        }
+    }
+}
 
 /// Activity state shared through ECS (plan §3.2).
 ///
@@ -423,83 +521,128 @@ fn setup_scene(mut commands: Commands) {
     spawn_hud(&mut hud_spawner);
 }
 
-/// Spawns the desk's full-window visual root and its desk-area child
-/// (placeholder room + three placeholder props), and returns the root's
-/// entity so the caller can parent the HUD bar under it.
+/// Marker on the placeholder **desk-upgrade prop** the M5 coin-threshold
+/// upgrade spawns (plan §4/M5: "a coin threshold unlocks a second placeholder
+/// prop"). `desk_upgrade_system` inserts/removes this component (rather than
+/// despawning/re-spawning the entity) so the entity's identity is stable and
+/// the prop simply appears/disappears as the wallet crosses the threshold.
+#[derive(Component)]
+pub(crate) struct DeskUpgradeProp;
+
+/// Marker on the HUD bar's root node.
+///
+/// Exists so tests can find the HUD by identity rather than by matching a
+/// styling value. The regression test for the "HUD not rendering" bug used
+/// to locate it by `height: 88px`, which silently broke the moment the bar
+/// was restyled — a test whose *locator* depends on cosmetics fails for
+/// reasons that have nothing to do with the invariant it guards.
+#[derive(Component)]
+struct HudRoot;
+
+/// Spawns the UI root that hosts the HUD, and returns its entity.
+///
+/// This root is deliberately **transparent and empty**: the room, desk,
+/// character and props are all real sprites drawn by [`scene::ScenePlugin`]
+/// now, not `Node` rectangles. It exists only to (a) carry the `Developer`
+/// component that the mood/idle systems query, and (b) give the HUD bar
+/// something to be the last flex child of, so it lands at the bottom.
+///
+/// It must stay transparent. `bevy_ui` draws *above* the 2D sprite layer, so
+/// any `BackgroundColor` on this root or its spacer paints over the entire
+/// pixel-art scene — which is exactly what happened when the placeholder
+/// props were still here: the sprites loaded and rendered correctly but were
+/// completely hidden behind an opaque full-window node.
 fn spawn_desk(commands: &mut Commands) -> Entity {
     commands
         .spawn((
-            // The developer character, mood starts Idle (M3's
-            // idle_detection_system drives it after that).
+            // The developer character's game state. The *visual* character is
+            // a sprite owned by `scene.rs`, which reads this mood; the
+            // component lives here because `idle_detection_system` and
+            // `mood_render_system` already query it via `.single()`.
             Developer { mood: Mood::Idle },
-            // The desk's visual root: a full-window container that the desk
-            // area fills (the HUD bar is a sibling in the same root).
             Node {
                 width: Val::Percent(100.0),
                 height: Val::Percent(100.0),
-                // Flex column so the desk area and the HUD stack vertically.
                 flex_direction: FlexDirection::Column,
                 ..default()
             },
         ))
         .with_children(|parent| {
-            // Desk area: a placeholder room that fills everything above the
-            // HUD. Colored rects stand in for art (plan §3.3).
-            parent
-                .spawn((
-                    Node {
-                        width: Val::Percent(100.0),
-                        // Flex-grow so the desk takes the remaining height
-                        // above the fixed-height HUD bar.
-                        flex_grow: 1.0,
-                        flex_direction: FlexDirection::Column,
-                        align_items: AlignItems::Center,
-                        justify_content: JustifyContent::Center,
-                        row_gap: px(24.0),
-                        ..default()
-                    },
-                    BackgroundColor(Color::srgb(0.13, 0.15, 0.20)),
-                ))
-                .with_children(|desk| {
-                    // The desk surface: a wide horizontal placeholder slab.
-                    desk.spawn((
-                        Node {
-                            width: px(520.0),
-                            height: px(24.0),
-                            ..default()
-                        },
-                        BackgroundColor(Color::srgb(0.45, 0.32, 0.20)),
-                    ));
-                    // A placeholder "computer" prop next to the developer.
-                    desk.spawn((
-                        Node {
-                            width: px(140.0),
-                            height: px(90.0),
-                            ..default()
-                        },
-                        BackgroundColor(Color::srgb(0.20, 0.22, 0.28)),
-                    ));
-                    // The M5 desk-upgrade prop: a placeholder "plant" that is
-                    // hidden until the wallet crosses [`DESK_UPGRADE_COST`]
-                    // (plan §4/M5 "a coin threshold unlocks a second
-                    // placeholder prop"). Marked `DeskUpgradeProp` so
-                    // `desk_upgrade_system` can toggle its `Visibility`
-                    // component; it spawns `Visibility::Hidden` (the "hidden"
-                    // state — Bevy's render pipeline skips hidden entities,
-                    // so it draws nothing).
-                    desk.spawn((
-                        Node {
-                            width: px(60.0),
-                            height: px(80.0),
-                            ..default()
-                        },
-                        BackgroundColor(Color::srgb(0.25, 0.55, 0.30)),
-                        DeskUpgradeProp,
-                        Visibility::Hidden,
-                    ));
-                });
+            // A transparent spacer that eats all the height above the HUD, so
+            // the fixed-height HUD bar spawned after it sits at the bottom.
+            // No `BackgroundColor` — see the note above.
+            parent.spawn(Node {
+                width: Val::Percent(100.0),
+                flex_grow: 1.0,
+                ..default()
+            });
         })
         .id()
+}
+
+/// The M5 desk upgrade (plan §4/M5: "a coin threshold unlocks a second
+/// placeholder prop … proves the 'world visibly changes' hook without real
+/// art").
+///
+/// While `Wallet >= [`DESK_UPGRADE_COST`]` the plant *sprite* spawned by
+/// [`scene::ScenePlugin`] carries `Visibility::Visible` and is rendered; below the threshold
+/// it carries `Visibility::Hidden` and Bevy's render pipeline skips it (the
+/// "hidden" state). The prop entity is spawned once by [`spawn_desk`] and
+/// kept alive; this system only swaps the `Visibility` *component*
+/// (visible ↔ hidden), so the entity's identity is stable and there is no
+/// spawn/despawn churn.
+///
+/// (Bevy 0.19 note: `Node` — the `bevy_ui` layout component — has no
+/// `visibility` field, and `EntityCommands` has no `despawn_component`;
+/// toggling the `Visibility` *component* via `Command` is the clean,
+/// chainable way to show/hide. Visibility is a standard Bevy concept the
+/// plan §3.3 already relies on for the placeholder `Node` UI, so this adds
+/// no new architecture.)
+///
+/// The upgrade is **non-persistent**: it is derived from the persisted
+/// wallet every frame, so a relaunch whose wallet already meets the
+/// threshold re-unlocks it automatically. This avoids extending the plan
+/// §3.4 `SaveData` shape (the plan's M5 text offers "keep it non-persistent
+/// if simpler") — see the M5 milestone-log entry.
+///
+/// Logs one `info!` per unlock (a `Local<bool>` edge trigger, the same
+/// pattern M2's removed counter log used with `Local<usize>`) so a headless
+/// smoke run leaves an audit trail — the window's pixels aren't visible from
+/// an agent session. A wallet that already meets the threshold at startup
+/// (a restored save) unlocks silently: the plant is simply there, which is
+/// the correct visible behavior for a returning player.
+fn desk_upgrade_system(
+    mut commands: Commands,
+    wallet: Res<Wallet>,
+    mut prop: Query<Entity, With<DeskUpgradeProp>>,
+    mut ever_unlocked: Local<bool>,
+) {
+    let unlocked = wallet.0 >= DESK_UPGRADE_COST;
+    for entity in &mut prop {
+        // The prop entity is always spawned (by `setup_scene`); this query
+        // is empty only in a test fixture that didn't build the desk. Swap
+        // the `Visibility` component to show/hide it. (Commands are applied
+        // at frame end, so the change takes effect on the *next* frame —
+        // deterministic, and exactly what the app-driven test asserts.)
+        commands
+            .entity(entity)
+            .remove::<Visibility>()
+            .insert(if unlocked {
+                Visibility::Visible
+            } else {
+                Visibility::Hidden
+            });
+    }
+    if unlocked && !*ever_unlocked {
+        *ever_unlocked = true;
+        info!(
+            "desk upgrade unlocked: the desk plant appeared (wallet {} ≥ {} coins)",
+            wallet.0, DESK_UPGRADE_COST
+        );
+    }
+    if !unlocked && *ever_unlocked {
+        *ever_unlocked = false;
+    }
 }
 
 /// Forward the window's focus state into the provider (plan §3.1).
@@ -512,9 +655,7 @@ fn forward_focus_events(
     mut focus_events: MessageReader<WindowFocused>,
 ) {
     for event in focus_events.read() {
-        source
-            .0
-            .record([ActivityEvent::FocusChanged(event.focused)]);
+        source.record([ActivityEvent::FocusChanged(event.focused)]);
     }
 }
 
@@ -525,7 +666,7 @@ fn forward_keyboard_events(
     mut keyboard_events: MessageReader<KeyboardInput>,
 ) {
     for _event in keyboard_events.read() {
-        source.0.record([ActivityEvent::Keystroke]);
+        source.record([ActivityEvent::Keystroke]);
     }
 }
 
@@ -536,7 +677,7 @@ fn forward_mouse_events(
     mut mouse_motion: MessageReader<MouseMotion>,
 ) {
     for _event in mouse_motion.read() {
-        source.0.record([ActivityEvent::MouseMoved]);
+        source.record([ActivityEvent::MouseMoved]);
     }
 }
 
@@ -561,7 +702,7 @@ fn activity_bridge_system(
     times: Res<Time>,
 ) {
     let dt = times.delta();
-    let events = source.0.poll();
+    let events = source.poll();
     meter.recent_rate = decay_and_accumulate(meter.recent_rate, &events, dt);
     let fresh = non_focus_event(&events);
     if fresh {
@@ -807,71 +948,6 @@ fn hud_render_system(
     }
 }
 
-/// The M5 desk upgrade (plan §4/M5: "a coin threshold unlocks a second
-/// placeholder prop … proves the 'world visibly changes' hook without real
-/// art").
-///
-/// While `Wallet >= [`DESK_UPGRADE_COST`]` the placeholder plant prop on the
-/// desk carries `Visibility::Visible` and is rendered; below the threshold
-/// it carries `Visibility::Hidden` and Bevy's render pipeline skips it (the
-/// "hidden" state). The prop entity is spawned once by [`spawn_desk`] and
-/// kept alive; this system only swaps the `Visibility` *component*
-/// (visible ↔ hidden), so the entity's identity is stable and there is no
-/// spawn/despawn churn.
-///
-/// (Bevy 0.19 note: `Node` — the `bevy_ui` layout component — has no
-/// `visibility` field, and `EntityCommands` has no `despawn_component`;
-/// toggling the `Visibility` *component* via `Command` is the clean,
-/// chainable way to show/hide. Visibility is a standard Bevy concept the
-/// plan §3.3 already relies on for the placeholder `Node` UI, so this adds
-/// no new architecture.)
-///
-/// The upgrade is **non-persistent**: it is derived from the persisted
-/// wallet every frame, so a relaunch whose wallet already meets the
-/// threshold re-unlocks it automatically. This avoids extending the plan
-/// §3.4 `SaveData` shape (the plan's M5 text offers "keep it non-persistent
-/// if simpler") — see the M5 milestone-log entry.
-///
-/// Logs one `info!` per unlock (a `Local<bool>` edge trigger, the same
-/// pattern M2's removed counter log used with `Local<usize>`) so a headless
-/// smoke run leaves an audit trail — the window's pixels aren't visible from
-/// an agent session. A wallet that already meets the threshold at startup
-/// (a restored save) unlocks silently: the plant is simply there, which is
-/// the correct visible behavior for a returning player.
-fn desk_upgrade_system(
-    mut commands: Commands,
-    wallet: Res<Wallet>,
-    mut prop: Query<Entity, With<DeskUpgradeProp>>,
-    mut ever_unlocked: Local<bool>,
-) {
-    let unlocked = wallet.0 >= DESK_UPGRADE_COST;
-    for entity in &mut prop {
-        // The prop entity is always spawned (by `setup_scene`); this query
-        // is empty only in a test fixture that didn't build the desk. Swap
-        // the `Visibility` component to show/hide it. (Commands are applied
-        // at frame end, so the change takes effect on the *next* frame —
-        // deterministic, and exactly what the app-driven test asserts.)
-        commands
-            .entity(entity)
-            .remove::<Visibility>()
-            .insert(if unlocked {
-                Visibility::Visible
-            } else {
-                Visibility::Hidden
-            });
-    }
-    if unlocked && !*ever_unlocked {
-        *ever_unlocked = true;
-        info!(
-            "desk upgrade unlocked: the desk plant appeared (wallet {} ≥ {} coins)",
-            wallet.0, DESK_UPGRADE_COST
-        );
-    }
-    if !unlocked && *ever_unlocked {
-        *ever_unlocked = false;
-    }
-}
-
 // ---------------------------------------------------------------------------
 // Scene spawners (M1 layout, M3 markers added)
 // ---------------------------------------------------------------------------
@@ -889,16 +965,27 @@ fn spawn_hud(parent: &mut ChildSpawnerCommands) {
         .spawn((
             Node {
                 width: Val::Percent(100.0),
-                height: px(88.0),
+                height: px(64.0),
                 flex_direction: FlexDirection::Column,
                 justify_content: JustifyContent::Center,
                 row_gap: px(4.0),
                 padding: UiRect::axes(px(12.0), px(6.0)),
                 ..default()
             },
-            BackgroundColor(Color::srgb(0.09, 0.10, 0.13)),
+            BackgroundColor(Color::srgb(0.141, 0.122, 0.180)),
+            HudRoot,
         ))
         .with_children(|hud| {
+            // A 2px wooden lip along the top edge: the HUD should read as a
+            // shelf the room rests on, not a panel pasted over the art.
+            hud.spawn((
+                Node {
+                    width: Val::Percent(100.0),
+                    height: px(2.0),
+                    ..default()
+                },
+                BackgroundColor(Color::srgb(0.545, 0.369, 0.235)),
+            ));
             // --- Progress bar (hardcoded 0% for M1; `hud_render_system`
             //     drives it from `CurrentProject` in M3) ---
             hud.spawn((
@@ -907,7 +994,7 @@ fn spawn_hud(parent: &mut ChildSpawnerCommands) {
                     height: px(14.0),
                     ..default()
                 },
-                BackgroundColor(Color::srgb(0.20, 0.22, 0.26)),
+                BackgroundColor(Color::srgb(0.420, 0.271, 0.169)),
             ))
             .with_children(|bar| {
                 // Starts at 0% width (M1); `hud_render_system` (M3) updates
@@ -918,7 +1005,7 @@ fn spawn_hud(parent: &mut ChildSpawnerCommands) {
                         height: Val::Percent(100.0),
                         ..default()
                     },
-                    BackgroundColor(Color::srgb(0.10, 0.60, 0.35)),
+                    BackgroundColor(Color::srgb(0.306, 0.545, 0.310)),
                     ProgressBarFill,
                 ));
             });
@@ -937,14 +1024,14 @@ fn spawn_hud(parent: &mut ChildSpawnerCommands) {
                 row.spawn((
                     Text::new("Coins: 0"),
                     TextFont::from_font_size(px(14.0)),
-                    TextColor(Color::srgb(0.95, 0.80, 0.30)),
+                    TextColor(Color::srgb(0.910, 0.769, 0.416)),
                     CoinCount,
                 ));
                 // Xp / level (hardcoded Lv 1, 0 XP for M1; `XpLevel` — M3).
                 row.spawn((
                     Text::new("Lv 1 · 0 XP"),
                     TextFont::from_font_size(px(14.0)),
-                    TextColor(Color::srgb(0.9, 0.9, 0.9)),
+                    TextColor(Color::srgb(0.949, 0.878, 0.788)),
                     XpLevel,
                 ));
                 // Mood label. Marked `MoodLabel` so `mood_render_system`
@@ -953,7 +1040,7 @@ fn spawn_hud(parent: &mut ChildSpawnerCommands) {
                 row.spawn((
                     Text::new("Mood: Idle"),
                     TextFont::from_font_size(px(14.0)),
-                    TextColor(Color::srgb(0.45, 0.75, 0.95)),
+                    TextColor(Color::srgb(0.498, 0.831, 0.757)),
                     MoodLabel,
                 ));
             });
@@ -963,7 +1050,7 @@ fn spawn_hud(parent: &mut ChildSpawnerCommands) {
             hud.spawn((
                 Text::new("Project: Fix login flow"),
                 TextFont::from_font_size(px(14.0)),
-                TextColor(Color::srgb(0.75, 0.85, 0.95)),
+                TextColor(Color::srgb(0.949, 0.878, 0.788)),
                 ProjectName,
             ));
 
@@ -973,7 +1060,7 @@ fn spawn_hud(parent: &mut ChildSpawnerCommands) {
             hud.spawn((
                 Text::new(""),
                 TextFont::from_font_size(px(12.0)),
-                TextColor(Color::srgb(0.70, 0.65, 0.50)),
+                TextColor(Color::srgb(1.000, 0.851, 0.541)),
                 MoodLine,
             ));
         });
@@ -1294,7 +1381,8 @@ fn enter_playing(world: &mut World) {
 /// a one-line call into this function.
 pub fn run() {
     App::new()
-        .add_plugins(DefaultPlugins)
+        .add_plugins(configured_default_plugins())
+        .add_plugins(scene::ScenePlugin)
         // M2 activity resources — inserted during construction, so they
         // exist before any Update frame runs.
         .init_resource::<ActivitySource>()
@@ -1368,6 +1456,8 @@ pub fn run() {
                 // M3: flip the mood to Coding on fresh activity, to
                 // OnBreak after IDLE_THRESHOLD seconds of silence.
                 idle_detection_system,
+                desk_upgrade_system,
+                desk_upgrade_system,
                 // M5: the desk plant upgrade — show the placeholder prop
                 // once the wallet crosses the coin threshold (plan §4/M5).
                 // Toggles the prop's `Visibility` component via a `Command`
@@ -1376,7 +1466,6 @@ pub fn run() {
                 // chain) updates, so an upgrade earned this frame shows next
                 // frame — the deterministic behavior the app-driven test
                 // asserts.
-                desk_upgrade_system,
                 // M3: complete the project when the bar is full and roll
                 // the next one from the static list (plan §3.2).
                 // Runs after project_progress_system (FixedUpdate precedes
@@ -1415,7 +1504,8 @@ pub fn build_app_with_seed(seed_wallet: u64, seed_xp: u32, seed_work_done: f32) 
     set_save_path(Some(tmp.join("save.json")));
 
     let mut app = App::new();
-    app.add_plugins(DefaultPlugins);
+    app.add_plugins(configured_default_plugins());
+    app.add_plugins(scene::ScenePlugin);
     app.init_resource::<ActivitySource>();
     app.init_resource::<ActivityMeter>();
     // Seeded progression state — present before the first frame so the HUD
@@ -1448,7 +1538,6 @@ pub fn build_app_with_seed(seed_wallet: u64, seed_xp: u32, seed_work_done: f32) 
             forward_mouse_events,
             activity_bridge_system,
             idle_detection_system,
-            desk_upgrade_system,
             project_completion_system,
             xp_level_system,
             mood_render_system,
@@ -1681,7 +1770,13 @@ mod tests {
         app.add_message::<KeyboardInput>();
 
         app.insert_resource(FrameDt(Duration::from_millis(16)))
-            .init_resource::<ActivitySource>()
+            // Pin the FOCUSED provider explicitly. `Default` prefers the
+            // OS-global hook, whose `record` is a no-op, so a test that
+            // injects events would count nothing — and would pass or fail
+            // depending on whether this machine has readable input
+            // devices, which is exactly the kind of ambient dependency a
+            // unit test must not have.
+            .insert_resource(ActivitySource::Focused(FocusedWindowProvider::default()))
             .init_resource::<ActivityMeter>()
             .insert_resource(Wallet(0))
             .insert_resource(PlayerXp::default())
@@ -1700,13 +1795,13 @@ mod tests {
             (
                 |mut source: ResMut<ActivitySource>, mut kb: MessageReader<KeyboardInput>| {
                     for _ in kb.read() {
-                        source.0.record([ActivityEvent::Keystroke]);
+                        source.record([ActivityEvent::Keystroke]);
                     }
                 },
                 |mut source: ResMut<ActivitySource>,
                  mut meter: ResMut<ActivityMeter>,
                  dt: Res<FrameDt>| {
-                    let events = source.0.poll();
+                    let events = source.poll();
                     meter.recent_rate = decay_and_accumulate(meter.recent_rate, &events, dt.0);
                     let fresh = non_focus_event(&events);
                     if fresh {
@@ -2617,12 +2712,8 @@ mod tests {
             q.iter(world).next().expect("desk root not spawned")
         };
         let hud_root = {
-            let mut q = world.query::<(Entity, &Node)>();
-            q.iter(world)
-                .find(|(_, n)| {
-                    matches!(n.width, Val::Percent(100.0)) && matches!(n.height, Val::Px(88.0))
-                })
-                .map(|(e, _)| e)
+            let mut q = world.query_filtered::<Entity, With<HudRoot>>();
+            q.iter(world).next()
         };
         (desk_root, hud_root)
     }
@@ -2640,8 +2731,8 @@ mod tests {
         let world = app.world_mut();
         let (desk_root, hud_root) = scene_entities(world);
         let hud_root = hud_root.expect(
-            "the HUD bar root node (100% × 88px) must exist — if it does not, \
-             the HUD is not being spawned at all",
+            "the HUD bar root node (marked `HudRoot`) must exist — if it does \
+             not, the HUD is not being spawned at all",
         );
         assert_ne!(
             desk_root, hud_root,

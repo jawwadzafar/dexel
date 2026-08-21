@@ -12,9 +12,26 @@
 //!
 //! Privacy invariant: events carry **counts and focus transitions only** —
 //! never key identity, text, or window titles.
+//!
+//! Two providers exist. [`FocusedWindowProvider`] sees only input delivered to
+//! the companion's own window, so it counts nothing while you are typing in
+//! your editor; `GlobalInputProvider` watches OS-level keyboard/mouse
+//! activity regardless of focus and is the one that makes the premise work.
+//! The latter needs an OS hook and platform-specific permissions, so it lives
+//! behind the **`global-input`** Cargo feature (off by default — a default
+//! build does not even download the backend crate) and its constructor returns
+//! an error rather than panicking when the hook cannot start, so callers fall
+//! back to [`FocusedWindowProvider`]. See the `global_input` module for that
+//! trade-off in full.
 
 use std::collections::VecDeque;
 use std::time::Duration;
+
+#[cfg(feature = "global-input")]
+pub mod global_input;
+
+#[cfg(feature = "global-input")]
+pub use global_input::{GlobalInputError, GlobalInputProvider};
 
 /// A single unit of user activity observed since the last poll.
 ///
