@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"os"
 	"path/filepath"
 	"sort"
@@ -149,6 +150,13 @@ type StreakSave struct {
 // Privacy invariant (ADR 0002/0009, carried from the Rust save): this
 // file contains no user content. Sprint names come from the static list
 // (never from input); only an index and a work-unit float are stored.
+//
+// Mac (SEC-1, docs/plan/SEC-1-design.md §2, ADR 0014) is the hex
+// HMAC-SHA256 tag of this struct with Mac itself zeroed (see
+// integrity.go's macPreimage/computeMAC) — a fixed-width digest, not
+// content, so it does not weaken the privacy invariant above. It is ""
+// only for a grandfathered schema-4-or-earlier save that predates this
+// field (see Load's doc comment and CurrentSchema's).
 type SaveData struct {
 	Schema           int                     `json:"schema"`
 	DevCash          uint64                  `json:"devCash"`
@@ -160,6 +168,7 @@ type SaveData struct {
 	ImportedFromRust bool                    `json:"importedFromRust,omitempty"`
 	ImportedAt       string                  `json:"importedAt,omitempty"` // RFC3339, "" if never imported
 	Stats            StatsSave               `json:"stats"`
+	Mac              string                  `json:"mac,omitempty"`
 }
 
 // CurrentSchema is the schema version this build writes.
@@ -206,7 +215,22 @@ type SaveData struct {
 // pre-existing stats field (today/lifetime/coinsToday) are read exactly
 // as before. ErrFutureSchema is unchanged by this bump: a schema-5 save
 // is still renamed to ".future" and refused, never silently downgraded.
-const CurrentSchema = 4
+//
+// Bumped 4 -> 5 for SEC-1 (docs/plan/SEC-1-design.md,
+// docs/adr/0014-save-integrity-hmac-and-config-split.md): SaveData gains
+// Mac, the hex HMAC-SHA256 tag over the rest of the struct (see
+// integrity.go). Unlike every prior bump, this one is not purely
+// additive in the usual "old build ignores an unknown key" sense —
+// schema >= 5 is the signal that MAC verification is IN EFFECT (Load
+// verifies only at schema >= 5), so the bump is load-bearing for the
+// anti-cheat mechanism itself, not just a version label. A pre-SEC-1
+// schema-4-or-earlier file has no "mac" key; Load grandfathers it in as
+// trusted (no verification), and the next Save re-persists it as a
+// signed schema-5 file — never mistaken for tampering. ErrFutureSchema is
+// unchanged by this bump: a schema-6 save is still renamed to ".future"
+// and refused, never silently downgraded (see
+// TestFutureSchema6RefusalStillFiresAfterTheSchema5Bump).
+const CurrentSchema = 5
 
 // DefaultPath returns ~/.config/dexel/state.json.
 func DefaultPath() (string, error) {
@@ -215,6 +239,21 @@ func DefaultPath() (string, error) {
 		return "", fmt.Errorf("resolve home dir: %w", err)
 	}
 	return filepath.Join(home, ".config", "dexel", "state.json"), nil
+}
+
+// quantizeUnits rounds v to 6 decimal places (SEC-1 design §2.3):
+// sprint.unitsDone is the only float64 on SaveData, and quantizing it at
+// snapshot time means the value written to disk and the value fed into
+// the MAC preimage are the identical float64 bits, so two logically-equal
+// saves (whose progress differs only by sub-µunit floating-point
+// accumulation) produce byte-identical preimages and the same MAC. 6
+// decimals is far finer than any work-unit granularity the economy uses,
+// so no visible progress is lost. Save re-applies this defensively to
+// whatever SaveData it is given, so a caller that builds a SaveData by
+// hand (bypassing Snapshot) still gets a MAC that matches what ends up on
+// disk.
+func quantizeUnits(v float64) float64 {
+	return math.Round(v*1e6) / 1e6
 }
 
 // Snapshot extracts a SaveData from the live game state. Arrays are
@@ -259,7 +298,7 @@ func Snapshot(g *game.Game) SaveData {
 		Schema:           CurrentSchema,
 		DevCash:          g.DevCash,
 		XP:               g.XP,
-		Sprint:           SprintSave{Index: g.SprintIndex(), UnitsDone: g.Progress},
+		Sprint:           SprintSave{Index: g.SprintIndex(), UnitsDone: quantizeUnits(g.Progress)},
 		OwnedItems:       owned,
 		OwnedTints:       tints,
 		Equipped:         equipped,
@@ -454,15 +493,38 @@ func splitTintKey(key string) (itemID, tintID string, ok bool) {
 }
 
 // Save writes d to path atomically: write state.json.tmp, fsync, rename
-// over the destination (docs/upgrade-design.md's exact recipe). A crash
-// mid-write can never leave a half-written, unparseable state.json behind.
+// over the destination (docs/upgrade-design.md's exact recipe, factored
+// out as writeFileAtomically below so SaveConfig — config.go — can reuse
+// it verbatim for config.json). A crash mid-write can never leave a
+// half-written, unparseable state.json behind.
+//
+// SEC-1 (docs/plan/SEC-1-design.md §2, ADR 0014): before marshaling, Save
+// quantizes d.Sprint.UnitsDone (quantizeUnits — a no-op if Snapshot
+// already quantized it, but this makes Save itself correct for any
+// caller, not just ones that went through Snapshot) and then computes and
+// sets d.Mac via computeMAC (integrity.go), so every file Save writes is
+// self-consistently signed regardless of what schema value it carries —
+// verification of that tag is Load's job, gated on schema >= 5.
 func Save(path string, d SaveData) error {
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return fmt.Errorf("create save dir: %w", err)
-	}
+	d.Sprint.UnitsDone = quantizeUnits(d.Sprint.UnitsDone)
+	d.Mac = computeMAC(d)
+
 	data, err := json.MarshalIndent(d, "", "  ")
 	if err != nil {
 		return fmt.Errorf("marshal save: %w", err)
+	}
+	return writeFileAtomically(path, data)
+}
+
+// writeFileAtomically writes data to path via the tmp-write + fsync +
+// rename + dir-fsync recipe (docs/upgrade-design.md): a crash mid-write
+// can never leave a half-written, unparseable file behind. Shared by Save
+// (state.json) and SaveConfig (config.json, config.go) — SEC-1 design
+// §1.2 calls the second file's write "a second, identical, already-
+// written atomic write."
+func writeFileAtomically(path string, data []byte) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return fmt.Errorf("create save dir: %w", err)
 	}
 
 	tmpPath := path + ".tmp"
@@ -499,7 +561,7 @@ func Save(path string, d SaveData) error {
 	// the caller (main.go's autosave/shutdown persist()) only logs it —
 	// callers that care about durability guarantees should see this the
 	// same way they'd see any other save failure, not have it silently
-	// swallowed inside Save.
+	// swallowed inside here.
 	if dirErr := syncDir(filepath.Dir(path)); dirErr != nil {
 		return fmt.Errorf("save renamed into place but syncing its directory failed (rename may not survive a power cut): %w", dirErr)
 	}
@@ -541,6 +603,23 @@ func syncDir(dir string) error {
 // FAILURE, not "no save" — the same way an unreadable file is surfaced —
 // while the future-schema data sits recoverable at its own path rather
 // than being silently clobbered by whatever this older build does next.
+//
+// SEC-1 (docs/plan/SEC-1-design.md §4, ADR 0014): a save whose Schema is
+// >= 5 (i.e. this build's or a prior SEC-1-era build's) that parses fine
+// but whose Mac does not verify (integrity.go's verifyMAC) is handled the
+// same way as a future schema, and deliberately NOT the same way as a
+// missing file: the original is renamed to "<path>.invalid" (never
+// deleted) and Load returns an error wrapping ErrTampered, never
+// (_, true, _) and never (SaveData{}, false, nil). That last distinction
+// is the entire point — collapsing a tamper failure into "no save" would
+// let main.go's loadOrImport fall through to the legacy-import path,
+// which grants items and refunds Dev Cash, so a hand-edited state.json
+// could trigger a legacy re-grant. Returning a distinct sentinel closes
+// that vector the exact same way ErrFutureSchema already does: the
+// caller must treat "load failed" and "no save yet" as different things.
+// A schema-4-or-earlier file has no Mac to check at all — it is
+// grandfathered in as trusted, and the next Save call re-persists it
+// signed at schema 5 (see CurrentSchema's doc comment).
 func Load(path string) (SaveData, bool, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -563,6 +642,15 @@ func Load(path string) (SaveData, bool, error) {
 		}
 		return SaveData{}, false, fmt.Errorf("%w: schema %d > this build's %d; original preserved untouched at %s (NOT loaded, NOT deleted, NOT overwritten)",
 			ErrFutureSchema, d.Schema, CurrentSchema, futurePath)
+	}
+	if d.Schema >= 5 && !verifyMAC(d) {
+		invalidPath := path + ".invalid"
+		if renameErr := os.Rename(path, invalidPath); renameErr != nil {
+			return SaveData{}, false, fmt.Errorf("%w: MAC mismatch, and backing up %s to %s failed: %v",
+				ErrTampered, path, invalidPath, renameErr)
+		}
+		return SaveData{}, false, fmt.Errorf("%w: MAC mismatch; original preserved untouched at %s (NOT loaded, NOT deleted, NOT overwritten)",
+			ErrTampered, invalidPath)
 	}
 	return d, true, nil
 }

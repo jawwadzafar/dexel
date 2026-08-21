@@ -29,6 +29,19 @@ func TestSaveDataIsContentFree(t *testing.T) {
 		"ImportedFromRust": "bool",
 		"ImportedAt":       "string",
 		"Stats":            "store.StatsSave",
+		// Mac (SEC-1, docs/plan/SEC-1-design.md §6, ADR
+		// 0014-save-integrity-hmac-and-config-split.md): the hex
+		// HMAC-SHA256 tag over the rest of this struct — a fixed-width
+		// DIGEST field, not content, and it cannot carry content since it
+		// is a deterministic function of the (already content-free)
+		// fields above. This is the one field allowed to be added here
+		// without itself needing a privacy justification beyond "it's a
+		// digest." The dexel's user-authored NAME, by contrast, is
+		// deliberately NOT here: it lives entirely outside SaveData, in
+		// its own unsigned config.json (see config.go's ConfigData doc
+		// comment for why), so this allow-list staying free of any name
+		// field is itself part of the privacy proof, not an omission.
+		"Mac": "string",
 	}
 
 	// Field/type names whose presence anywhere on SaveData is itself a

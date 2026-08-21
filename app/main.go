@@ -7,6 +7,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"log"
@@ -66,6 +67,17 @@ func main() {
 		log.Fatalf("resolve save path: %v", err)
 	}
 	loadOrImport(g, savePath)
+
+	// SEC-1 (docs/plan/SEC-1-design.md §7 GO-2, ADR 0014): config.json is
+	// loaded on a path fully independent of state.json above — it is
+	// never blocked by, and never blocks, a tampered or future-schema
+	// state load. The loaded name is only held here for a future
+	// Settings-modal UI (design §7: "no wire change in this stage" — it
+	// is never added to SaveData, StateMessage, or any other wire
+	// contract).
+	if dexelName := loadOrInitConfig(); dexelName != "" {
+		log.Printf("dexel name: %q", dexelName)
+	}
 
 	eng := engine.New(provider)
 	hub := newHub(wsOriginPatterns(*addr), *insecureOrigin)
@@ -428,6 +440,26 @@ func buildVersion() string {
 func loadOrImport(g *game.Game, savePath string) {
 	data, ok, err := store.Load(savePath)
 	if err != nil {
+		// SEC-1 (docs/plan/SEC-1-design.md §4, ADR 0014): ErrTampered and
+		// ErrFutureSchema are NOT "no save" — store.Load never returns
+		// them alongside ok==true, and they must never be treated like
+		// the genuine "no save yet" case (ok==false, err==nil) below,
+		// because that case is the ONLY one allowed to fall through to
+		// the legacy-import path a few lines down. Legacy import grants
+		// items and refunds Dev Cash; if a tampered or future-schema
+		// state.json were mistaken for "no save," a hand-edited save
+		// could trigger a legacy re-grant — the exact anti-cheat hole
+		// SEC-1 closes. Both cases return immediately, before the
+		// legacy-import path is even reached, leaving g at game.New()'s
+		// fresh defaults; the next autosave writes a valid save.
+		if errors.Is(err, store.ErrTampered) {
+			log.Printf("save integrity check failed; starting a fresh economy — your file was preserved at %s.invalid", savePath)
+			return
+		}
+		if errors.Is(err, store.ErrFutureSchema) {
+			log.Printf("save schema is newer than this build supports; starting fresh — your file was preserved at %s.future: %v", savePath, err)
+			return
+		}
 		log.Printf("load save failed (starting fresh): %v", err)
 	}
 	if ok {
@@ -457,4 +489,37 @@ func loadOrImport(g *game.Game, savePath string) {
 	if err := store.Save(savePath, imported); err != nil {
 		log.Printf("failed to persist imported legacy save: %v", err)
 	}
+}
+
+// loadOrInitConfig loads ~/.config/dexel/config.json (SEC-1 design §1.2,
+// §7 GO-2) on a path fully independent of state.json/loadOrImport: it is
+// never blocked by, and never blocks, the protected-save load above,
+// whether that load succeeded, found nothing, or hit a tampered/
+// future-schema save. store.LoadConfig already degrades a missing or
+// malformed config.json to ConfigData{} without an error (config is
+// deliberately hand-editable and unsigned), so the only extra step here
+// is: if no config.json exists yet, write one with SaveConfig so the user
+// has a file to edit at all — that user-editable slot for the dexel's
+// name is the entire point of splitting config out of the protected save.
+// Returns the loaded (or default) name; callers only log it for now — no
+// wire change in this stage (SEC-1 design §7: the name is deliberately
+// NOT added to SaveData, StateMessage, or any other wire contract).
+func loadOrInitConfig() string {
+	cfgPath, err := store.ConfigPath()
+	if err != nil {
+		log.Printf("resolve config path: %v", err)
+		return ""
+	}
+	cfg, err := store.LoadConfig(cfgPath)
+	if err != nil {
+		log.Printf("load config failed (using defaults): %v", err)
+	}
+	if _, statErr := os.Stat(cfgPath); os.IsNotExist(statErr) {
+		if err := store.SaveConfig(cfgPath, cfg); err != nil {
+			log.Printf("write default config failed: %v", err)
+		} else {
+			log.Printf("wrote default config to %s", cfgPath)
+		}
+	}
+	return cfg.Name
 }
