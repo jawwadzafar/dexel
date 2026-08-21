@@ -20,3 +20,4 @@ say something different — supersede it with a new one and cross-link.
 | [0012](0012-a2-content-free-signal-set-and-permission-fork.md) | A2 signal set: permissionless-derivable only, copy/paste deferred behind a permission fork | accepted |
 | [0013](0013-analytics-over-time-history-streaks-and-charts.md) | Analytics A3 over time: 30-day rolling history, server-side streaks, CSS pixel charts | accepted |
 | [0014](0014-save-integrity-hmac-and-config-split.md) | Save integrity: HMAC-signed state.json + unsigned config.json; honest local anti-cheat ceiling | accepted |
+| [0015](0015-tauri-desktop-shell.md) | Tauri desktop shell: Go binary as sidecar, webview on local server, phased build matrix | accepted |
