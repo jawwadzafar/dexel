@@ -245,8 +245,18 @@ img, .sprite {
   position: absolute;
   left: 552px;
   top: 4px;
-  width: 80px;
+  /* ui-spec.md §2.1 gives width 80, but the label is 9 chars (`[S] STORE`)
+     which at the spec's own 8px/char rule needs 72px of content, plus the
+     global .nes-btn 4px border (8px) and this row's "padding 0 4px" (8px)
+     = 88px minimum, or the label wraps/overflows. 552 + 88 = 640 lands
+     exactly flush with the titlebar's right edge, matching the flush-right
+     bracket in the §2 ASCII mockup, so widen to 88 rather than shrink the
+     label or drop the padding. */
+  width: 88px;
   height: 16px;
+  padding: 0 4px;
+  font-size: 8px;
+  white-space: nowrap;
 }
 
 /* ================= pixel-panel (NOT nes-container) ================= */

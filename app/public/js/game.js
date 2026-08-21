@@ -212,6 +212,9 @@
   // Small helpers
   // ---------------------------------------------------------------------
   function clamp(n, lo, hi) { return Math.max(lo, Math.min(hi, n)); }
+  // Wire numbers arrive as float64; every on-screen numeric render must be an
+  // integer (see ui-spec.md's own examples: "4,200 / 5,000", "LV 5", "34 / 75").
+  function fmtInt(n) { return String(Math.floor(Number(n) || 0)); }
   function truncate(str, maxLen) {
     str = str || '';
     if (str.length <= maxLen) return str;
@@ -498,13 +501,13 @@
     var moodColor = MOOD_COLOR[state.activeState] || MOOD_COLOR.idle;
     el.moodDot.style.background = moodColor;
     el.statusDot.style.background = moodColor;
-    el.hudLevel.textContent = 'LV ' + state.level;
-    el.hudCash.textContent = String(state.devCash);
+    el.hudLevel.textContent = 'LV ' + fmtInt(state.level);
+    el.hudCash.textContent = fmtInt(state.devCash);
 
     el.sprintName.textContent = truncate(state.sprint.name, 28);
     el.sprintBar.max = state.sprint.target;
     el.sprintBar.value = state.sprint.progress;
-    el.sprintUnits.textContent = state.sprint.progress + ' / ' + state.sprint.target + ' ' + state.sprint.unitLabel;
+    el.sprintUnits.textContent = fmtInt(state.sprint.progress) + ' / ' + fmtInt(state.sprint.target) + ' ' + state.sprint.unitLabel;
 
     el.statusLine.textContent = truncate(state.activityLine, 34);
 
@@ -974,7 +977,7 @@
 
   function updateStoreCash() {
     if (!state) return;
-    el.storeCash.textContent = String(state.devCash);
+    el.storeCash.textContent = fmtInt(state.devCash);
   }
 
   // ---------------------------------------------------------------------
