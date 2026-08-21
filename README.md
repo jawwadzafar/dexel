@@ -2,7 +2,7 @@
 
 A cozy pixel-art desktop companion whose workday runs on *your* real typing.
 
-![dev companion running with a live sprint, terminal, and status line](docs/images/hero.png)
+![dexel running with a live sprint, terminal, and status line](docs/images/hero.png)
 
 ## What is this
 
