@@ -1223,3 +1223,116 @@ tests.
 
 
 
+
+---
+
+## v0.2 — art, character, and global activity
+
+- **Date:** 2026-08-21
+- **Branch:** `feat/v0.2-art-and-global-input` (commit `9142f2e`)
+- **Driven by:** Claude Code with four parallel subagents (art generation, art
+  defect fixes, scene composition, global input), integration done by hand.
+
+### Why this exists
+v0.1 (M0-M5) proved the loop but did not look like the product. A vision model
+shown a screenshot of the v0.1 build said: *"This image does not contain a cozy
+scene, pixel art, or a character … characteristic of placeholder programmer
+art … There is no artistic style present."* That was accurate — the scene was
+three colored `Node` rectangles and there was no character at all.
+
+### Files changed
+- `docs/art-direction.md` (new) — 18-colour palette, 15-sprite manifest with
+  authored sizes, character rules, layering order.
+- `tools/gen_assets.py` (new, ~800 lines) + `assets/` (15 PNGs) — art as
+  committed, deterministic, palette-asserted code.
+- `companion/src/scene.rs` (new) — `ScenePlugin`: sprite room, mood-driven
+  character animation, monitor power state.
+- `companion/src/lib.rs` — `configured_default_plugins()`,
+  `ActivitySource` enum (global with fallback), HUD restyle, `HudRoot` marker,
+  placeholder props removed.
+- `activity/src/global_input.rs` (new) + `activity/Cargo.toml` —
+  `GlobalInputProvider` behind `global-input`.
+- `companion/Cargo.toml` — pass-through `global-input` feature.
+- `README.md`, `docs/implementation-plan.md` (v0.2 section), `fleet.yaml`.
+
+### Commands run and results
+- `cargo fmt --all -- --check` → clean.
+- `cargo clippy -p companion --all-targets -- -D warnings` → clean, no output.
+- `cargo clippy -p activity --all-targets --all-features -- -D warnings` → clean.
+- `cargo test --workspace` → **49 passed, 0 failed** (was 44).
+- `cargo check -p companion --no-default-features` → passes (fallback path).
+- `cargo check -p activity` with no features → passes, and `cargo tree` confirms
+  `evdev` is absent from a default build.
+- Runtime: `global input active (3 devices) — activity counts while this window
+  is unfocused`.
+
+### Bugs found and fixed during this work
+1. **Sprites rendered but were completely invisible.** `bevy_ui` draws above
+   the 2D sprite layer, and the old opaque full-window `Node` covered the
+   scene. Same class as the original HUD bug. The UI root is now transparent.
+2. **Asset root resolved to two different wrong places.** Bevy resolves
+   `AssetPlugin.file_path` against the *running package's* manifest dir, so
+   `cargo run -p companion` and `-p shotcap` disagreed. Now one absolute path
+   for the whole workspace.
+3. **`LAMP_X` was set to the monitor's x**, which is why the lamp glow floated
+   beside the screen rather than near the lamp.
+4. **Art-direction spec self-contradiction** — layering list vs prose on
+   whether the desk occludes the character. The wrong one had shipped.
+5. **A regression test located the HUD by `height: 88px`**, so restyling the
+   bar broke a test unrelated to styling. Now found by a `HudRoot` marker.
+6. **Duplicate owners for plant visibility** — `scene.rs` had its own system
+   competing with `lib.rs`'s tested one. Now single-owner.
+
+### Remaining issues
+- **Lighting**: the last thing the vision critique names. The lamp and monitor
+  are on but cast no light, so the scene reads as "a collection of stickers
+  pasted on a purple background". A focused lighting pass is in flight. Note
+  the tradeoff: earlier dithered-glow attempts were rejected as looking like
+  "a clipping error" and "a giant mysterious semi-circle", so light must be
+  small, hard-edged, and baked into the emitting/receiving sprite rather than
+  the background.
+- **No human has looked at the game on a live display.** Mechanical (`cargo
+  test`) and vision-model (`shotcap` + `visual-check.py`) proof both pass, and
+  that combination caught every defect above — but a human glance is still
+  worth having before calling v0.2 done.
+
+---
+
+## v0.3 — the product loop: earn, buy, see it change
+
+- **Date:** 2026-08-21
+- **Branch:** `feat/v0.2-art-and-global-input` (continues from the v0.2 entry)
+- **Driven by:** Fable overseer + Sonnet implementation agents + specialist
+  art/detection agents, per-file ownership to avoid clobbering.
+
+### What landed
+- **Upgrade shop** (ADR 0008): 7 tracks / 13 tiers in one data-driven table;
+  Tab strip UI; ownership persisted (`SaveData.upgrades`, serde default so
+  old saves load); the v0.2 auto-unlock plant became a purchase.
+- **14 new sprites** for the tracks, palette-pure and deterministic;
+  monitor upgrades sized to fully cover the base monitor's opaque footprint.
+- **Active-app HUD line** (ADR 0009): "Coding in VS Code" from real
+  foreground-app identity (app class only — titles are structurally
+  unreachable); honest "Working..." when the compositor declines. The
+  generated fiction ("Fix login flow") no longer appears in the UI.
+- **Economy rebalance** (ADR 0005): weighted events, 100ms mouse coalescing,
+  recalibrated ceiling — mouse-only spam is now the slowest path.
+- **Always-on-top + F10** (ADR 0007), global input (ADR 0003), lighting pass
+  and two composition fixes (shelf, cat) — each verified by rendering and
+  LOOKING, which caught every placement bug the tests could not.
+
+### Verification at closeout
+- `cargo test --workspace`: **79 passed, 0 failed** (44 baseline at v0.1).
+- `cargo clippy --workspace --all-targets -- -D warnings`: clean.
+- `cargo check -p companion --no-default-features`: passes (both features
+  degrade gracefully).
+- Render of the everything-owned seeded state: zero missing assets, zero
+  panics, judged by eye — cohesive cozy scene, all purchases visible.
+
+### Carried / known gaps
+- Desk crowding at full ownership (keyboard+mouse+duck+mug share a small
+  tabletop) — acceptable now, revisit if a bigger desk sprite lands.
+- Cat tail-flick animation deferred (frames pre-authored as cat_a/cat_b).
+- Wayland-native focused apps cannot be identified (GNOME denies the API);
+  XWayland apps expected to work — needs one human click-test.
+- No human has yet played the built game with everything owned.

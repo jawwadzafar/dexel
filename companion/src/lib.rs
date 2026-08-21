@@ -21,8 +21,20 @@
 //! personality line ("Maybe we should take a break?") appears when the mood
 //! flips to `OnBreak` and clears when the developer returns to coding.
 //! See docs/implementation-plan.md §3.1/§3.2 and §4/M2/M3/M5.
+//!
+//! v0.3: the upgrade/shop system (docs/upgrade-design.md) REPLACES M5's
+//! single coin-threshold plant with `UPGRADE_TRACKS` — seven data-driven
+//! tracks of tiered, *purchased* (not auto-unlocked) upgrades, persisted in
+//! `OwnedUpgrades`/`SaveData.upgrades`. A `Tab`-toggled shop strip
+//! (`spawn_shop_strip`/`shop_input_system`/`shop_render_system`) lets the
+//! player spend `Wallet` coins on the next tier of a track; `scene.rs`'s
+//! `upgrade_render_system` renders whatever is owned. The v0.2 plant prop is
+//! now `desk_decor` tier 1 — same sprite, same position, bought instead of
+//! auto-unlocked.
 
-use activity::{ActivityEvent, ActivityProvider, FocusedWindowProvider, decay_and_accumulate};
+use activity::{
+    ActivityEvent, ActivityProvider, FocusedWindowProvider, MOUSE_SAMPLE_SECS, decay_and_accumulate,
+};
 // Bevy 0.19: the event-reading system param is `MessageReader` (the 0.19
 // "Messages" API replaced `EventReader`); input events live under
 // `bevy::input` (the prelude only re-exports *buttons*/codes, not the
@@ -34,9 +46,67 @@ use bevy::input::mouse::MouseMotion;
 use bevy::prelude::*;
 use bevy::window::WindowFocused;
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 use std::fs;
 use std::path::PathBuf;
 use std::time::Duration;
+
+pub mod scene;
+
+/// `DefaultPlugins` configured for this game, shared by `run()` and
+/// `build_app_with_seed()` so the two entry points can never drift apart.
+///
+/// Three settings here are load-bearing rather than cosmetic:
+///
+/// * `ImagePlugin::default_nearest()` — pixel art MUST be sampled
+///   nearest-neighbour. The default is bilinear, which visibly blurs every
+///   24x32 sprite once it is upscaled (art-direction non-negotiable #1) and
+///   cannot be set from inside a plugin.
+/// * `AssetPlugin.file_path` — an ABSOLUTE path to the workspace `assets/`
+///   dir, derived from this crate's manifest dir at compile time. Bevy's
+///   default resolves `assets` against `CARGO_MANIFEST_DIR` *of the running
+///   package*, so `cargo run -p companion` would look in `companion/assets/`
+///   and `cargo run -p shotcap` in `tools/shotcap/assets/` — two different
+///   wrong places. Pinning it to one absolute path makes every binary in the
+///   workspace agree. A shipped binary has no such dir, so we fall back to a
+///   plain relative `assets` when it is missing.
+/// * `WindowPlugin` — 640x400, which is exactly the 320x200 room at the 2x
+///   integer upscale the camera uses. A desktop companion sits beside your
+///   work; it does not fill the screen.
+fn configured_default_plugins() -> bevy::app::PluginGroupBuilder {
+    const DEV_ASSETS: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../assets");
+    let file_path = if std::path::Path::new(DEV_ASSETS).is_dir() {
+        DEV_ASSETS.to_string()
+    } else {
+        "assets".to_string()
+    };
+
+    DefaultPlugins
+        .set(ImagePlugin::default_nearest())
+        .set(AssetPlugin {
+            file_path,
+            ..default()
+        })
+        .set(WindowPlugin {
+            primary_window: Some(Window {
+                title: "dev-companion".into(),
+                resolution: bevy::window::WindowResolution::new(640, 400),
+                resizable: false,
+                // A desktop companion has to stay VISIBLE beside the work it
+                // is reacting to. This is the genre convention (Rusty's
+                // Retirement presents as a desktop overlay; Bongo Cat sits on
+                // the taskbar) and it is load-bearing for the product: a
+                // companion that your editor buries is a companion you never
+                // see react, which removes the entire reason to run it.
+                // Toggle at runtime with F10 — always-on-top is the right
+                // default but the wrong permanent state (screen sharing,
+                // fullscreen video), so it must not be a build-time choice.
+                window_level: bevy::window::WindowLevel::AlwaysOnTop,
+                ..default()
+            }),
+            ..default()
+        })
+}
 
 // ---------------------------------------------------------------------------
 // Components / mood
@@ -104,14 +174,6 @@ struct XpLevel;
 #[derive(Component)]
 struct ProjectName;
 
-/// Marker on the placeholder **desk-upgrade prop** the M5 coin-threshold
-/// upgrade spawns (plan §4/M5: "a coin threshold unlocks a second placeholder
-/// prop"). `desk_upgrade_system` inserts/removes this component (rather than
-/// despawning/re-spawning the entity) so the entity's identity is stable and
-/// the prop simply appears/disappears as the wallet crosses the threshold.
-#[derive(Component)]
-struct DeskUpgradeProp;
-
 /// Marker on the HUD **mood line** text (plan §4/M5 "one or two idle/mood
 /// text lines … for personality, no dialogue system"). `mood_render_system`
 /// writes the mood word to `MoodLabel` and the personality line (only on
@@ -123,11 +185,70 @@ struct MoodLine;
 // Resources
 // ---------------------------------------------------------------------------
 
-/// The companion crate's activity source (plan §3.1): `FocusedWindowProvider`,
-/// fed by the Bevy input-forwarding systems below. Held as a resource so
-/// Update systems can borrow it.
-#[derive(Resource, Default)]
-struct ActivitySource(FocusedWindowProvider);
+/// The companion crate's activity source (plan §3.1/§A3).
+///
+/// Prefers the OS-global hook and falls back to the focused-window provider.
+/// That order matters: this is a *desktop companion*, so the activity worth
+/// counting happens in the user's editor while this window is unfocused.
+/// v0.1 only had `Focused`, which made the whole premise inert in its real
+/// use case — the companion never progressed while you were actually coding.
+#[derive(Resource)]
+enum ActivitySource {
+    /// Fed by the Bevy input-forwarding systems below (v0.1 behaviour, and
+    /// the fallback when the OS hook is unavailable).
+    Focused(FocusedWindowProvider),
+    /// Fed by its own OS-level thread inside the `activity` crate. The
+    /// forwarding systems must NOT feed this one, or anything typed into the
+    /// game window itself would be counted twice.
+    #[cfg(feature = "global-input")]
+    Global(activity::GlobalInputProvider),
+}
+
+impl Default for ActivitySource {
+    fn default() -> Self {
+        #[cfg(feature = "global-input")]
+        match activity::GlobalInputProvider::new() {
+            Ok(provider) => {
+                info!(
+                    "global input active ({} devices) — activity counts while \
+                     this window is unfocused",
+                    provider.watched_devices()
+                );
+                return Self::Global(provider);
+            }
+            // Not fatal, and deliberately not a panic: the usual cause is
+            // simply that the user is not in the `input` group. Degrade to
+            // the v0.1 behaviour and say so, rather than silently counting
+            // nothing.
+            Err(err) => warn!(
+                "global input unavailable ({err}); counting activity only \
+                 while the game window is focused"
+            ),
+        }
+        Self::Focused(FocusedWindowProvider::default())
+    }
+}
+
+impl ActivitySource {
+    /// Feed in events Bevy observed. A no-op under `Global`, whose own thread
+    /// is already the source of truth.
+    fn record(&mut self, events: impl IntoIterator<Item = ActivityEvent>) {
+        match self {
+            Self::Focused(provider) => provider.record(events),
+            #[cfg(feature = "global-input")]
+            Self::Global(_) => {}
+        }
+    }
+
+    /// Drain whatever has accumulated since the last call.
+    fn poll(&mut self) -> Vec<ActivityEvent> {
+        match self {
+            Self::Focused(provider) => provider.poll(),
+            #[cfg(feature = "global-input")]
+            Self::Global(provider) => provider.poll(),
+        }
+    }
+}
 
 /// Activity state shared through ECS (plan §3.2).
 ///
@@ -165,16 +286,6 @@ pub const IDLE_THRESHOLD: f32 = 60.0;
 /// every 30s)"). Named const so the M4 test and the milestone log share the
 /// same tuning.
 pub const SAVE_INTERVAL: f32 = 30.0;
-
-/// The wallet value at which the desk plant upgrade unlocks (plan §4/M5:
-/// "a coin threshold unlocks a second placeholder prop"). Named const so the
-/// upgrade system and its unit test share the same tuning.
-///
-/// Tuning: the first two projects award 25 and 40 coins (65 total), so the
-/// plant appears partway through the *third* project ("Add CI cache") on a
-/// fresh run — the "world visibly changes" hook lands a couple of minutes in,
-/// not immediately, and not before the player has seen the base desk.
-pub const DESK_UPGRADE_COST: u64 = 50;
 
 /// The developer's coin purse (plan §3.2). Awarded on project completion by
 /// `xp_level_system`.
@@ -293,16 +404,16 @@ struct LevelUp {
 /// progress_delta(rate, fixed_dt) = rate * MIN_WORK_PER_EVENT * fixed_dt
 /// ```
 ///
-/// with `MIN_WORK_PER_EVENT = 0.05` (tuning const).
+/// with `MIN_WORK_PER_EVENT = 0.008` (tuning const).
 ///
 /// **Anti-mashing rule** (plan §1, made concrete and testable): the input
 /// `rate` is a *decaying* events/second average that the `activity` crate
-/// already clamps to `activity::MAX_RECENT_RATE` (120 ev/s) in
+/// already clamps to `activity::MAX_RECENT_RATE` (15 weight/s) in
 /// `decay_and_accumulate`. Because this function is **linear** in `rate`
 /// (work is added per wall-clock second at a fixed rate proportional to
 /// events/s, not per event), a sustained max-rate mash converges to
 /// `MAX_RECENT_RATE * MIN_WORK_PER_EVENT` work/s — the same throughput as
-/// a steady real-typing session at 120 ev/s would produce within one
+/// a steady real-typing session at the 15 weight/s ceiling would produce within one
 /// session (M2's `decay_and_accumulate_sustained_max_rate_mash_does_not_
 /// runaway` test proves the rate itself converges; this function's linearity
 /// is what carries that bound through to work). Per-frame clamping inside
@@ -320,11 +431,10 @@ pub fn progress_delta(recent_rate: f32, fixed_dt: f32) -> f32 {
 /// constant coefficient — the bound on total work/s comes from
 /// `activity::MAX_RECENT_RATE`, not this value.
 ///
-/// At the 120 ev/s anti-mash ceiling this gives 6.0 work/s — project #1
-/// (`total_work = 50`) completes in ≈ 8.3 s of continuous typing at the
-/// ceiling, which is a readable demo pace for M3's exit criterion without
-/// making the first project feel trivially short.
-pub const MIN_WORK_PER_EVENT: f32 = 0.05;
+/// At the anti-mash ceiling this gives 15 * 0.008 = 0.12 work/s — project
+/// #1 (`total_work = 50`) completes in about 7 minutes flat-out, ~21 min at
+/// a real typist's 5 keys/s (ADR 0005 records the calibration).
+pub const MIN_WORK_PER_EVENT: f32 = 0.008;
 
 /// The level the developer is at for `xp` total experience (plan §3.2,
 /// `xp_level_system`'s `*level_for_xp`). Pure and unit-testable with the
@@ -386,6 +496,264 @@ pub fn next_project_index(old_index: usize, len: usize) -> usize {
 }
 
 // ---------------------------------------------------------------------------
+// Upgrades / shop (docs/upgrade-design.md v0.3)
+// ---------------------------------------------------------------------------
+
+/// One purchasable rung of an [`UpgradeTrack`] (docs/upgrade-design.md
+/// "Tracks and tiers"): the sprite [`scene::upgrade_render_system`] shows
+/// once this tier is owned, its coin cost, and the short phrase shown in the
+/// shop row and in the "Bought: …!" confirmation flash (the design doc's own
+/// example — "Mechanical keyboard!" — is exactly `format!("Bought: {}!",
+/// flavor)`).
+struct UpgradeTier {
+    /// Asset-relative filename `scene::spawn_upgrade_slots` loads. Not a
+    /// full path — every sprite lives at the assets root, same as the rest
+    /// of the manifest in `scene.rs`.
+    sprite: &'static str,
+    /// Coins spent to buy *into* this tier from the previous one.
+    cost: u64,
+    flavor: &'static str,
+}
+
+/// How a track's owned tiers compose visually once more than one sprite
+/// exists for it (docs/upgrade-design.md "Scene contract").
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum UpgradeTrackKind {
+    /// Buying a new tier replaces the previous tier's sprite outright — only
+    /// the highest owned tier is ever visible. The common case: keyboard,
+    /// mouse, monitor, chair, wall.
+    Replace,
+    /// Buying a new tier adds a sprite alongside the ones already owned.
+    /// `desk_decor` only: the art manifest adds a standalone `duck.png` (no
+    /// combined "plant + duck" image exists), so tier 2 must show *both*
+    /// the tier-1 plant and the tier-2 duck at once.
+    Accumulate,
+}
+
+/// One row of the shop / scene table (docs/upgrade-design.md "Data-driven
+/// from one table"): `id` is both the `OwnedUpgrades`/`SaveData.upgrades`
+/// map key and the scene-slot lookup key ([`scene::upgrade_slot_anchor`]),
+/// so it must stay stable once a save exists with it in the map.
+struct UpgradeTrack {
+    id: &'static str,
+    name: &'static str,
+    kind: UpgradeTrackKind,
+    /// `tiers[0]` is tier 1, `tiers[1]` is tier 2, etc. — there is no tier-0
+    /// row because tier 0 ("not yet bought") is never rendered or costed;
+    /// it is simply the absence of an entry in `OwnedUpgrades`.
+    tiers: &'static [UpgradeTier],
+}
+
+/// The one table docs/upgrade-design.md's "Data-driven from one table"
+/// principle demands: the shop lists exactly this, the scene renders
+/// exactly this, and a new tier is one more row here — never a new system.
+/// Costs and flavor match the design doc's "Tracks and tiers" table (v0.3)
+/// exactly; `desk_decor` tier 1 reuses the existing `plant.png` (the v0.2
+/// prop this system replaces), so no new sprite file is needed for it.
+static UPGRADE_TRACKS: &[UpgradeTrack] = &[
+    UpgradeTrack {
+        id: "keyboard",
+        name: "Keyboard",
+        kind: UpgradeTrackKind::Replace,
+        tiers: &[
+            UpgradeTier {
+                sprite: "keyboard_t1.png",
+                cost: 30,
+                flavor: "Basic keyboard",
+            },
+            UpgradeTier {
+                sprite: "keyboard_t2.png",
+                cost: 120,
+                flavor: "Mechanical keyboard",
+            },
+        ],
+    },
+    UpgradeTrack {
+        id: "mouse",
+        name: "Mouse",
+        kind: UpgradeTrackKind::Replace,
+        tiers: &[
+            UpgradeTier {
+                sprite: "mouse_t1.png",
+                cost: 20,
+                flavor: "Mouse and pad",
+            },
+            UpgradeTier {
+                sprite: "mouse_t2.png",
+                cost: 90,
+                flavor: "Gaming mouse",
+            },
+        ],
+    },
+    UpgradeTrack {
+        id: "monitor",
+        name: "Monitor",
+        kind: UpgradeTrackKind::Replace,
+        tiers: &[
+            UpgradeTier {
+                sprite: "monitor_dual.png",
+                cost: 150,
+                flavor: "Dual monitors",
+            },
+            UpgradeTier {
+                sprite: "monitor_ultra.png",
+                cost: 400,
+                flavor: "Ultrawide monitor",
+            },
+        ],
+    },
+    UpgradeTrack {
+        id: "chair",
+        name: "Chair",
+        kind: UpgradeTrackKind::Replace,
+        tiers: &[
+            UpgradeTier {
+                sprite: "chair_t1.png",
+                cost: 100,
+                flavor: "Ergonomic chair",
+            },
+            UpgradeTier {
+                sprite: "chair_t2.png",
+                cost: 300,
+                flavor: "Gaming chair",
+            },
+        ],
+    },
+    UpgradeTrack {
+        id: "desk_decor",
+        name: "Desk decor",
+        kind: UpgradeTrackKind::Accumulate,
+        tiers: &[
+            UpgradeTier {
+                sprite: "plant.png",
+                cost: 50,
+                flavor: "Desk plant",
+            },
+            UpgradeTier {
+                sprite: "duck.png",
+                cost: 130,
+                flavor: "Rubber duck",
+            },
+        ],
+    },
+    UpgradeTrack {
+        id: "wall",
+        name: "Wall",
+        kind: UpgradeTrackKind::Replace,
+        tiers: &[
+            UpgradeTier {
+                sprite: "poster.png",
+                cost: 80,
+                flavor: "\"It works on my machine\" poster",
+            },
+            UpgradeTier {
+                sprite: "shelf.png",
+                cost: 200,
+                flavor: "Shelf with books and trophy",
+            },
+        ],
+    },
+    UpgradeTrack {
+        id: "pet",
+        name: "Pet",
+        kind: UpgradeTrackKind::Replace,
+        tiers: &[UpgradeTier {
+            sprite: "cat.png",
+            cost: 250,
+            flavor: "Sleeping cat",
+        }],
+    },
+];
+
+/// The developer's owned upgrade tiers (plan/docs/upgrade-design.md
+/// "Persistence"): `track_id -> owned_tier`, `0` (absent from the map) means
+/// "not yet bought". A `BTreeMap` for the same reason `SaveData.upgrades`
+/// is one: deterministic serialization order.
+#[derive(Resource, Debug, Default, Clone, PartialEq, Eq)]
+struct OwnedUpgrades(BTreeMap<String, u8>);
+
+impl OwnedUpgrades {
+    /// The owned tier of `track_id`, or `0` if never purchased. Never panics
+    /// on an unknown id — the shop/scene only ever query ids that exist in
+    /// [`UPGRADE_TRACKS`], but a defensive default is one line cheaper than
+    /// an `unwrap`.
+    fn tier_of(&self, track_id: &str) -> u8 {
+        self.0.get(track_id).copied().unwrap_or(0)
+    }
+}
+
+/// Attempt to buy the next tier of `track`, given the current `wallet` and
+/// `owned_tier`. `None` (a no-op, per docs/upgrade-design.md "Interaction":
+/// "Enter to buy if affordable") on either "nothing left to buy" (already at
+/// the track's max tier) or "can't afford it" — the caller does not need to
+/// distinguish the two, both leave the wallet and tier untouched. `Some`
+/// carries the wallet *after* the purchase and the *new* owned tier, so a
+/// caller never has to re-derive `owned_tier + 1` or `wallet - cost` and risk
+/// getting one of them wrong.
+#[must_use]
+fn try_buy_tier(track: &UpgradeTrack, wallet: u64, owned_tier: u8) -> Option<(u64, u8)> {
+    let tier = track.tiers.get(owned_tier as usize)?; // None once maxed
+    if wallet < tier.cost {
+        return None;
+    }
+    Some((wallet - tier.cost, owned_tier + 1))
+}
+
+/// The shop row's label for `track` at `owned_tier`: `"Name  cost"` for the
+/// next tier, or `"Name  MAX"` once every tier is owned
+/// (docs/upgrade-design.md "Interaction": "name — next tier cost").
+#[must_use]
+fn shop_label_text(track: &UpgradeTrack, owned_tier: u8) -> String {
+    match track.tiers.get(owned_tier as usize) {
+        Some(next) => format!("{}  {}", track.name, next.cost),
+        None => format!("{}  MAX", track.name),
+    }
+}
+
+/// Clamp a restored save's upgrade map against the live [`UPGRADE_TRACKS`]
+/// table: an unknown track id (e.g. a track removed in a later build) is
+/// dropped, and a tier past that track's max (a hand-edited save, or one
+/// written by a build with more tiers) is clamped down to the max — the
+/// same "never trust the file, never panic" rule `load_or_init_save` already
+/// applies to the saved project index.
+#[must_use]
+fn validate_owned_upgrades(raw: BTreeMap<String, u8>) -> BTreeMap<String, u8> {
+    raw.into_iter()
+        .filter_map(|(id, tier)| {
+            UPGRADE_TRACKS
+                .iter()
+                .find(|t| t.id == id)
+                .map(|t| (id, tier.min(t.tiers.len() as u8)))
+        })
+        .collect()
+}
+
+/// The shop strip's open/closed state and which track is selected
+/// (docs/upgrade-design.md "Interaction": "`Tab` … toggles a shop strip …
+/// arrow keys/1-9 to select"). Hidden and unselected-at-zero by default —
+/// `Default::default()` gives `open: false, selected: 0`, which is exactly
+/// "closed, first track highlighted when it opens".
+#[derive(Resource, Debug, Default)]
+struct ShopState {
+    open: bool,
+    selected: usize,
+}
+
+/// A short-lived purchase confirmation ("Bought: Mechanical keyboard!")
+/// shown on the [`MoodLine`] node, overriding the mood-personality line for
+/// [`PURCHASE_FLASH_SECS`] — docs/upgrade-design.md "Interaction": "one-line
+/// HUD flash", reusing the mechanism `mood_render_system` already owns
+/// rather than adding a second text node. `None` when nothing is pending.
+#[derive(Resource, Default)]
+struct PurchaseFlash(Option<(String, Timer)>);
+
+/// How long a purchase confirmation stays on screen before
+/// `mood_render_system` reverts the `MoodLine` node to the ordinary mood
+/// line. Long enough to read a short sentence, short enough that it never
+/// lingers into the next mood change.
+const PURCHASE_FLASH_SECS: f32 = 3.0;
+
+// ---------------------------------------------------------------------------
 // Systems — input forwarding (M2, unchanged)
 // ---------------------------------------------------------------------------
 
@@ -420,86 +788,210 @@ fn setup_scene(mut commands: Commands) {
     // `&mut ChildSpawnerCommands`) emits the HUD root node as a child of the
     // desk root without any extra wrapper entity.
     let mut hud_spawner = ChildSpawnerCommands::new(commands, desk_root);
+    // The shop strip is spawned BEFORE the HUD, so it lands as the child
+    // just above it in the flex column (the spacer eats the remaining
+    // height, the shop strip and the HUD stack at the bottom in spawn
+    // order) — "one row above the HUD" per docs/upgrade-design.md.
+    spawn_shop_strip(&mut hud_spawner);
     spawn_hud(&mut hud_spawner);
 }
 
-/// Spawns the desk's full-window visual root and its desk-area child
-/// (placeholder room + three placeholder props), and returns the root's
-/// entity so the caller can parent the HUD bar under it.
+/// Marker on the HUD bar's root node.
+///
+/// Exists so tests can find the HUD by identity rather than by matching a
+/// styling value. The regression test for the "HUD not rendering" bug used
+/// to locate it by `height: 88px`, which silently broke the moment the bar
+/// was restyled — a test whose *locator* depends on cosmetics fails for
+/// reasons that have nothing to do with the invariant it guards.
+#[derive(Component)]
+struct HudRoot;
+
+/// Marker on the shop strip's root node — `shop_render_system` toggles its
+/// `Node.display` between `Flex` (open) and `None` (closed, zero layout
+/// space) from [`ShopState`].
+#[derive(Component)]
+struct ShopRoot;
+
+/// Marker + [`UPGRADE_TRACKS`] index on one shop item's background
+/// container. The selection highlight lives here (on the container's
+/// `BackgroundColor`) rather than on the label text, because `Text` nodes
+/// carry no background of their own.
+#[derive(Component)]
+struct ShopItemContainer(usize);
+
+/// Marker + [`UPGRADE_TRACKS`] index on one shop item's label text — its
+/// content and color (afford/dim/MAX) are written by `shop_render_system`.
+#[derive(Component)]
+struct ShopItemLabel(usize);
+
+/// Spawns the UI root that hosts the HUD, and returns its entity.
+///
+/// This root is deliberately **transparent and empty**: the room, desk,
+/// character and props are all real sprites drawn by [`scene::ScenePlugin`]
+/// now, not `Node` rectangles. It exists only to (a) carry the `Developer`
+/// component that the mood/idle systems query, and (b) give the HUD bar
+/// something to be the last flex child of, so it lands at the bottom.
+///
+/// It must stay transparent. `bevy_ui` draws *above* the 2D sprite layer, so
+/// any `BackgroundColor` on this root or its spacer paints over the entire
+/// pixel-art scene — which is exactly what happened when the placeholder
+/// props were still here: the sprites loaded and rendered correctly but were
+/// completely hidden behind an opaque full-window node.
 fn spawn_desk(commands: &mut Commands) -> Entity {
     commands
         .spawn((
-            // The developer character, mood starts Idle (M3's
-            // idle_detection_system drives it after that).
+            // The developer character's game state. The *visual* character is
+            // a sprite owned by `scene.rs`, which reads this mood; the
+            // component lives here because `idle_detection_system` and
+            // `mood_render_system` already query it via `.single()`.
             Developer { mood: Mood::Idle },
-            // The desk's visual root: a full-window container that the desk
-            // area fills (the HUD bar is a sibling in the same root).
             Node {
                 width: Val::Percent(100.0),
                 height: Val::Percent(100.0),
-                // Flex column so the desk area and the HUD stack vertically.
                 flex_direction: FlexDirection::Column,
                 ..default()
             },
         ))
         .with_children(|parent| {
-            // Desk area: a placeholder room that fills everything above the
-            // HUD. Colored rects stand in for art (plan §3.3).
-            parent
-                .spawn((
-                    Node {
-                        width: Val::Percent(100.0),
-                        // Flex-grow so the desk takes the remaining height
-                        // above the fixed-height HUD bar.
-                        flex_grow: 1.0,
-                        flex_direction: FlexDirection::Column,
-                        align_items: AlignItems::Center,
-                        justify_content: JustifyContent::Center,
-                        row_gap: px(24.0),
-                        ..default()
-                    },
-                    BackgroundColor(Color::srgb(0.13, 0.15, 0.20)),
-                ))
-                .with_children(|desk| {
-                    // The desk surface: a wide horizontal placeholder slab.
-                    desk.spawn((
-                        Node {
-                            width: px(520.0),
-                            height: px(24.0),
-                            ..default()
-                        },
-                        BackgroundColor(Color::srgb(0.45, 0.32, 0.20)),
-                    ));
-                    // A placeholder "computer" prop next to the developer.
-                    desk.spawn((
-                        Node {
-                            width: px(140.0),
-                            height: px(90.0),
-                            ..default()
-                        },
-                        BackgroundColor(Color::srgb(0.20, 0.22, 0.28)),
-                    ));
-                    // The M5 desk-upgrade prop: a placeholder "plant" that is
-                    // hidden until the wallet crosses [`DESK_UPGRADE_COST`]
-                    // (plan §4/M5 "a coin threshold unlocks a second
-                    // placeholder prop"). Marked `DeskUpgradeProp` so
-                    // `desk_upgrade_system` can toggle its `Visibility`
-                    // component; it spawns `Visibility::Hidden` (the "hidden"
-                    // state — Bevy's render pipeline skips hidden entities,
-                    // so it draws nothing).
-                    desk.spawn((
-                        Node {
-                            width: px(60.0),
-                            height: px(80.0),
-                            ..default()
-                        },
-                        BackgroundColor(Color::srgb(0.25, 0.55, 0.30)),
-                        DeskUpgradeProp,
-                        Visibility::Hidden,
-                    ));
-                });
+            // A transparent spacer that eats all the height above the HUD, so
+            // the fixed-height HUD bar spawned after it sits at the bottom.
+            // No `BackgroundColor` — see the note above.
+            parent.spawn(Node {
+                width: Val::Percent(100.0),
+                flex_grow: 1.0,
+                ..default()
+            });
         })
         .id()
+}
+
+/// The HUD's activity line: what the user is ACTUALLY doing (ADR 0009).
+///
+/// v0.2 showed generated fiction here ("Project: Fix login flow"). The line
+/// now names the real foreground application when the OS will tell us —
+/// application identity only, never window titles, which leak file names and
+/// page contents. When the compositor declines (Wayland-native focus, no
+/// window server, feature off) the line falls back to a generic label rather
+/// than a guess or a stale value.
+#[derive(Resource)]
+struct ActiveAppHud {
+    /// `None` when construction failed or the `active-app` feature is off.
+    #[cfg(feature = "active-app")]
+    watcher: Option<activity::ActiveAppWatcher>,
+    /// The watcher refreshes internally at 1 Hz, so polling faster buys
+    /// nothing; this timer keeps the system honest about that.
+    refresh: Timer,
+    line: String,
+}
+
+impl Default for ActiveAppHud {
+    fn default() -> Self {
+        Self {
+            #[cfg(feature = "active-app")]
+            watcher: match activity::ActiveAppWatcher::new() {
+                Ok(watcher) => Some(watcher),
+                // Caller-actionable message (stale XAUTHORITY, headless…);
+                // not fatal — the HUD just stays generic.
+                Err(err) => {
+                    warn!(
+                        "active-app detection unavailable ({err}); HUD shows \
+                         a generic activity line"
+                    );
+                    None
+                }
+            },
+            refresh: Timer::from_seconds(1.0, TimerMode::Repeating),
+            line: activity_line(None),
+        }
+    }
+}
+
+impl ActiveAppHud {
+    /// Fixture for `build_app_with_seed`: no watcher, so captures are
+    /// deterministic instead of depending on what the build machine happens
+    /// to have focused.
+    fn disconnected() -> Self {
+        Self {
+            #[cfg(feature = "active-app")]
+            watcher: None,
+            refresh: Timer::from_seconds(1.0, TimerMode::Repeating),
+            line: activity_line(None),
+        }
+    }
+}
+
+/// The verb map: raw app id -> a line that doesn't lie. "Coding in Firefox"
+/// would be fiction, so the verb comes from the id and the name from the
+/// friendly display string. Plain `fn` so it is unit-testable (plan §3.2).
+fn activity_line(app: Option<(&str, &str)>) -> String {
+    let Some((id, display)) = app else {
+        // Unknown is an honest state, not an error — never guess, never
+        // hold a stale name (the watcher already clears its own cache).
+        return "Working...".to_string();
+    };
+    let coding = [
+        "code", "codium", "cursor", "zed", "sublime", "gvim", "neovide", "emacs",
+    ];
+    let browsing = [
+        "firefox",
+        "chromium",
+        "google-chrome",
+        "brave",
+        "vivaldi",
+        "epiphany",
+    ];
+    let terminal = [
+        "kitty",
+        "alacritty",
+        "gnome-terminal",
+        "konsole",
+        "ghostty",
+        "wezterm",
+        "xterm",
+    ];
+    if coding.iter().any(|c| id.starts_with(c)) || id.starts_with("jetbrains-") {
+        format!("Coding in {display}")
+    } else if browsing.contains(&id) {
+        format!("Browsing in {display}")
+    } else if terminal.contains(&id) {
+        "In the terminal".to_string()
+    } else {
+        format!("In {display}")
+    }
+}
+
+/// Refresh the activity line once a second from the watcher.
+fn active_app_hud_system(time: Res<Time>, mut hud: ResMut<ActiveAppHud>) {
+    if !hud.refresh.tick(time.delta()).just_finished() {
+        return;
+    }
+    #[cfg(feature = "active-app")]
+    {
+        let app: Option<(String, String)> = hud
+            .watcher
+            .as_mut()
+            .and_then(|w| w.current())
+            .map(|a| (a.id().to_string(), a.display().to_string()));
+        hud.line = activity_line(app.as_ref().map(|(i, d)| (i.as_str(), d.as_str())));
+    }
+}
+
+/// Toggle always-on-top with F10.
+///
+/// Deliberately a keybinding rather than a setting: the moments you need it
+/// off (screen share, fullscreen video) are momentary, and quitting to edit a
+/// config to get your screen back is a worse experience than the problem.
+fn toggle_always_on_top(keys: Res<ButtonInput<KeyCode>>, mut windows: Query<&mut Window>) {
+    if !keys.just_pressed(KeyCode::F10) {
+        return;
+    }
+    for mut window in &mut windows {
+        window.window_level = match window.window_level {
+            bevy::window::WindowLevel::AlwaysOnTop => bevy::window::WindowLevel::Normal,
+            _ => bevy::window::WindowLevel::AlwaysOnTop,
+        };
+        info!("always-on-top: {:?}", window.window_level);
+    }
 }
 
 /// Forward the window's focus state into the provider (plan §3.1).
@@ -512,9 +1004,7 @@ fn forward_focus_events(
     mut focus_events: MessageReader<WindowFocused>,
 ) {
     for event in focus_events.read() {
-        source
-            .0
-            .record([ActivityEvent::FocusChanged(event.focused)]);
+        source.record([ActivityEvent::FocusChanged(event.focused)]);
     }
 }
 
@@ -525,7 +1015,7 @@ fn forward_keyboard_events(
     mut keyboard_events: MessageReader<KeyboardInput>,
 ) {
     for _event in keyboard_events.read() {
-        source.0.record([ActivityEvent::Keystroke]);
+        source.record([ActivityEvent::Keystroke]);
     }
 }
 
@@ -534,9 +1024,28 @@ fn forward_keyboard_events(
 fn forward_mouse_events(
     mut source: ResMut<ActivitySource>,
     mut mouse_motion: MessageReader<MouseMotion>,
+    time: Res<Time>,
+    mut since_last: Local<f32>,
 ) {
-    for _event in mouse_motion.read() {
-        source.0.record([ActivityEvent::MouseMoved]);
+    // Coalesce to at most ONE MouseMoved per MOUSE_SAMPLE_SECS, no matter how
+    // many motion messages arrived.
+    //
+    // A mouse reports motion at 125-1000 Hz, so recording one event per
+    // message let a couple of seconds of aimless wiggling pin `recent_rate` at
+    // its ceiling and burn through a whole project — the reported "bar goes
+    // burr on simple mouse move" bug. Emitting per FRAME is not enough either:
+    // at 60fps that is 60 events/s, which even at MOUSE_WEIGHT still reaches
+    // the ceiling on its own. Sampling on a wall-clock interval decouples the
+    // signal from both mouse polling rate and frame rate.
+    *since_last += time.delta_secs();
+    let moved = mouse_motion.read().count() > 0;
+    if moved && *since_last >= MOUSE_SAMPLE_SECS {
+        *since_last = 0.0;
+        source.record([ActivityEvent::MouseMoved]);
+    } else if !moved {
+        // Cap the accumulator so a long still period cannot bank credit and
+        // make the first twitch after it count extra.
+        *since_last = since_last.min(MOUSE_SAMPLE_SECS);
     }
 }
 
@@ -561,7 +1070,7 @@ fn activity_bridge_system(
     times: Res<Time>,
 ) {
     let dt = times.delta();
-    let events = source.0.poll();
+    let events = source.poll();
     meter.recent_rate = decay_and_accumulate(meter.recent_rate, &events, dt);
     let fresh = non_focus_event(&events);
     if fresh {
@@ -725,8 +1234,10 @@ fn mood_line(mood: Mood) -> Option<&'static str> {
 }
 
 /// `Developer.mood` → `MoodLabel` text + color (plan §3.2), plus the
-/// personality line on the `MoodLine` node (plan §4/M5) — set on `OnBreak`,
-/// cleared for the other moods.
+/// `MoodLine` node (plan §4/M5): the mood's personality line normally, or —
+/// while a [`PurchaseFlash`] is pending — the "Bought: …!" confirmation
+/// instead, reusing this one node rather than adding a second (see
+/// [`PurchaseFlash`]'s doc for why).
 ///
 /// The two `&mut Text` queries (the mood label and the mood line) are merged
 /// into one `ParamSet` because Bevy 0.19's query-state validator does not
@@ -740,6 +1251,8 @@ fn mood_line(mood: Mood) -> Option<&'static str> {
     reason = "ParamSet of 2 disjoint mood text queries — factoring into type aliases loses the elided lifetimes the ParamSet impl needs"
 )]
 fn mood_render_system(
+    time: Res<Time>,
+    mut flash: ResMut<PurchaseFlash>,
     developer: Query<&Developer>,
     mut texts: ParamSet<(
         Query<(&mut Text, &mut TextColor), With<MoodLabel>>,
@@ -753,8 +1266,22 @@ fn mood_render_system(
         *text = Text::new(format!("Mood: {}", dev.mood.label()));
         *color = TextColor(dev.mood.color());
     }
-    for mut line in &mut texts.p1() {
-        *line = Text::new(mood_line(dev.mood).unwrap_or_default());
+
+    // `take()` the flash so mutating it back in (still pending) or leaving
+    // it as `None` (expired, or never set) needs no borrow gymnastics.
+    let line: String = match flash.0.take() {
+        Some((message, mut timer)) => {
+            if timer.tick(time.delta()).is_finished() {
+                mood_line(dev.mood).unwrap_or_default().to_string()
+            } else {
+                flash.0 = Some((message.clone(), timer));
+                message
+            }
+        }
+        None => mood_line(dev.mood).unwrap_or_default().to_string(),
+    };
+    for mut text_node in &mut texts.p1() {
+        *text_node = Text::new(line.clone());
     }
 }
 
@@ -783,6 +1310,7 @@ fn mood_render_system(
 )]
 fn hud_render_system(
     project: Res<CurrentProject>,
+    app_hud: Res<ActiveAppHud>,
     wallet: Res<Wallet>,
     xp: Res<PlayerXp>,
     mut fill: Query<&mut Node, With<ProgressBarFill>>,
@@ -800,81 +1328,189 @@ fn hud_render_system(
         *text = Text::new(format!("Coins: {}", wallet.0));
     }
     for mut text in &mut texts.p1() {
-        *text = Text::new(format!("Lv {} · {} XP", xp.level, xp.xp));
+        *text = Text::new(format!("Lv {} | {} XP", xp.level, xp.xp));
     }
     for mut text in &mut texts.p2() {
-        *text = Text::new(format!("Project: {}", project.name));
+        // The real activity line (ADR 0009), not the internal project's
+        // fictional name — the project still exists mechanically (work,
+        // rewards), it just no longer masquerades as what the user is doing.
+        *text = Text::new(app_hud.line.clone());
     }
 }
 
-/// The M5 desk upgrade (plan §4/M5: "a coin threshold unlocks a second
-/// placeholder prop … proves the 'world visibly changes' hook without real
-/// art").
+// ---------------------------------------------------------------------------
+// Systems — v0.3 shop (docs/upgrade-design.md "Interaction")
+// ---------------------------------------------------------------------------
+
+/// `Tab` toggles the shop strip; while open, `Left`/`Right` and `1`-`7` move
+/// the selection and `Enter` buys the selected track's next tier if
+/// affordable (docs/upgrade-design.md "Interaction"). Closed is the default
+/// (per [`ShopState`]), and closing again does not reset the selection — a
+/// player who reopens it lands back where they left off.
 ///
-/// While `Wallet >= [`DESK_UPGRADE_COST`]` the placeholder plant prop on the
-/// desk carries `Visibility::Visible` and is rendered; below the threshold
-/// it carries `Visibility::Hidden` and Bevy's render pipeline skips it (the
-/// "hidden" state). The prop entity is spawned once by [`spawn_desk`] and
-/// kept alive; this system only swaps the `Visibility` *component*
-/// (visible ↔ hidden), so the entity's identity is stable and there is no
-/// spawn/despawn churn.
-///
-/// (Bevy 0.19 note: `Node` — the `bevy_ui` layout component — has no
-/// `visibility` field, and `EntityCommands` has no `despawn_component`;
-/// toggling the `Visibility` *component* via `Command` is the clean,
-/// chainable way to show/hide. Visibility is a standard Bevy concept the
-/// plan §3.3 already relies on for the placeholder `Node` UI, so this adds
-/// no new architecture.)
-///
-/// The upgrade is **non-persistent**: it is derived from the persisted
-/// wallet every frame, so a relaunch whose wallet already meets the
-/// threshold re-unlocks it automatically. This avoids extending the plan
-/// §3.4 `SaveData` shape (the plan's M5 text offers "keep it non-persistent
-/// if simpler") — see the M5 milestone-log entry.
-///
-/// Logs one `info!` per unlock (a `Local<bool>` edge trigger, the same
-/// pattern M2's removed counter log used with `Local<usize>`) so a headless
-/// smoke run leaves an audit trail — the window's pixels aren't visible from
-/// an agent session. A wallet that already meets the threshold at startup
-/// (a restored save) unlocks silently: the plant is simply there, which is
-/// the correct visible behavior for a returning player.
-fn desk_upgrade_system(
-    mut commands: Commands,
-    wallet: Res<Wallet>,
-    mut prop: Query<Entity, With<DeskUpgradeProp>>,
-    mut ever_unlocked: Local<bool>,
+/// Buying is a plain resource mutation (`Wallet`/`OwnedUpgrades`), not a
+/// `Command` — unlike `desk_upgrade_system`'s old `Visibility` toggle, there
+/// is no entity to defer against, so the wallet/tier/flash all update in the
+/// same frame the key was pressed (what the buy-logic tests below expect of
+/// [`try_buy_tier`], and what makes the flash feel instant).
+fn shop_input_system(
+    keys: Res<ButtonInput<KeyCode>>,
+    mut shop: ResMut<ShopState>,
+    mut wallet: ResMut<Wallet>,
+    mut owned: ResMut<OwnedUpgrades>,
+    mut flash: ResMut<PurchaseFlash>,
 ) {
-    let unlocked = wallet.0 >= DESK_UPGRADE_COST;
-    for entity in &mut prop {
-        // The prop entity is always spawned (by `setup_scene`); this query
-        // is empty only in a test fixture that didn't build the desk. Swap
-        // the `Visibility` component to show/hide it. (Commands are applied
-        // at frame end, so the change takes effect on the *next* frame —
-        // deterministic, and exactly what the app-driven test asserts.)
-        commands
-            .entity(entity)
-            .remove::<Visibility>()
-            .insert(if unlocked {
-                Visibility::Visible
-            } else {
-                Visibility::Hidden
-            });
+    if keys.just_pressed(KeyCode::Tab) {
+        shop.open = !shop.open;
     }
-    if unlocked && !*ever_unlocked {
-        *ever_unlocked = true;
-        info!(
-            "desk upgrade unlocked: the desk plant appeared (wallet {} ≥ {} coins)",
-            wallet.0, DESK_UPGRADE_COST
-        );
+    if !shop.open {
+        return; // arrows/digits/Enter are shop-only bindings while closed
     }
-    if !unlocked && *ever_unlocked {
-        *ever_unlocked = false;
+
+    let len = UPGRADE_TRACKS.len();
+    if keys.just_pressed(KeyCode::ArrowRight) {
+        shop.selected = (shop.selected + 1) % len;
+    }
+    if keys.just_pressed(KeyCode::ArrowLeft) {
+        shop.selected = (shop.selected + len - 1) % len;
+    }
+    const DIGIT_KEYS: [KeyCode; 7] = [
+        KeyCode::Digit1,
+        KeyCode::Digit2,
+        KeyCode::Digit3,
+        KeyCode::Digit4,
+        KeyCode::Digit5,
+        KeyCode::Digit6,
+        KeyCode::Digit7,
+    ];
+    for (i, key) in DIGIT_KEYS.into_iter().enumerate().take(len) {
+        if keys.just_pressed(key) {
+            shop.selected = i;
+        }
+    }
+
+    if keys.just_pressed(KeyCode::Enter) {
+        let track = &UPGRADE_TRACKS[shop.selected];
+        let owned_tier = owned.tier_of(track.id);
+        // Unaffordable or already maxed: `try_buy_tier` returns `None` and
+        // Enter is a no-op, per the design doc ("Enter does nothing").
+        if let Some((new_wallet, new_tier)) = try_buy_tier(track, wallet.0, owned_tier) {
+            wallet.0 = new_wallet;
+            owned.0.insert(track.id.to_string(), new_tier);
+            let flavor = track.tiers[(new_tier - 1) as usize].flavor;
+            info!(
+                "bought {} tier {new_tier} ({flavor}) — wallet now {}",
+                track.name, wallet.0
+            );
+            flash.0 = Some((
+                format!("Bought: {flavor}!"),
+                Timer::from_seconds(PURCHASE_FLASH_SECS, TimerMode::Once),
+            ));
+        }
+    }
+}
+
+/// Renders the shop strip from [`ShopState`]/`Wallet`/`OwnedUpgrades`: opens
+/// or closes the strip (`Node.display`, so a closed strip takes zero layout
+/// space — it must never nudge the room or the HUD, per the design doc's
+/// "never blocks the game … or steals the whole screen"), highlights the
+/// selected item, and labels each item `"Name  cost"`/`"Name  MAX"`, dimmed
+/// when unaffordable.
+fn shop_render_system(
+    shop: Res<ShopState>,
+    wallet: Res<Wallet>,
+    owned: Res<OwnedUpgrades>,
+    mut root: Query<&mut Node, With<ShopRoot>>,
+    mut containers: Query<(&ShopItemContainer, &mut BackgroundColor)>,
+    mut labels: Query<(&ShopItemLabel, &mut Text, &mut TextColor)>,
+) {
+    for mut node in &mut root {
+        node.display = if shop.open {
+            Display::Flex
+        } else {
+            Display::None
+        };
+    }
+    if !shop.open {
+        return; // nothing visible to keep in sync while closed
+    }
+
+    for (container, mut bg) in &mut containers {
+        *bg = BackgroundColor(if container.0 == shop.selected {
+            Color::srgb(0.420, 0.271, 0.169) // the HUD's own wood accent — reused, not invented
+        } else {
+            Color::NONE
+        });
+    }
+
+    for (label, mut text, mut color) in &mut labels {
+        let track = &UPGRADE_TRACKS[label.0];
+        let owned_tier = owned.tier_of(track.id);
+        *text = Text::new(shop_label_text(track, owned_tier));
+        let maxed = owned_tier as usize == track.tiers.len();
+        let affordable = !maxed && wallet.0 >= track.tiers[owned_tier as usize].cost;
+        *color = TextColor(if maxed {
+            Color::srgb(0.498, 0.831, 0.757) // the mood label's own "Coding" teal — a quiet "done"
+        } else if affordable {
+            Color::srgb(0.949, 0.878, 0.788) // normal HUD text cream
+        } else {
+            Color::srgb(0.45, 0.40, 0.48) // dimmed: visibly present, visibly unaffordable
+        });
     }
 }
 
 // ---------------------------------------------------------------------------
 // Scene spawners (M1 layout, M3 markers added)
 // ---------------------------------------------------------------------------
+
+/// Spawns the shop strip (docs/upgrade-design.md "Interaction": "a shop
+/// strip the size of a HUD row"): one row, one item per [`UPGRADE_TRACKS`]
+/// entry, `Display::None` by default so `Tab` (closed by default) costs
+/// nothing in layout space until it is opened.
+///
+/// Text content/color and the selection highlight are all placeholder here
+/// (tier 0, unselected) — `shop_render_system` overwrites them every frame
+/// the strip is open, starting on the very first frame it opens (see that
+/// system's early return: it skips work only while `!shop.open`).
+fn spawn_shop_strip(parent: &mut ChildSpawnerCommands) {
+    parent
+        .spawn((
+            Node {
+                width: Val::Percent(100.0),
+                height: px(24.0),
+                display: Display::None,
+                flex_direction: FlexDirection::Row,
+                justify_content: JustifyContent::SpaceEvenly,
+                align_items: AlignItems::Center,
+                padding: UiRect::axes(px(8.0), px(2.0)),
+                ..default()
+            },
+            // One shade darker than the HUD bar — a shelf mounted above the
+            // shelf, not a separate window.
+            BackgroundColor(Color::srgb(0.098, 0.086, 0.129)),
+            ShopRoot,
+        ))
+        .with_children(|row| {
+            for (i, track) in UPGRADE_TRACKS.iter().enumerate() {
+                row.spawn((
+                    Node {
+                        padding: UiRect::axes(px(6.0), px(2.0)),
+                        ..default()
+                    },
+                    BackgroundColor(Color::NONE),
+                    ShopItemContainer(i),
+                ))
+                .with_children(|item| {
+                    item.spawn((
+                        Text::new(shop_label_text(track, 0)),
+                        TextFont::from_font_size(px(12.0)),
+                        TextColor(Color::srgb(0.949, 0.878, 0.788)),
+                        ShopItemLabel(i),
+                    ));
+                });
+            }
+        });
+}
 
 /// Spawns the HUD bar pinned to the bottom of the window.
 ///
@@ -889,16 +1525,27 @@ fn spawn_hud(parent: &mut ChildSpawnerCommands) {
         .spawn((
             Node {
                 width: Val::Percent(100.0),
-                height: px(88.0),
+                height: px(64.0),
                 flex_direction: FlexDirection::Column,
                 justify_content: JustifyContent::Center,
                 row_gap: px(4.0),
                 padding: UiRect::axes(px(12.0), px(6.0)),
                 ..default()
             },
-            BackgroundColor(Color::srgb(0.09, 0.10, 0.13)),
+            BackgroundColor(Color::srgb(0.141, 0.122, 0.180)),
+            HudRoot,
         ))
         .with_children(|hud| {
+            // A 2px wooden lip along the top edge: the HUD should read as a
+            // shelf the room rests on, not a panel pasted over the art.
+            hud.spawn((
+                Node {
+                    width: Val::Percent(100.0),
+                    height: px(2.0),
+                    ..default()
+                },
+                BackgroundColor(Color::srgb(0.545, 0.369, 0.235)),
+            ));
             // --- Progress bar (hardcoded 0% for M1; `hud_render_system`
             //     drives it from `CurrentProject` in M3) ---
             hud.spawn((
@@ -907,7 +1554,7 @@ fn spawn_hud(parent: &mut ChildSpawnerCommands) {
                     height: px(14.0),
                     ..default()
                 },
-                BackgroundColor(Color::srgb(0.20, 0.22, 0.26)),
+                BackgroundColor(Color::srgb(0.420, 0.271, 0.169)),
             ))
             .with_children(|bar| {
                 // Starts at 0% width (M1); `hud_render_system` (M3) updates
@@ -918,7 +1565,7 @@ fn spawn_hud(parent: &mut ChildSpawnerCommands) {
                         height: Val::Percent(100.0),
                         ..default()
                     },
-                    BackgroundColor(Color::srgb(0.10, 0.60, 0.35)),
+                    BackgroundColor(Color::srgb(0.306, 0.545, 0.310)),
                     ProgressBarFill,
                 ));
             });
@@ -937,14 +1584,14 @@ fn spawn_hud(parent: &mut ChildSpawnerCommands) {
                 row.spawn((
                     Text::new("Coins: 0"),
                     TextFont::from_font_size(px(14.0)),
-                    TextColor(Color::srgb(0.95, 0.80, 0.30)),
+                    TextColor(Color::srgb(0.910, 0.769, 0.416)),
                     CoinCount,
                 ));
                 // Xp / level (hardcoded Lv 1, 0 XP for M1; `XpLevel` — M3).
                 row.spawn((
-                    Text::new("Lv 1 · 0 XP"),
+                    Text::new("Lv 1 | 0 XP"),
                     TextFont::from_font_size(px(14.0)),
-                    TextColor(Color::srgb(0.9, 0.9, 0.9)),
+                    TextColor(Color::srgb(0.949, 0.878, 0.788)),
                     XpLevel,
                 ));
                 // Mood label. Marked `MoodLabel` so `mood_render_system`
@@ -953,7 +1600,7 @@ fn spawn_hud(parent: &mut ChildSpawnerCommands) {
                 row.spawn((
                     Text::new("Mood: Idle"),
                     TextFont::from_font_size(px(14.0)),
-                    TextColor(Color::srgb(0.45, 0.75, 0.95)),
+                    TextColor(Color::srgb(0.498, 0.831, 0.757)),
                     MoodLabel,
                 ));
             });
@@ -961,9 +1608,9 @@ fn spawn_hud(parent: &mut ChildSpawnerCommands) {
             // --- Project name row (M3: shows which static-list project is
             //     in progress, updated by the real `hud_render_system`) ---
             hud.spawn((
-                Text::new("Project: Fix login flow"),
+                Text::new("Working..."),
                 TextFont::from_font_size(px(14.0)),
-                TextColor(Color::srgb(0.75, 0.85, 0.95)),
+                TextColor(Color::srgb(0.949, 0.878, 0.788)),
                 ProjectName,
             ));
 
@@ -973,7 +1620,7 @@ fn spawn_hud(parent: &mut ChildSpawnerCommands) {
             hud.spawn((
                 Text::new(""),
                 TextFont::from_font_size(px(12.0)),
-                TextColor(Color::srgb(0.70, 0.65, 0.50)),
+                TextColor(Color::srgb(1.000, 0.851, 0.541)),
                 MoodLine,
             ));
         });
@@ -1018,6 +1665,14 @@ struct SaveData {
     /// install (there is always a current project once the game has started;
     /// a malformed save is treated as fresh, see [`load_save_file`]).
     current_project: Option<CurrentProjectSave>,
+    /// Owned upgrade tiers, `track_id -> owned_tier` (mirrors
+    /// `OwnedUpgrades`; docs/upgrade-design.md "Persistence").
+    /// `#[serde(default)]` so a v0.2 save with no `upgrades` key at all
+    /// (written before this field existed) deserializes to an empty map
+    /// instead of failing — the migration note's "nobody loses coins,
+    /// nothing crashes" guarantee.
+    #[serde(default)]
+    upgrades: BTreeMap<String, u8>,
 }
 
 /// The slice of a [`CurrentProject`] that survives a quit/relaunch
@@ -1147,6 +1802,7 @@ fn save_data_from_resources(
     xp: &PlayerXp,
     project: &CurrentProject,
     index: &NextProjectIndex,
+    owned: &OwnedUpgrades,
 ) -> SaveData {
     SaveData {
         wallet: wallet.0,
@@ -1156,6 +1812,7 @@ fn save_data_from_resources(
             index: index.0,
             work_done: project.work_done,
         }),
+        upgrades: owned.0.clone(),
     }
 }
 
@@ -1174,6 +1831,7 @@ fn load_or_init_save(
     mut xp: ResMut<PlayerXp>,
     mut project: ResMut<CurrentProject>,
     mut index: ResMut<NextProjectIndex>,
+    mut owned: ResMut<OwnedUpgrades>,
 ) {
     let path = effective_save_path();
     match load_save_file(&path) {
@@ -1193,6 +1851,10 @@ fn load_or_init_save(
                 index.0 = idx;
                 *project = rolled;
             }
+            // Never trust the file: an unknown track id or an out-of-range
+            // tier is dropped/clamped rather than carried into the live
+            // resource (see `validate_owned_upgrades`).
+            owned.0 = validate_owned_upgrades(data.upgrades);
             info!(
                 "restored save: wallet {} · level {} · {} XP · project '{}' ({:.1}/{:.1} work)",
                 wallet.0, xp.level, xp.xp, project.name, project.work_done, project.total_work
@@ -1220,6 +1882,11 @@ fn load_or_init_save(
 /// always `Playing` once `Startup` finishes, so the gate is a no-op in
 /// practice — but it matches the plan's stated shape and stays correct if a
 /// later state is added).
+#[allow(
+    clippy::too_many_arguments,
+    reason = "each param is a distinct Bevy system resource the save shape needs; bundling them \
+              into a struct would just move the field count, not reduce it"
+)]
 fn save_system(
     state: Res<State<AppState>>,
     mut save_timer: ResMut<SaveTimer>,
@@ -1228,6 +1895,7 @@ fn save_system(
     xp: Res<PlayerXp>,
     project: Res<CurrentProject>,
     index: Res<NextProjectIndex>,
+    owned: Res<OwnedUpgrades>,
 ) {
     let dt = times.delta();
     save_timer.0.tick(dt);
@@ -1242,7 +1910,7 @@ fn save_system(
     if !save_timer.0.just_finished() || !(state.get() == &AppState::Playing) {
         return;
     }
-    let data = save_data_from_resources(&wallet, &xp, &project, &index);
+    let data = save_data_from_resources(&wallet, &xp, &project, &index, &owned);
     let path = effective_save_path();
     match write_save_file(&path, &data) {
         Ok(()) => info!(
@@ -1294,10 +1962,12 @@ fn enter_playing(world: &mut World) {
 /// a one-line call into this function.
 pub fn run() {
     App::new()
-        .add_plugins(DefaultPlugins)
+        .add_plugins(configured_default_plugins())
+        .add_plugins(scene::ScenePlugin)
         // M2 activity resources — inserted during construction, so they
         // exist before any Update frame runs.
         .init_resource::<ActivitySource>()
+        .init_resource::<ActiveAppHud>()
         .init_resource::<ActivityMeter>()
         // M3 progression resources — same rule: present before the first
         // FixedUpdate/Update. `CurrentProject` starts at the first static
@@ -1306,6 +1976,11 @@ pub fn run() {
         .insert_resource(PlayerXp::default())
         .insert_resource(project_at(0))
         .init_resource::<NextProjectIndex>()
+        // v0.3 upgrade/shop resources (docs/upgrade-design.md) — empty/
+        // closed by default, exactly "not yet bought" / "not yet opened".
+        .init_resource::<OwnedUpgrades>()
+        .init_resource::<ShopState>()
+        .init_resource::<PurchaseFlash>()
         // M4 persistence: the autosave interval timer (plan §3.2/§3.4).
         .insert_resource(SaveTimer::new())
         // M3 messages (Bevy 0.19: `add_message` per type — there is no
@@ -1343,18 +2018,22 @@ pub fn run() {
             //   3. forward_mouse_events    (input → provider)
             //   4. activity_bridge_system  (drain → rate, reset/tick timer)
             //   5. idle_detection_system   (mood ↔ idle, M3)
-            //   6. desk_upgrade_system     (M5: toggle the plant prop's
-            //                               visibility at the wallet threshold)
+            //   6. shop_input_system       (v0.3: Tab/arrows/digits/Enter —
+            //                               open/select/buy)
             //   7. project_progress_system is FixedUpdate (below)
             //   8. project_completion_system (work_done ≥ total → award, roll)
             //   9. xp_level_system              (coins/xp in, level out)
-            //  10. mood_render_system      (mood → label text/color + mood line)
+            //  10. mood_render_system      (mood/flash → label + mood line)
             //  11. hud_render_system       (resources → bar/text, M3 real HUD)
-            //  12. save_system (M4) — autosave every SAVE_INTERVAL seconds
+            //  12. shop_render_system      (v0.3: ShopState → strip display/
+            //                               highlight/labels)
+            //  13. save_system (M4) — autosave every SAVE_INTERVAL seconds
             //      when AppState::Playing (plan §3.2/§3.4).
             //
             //   (The M2 `debug_counter_hud_system` sat here and was removed in
-            //   M5 — plan §4/M5.)
+            //   M5 — plan §4/M5. M5's `desk_upgrade_system` sat here and was
+            //   replaced in v0.3 by the shop + `scene::upgrade_render_system`
+            //   — docs/upgrade-design.md's migration note.)
             (
                 // Forward Bevy input events into the provider — the ONLY
                 // place Bevy input events are read; no game system reads
@@ -1368,15 +2047,11 @@ pub fn run() {
                 // M3: flip the mood to Coding on fresh activity, to
                 // OnBreak after IDLE_THRESHOLD seconds of silence.
                 idle_detection_system,
-                // M5: the desk plant upgrade — show the placeholder prop
-                // once the wallet crosses the coin threshold (plan §4/M5).
-                // Toggles the prop's `Visibility` component via a `Command`
-                // (applied at frame end → visible next frame). Reads only the
-                // `Wallet` resource, which `xp_level_system` (later in the
-                // chain) updates, so an upgrade earned this frame shows next
-                // frame — the deterministic behavior the app-driven test
-                // asserts.
-                desk_upgrade_system,
+                toggle_always_on_top,
+                // v0.3: open/close the shop, move the selection, buy on
+                // Enter — before the render systems below so a purchase
+                // this frame is reflected in the same frame's HUD/shop/scene.
+                shop_input_system,
                 // M3: complete the project when the bar is full and roll
                 // the next one from the static list (plan §3.2).
                 // Runs after project_progress_system (FixedUpdate precedes
@@ -1386,11 +2061,15 @@ pub fn run() {
                 // M3: award the fired ProjectCompleted (coins/xp) and fire
                 // LevelUp if level_for_xp crossed a threshold.
                 xp_level_system,
-                // M3: mood → label text + color (plan §3.2).
+                // M3: mood → label text + color (plan §3.2); v0.3: also
+                // shows/ticks the purchase-confirmation flash.
+                active_app_hud_system,
                 mood_render_system,
                 // M3: the real HUD — progress-bar fill width, coin /
                 // xp-level / project-name text from resources (plan §3.2).
                 hud_render_system,
+                // v0.3: the shop strip's own display/highlight/labels.
+                shop_render_system,
                 // M4: tick the SaveTimer and autosave when it fires, gated
                 // on AppState::Playing (plan §3.2/§3.4).
                 save_system,
@@ -1408,15 +2087,29 @@ pub fn run() {
 /// scene in-process with a known state — no window-manager or compositor
 /// tooling required: the probe attaches Bevy's `Screenshot` component and
 /// the game writes its own framebuffer to disk.
-pub fn build_app_with_seed(seed_wallet: u64, seed_xp: u32, seed_work_done: f32) -> App {
+///
+/// `seed_upgrades` seeds [`OwnedUpgrades`] (shotcap's
+/// `DEV_COMPANION_SEED_UPGRADES`, e.g. `"keyboard=2,pet=1"`) so a capture can
+/// photograph an owned state without playing through it — validated through
+/// [`validate_owned_upgrades`] the same as a restored save, so a typo'd
+/// track id or an out-of-range tier degrades gracefully instead of panicking
+/// a visual-verification run.
+pub fn build_app_with_seed(
+    seed_wallet: u64,
+    seed_xp: u32,
+    seed_work_done: f32,
+    seed_upgrades: BTreeMap<String, u8>,
+) -> App {
     // Redirect save I/O to a temp path (the test seam) so the probe never
     // reads or writes the user's real save file.
     let tmp = std::env::temp_dir().join(format!("dev-companion-shotcap-{}", std::process::id()));
     set_save_path(Some(tmp.join("save.json")));
 
     let mut app = App::new();
-    app.add_plugins(DefaultPlugins);
+    app.add_plugins(configured_default_plugins());
+    app.add_plugins(scene::ScenePlugin);
     app.init_resource::<ActivitySource>();
+    app.insert_resource(ActiveAppHud::disconnected());
     app.init_resource::<ActivityMeter>();
     // Seeded progression state — present before the first frame so the HUD
     // shows real numbers immediately.
@@ -1431,6 +2124,9 @@ pub fn build_app_with_seed(seed_wallet: u64, seed_xp: u32, seed_work_done: f32) 
         p
     });
     app.init_resource::<NextProjectIndex>();
+    app.insert_resource(OwnedUpgrades(validate_owned_upgrades(seed_upgrades)));
+    app.init_resource::<ShopState>();
+    app.init_resource::<PurchaseFlash>();
     app.insert_resource(SaveTimer::new());
     app.add_message::<ProjectCompleted>();
     app.add_message::<LevelUp>();
@@ -1448,11 +2144,15 @@ pub fn build_app_with_seed(seed_wallet: u64, seed_xp: u32, seed_work_done: f32) 
             forward_mouse_events,
             activity_bridge_system,
             idle_detection_system,
-            desk_upgrade_system,
+            // (`toggle_always_on_top` is deliberately omitted here, same as
+            // before v0.3 — the probe has no window to toggle.)
+            shop_input_system,
             project_completion_system,
             xp_level_system,
+            active_app_hud_system,
             mood_render_system,
             hud_render_system,
+            shop_render_system,
             save_system,
         )
             .chain(),
@@ -1499,7 +2199,8 @@ mod tests {
         // pattern as M2's rate test) converges the rate to
         // MAX_RECENT_RATE; `progress_delta` is linear in rate, so the work
         // per simulated second is bounded by MAX_RECENT_RATE *
-        // MIN_WORK_PER_EVENT = 6.0 work/s. Simulate 60 s of that mash
+        // MIN_WORK_PER_EVENT work/s (0.12 at current tuning; the assertion
+        // computes it dynamically). Simulate 60 s of that mash
         // through BOTH functions and assert the total work is within a
         // small tolerance of that bound — i.e. no input pattern can make
         // the progress bar fill faster than a steady 120 ev/s session.
@@ -1681,12 +2382,21 @@ mod tests {
         app.add_message::<KeyboardInput>();
 
         app.insert_resource(FrameDt(Duration::from_millis(16)))
-            .init_resource::<ActivitySource>()
+            // Pin the FOCUSED provider explicitly. `Default` prefers the
+            // OS-global hook, whose `record` is a no-op, so a test that
+            // injects events would count nothing — and would pass or fail
+            // depending on whether this machine has readable input
+            // devices, which is exactly the kind of ambient dependency a
+            // unit test must not have.
+            .insert_resource(ActivitySource::Focused(FocusedWindowProvider::default()))
             .init_resource::<ActivityMeter>()
             .insert_resource(Wallet(0))
             .insert_resource(PlayerXp::default())
             .insert_resource(project_at(0))
             .init_resource::<NextProjectIndex>()
+            // v0.3: `save_system` (added on top of this fixture by the M4
+            // save tests) now also reads `OwnedUpgrades`.
+            .init_resource::<OwnedUpgrades>()
             .add_systems(Startup, |mut commands: Commands| {
                 commands.spawn(Developer { mood: Mood::Idle });
             });
@@ -1700,13 +2410,13 @@ mod tests {
             (
                 |mut source: ResMut<ActivitySource>, mut kb: MessageReader<KeyboardInput>| {
                     for _ in kb.read() {
-                        source.0.record([ActivityEvent::Keystroke]);
+                        source.record([ActivityEvent::Keystroke]);
                     }
                 },
                 |mut source: ResMut<ActivitySource>,
                  mut meter: ResMut<ActivityMeter>,
                  dt: Res<FrameDt>| {
-                    let events = source.0.poll();
+                    let events = source.poll();
                     meter.recent_rate = decay_and_accumulate(meter.recent_rate, &events, dt.0);
                     let fresh = non_focus_event(&events);
                     if fresh {
@@ -1874,6 +2584,7 @@ mod tests {
                 index: 2,
                 work_done: 37.5,
             }),
+            upgrades: BTreeMap::new(),
         };
         let json = serde_json::to_string(&original).expect("serialization of a valid SaveData");
         let back: SaveData =
@@ -1887,11 +2598,176 @@ mod tests {
             xp: 0,
             level: 1,
             current_project: None,
+            upgrades: BTreeMap::new(),
         };
         let json_fresh = serde_json::to_string(&fresh).expect("fresh SaveData serialization");
         let back_fresh: SaveData =
             serde_json::from_str(&json_fresh).expect("fresh SaveData deserialization");
         assert_eq!(back_fresh, fresh);
+    }
+
+    // ------------------------------------------------------------------
+    // v0.3 — upgrades/shop (docs/upgrade-design.md)
+    // ------------------------------------------------------------------
+
+    /// A save carrying a non-empty `upgrades` map round-trips exactly —
+    /// the persistence half of docs/upgrade-design.md's "Persistence"
+    /// section.
+    #[test]
+    fn save_data_round_trip_with_upgrades() {
+        let mut upgrades = BTreeMap::new();
+        upgrades.insert("keyboard".to_string(), 2u8);
+        upgrades.insert("pet".to_string(), 1u8);
+        let original = SaveData {
+            wallet: 500,
+            xp: 10,
+            level: 1,
+            current_project: None,
+            upgrades,
+        };
+        let json = serde_json::to_string(&original).expect("serialization with upgrades");
+        let back: SaveData =
+            serde_json::from_str(&json).expect("deserialization of a save with upgrades");
+        assert_eq!(back, original);
+    }
+
+    /// A v0.2-era save on disk has no `"upgrades"` key at all —
+    /// `#[serde(default)]` must load it as an empty map rather than failing
+    /// to deserialize, the migration note's "old saves load cleanly"
+    /// guarantee.
+    #[test]
+    fn save_data_without_upgrades_field_loads_with_an_empty_map() {
+        let json = r#"{"wallet": 65, "xp": 40, "level": 1, "current_project": null}"#;
+        let data: SaveData = serde_json::from_str(json)
+            .expect("an old save with no `upgrades` key must still deserialize");
+        assert!(
+            data.upgrades.is_empty(),
+            "a missing `upgrades` key must default to an empty map, got {:?}",
+            data.upgrades
+        );
+    }
+
+    /// Table integrity (docs/upgrade-design.md "Data-driven from one
+    /// table"): every track has at least one tier, every tier has a
+    /// non-empty sprite name and flavor line, and costs strictly increase
+    /// within a track — the shop/scene both trust this without
+    /// re-validating it at render time.
+    #[test]
+    fn upgrade_tracks_table_integrity() {
+        assert_eq!(
+            UPGRADE_TRACKS.len(),
+            7,
+            "docs/upgrade-design.md lists exactly seven tracks"
+        );
+        let mut seen_ids = std::collections::BTreeSet::new();
+        for track in UPGRADE_TRACKS {
+            assert!(
+                seen_ids.insert(track.id),
+                "duplicate track id {:?}",
+                track.id
+            );
+            assert!(
+                !track.tiers.is_empty(),
+                "{} must have at least one tier",
+                track.id
+            );
+            let mut last_cost = 0u64;
+            for (i, tier) in track.tiers.iter().enumerate() {
+                assert!(
+                    !tier.sprite.is_empty(),
+                    "{} tier {} is missing a sprite name",
+                    track.id,
+                    i + 1
+                );
+                assert!(
+                    !tier.flavor.is_empty(),
+                    "{} tier {} is missing a flavor line",
+                    track.id,
+                    i + 1
+                );
+                assert!(
+                    tier.cost > last_cost,
+                    "{}'s tier costs must strictly increase (tier {} costs {}, previous {})",
+                    track.id,
+                    i + 1,
+                    tier.cost,
+                    last_cost
+                );
+                last_cost = tier.cost;
+            }
+        }
+    }
+
+    /// Buy logic: insufficient funds is a no-op.
+    #[test]
+    fn try_buy_tier_insufficient_funds_is_a_no_op() {
+        let track = &UPGRADE_TRACKS[0]; // keyboard: tier 1 costs 30
+        assert_eq!(
+            try_buy_tier(track, 10, 0),
+            None,
+            "10 coins can't afford a 30-coin tier 1"
+        );
+    }
+
+    /// Buy logic: a successful buy decrements the wallet by exactly the
+    /// tier's cost and advances the owned tier by exactly one.
+    #[test]
+    fn try_buy_tier_successful_buy_decrements_wallet_exactly() {
+        let track = &UPGRADE_TRACKS[0];
+        let cost = track.tiers[0].cost;
+        let (new_wallet, new_tier) =
+            try_buy_tier(track, cost + 5, 0).expect("an affordable buy must succeed");
+        assert_eq!(new_wallet, 5, "wallet must drop by exactly the tier's cost");
+        assert_eq!(new_tier, 1);
+    }
+
+    /// Buy logic: once a track is at its max tier, no amount of money buys
+    /// another — the tier caps, it does not overflow past the table.
+    #[test]
+    fn try_buy_tier_caps_at_the_tracks_max_tier() {
+        let track = &UPGRADE_TRACKS[0]; // 2 tiers
+        let max = track.tiers.len() as u8;
+        assert_eq!(
+            try_buy_tier(track, u64::MAX, max),
+            None,
+            "already at the max tier — no further purchase, regardless of wallet size"
+        );
+    }
+
+    /// `validate_owned_upgrades` drops ids the live table no longer knows
+    /// and clamps a tier past a track's max — the same "never trust the
+    /// file" rule the project-index clamp already applies.
+    #[test]
+    fn validate_owned_upgrades_drops_unknown_ids_and_clamps_tiers() {
+        let mut raw = BTreeMap::new();
+        raw.insert("keyboard".to_string(), 250u8); // keyboard's max is 2
+        raw.insert("nonexistent_track".to_string(), 1u8);
+        raw.insert("pet".to_string(), 1u8); // pet's max is 1 — already valid
+        let cleaned = validate_owned_upgrades(raw);
+        assert_eq!(
+            cleaned.get("keyboard"),
+            Some(&2u8),
+            "clamped to the max tier"
+        );
+        assert_eq!(
+            cleaned.get("pet"),
+            Some(&1u8),
+            "a valid entry passes through unchanged"
+        );
+        assert!(
+            !cleaned.contains_key("nonexistent_track"),
+            "an unknown track id must be dropped, not carried forward"
+        );
+    }
+
+    /// The shop label shows the next tier's cost, or `MAX` once the track is
+    /// fully owned.
+    #[test]
+    fn shop_label_text_shows_next_cost_then_max() {
+        let track = &UPGRADE_TRACKS[0]; // keyboard: 30, then 120
+        assert_eq!(shop_label_text(track, 0), "Keyboard  30");
+        assert_eq!(shop_label_text(track, 1), "Keyboard  120");
+        assert_eq!(shop_label_text(track, 2), "Keyboard  MAX");
     }
 
     /// Focused check of Bevy 0.19's `Timer::tick` + `just_finished` at the
@@ -1940,6 +2816,7 @@ mod tests {
                 index: 3,
                 work_done: 0.0,
             }),
+            upgrades: BTreeMap::new(),
         };
         write_save_file(&path, &original).expect("write_save_file to a temp dir");
         let loaded = load_save_file(&path).expect("load_save_file of a just-written file");
@@ -1977,8 +2854,8 @@ mod tests {
     }
 
     /// `save_data_from_resources` captures exactly what the exit criterion
-    /// names: wallet, xp, level, and the in-progress project (index + work
-    /// done).
+    /// names: wallet, xp, level, the in-progress project (index + work
+    /// done), and (v0.3) the owned upgrades.
     #[test]
     fn save_data_from_resources_captures_wallet_xp_level_and_project() {
         let wallet = Wallet(42);
@@ -1986,8 +2863,11 @@ mod tests {
         let mut project = project_at(1);
         project.work_done = 20.25;
         let index = NextProjectIndex(1);
+        let mut owned_map = BTreeMap::new();
+        owned_map.insert("keyboard".to_string(), 1u8);
+        let owned = OwnedUpgrades(owned_map.clone());
 
-        let data = save_data_from_resources(&wallet, &xp, &project, &index);
+        let data = save_data_from_resources(&wallet, &xp, &project, &index, &owned);
         assert_eq!(
             data,
             SaveData {
@@ -1998,6 +2878,7 @@ mod tests {
                     index: 1,
                     work_done: 20.25
                 }),
+                upgrades: owned_map,
             }
         );
     }
@@ -2025,6 +2906,7 @@ mod tests {
         app.insert_resource(PlayerXp::default());
         app.insert_resource(project_at(0));
         app.init_resource::<NextProjectIndex>();
+        app.init_resource::<OwnedUpgrades>();
         app.add_systems(Update, load_or_init_save);
         app.update();
 
@@ -2067,6 +2949,7 @@ mod tests {
                 index: 2,
                 work_done: 30.0,
             }),
+            upgrades: BTreeMap::new(),
         };
         write_save_file(&path, &save).expect("seed the save file");
         set_save_path(Some(path));
@@ -2078,6 +2961,7 @@ mod tests {
         app.insert_resource(PlayerXp::default());
         app.insert_resource(project_at(0));
         app.init_resource::<NextProjectIndex>();
+        app.init_resource::<OwnedUpgrades>();
         app.add_systems(Update, load_or_init_save);
         app.update();
 
@@ -2327,6 +3211,7 @@ mod tests {
             app2.insert_resource(PlayerXp::default());
             app2.insert_resource(project_at(0));
             app2.init_resource::<NextProjectIndex>();
+            app2.init_resource::<OwnedUpgrades>();
             app2.add_systems(Update, load_or_init_save);
             app2.update(); // runs load_or_init_save on the real save file
 
@@ -2407,6 +3292,7 @@ mod tests {
         app.insert_resource(PlayerXp::default());
         app.insert_resource(project_at(0));
         app.init_resource::<NextProjectIndex>();
+        app.init_resource::<OwnedUpgrades>();
         app.add_systems(Update, load_or_init_save);
         // Must NOT panic on the Err arm — that is the whole point.
         app.update();
@@ -2464,6 +3350,7 @@ mod tests {
                 index: 999,
                 work_done: 0.0,
             }),
+            upgrades: BTreeMap::new(),
         };
         write_save_file(&path, &save).expect("seed the (corrupt-index) save");
         set_save_path(Some(path));
@@ -2474,6 +3361,7 @@ mod tests {
         app.insert_resource(PlayerXp::default());
         app.insert_resource(project_at(0));
         app.init_resource::<NextProjectIndex>();
+        app.init_resource::<OwnedUpgrades>();
         app.add_systems(Update, load_or_init_save);
         // Must NOT panic on the out-of-range index — the clamp handles it.
         app.update();
@@ -2502,101 +3390,15 @@ mod tests {
     }
 
     // ------------------------------------------------------------------
-    // M5 — desk upgrade (plan §4/M5: "a coin threshold unlocks a second
-    // placeholder prop"). App-driven through the *shipping*
-    // `desk_upgrade_system`: the plant prop starts hidden, becomes visible
-    // the frame the wallet crosses [`DESK_UPGRADE_COST`], and (with a
-    // restored wallet above the threshold) is visible from the start —
-    // proving the upgrade is derived from the persisted wallet.
+    // The M5 desk-upgrade tests (wallet-threshold-driven plant visibility)
+    // lived here. v0.3 replaces that system with the shop/`OwnedUpgrades`
+    // (docs/upgrade-design.md's migration note); the same intent — a
+    // visible change from persisted state — is now proven in `scene.rs`'s
+    // test module against the shipping `upgrade_render_system`
+    // (`desk_decor_shows_the_plant_once_purchased` /
+    // `desk_decor_restored_ownership_is_visible_on_launch`), since that is
+    // where the sprite-visibility system now lives.
     // ------------------------------------------------------------------
-
-    /// The M5 desk prop, as `setup_scene` spawns it in the real app
-    /// (hidden by default via `Visibility::Hidden`; `desk_upgrade_system`
-    /// swaps it to `Visibility::Visible` when the wallet crosses the
-    /// threshold).
-    fn spawn_desk_prop(commands: &mut Commands) {
-        commands.spawn((
-            Node {
-                width: px(60.0),
-                height: px(80.0),
-                ..default()
-            },
-            BackgroundColor(Color::srgb(0.25, 0.55, 0.30)),
-            DeskUpgradeProp,
-            Visibility::Hidden,
-        ));
-    }
-
-    /// True if the desk prop is currently `Visibility::Visible` (i.e. the
-    /// upgrade is "visible"). `World::query_filtered` takes `&mut World` in
-    /// Bevy 0.19.
-    fn prop_is_visible(world: &mut World) -> bool {
-        let mut q = world.query_filtered::<&Visibility, With<DeskUpgradeProp>>();
-        q.iter(world)
-            .next()
-            .copied()
-            .map(|v| v == Visibility::Visible)
-            .unwrap_or(false)
-    }
-
-    #[test]
-    fn m5_desk_upgrade_shows_plant_when_wallet_crosses_threshold() {
-        let mut app = App::new();
-        app.add_plugins(MinimalPlugins);
-        app.insert_resource(Wallet(0));
-        app.add_systems(Startup, |mut commands: Commands| {
-            spawn_desk_prop(&mut commands)
-        });
-        app.add_systems(Update, desk_upgrade_system);
-
-        // Below the threshold: hidden (Visibility::Hidden).
-        app.update();
-        assert!(
-            !prop_is_visible(app.world_mut()),
-            "wallet 0 < {DESK_UPGRADE_COST}: the plant must be hidden"
-        );
-
-        // Cross the threshold (exactly at DESK_UPGRADE_COST): visible.
-        *app.world_mut().resource_mut::<Wallet>() = Wallet(DESK_UPGRADE_COST);
-        app.update();
-        assert!(
-            prop_is_visible(app.world_mut()),
-            "wallet == {DESK_UPGRADE_COST}: the plant must be visible (the \
-             coin threshold unlocks the prop)"
-        );
-
-        // Above the threshold: still visible.
-        *app.world_mut().resource_mut::<Wallet>() = Wallet(DESK_UPGRADE_COST + 5);
-        app.update();
-        assert!(
-            prop_is_visible(app.world_mut()),
-            "wallet above the threshold: the plant stays visible"
-        );
-    }
-
-    #[test]
-    fn m5_desk_upgrade_restored_wallet_above_threshold_is_visible_on_launch() {
-        // Non-persistence consequence: the upgrade is *derived* from the
-        // persisted wallet, so a relaunch whose wallet already meets the
-        // threshold shows the plant from the first frame (no separate
-        // "bought" flag to persist — the plan §4/M5 "keep it non-persistent
-        // if simpler" choice).
-        let mut app = App::new();
-        app.add_plugins(MinimalPlugins);
-        // A restored save's wallet, above the threshold.
-        app.insert_resource(Wallet(120));
-        app.add_systems(Startup, |mut commands: Commands| {
-            spawn_desk_prop(&mut commands)
-        });
-        app.add_systems(Update, desk_upgrade_system);
-        app.update();
-
-        assert!(
-            prop_is_visible(app.world_mut()),
-            "a restored wallet of 120 ≥ {DESK_UPGRADE_COST} must show the \
-             plant on launch (derived, not separately persisted)"
-        );
-    }
 
     // ------------------------------------------------------------------
     // HUD layout regression — the HUD bar must be a CHILD of the desk root
@@ -2617,12 +3419,8 @@ mod tests {
             q.iter(world).next().expect("desk root not spawned")
         };
         let hud_root = {
-            let mut q = world.query::<(Entity, &Node)>();
-            q.iter(world)
-                .find(|(_, n)| {
-                    matches!(n.width, Val::Percent(100.0)) && matches!(n.height, Val::Px(88.0))
-                })
-                .map(|(e, _)| e)
+            let mut q = world.query_filtered::<Entity, With<HudRoot>>();
+            q.iter(world).next()
         };
         (desk_root, hud_root)
     }
@@ -2640,8 +3438,8 @@ mod tests {
         let world = app.world_mut();
         let (desk_root, hud_root) = scene_entities(world);
         let hud_root = hud_root.expect(
-            "the HUD bar root node (100% × 88px) must exist — if it does not, \
-             the HUD is not being spawned at all",
+            "the HUD bar root node (marked `HudRoot`) must exist — if it does \
+             not, the HUD is not being spawned at all",
         );
         assert_ne!(
             desk_root, hud_root,
@@ -2664,5 +3462,93 @@ mod tests {
             "the HUD root's parent must be the desk root (flex-column stacks \
              it below the desk area); got a different parent"
         );
+    }
+
+    // ------------------------------------------------------------------
+    // ADR 0009 — the activity line (verb map)
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn activity_line_maps_editors_browsers_terminals_and_unknowns() {
+        assert_eq!(
+            activity_line(Some(("code", "VS Code"))),
+            "Coding in VS Code"
+        );
+        assert_eq!(
+            activity_line(Some(("jetbrains-idea", "IntelliJ"))),
+            "Coding in IntelliJ"
+        );
+        assert_eq!(
+            activity_line(Some(("firefox", "Firefox"))),
+            "Browsing in Firefox"
+        );
+        assert_eq!(activity_line(Some(("kitty", "kitty"))), "In the terminal");
+        // Unknown apps get the honest generic verb, with the display name.
+        assert_eq!(activity_line(Some(("blender", "blender"))), "In blender");
+    }
+
+    #[test]
+    fn activity_line_none_is_generic_and_never_a_guess() {
+        assert_eq!(activity_line(None), "Working...");
+    }
+
+    // ------------------------------------------------------------------
+    // ADR 0005 — incentives, not just boundedness. The old anti-mash test
+    // passed before AND after a 6x rebalance because it only asserted the
+    // total was finite; and a boundedness test also passed while the GLOBAL
+    // input path coalesced mouse motion per 16ms sweep (62.5 ev/s), which
+    // let mouse-only wiggling out-earn a real typist 3:1 on the default
+    // build. This test compares the STRATEGIES, parameterised by the shared
+    // sampling constant, so a provider that re-diverges fails it.
+    // ------------------------------------------------------------------
+
+    /// Simulate `seconds` of wall-clock input at `events_per_sec` of the
+    /// given event kind, through the REAL rate + progress math.
+    fn work_earned(kind: ActivityEvent, events_per_sec: f32, seconds: f32) -> f32 {
+        let frame = Duration::from_millis(16);
+        let frame_secs = frame.as_secs_f32();
+        let mut rate = 0.0f32;
+        let mut work = 0.0f32;
+        let mut carry = 0.0f32;
+        let steps = (seconds / frame_secs) as usize;
+        for _ in 0..steps {
+            carry += events_per_sec * frame_secs;
+            let n = carry as usize;
+            carry -= n as f32;
+            let events = vec![kind; n];
+            rate = decay_and_accumulate(rate, &events, frame);
+            work += progress_delta(rate, frame_secs);
+        }
+        work
+    }
+
+    #[test]
+    fn mouse_only_spam_earns_less_than_real_typing() {
+        // The mouse's maximum possible coalesced rate is one event per
+        // MOUSE_SAMPLE_SECS — on EVERY provider, by shared constant.
+        let mouse_max_rate = 1.0 / MOUSE_SAMPLE_SECS;
+        let mouse = work_earned(ActivityEvent::MouseMoved, mouse_max_rate, 60.0);
+        let typing = work_earned(ActivityEvent::Keystroke, 5.0, 60.0);
+        assert!(
+            mouse < typing,
+            "mouse-only wiggling ({mouse:.3} work/min) must never out-earn a \
+             real typist at 5 keys/s ({typing:.3} work/min) — if this fails, \
+             a provider's coalescing has diverged from MOUSE_SAMPLE_SECS or \
+             the weights were retuned without re-checking incentives"
+        );
+        // And the margin should be a real disincentive, not a rounding win.
+        assert!(
+            mouse < typing * 0.6,
+            "mouse-only should earn well under two-thirds of typing \
+             (got {mouse:.3} vs {typing:.3})"
+        );
+    }
+
+    #[test]
+    fn event_weights_rank_typing_over_mouse_over_focus() {
+        use activity::event_weight;
+        assert_eq!(event_weight(&ActivityEvent::Keystroke), 1.0);
+        assert!(event_weight(&ActivityEvent::MouseMoved) < 0.5);
+        assert_eq!(event_weight(&ActivityEvent::FocusChanged(true)), 0.0);
     }
 }

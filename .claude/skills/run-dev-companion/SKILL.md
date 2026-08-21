@@ -1,6 +1,6 @@
 ---
 name: run-dev-companion
-description: 'Orchestrates the dev-companion agent fleet for Rust + Bevy developer companion desktop game: game-architect, game-engineer, pr-reviewer-correctness, visual-verifier, pr-reviewer-boundaries, pr-reviewer-tests, pr-merge-decider. Use when the request is about implementing, extending, or re-planning the dev-companion Rust/Bevy game. This includes re-runs, updates, partial fixes ("redo the X part"), and improvements to previous results. Simple factual questions can be answered directly without the fleet.'
+description: 'Orchestrates the dev-companion agent fleet for Rust + Bevy developer companion desktop game: game-architect, game-engineer, pr-reviewer-correctness, visual-verifier, game-artist, pr-reviewer-boundaries, pr-reviewer-tests, pr-merge-decider. Use when the request is about implementing, extending, or re-planning the dev-companion Rust/Bevy game. This includes re-runs, updates, partial fixes ("redo the X part"), and improvements to previous results. Simple factual questions can be answered directly without the fleet.'
 argument-hint: "[what the fleet should work on]"
 ---
 
@@ -9,7 +9,7 @@ argument-hint: "[what the fleet should work on]"
 Orchestrator for the **dev-companion** fleet — Rust + Bevy developer companion desktop game.
 
 - Pattern: **pipeline** · Execution: **subagents**
-- Agents: `game-architect`, `game-engineer`, `pr-reviewer-correctness`, `visual-verifier`, `pr-reviewer-boundaries`, `pr-reviewer-tests`, `pr-merge-decider`
+- Agents: `game-architect`, `game-engineer`, `pr-reviewer-correctness`, `visual-verifier`, `game-artist`, `pr-reviewer-boundaries`, `pr-reviewer-tests`, `pr-merge-decider`
 - Workspace: `_fleet/` (handoffs in `_fleet/local/handoffs/`, ledger at `_fleet/local/LEDGER.md`)
 
 ## Phase 0: Context check
@@ -37,7 +37,9 @@ Agents: `game-architect`.
 ### Phase 2: Milestone cycle
 **Execution mode:** subagents
 
-Agents: `game-engineer`, `pr-reviewer-correctness`, `pr-reviewer-boundaries`, `pr-reviewer-tests`, `visual-verifier`, `pr-merge-decider`.
+Agents: `game-artist`, `game-engineer`, `pr-reviewer-correctness`, `pr-reviewer-boundaries`, `pr-reviewer-tests`, `visual-verifier`, `pr-merge-decider`.
+- `game-artist`: A cohesive cozy pixel-art look matching docs/art-direction.md, where a vision model shown a screenshot describes it as finished pixel art — never as placeholder rectangles.
+. Hands off to `game-engineer` (artifact: `assets/`).
 - `game-engineer`: Each milestone compiles, passes cargo fmt/clippy/test, passes its manual smoke test, and lands as its own reviewable PR before the next milestone starts.
 . Hands off to `pr-reviewer-correctness`, `pr-reviewer-boundaries`, `pr-reviewer-tests`, `visual-verifier` (artifact: `docs/milestone-log.md`).
 - `pr-reviewer-correctness`: A verdict on plan/exit-criterion adherence backed by commands this agent ran itself, in its own worktree.. Hands off to `pr-merge-decider` (artifact: `_fleet/local/handoffs/*-pr-reviewer-correctness-to-pr-merge-decider.md`).

@@ -5,7 +5,7 @@ tools: Read, Grep, Glob, Bash
 model: inherit
 skills:
   - pr-review-lens
-color: pink
+color: yellow
 x-fleetsmith-origin: human
 ---
 

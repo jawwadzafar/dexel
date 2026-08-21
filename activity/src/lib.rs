@@ -12,9 +12,41 @@
 //!
 //! Privacy invariant: events carry **counts and focus transitions only** —
 //! never key identity, text, or window titles.
+//!
+//! Two providers exist. [`FocusedWindowProvider`] sees only input delivered to
+//! the companion's own window, so it counts nothing while you are typing in
+//! your editor; `GlobalInputProvider` watches OS-level keyboard/mouse
+//! activity regardless of focus and is the one that makes the premise work.
+//! The latter needs an OS hook and platform-specific permissions, so it lives
+//! behind the **`global-input`** Cargo feature (off by default — a default
+//! build does not even download the backend crate) and its constructor returns
+//! an error rather than panicking when the hook cannot start, so callers fall
+//! back to [`FocusedWindowProvider`]. See the `global_input` module for that
+//! trade-off in full.
+//!
+//! A third signal sits alongside them and deliberately does *not* implement
+//! [`ActivityProvider`]: `ActiveAppWatcher` (behind the **`active-app`**
+//! feature) answers "*where* is the user working?" rather than "how much?", so
+//! the game can label the session "Coding in VS Code" instead of inventing a
+//! project name. It is a pull-based query, not a stream of events, which is
+//! why it is a separate type rather than a fourth [`ActivityEvent`] variant —
+//! and the privacy invariant above applies to it in its strictest form: it
+//! captures the **application identity only** (`code`, `firefox`), never a
+//! window title. See the `active_app` module for how that is enforced
+//! structurally.
 
 use std::collections::VecDeque;
 use std::time::Duration;
+
+#[cfg(feature = "active-app")]
+pub mod active_app;
+#[cfg(feature = "global-input")]
+pub mod global_input;
+
+#[cfg(feature = "active-app")]
+pub use active_app::{ActiveApp, ActiveAppError, ActiveAppWatcher};
+#[cfg(feature = "global-input")]
+pub use global_input::{GlobalInputError, GlobalInputProvider};
 
 /// A single unit of user activity observed since the last poll.
 ///
@@ -91,6 +123,40 @@ impl ActivityProvider for FocusedWindowProvider {
     }
 }
 
+/// How much "evidence of real work" one activity event is worth.
+///
+/// Typing is the strongest signal we have and is the unit (1.0). Mouse motion
+/// is deliberately worth a fraction: it is weak evidence (scrolling a page,
+/// nudging a window) and it arrives orders of magnitude more often, so any
+/// weight near 1.0 makes the mouse the dominant input by sheer event volume.
+/// Focus changes are bookkeeping, not work, and are worth nothing.
+#[must_use]
+pub fn event_weight(event: &ActivityEvent) -> f32 {
+    match event {
+        ActivityEvent::Keystroke => 1.0,
+        ActivityEvent::MouseMoved => MOUSE_WEIGHT,
+        ActivityEvent::FocusChanged(_) => 0.0,
+    }
+}
+
+/// Mouse motion's weight relative to a keystroke. See [`event_weight`].
+pub const MOUSE_WEIGHT: f32 = 0.25;
+
+/// Minimum wall-clock gap between recorded `MouseMoved` events, for EVERY
+/// provider. At 0.1s the mouse contributes at most 10 events/s, i.e.
+/// `10 * MOUSE_WEIGHT = 2.5` weight/s — deliberately below a real typist's
+/// contribution, so moving the mouse supports progress without ever being
+/// the efficient way to earn it.
+///
+/// This lives HERE, next to [`MOUSE_WEIGHT`], because the two anti-mashing
+/// halves must never diverge again: v0.2 added the 100ms coalescing to the
+/// game's Bevy input path only, while `GlobalInputProvider` kept coalescing
+/// per 16ms sweep — 62.5 ev/s, which pinned `recent_rate` at its ceiling and
+/// let mouse-only wiggling out-earn a real typist 3:1 on the DEFAULT build.
+/// A per-provider constant is an invitation to repeat that; a shared one is
+/// not.
+pub const MOUSE_SAMPLE_SECS: f32 = 0.1;
+
 /// One step of the activity-rate decay/accumulation used by
 /// `activity_bridge_system` (plan §3.2).
 ///
@@ -110,14 +176,18 @@ impl ActivityProvider for FocusedWindowProvider {
 ///
 /// All arguments are plain values — no Bevy types — so unit tests call this
 /// directly without constructing an `App` (plan §3.2, `*` functions).
-#[must_use]
 pub fn decay_and_accumulate(previous_rate: f32, events: &[ActivityEvent], dt: Duration) -> f32 {
     if dt.is_zero() {
         return previous_rate;
     }
-    let dt_secs = dt.as_secs_f32().max(f32::EPSILON); // guard: never divide by 0
-    // Add this frame's raw count as a new "events/second" bucket.
-    let added = events.len() as f32;
+    let dt_secs = dt.as_secs_f32();
+    // Sum this frame's events by WEIGHT, not by count. Counting raw events
+    // treats one mouse twitch as equal to one keystroke, and a mouse reports
+    // motion at 125-1000 Hz while a fast typist manages ~5-10 keys/s — so an
+    // unweighted count lets a few seconds of aimless mouse movement out-earn
+    // a minute of real work, which is exactly the "idle game wearing a
+    // productivity costume" failure this project exists to avoid.
+    let added: f32 = events.iter().map(event_weight).sum();
     // Exponential decay toward zero over the elapsed dt.
     let decay = previous_rate * (-DECAY_PER_SECOND * dt_secs).exp();
     // Clamp: a sustained max-rate input converges to the ceiling instead of
@@ -133,7 +203,7 @@ pub const DECAY_PER_SECOND: f32 = 1.0;
 /// Finite upper bound of `recent_rate` (events/second) a sustained max-rate
 /// mash can reach. Steady input below this rate never touches the ceiling;
 /// an absurd mash converges here (plan §1's anti-mashing invariant).
-pub const MAX_RECENT_RATE: f32 = 120.0;
+pub const MAX_RECENT_RATE: f32 = 15.0;
 
 /// A scripted activity source used only in tests.
 ///
