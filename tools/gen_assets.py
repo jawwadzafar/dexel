@@ -145,6 +145,135 @@ def radial_dither_glow(s: "Sprite", cx: float, cy: float, rx: float, ry: float,
             if thresh < t * 16:
                 s.dot(x, y, colour)
 
+
+# --------------------------------------------------------------------------
+# Small-sprite shading helpers - the REST-OF-MANIFEST fidelity pass's own
+# additions, built directly on top of the hero pass's `bayer_mix` so every
+# desk item/chair/buddy shares its exact dithering mechanics and its ONE
+# stated light direction: a soft key light from the upper-left of each
+# sprite's own canvas (matching the room/monitor/developer). Every helper
+# below therefore puts its highlight on the top/left and its shadow or AO
+# on the bottom/right - never the other way round, so nothing in the scene
+# reads as lit from a different angle than the hero sprites.
+# --------------------------------------------------------------------------
+
+def hgrad(x: int, y: int, x0: int, x1: int, lo: str, hi: str) -> str:
+    """Dithered horizontal gradient across [x0, x1]: `hi` (lit) at x0,
+    fading to `lo` (shadow) at x1 - the upper-left key light read as "this
+    side is closer to the light" for any panel wider than it is tall."""
+    if x1 <= x0:
+        return hi
+    ratio = max(0.0, min(1.0, 1.0 - (x - x0) / (x1 - x0)))
+    return bayer_mix(x, y, ratio, lo, hi)
+
+
+def vgrad(x: int, y: int, y0: int, y1: int, top: str, bottom: str) -> str:
+    """Dithered vertical gradient across [y0, y1]: `top` at y0, `bottom` at
+    y1 - used for top-lit/bottom-AO reads on shapes taller than wide."""
+    if y1 <= y0:
+        return top
+    ratio = max(0.0, min(1.0, (y - y0) / (y1 - y0)))
+    return bayer_mix(x, y, ratio, top, bottom)
+
+
+def shade_ellipse(s: "Sprite", cx: int, cy: int, rx: int, ry: int, lo: str,
+                   hi: str) -> None:
+    """A hard-edged pixel ellipse (see `Sprite.ellipse`), but dithered
+    lit-left (`hi`, at x=cx-rx) to shadow-right (`lo`, at x=cx+rx) instead
+    of a flat fill - used for plant leaves and pot rims so each rounded
+    form gets its own light/dark side under the scene's one key light."""
+    for y in range(cy - ry, cy + ry + 1):
+        for x in range(cx - rx, cx + rx + 1):
+            ddx, ddy = x - cx, y - cy
+            if (ddx * ddx) / float(rx * rx) + (ddy * ddy) / float(ry * ry) <= 1.05:
+                s.dot(x, y, hgrad(x, y, cx - rx, cx + rx, lo, hi))
+
+
+def bevel_rect(s: "Sprite", x0: int, y0: int, x1: int, y1: int, base: str,
+               light: str, shadow: str, ratio: float = 0.55) -> None:
+    """Fill a rect flat `base`, then dither a 1px highlight on its top+left
+    edge and a 1px shadow on its bottom+right edge - the cheap, reusable
+    "material bevel" every hard-edged desk item (keyboard case, mouse
+    shell, gas cylinder, thermos body...) gets so it reads as a beveled
+    object under the scene's one key light, not a flat rectangle."""
+    s.rect(x0, y0, x1, y1, base)
+    for x in range(x0, x1 + 1):
+        s.dot(x, y0, bayer_mix(x, y0, ratio, base, light))
+    for y in range(y0, y1 + 1):
+        s.dot(x0, y, bayer_mix(x0, y, ratio, base, light))
+    for x in range(x0, x1 + 1):
+        s.dot(x, y1, bayer_mix(x, y1, ratio, base, shadow))
+    for y in range(y0, y1 + 1):
+        s.dot(x1, y, bayer_mix(x1, y, ratio, base, shadow))
+
+
+def ao_hline(s: "Sprite", y: int, x0: int, x1: int, base_lookup, shadow: str,
+             ratio: float = 0.5) -> None:
+    """A dithered ambient-occlusion line: half-density `shadow` dithered
+    against whatever `base_lookup(x)` already names at each x - used where
+    two forms meet (a seat well, a pot rim, a case lip) so the contact
+    line reads as a soft occlusion gradient instead of a hard flat seam."""
+    for x in range(x0, x1 + 1):
+        s.dot(x, y, bayer_mix(x, y, ratio, base_lookup(x), shadow))
+
+
+def chair_shade_rect(s: "Sprite", cx: float, half: float, x0: int, y0: int,
+                      x1: int, y1: int, extra: float = 0.0, base: float = 3.0,
+                      sway: float = 0.8) -> None:
+    """Fill a rect on the chair's ramp canvas with a dithered cross-section
+    gradient: anchored on `base` (ramp4 by default - the tint-headroom
+    anchor the CRITICAL tint lesson requires), lit (brighter) toward
+    x < cx and shadowed toward x > cx, matching the room's one upper-left
+    key light. `extra` is a flat additional darkening (AO at a seam/taper,
+    a shadow-side panel) stacked on top of the cross-section gradient."""
+    for y in range(y0, y1 + 1):
+        for x in range(x0, x1 + 1):
+            rel = max(-1.0, min(1.0, (x - cx) / half)) if half else 0.0
+            v = base - sway * rel - extra
+            s.dot(x, y, ramp_dither(x, y, v))
+
+
+def chair_shade_ellipse(s: "Sprite", ecx: int, ecy: int, rx: int, ry: int,
+                         cx: float, half: float, extra: float = 0.0,
+                         base: float = 3.0, sway: float = 0.8) -> None:
+    """Same cross-section gradient as `chair_shade_rect`, but only inside a
+    hard-edged pixel ellipse (see `Sprite.ellipse`) - for the antigrav
+    pod's rounded tiers."""
+    for y in range(ecy - ry, ecy + ry + 1):
+        for x in range(ecx - rx, ecx + rx + 1):
+            ddx, ddy = x - ecx, y - ecy
+            if (ddx * ddx) / float(rx * rx) + (ddy * ddy) / float(ry * ry) <= 1.05:
+                rel = max(-1.0, min(1.0, (x - cx) / half)) if half else 0.0
+                v = base - sway * rel - extra
+                s.dot(x, y, ramp_dither(x, y, v))
+
+
+def chair_rim_light(s: "Sprite", rim: int = 2, boost: float = 1.6) -> None:
+    """THE tint-crush fix, ported from the developer sprite: a dithered
+    boost toward ramp5 (undarkened at ANY tint) on the leftmost `rim`
+    opaque columns of every row - the true lit silhouette edge. Every
+    chair form gets this, called once at the end of the build, so the
+    chair still separates from the wall at its DARKEST purchasable tint
+    (`slate`, near-black) exactly the way the hero pass's rim light keeps
+    the developer's silhouette visible at that same tint. Must run AFTER
+    every other fill in the builder (including AO patches), since it is
+    the outermost, highest-priority pass."""
+    mask = s.mask()
+    for y in range(s.h):
+        xs = [x for x in range(s.w) if mask[y][x]]
+        if not xs:
+            continue
+        x0 = min(xs)
+        for i in range(rim):
+            x = x0 + i
+            if x >= s.w or not mask[y][x]:
+                continue
+            cur = s.img.getpixel((x, y))[:3]
+            idx = _RAMP_STEPS.index(RGB_TO_RAMP[cur]) if cur in RGB_TO_RAMP else 3
+            v = min(4.0, idx + boost * (1 - i / rim))
+            s.dot(x, y, ramp_dither(x, y, v))
+
+
 # The 45-file v2 manifest (docs/art-direction.md, "Sprite manifest v2"), used
 # both to author and to verify. Keep in sync with the doc; the self-check
 # compares against this and the final assets/ directory listing must equal
@@ -472,18 +601,61 @@ def build_room_back() -> Sprite:
 def build_desk_back() -> Sprite:
     """320x58 (room rows 74..132): the desk slab seen from above-behind.
 
-    4 `desk_dark` grain rows across the surface, a `wall_light` sheen band
-    under the monitor's glow (local rows 0..7, room 74..81 - directly under
-    the wall glow pool built above), a `desk_dark` near lip (local 55..56)
-    and a 1px `shadow` under it (local row 57, room row 131) that abuts
-    room_back's own shadow band (room 132..133) to form one unbroken 3-row
-    cast-shadow line at the wall/floor seam.
+    HERO-FIDELITY MATCH (rest-of-manifest pass). The desk is the stage
+    everything else sits on, so it gets the same three moves as the floor
+    in `build_room_back`: dithered wood grain instead of flat rows, a
+    dithered sheen picking up the monitor's glow (already present, now
+    blended at its edges instead of a hard rect), and a genuinely LIT
+    front lip - a highlight on the lip's own top edge (it catches the
+    room's ambient upper-left key light square-on, being the nearest
+    horizontal surface to the viewer) fading into a dithered AO gradient
+    immediately above it (the desk surface receding away from that edge)
+    and the existing 1px `shadow` hairline below it, which abuts
+    room_back's own shadow band to form one unbroken cast-shadow line at
+    the wall/floor seam.
     """
     s = Sprite(320, 58, bg="desk")
-    for y in (8, 20, 32, 44):
+    GLOW_CX = 160
+
+    # Sheen band: dithered fade in from both sides instead of a hard rect,
+    # so the glow bleeding onto the desk reads the same "soft pool" as the
+    # wall glow above it, not a pasted rectangle.
+    for y in range(0, 8):
+        for x in range(90, 231):
+            d = abs(x - GLOW_CX) / 70.0
+            t = max(0.0, 1.0 - d) * max(0.0, 1.0 - y / 9.0)
+            if t > 0.0:
+                s.dot(x, y, bayer_mix(x, y, min(1.0, t), "desk", "wall_light"))
+
+    # Wood grain: 4 seams (groove + near-edge highlight, like the floor's
+    # plank seams) plus short dithered grain streaks per board so the
+    # surface reads as individual boards, not a flat brown field.
+    seams = (8, 20, 32, 44)
+    bands = [(0, seams[0])] + [(seams[i], seams[i + 1]) for i in range(len(seams) - 1)] + [(seams[-1], 55)]
+    for y in seams:
         s.hline(y, 0, 319, "desk_dark")
-    s.rect(120, 0, 200, 7, "wall_light")   # sheen picking up the wall's glow
-    s.rect(0, 55, 319, 56, "desk_dark")    # near lip
+        for x in range(0, 320):
+            s.dot(x, y + 1, bayer_mix(x, y + 1, 0.3, "desk", "desk_dark"))
+    for i, (by0, by1) in enumerate(bands):
+        step = 40 + i * 5
+        offset = (i * 13) % step
+        gy = (by0 + by1) // 2
+        for x in range(offset, 320, step):
+            for gx in range(x, min(x + 14, 319)):
+                s.dot(gx, gy, bayer_mix(gx, gy, 0.3, "desk", "desk_dark"))
+
+    # Ambient occlusion rising into the near lip: the surface dims as it
+    # approaches its own front edge, a few rows of dithered fade.
+    for y in range(50, 55):
+        for x in range(0, 320):
+            s.dot(x, y, bayer_mix(x, y, 0.15 + (y - 50) * 0.12, "desk", "desk_dark"))
+
+    # Near lip: a lit top edge (row 55, the corner catching the key light
+    # square-on) dithering down into flat desk_dark (row 56), then the 1px
+    # cast-shadow hairline (row 57) unchanged from the previous version.
+    for x in range(0, 320):
+        s.dot(x, 55, bayer_mix(x, 55, 0.6, "desk_dark", "floor_light"))
+    s.hline(56, 0, 319, "desk_dark")
     s.hline(57, 0, 319, "shadow")          # 1px shadow under the lip
     return s
 
@@ -1028,30 +1200,51 @@ def _chair_star_base(s: Sprite, cx: int, hub_y: int, foot_y: int, spread: int) -
     s.hline(foot_y + 2, feet_x[0] - 4, feet_x[-1] + 4, "shadow")   # contact shadow
 
 
+CHAIR_CX = 68.0        # every chair style's own canvas centreline (width/2)
+
+
 def build_chair_basic_form() -> Sprite:
+    """Mesh task chair. HERO-FIDELITY MATCH: the flat ramp3/ramp4 blocks
+    are replaced with a dithered cross-section gradient (`chair_shade_rect`)
+    anchored on ramp4 (tint headroom - `chair_basic`'s DEFAULT tint is
+    `slate`, the near-black one, so this anchor is what keeps the DEFAULT
+    fresh-player chair a readable mid-value mesh instead of a black void),
+    lit toward x<cx to match the room's one upper-left key light, plus a
+    woven mesh texture (small punctures, one ramp step darker) across the
+    backrest and a soft AO band at the taper into the seat.
+    """
     s = Sprite(136, 84, palette=RAMP)
-    s.rect(14, 10, 122, 3 + 37, "ramp4")            # mesh backrest, rows 10-40
+    cx, half = CHAIR_CX, 54.0
+    chair_shade_rect(s, cx, half, 14, 10, 122, 46)          # mesh backrest, rows 10-46
     # The rounded top of the backrest starts one row BELOW the restricted
     # zone (y_below=4), not at it: the outline halo added in the detail
     # layer extends 1px above whatever this shape's topmost row is, and a
     # rect starting exactly at row 4 would put that halo at row 3, inside
     # the forbidden band. Starting at row 5 puts the halo at row 4, which is
     # not restricted.
-    s.rect(20, 5, 116, 9, "ramp4")
+    chair_shade_rect(s, cx, half, 20, 5, 116, 9)
     # Wing tips (rows 0-4): kept 1px inside the hard-region x boundary
     # (x<24 / x>112), and extended down to row 4 so they meet the backrest
     # above with no gap.
-    s.rect(14, 0, 22, 4, "ramp4")                   # left wing tip
-    s.rect(114, 0, 122, 4, "ramp4")                 # right wing tip
-    s.rect(18, 41, 118, 46, "ramp3")                # taper into the seat
-    s.rect(10, 47, 126, 60, "ramp4")                # seat pan, modest wings
-    s.rect(10, 47, 30, 60, "ramp2")                 # left seat wing, shadow side
+    chair_shade_rect(s, cx, half, 14, 0, 22, 4)             # left wing tip
+    chair_shade_rect(s, cx, half, 114, 0, 122, 4)           # right wing tip
+    chair_shade_rect(s, cx, half, 18, 41, 118, 46, extra=0.4)   # taper into the seat, soft AO
+    chair_shade_rect(s, cx, half, 10, 47, 126, 60)          # seat pan, modest wings
+    chair_shade_rect(s, cx, half, 106, 51, 126, 60, extra=0.3)  # seat well AO, far (shadow) corner
+    # Mesh weave: a sparse grid of small punctures, one ramp step darker -
+    # the "seams" a woven back needs to read as fabric, not a flat panel.
+    for wy in range(13, 39, 5):
+        for wx in range(17, 120, 7):
+            rel = max(-1.0, min(1.0, (wx - cx) / half))
+            v = 3.0 - 0.8 * rel - 0.7
+            s.dot(wx, wy, ramp_dither(wx, wy, v))
+    chair_rim_light(s)   # tint-crush fix: keeps the lit edge visible even at slate
     return s
 
 
 def build_chair_basic_detail() -> Sprite:
     s = Sprite(136, 84)
-    s.rect(60, 61, 76, 78, "metal")                 # gas cylinder
+    bevel_rect(s, 60, 61, 76, 78, "metal", "wall_light", "shadow")   # gas cylinder
     _chair_star_base(s, 68, 78, 82, 54)
     fab = build_chair_basic_form()
     outline_from_mask(s, union_mask(fab.mask(), s.mask()), "shadow")
@@ -1069,26 +1262,28 @@ def build_chair_racer_form() -> Sprite:
     two shelf brackets floating above the chair, not a backrest.
     """
     s = Sprite(140, 88, palette=RAMP)
-    s.rect(8, 0, 24, 8, "ramp4")                     # left bolstered wing (y<8, x<26)
-    s.rect(116, 0, 132, 8, "ramp4")                  # right bolstered wing (y<8, x>114)
+    cx, half = 70.0, 60.0
+    chair_shade_rect(s, cx, half, 8, 0, 24, 8)             # left bolstered wing (y<8, x<26)
+    chair_shade_rect(s, cx, half, 116, 0, 132, 8)          # right bolstered wing (y<8, x>114)
     taper = [(9, 8, 34, 106, 132), (10, 8, 44, 96, 132), (11, 10, 56, 84, 130),
               (12, 14, 68, 72, 126)]
     for y, lx0, lx1, rx0, rx1 in taper:
-        s.hline(y, lx0, lx1, "ramp4")
-        s.hline(y, rx0, rx1, "ramp4")
-    s.rect(20, 13, 120, 42, "ramp4")                 # waisted back, now one mass
-    s.rect(20, 13, 40, 42, "ramp2")                  # shadow side
-    s.rect(24, 43, 116, 48, "ramp3")                 # taper into the seat
-    s.rect(12, 49, 128, 62, "ramp4")                 # seat pan
+        chair_shade_rect(s, cx, half, lx0, y, lx1, y)
+        chair_shade_rect(s, cx, half, rx0, y, rx1, y)
+    chair_shade_rect(s, cx, half, 20, 13, 120, 42)         # waisted back, now one mass
+    chair_shade_rect(s, cx, half, 24, 43, 116, 48, extra=0.4)   # taper into the seat, soft AO
+    chair_shade_rect(s, cx, half, 12, 49, 128, 62)         # seat pan
+    chair_shade_rect(s, cx, half, 98, 53, 128, 62, extra=0.3)   # seat well AO, far corner
+    chair_rim_light(s)   # tint-crush fix: keeps the lit edge visible even at slate
     return s
 
 
 def build_chair_racer_detail() -> Sprite:
     s = Sprite(140, 88)
-    s.rect(62, 63, 78, 80, "metal")                 # gas cylinder
+    bevel_rect(s, 62, 63, 78, 80, "metal", "wall_light", "shadow")   # gas cylinder
     _chair_star_base(s, 70, 80, 84, 56)
     for x0, x1, y0, y1 in ((20, 40, 18, 40), (100, 120, 18, 40)):
-        s.vline(x0 + 3, y0, y1, "cream")
+        s.vline(x0 + 3, y0, y1, "cream")               # double stitching, lit side
         s.vline(x1 - 3, y0, y1, "cream")
     fab = build_chair_racer_form()
     outline_from_mask(s, union_mask(fab.mask(), s.mask()), "shadow")
@@ -1096,16 +1291,23 @@ def build_chair_racer_detail() -> Sprite:
 
 
 def build_chair_exec_form() -> Sprite:
+    """Tufted leather executive chair. HERO-FIDELITY MATCH: dithered
+    cross-section gradient anchored on ramp4 (this style's DEFAULT tint is
+    `ember`, but every chair uses the same tint-headroom anchor so no
+    style is a special case), lit toward x<cx, with a soft AO seam between
+    the two leather panels and at the taper into the seat."""
     s = Sprite(144, 100, palette=RAMP)
-    s.rect(8, 0, 26, 20, "ramp4")                    # left headrest wing (y<20, x<28)
-    s.rect(118, 0, 136, 20, "ramp4")                 # right headrest wing (y<20, x>116)
+    cx, half = 72.0, 62.0
+    chair_shade_rect(s, cx, half, 8, 0, 26, 20)             # left headrest wing (y<20, x<28)
+    chair_shade_rect(s, cx, half, 118, 0, 136, 20)          # right headrest wing (y<20, x>116)
     # Starts one row below the restricted zone (y_below=20) for the same
     # outline-halo reason as the other two chairs' top transition rows.
-    s.rect(14, 21, 130, 54, "ramp4")                # wide leather panels merge below
-    s.rect(14, 21, 60, 54, "ramp2")                 # left panel, shadow side
-    s.rect(84, 21, 130, 54, "ramp3")                # right panel, mid tone
-    s.rect(18, 55, 126, 62, "ramp3")                # taper into the seat
-    s.rect(6, 63, 138, 76, "ramp4")                 # seat with wide armrest tops
+    chair_shade_rect(s, cx, half, 14, 21, 130, 54)          # wide leather panels merge below
+    chair_shade_rect(s, cx, half, 70, 21, 74, 54, extra=0.5)   # seam AO between the two panels
+    chair_shade_rect(s, cx, half, 18, 55, 126, 62, extra=0.4)   # taper into the seat, soft AO
+    chair_shade_rect(s, cx, half, 6, 63, 138, 76)           # seat with wide armrest tops
+    chair_shade_rect(s, cx, half, 110, 67, 138, 76, extra=0.3)  # seat well AO, far corner
+    chair_rim_light(s)   # tint-crush fix: keeps the lit edge visible even at slate
     return s
 
 
@@ -1115,9 +1317,9 @@ def build_chair_exec_detail() -> Sprite:
     for gy in (28, 38, 48):
         for gx in (30, 50, 94, 114):
             s.dot(gx, gy, "gold")                   # button tufting
-    s.rect(0, 64, 13, 68, "desk_dark")               # armrest tops
-    s.rect(131, 64, 143, 68, "desk_dark")
-    s.rect(64, 77, 80, 92, "metal")                  # heavier gas cylinder
+    bevel_rect(s, 0, 64, 13, 68, "desk_dark", "wall_light", "shadow")     # armrest tops
+    bevel_rect(s, 131, 64, 143, 68, "desk_dark", "wall_light", "shadow")
+    bevel_rect(s, 64, 77, 80, 92, "metal", "wall_light", "shadow")        # heavier gas cylinder
     _chair_star_base(s, 72, 92, 96, 60)
     fab = build_chair_exec_form()
     outline_from_mask(s, union_mask(fab.mask(), s.mask()), "shadow")
@@ -1134,20 +1336,24 @@ def build_chair_antigrav_form() -> Sprite:
     out of hard-edged fills.
     """
     s = Sprite(128, 72, palette=RAMP)
+    chair_cx, half = 64.0, 32.0
     tiers = [
-        (64, 14, 22, 14, "ramp4"),   # rounded cap
-        (64, 28, 30, 16, "ramp4"),   # upper body
-        (64, 42, 32, 16, "ramp3"),   # mid body
-        (64, 53, 26, 13, "ramp2"),   # lower taper, shadow side
+        (64, 14, 22, 14, 0.0),    # rounded cap
+        (64, 28, 30, 16, 0.0),    # upper body
+        (64, 42, 32, 16, 0.35),   # mid body, slight AO deepening downward
+        (64, 53, 26, 13, 0.7),    # lower taper, deepest AO before the glow ring
     ]
-    for cx, cy, rx, ry, name in tiers:
-        s.ellipse(cx, cy, rx, ry, name)
+    for ecx, ecy, rx, ry, extra in tiers:
+        chair_shade_ellipse(s, ecx, ecy, rx, ry, chair_cx, half, extra=extra)
+    chair_rim_light(s)   # tint-crush fix: keeps the lit edge visible at any tint
     return s
 
 
 def build_chair_antigrav_detail() -> Sprite:
     s = Sprite(128, 72)
     s.outline(38, 65, 89, 68, "screen")               # glow ring, levitation tell
+    for x in range(39, 89):
+        s.dot(x, 66, bayer_mix(x, 66, 0.4, "screen", "lamp"))   # dithered glow bleed inside the ring
     s.dots([(22, 67), (64, 70), (106, 67)], "lamp")   # 3 drifting float motes
     s.hline(71, 30, 97, "shadow")                     # ground-facing glow shadow
     fab = build_chair_antigrav_form()
@@ -1160,48 +1366,71 @@ def build_chair_antigrav_detail() -> Sprite:
 # --------------------------------------------------------------------------
 
 def build_kb_membrane() -> Sprite:
+    """HERO-FIDELITY MATCH: the case is a real bevel (dithered highlight top
+    edge, dithered AO where the case meets the desk) instead of one flat
+    metal rect plus a single flat highlight line, and each printed key
+    dimple gets a paired highlight so it reads as a shallow dish, not a
+    dot."""
     s = Sprite(96, 24)
-    s.rect(2, 2, 93, 18, "metal")
-    s.hline(1, 2, 93, "wall_light")
+    bevel_rect(s, 2, 2, 93, 18, "metal", "wall_light", "shadow", ratio=0.6)
     for ky in (5, 9, 13, 17):
         for kx in range(5, 91, 4):
-            s.dot(kx, ky, "desk_dark")
-    s.rect(2, 19, 93, 20, "desk_dark")
+            s.dot(kx, ky, "desk_dark")           # dimple shadow
+            s.dot(kx + 1, ky, "wall_light")      # dimple's lit far edge
+    bevel_rect(s, 2, 19, 93, 20, "desk_dark", "floor_light", "shadow", ratio=0.5)
     s.hline(23, 0, 95, "shadow")
     return s
 
 
 def build_kb_mech() -> Sprite:
+    """HERO-FIDELITY MATCH: each keycap is its own small bevel (light
+    top/left, dark bottom/right) instead of a flat metal square, so the
+    row reads as individual raised caps over the dark plate, not a strip
+    of dots."""
     s = Sprite(96, 24)
     s.rect(2, 1, 93, 19, "shadow")          # visible plate, darker than the caps
+    for x in range(2, 94):
+        s.dot(x, 1, bayer_mix(x, 1, 0.4, "shadow", "wall_light"))   # plate's own top AO/light seam
     for ky in (4, 9, 14):
         for kx in range(5, 91, 4):
-            s.rect(kx, ky, kx + 2, ky + 2, "metal")
+            bevel_rect(s, kx, ky, kx + 2, ky + 2, "metal", "wall_light", "shadow", ratio=0.65)
             s.dot(kx + 1, ky + 1, "cream")  # legend pixel
     s.hline(23, 0, 95, "shadow")
     return s
 
 
 def build_kb_split() -> Sprite:
+    """HERO-FIDELITY MATCH: each of the 4 case blocks is beveled instead of
+    flat metal, and the key-legend dots get a paired shadow pixel so the
+    keywell reads with real depth."""
     s = Sprite(96, 24)
-    s.rect(2, 4, 20, 19, "metal")            # left outer, lower
-    s.rect(21, 2, 42, 17, "metal")           # left inner, tented 2px higher
-    s.rect(53, 2, 74, 17, "metal")           # right inner
-    s.rect(75, 4, 93, 19, "metal")           # right outer
+    bevel_rect(s, 2, 4, 20, 19, "metal", "wall_light", "shadow")    # left outer, lower
+    bevel_rect(s, 21, 2, 42, 17, "metal", "wall_light", "shadow")   # left inner, tented 2px higher
+    bevel_rect(s, 53, 2, 74, 17, "metal", "wall_light", "shadow")   # right inner
+    bevel_rect(s, 75, 4, 93, 19, "metal", "wall_light", "shadow")   # right outer
     for ky in (7, 11):
         for kx in (5, 9, 13, 17, 24, 28, 32, 36, 57, 61, 65, 69, 78, 82, 86, 90):
             s.dot(kx, ky, "wall_light")
+            s.dot(kx, ky + 1, "shadow")     # paired shadow, gives the legend a lip
     s.hline(23, 0, 95, "shadow")
     return s
 
 
 def build_kb_neon() -> Sprite:
     s = Sprite(96, 24)
-    s.rect(12, 4, 83, 16, "metal")           # 60% footprint (72px), centred
+    bevel_rect(s, 12, 4, 83, 16, "metal", "wall_light", "shadow")   # 60% footprint (72px), centred
     third = (83 - 12 + 1) // 3
     s.hline(17, 12, 12 + third - 1, "screen")
     s.hline(17, 12 + third, 12 + 2 * third - 1, "gold")
     s.hline(17, 12 + 2 * third, 83, "plant")
+    # Underglow bleed: the RGB strip's own light spills one row up onto the
+    # case, dithered rather than a hard second stripe.
+    for x in range(12, 12 + third):
+        s.dot(x, 15, bayer_mix(x, 15, 0.35, "metal", "screen"))
+    for x in range(12 + third, 12 + 2 * third):
+        s.dot(x, 15, bayer_mix(x, 15, 0.35, "metal", "gold"))
+    for x in range(12 + 2 * third, 84):
+        s.dot(x, 15, bayer_mix(x, 15, 0.35, "metal", "plant"))
     s.hline(23, 8, 87, "shadow")
     return s
 
@@ -1211,10 +1440,13 @@ def build_kb_neon() -> Sprite:
 # --------------------------------------------------------------------------
 
 def build_mouse_stock() -> Sprite:
+    """HERO-FIDELITY MATCH: the shell is a real bevel (upper-left key light
+    highlight, lower-right shadow) instead of a flat metal blob, matching
+    every other beveled case in the scene."""
     s = Sprite(44, 24)
-    s.rect(2, 10, 41, 21, "shadow")
-    s.rect(15, 4, 28, 16, "metal")
-    s.vline(21, 5, 15, "shadow")             # 2-button seam
+    s.rect(2, 10, 41, 21, "shadow")           # mat/pad shadow the shell sits on
+    bevel_rect(s, 15, 4, 28, 16, "metal", "wall_light", "shadow", ratio=0.6)
+    s.vline(21, 5, 15, "shadow")              # 2-button seam
     s.hline(23, 0, 43, "shadow")
     return s
 
@@ -1222,9 +1454,11 @@ def build_mouse_stock() -> Sprite:
 def build_mouse_gaming() -> Sprite:
     s = Sprite(44, 24)
     s.rect(2, 9, 41, 21, "shadow")
-    s.rect(13, 3, 30, 17, "metal")
+    bevel_rect(s, 13, 3, 30, 17, "metal", "wall_light", "shadow", ratio=0.6)
     s.vline(21, 3, 6, "shadow")               # scroll notch
     s.dot(21, 9, "screen")                    # accent
+    for x, y in ((20, 8), (22, 10)):
+        s.dot(x, y, bayer_mix(x, y, 0.5, "screen", "screen_dim"))   # accent glow bleed
     s.hline(23, 0, 43, "shadow")
     return s
 
@@ -1232,18 +1466,25 @@ def build_mouse_gaming() -> Sprite:
 def build_mouse_trackball() -> Sprite:
     s = Sprite(44, 24)
     s.rect(2, 10, 41, 21, "shadow")
-    s.rect(10, 5, 33, 16, "metal")
+    bevel_rect(s, 10, 5, 33, 16, "metal", "wall_light", "shadow", ratio=0.6)
     s.ellipse(21, 11, 3, 3, "gold")
+    s.dot(19, 10, "cream")                    # ball's specular glint, upper-left
     s.hline(23, 0, 43, "shadow")
     return s
 
 
 def build_mouse_vertical() -> Sprite:
+    """HERO-FIDELITY MATCH: the ergonomic body reads with a lit ridge along
+    its upper-left face and a dithered shadow along its lower-right face
+    instead of one flat metal silhouette."""
     s = Sprite(44, 24)
     s.rect(2, 12, 41, 21, "shadow")
     for i, y in enumerate(range(4, 17)):
         inset = i // 3
-        s.hline(y, 17 + inset, 26 - inset, "metal")
+        x0, x1 = 17 + inset, 26 - inset
+        s.hline(y, x0, x1, "metal")
+        s.dot(x0, y, bayer_mix(x0, y, 0.6, "metal", "wall_light"))   # lit left ridge
+        s.dot(x1, y, bayer_mix(x1, y, 0.6, "metal", "shadow"))       # shadow right ridge
     s.hline(23, 0, 43, "shadow")
     return s
 
@@ -1253,9 +1494,14 @@ def build_mouse_vertical() -> Sprite:
 # --------------------------------------------------------------------------
 
 def build_bev_mug() -> Sprite:
+    """HERO-FIDELITY MATCH: the ceramic body is a dithered highlight+shadow
+    gradient (lit toward the left, matching the room's key light) instead
+    of a flat cream fill, so it reads as a rounded mug, not a beige tile."""
     s = Sprite(20, 24)
-    s.rect(4, 10, 15, 21, "cream")
-    s.hline(14, 4, 15, "pot")
+    for y in range(10, 22):
+        for x in range(4, 16):
+            s.dot(x, y, hgrad(x, y, 4, 15, "pot", "cream"))
+    s.hline(14, 4, 15, "pot")                 # coffee line at the rim
     s.dot(4, 10, "shadow")                    # chip
     s.dots([(6, 6), (9, 4)], "cream")         # steam
     s.dots([(16, 12), (16, 13), (16, 14)], "cream")   # handle
@@ -1265,28 +1511,41 @@ def build_bev_mug() -> Sprite:
 
 
 def build_bev_thermos() -> Sprite:
+    """HERO-FIDELITY MATCH: the steel body is a real bevel instead of a
+    flat metal rect plus one manual highlight line."""
     s = Sprite(20, 24)
-    s.rect(6, 6, 13, 21, "metal")
-    s.rect(6, 3, 13, 5, "desk_dark")
-    s.vline(7, 7, 20, "wall_light")
+    bevel_rect(s, 6, 6, 13, 21, "metal", "wall_light", "shadow", ratio=0.6)
+    bevel_rect(s, 6, 3, 13, 5, "desk_dark", "floor_light", "shadow", ratio=0.6)
     s.hline(23, 3, 16, "shadow")
     return s
 
 
 def build_bev_teacup() -> Sprite:
+    """HERO-FIDELITY MATCH: the cup body gets the same lit-left/dark-right
+    ceramic gradient as the mug; the saucer keeps a flat top but gains a
+    dithered AO rim where it meets the desk."""
     s = Sprite(20, 24)
     s.rect(2, 19, 17, 21, "cream")
-    s.rect(6, 11, 14, 19, "cream")
+    for y in range(11, 20):
+        for x in range(6, 15):
+            s.dot(x, y, hgrad(x, y, 6, 14, "pot", "cream"))
     s.hline(11, 6, 14, "pot")
     s.dot(15, 13, "cream")                    # handle
+    for x in range(2, 18):
+        s.dot(x, 21, bayer_mix(x, 21, 0.4, "cream", "shadow"))   # saucer's own AO rim
     s.hline(23, 0, 19, "shadow")
     return s
 
 
 def build_bev_energy() -> Sprite:
+    """HERO-FIDELITY MATCH: `screen_dim` already gave this can a shadow
+    side; adding a dithered `cream` glint on the lit side completes the
+    bevel so the can reads as a metallic cylinder."""
     s = Sprite(20, 24)
     s.rect(6, 5, 13, 21, "screen")
-    s.vline(13, 5, 21, "screen_dim")
+    s.vline(13, 5, 21, "screen_dim")          # shadow side
+    for y in range(5, 22):
+        s.dot(6, y, bayer_mix(6, y, 0.45, "screen", "cream"))   # lit side glint
     s.dots([(9, 5), (10, 5)], "gold")
     s.hline(23, 3, 16, "shadow")
     return s
@@ -1298,38 +1557,47 @@ def build_bev_energy() -> Sprite:
 
 def build_plant_succulent() -> Sprite:
     """Only the lower 24 rows (20..43) are painted; the tall empty slot
-    above is intentional - a small plant in a tall slot."""
+    above is intentional - a small plant in a tall slot.
+
+    HERO-FIDELITY MATCH: each rosette lobe gets its own light/dark side
+    (`shade_ellipse`) instead of a flat green blob, and the terracotta
+    pot gets a beveled rim so it reads as a glazed ceramic pot.
+    """
     s = Sprite(40, 44)
-    s.rect(14, 32, 25, 41, "pot")
+    bevel_rect(s, 14, 32, 25, 41, "pot", "lamp", "desk_dark", ratio=0.45)
     s.hline(32, 14, 25, "gold")
     for cx, cy in ((16, 24), (22, 22), (19, 27)):
-        s.ellipse(cx, cy, 4, 4, "plant")
+        shade_ellipse(s, cx, cy, 4, 4, "wall_dark", "plant")
     s.hline(42, 10, 29, "shadow")
     return s
 
 
 def build_plant_monstera() -> Sprite:
+    """HERO-FIDELITY MATCH: each leaf gets a lit/shadow split instead of a
+    flat green fill, and the pot is beveled like every other ceramic/metal
+    vessel in the manifest."""
     s = Sprite(40, 44)
-    s.rect(12, 38, 27, 43, "pot")
+    bevel_rect(s, 12, 38, 27, 43, "pot", "lamp", "desk_dark", ratio=0.45)
     s.vline(19, 20, 38, "desk_dark")
     s.vline(23, 22, 38, "desk_dark")
     leaves = ((14, 10, 8, 6), (26, 8, 8, 6), (20, 20, 10, 7), (12, 26, 7, 5), (28, 26, 7, 5))
     for cx, cy, rx, ry in leaves:
-        s.ellipse(cx, cy, rx, ry, "plant")
+        shade_ellipse(s, cx, cy, rx, ry, "wall_dark", "plant")
         s.vline(cx, cy - ry, cy + ry, "desk_dark")   # the monstera split
     s.hline(43, 8, 31, "shadow")
     return s
 
 
 def build_plant_bonsai() -> Sprite:
+    """HERO-FIDELITY MATCH: canopy clumps shaded lit/dark, tray beveled."""
     s = Sprite(40, 44)
-    s.rect(4, 38, 35, 42, "pot")           # wide shallow tray
+    bevel_rect(s, 4, 38, 35, 42, "pot", "lamp", "desk_dark", ratio=0.4)   # wide shallow tray
     s.hline(38, 4, 35, "gold")
     s.vline(18, 24, 38, "desk_dark")        # gnarled trunk
     s.vline(19, 20, 25, "desk_dark")
     s.vline(22, 18, 22, "desk_dark")
     for cx, cy, rx, ry in ((16, 14, 9, 4), (24, 12, 8, 4)):
-        s.ellipse(cx, cy, rx, ry, "plant")
+        shade_ellipse(s, cx, cy, rx, ry, "wall_dark", "plant")
     s.hline(43, 2, 37, "shadow")
     return s
 
@@ -1339,9 +1607,15 @@ def build_plant_bonsai() -> Sprite:
 # --------------------------------------------------------------------------
 
 def build_wall_poster() -> Sprite:
+    """HERO-FIDELITY MATCH: the frame is beveled and the paper gets a soft
+    dithered AO fade at its edges (curling slightly away from the wall)
+    instead of a flat cream card."""
     s = Sprite(40, 44)
-    s.rect(2, 2, 37, 41, "shadow")
+    bevel_rect(s, 2, 2, 37, 41, "shadow", "wall_light", "wall_dark", ratio=0.5)
     s.rect(5, 5, 34, 38, "cream")
+    for y in range(5, 39):
+        for x in (5, 34):
+            s.dot(x, y, bayer_mix(x, y, 0.4, "cream", "floor_light"))   # paper edge AO
     for y, x1 in ((10, 28), (13, 25), (16, 30), (19, 22), (22, 27), (25, 20),
                   (28, 26), (31, 24)):
         s.hline(y, 8, x1, "desk_dark")
@@ -1349,26 +1623,36 @@ def build_wall_poster() -> Sprite:
 
 
 def build_wall_shelf() -> Sprite:
+    """HERO-FIDELITY MATCH: each volume's highlight/shadow pair now sits
+    lit-left/shadow-right (matching the room's one key light, where the
+    old version had it backwards), and the board itself is beveled."""
     s = Sprite(40, 44)
     board_top = 30
     volumes = ((3, 14, 8, "shirt"), (10, 12, 15, "plant"),
                (17, 16, 22, "pot"), (24, 13, 27, "metal"))
     for x0, y0, x1, cover in volumes:
         s.rect(x0, y0, x1, board_top - 1, cover)
-        s.vline(x0, y0, board_top - 2, "shadow")
-        s.rect(x1 - 1, y0 + 1, x1, board_top - 2, "cream")
+        s.rect(x0, y0 + 1, x0 + 1, board_top - 2, "wall_light")   # lit left edge
+        s.vline(x1, y0, board_top - 2, "shadow")                  # shadow right edge
     s.rect(31, 20, 34, 22, "gold")           # trophy cup
     s.vline(32, 23, 25, "gold")
     s.rect(31, 26, 34, board_top - 1, "gold")
+    s.dot(31, 20, "cream")                   # trophy's own glint
+    bevel_rect(s, 0, board_top + 1, 39, board_top + 2, "desk", "wall_light", "desk_dark", ratio=0.5)
     s.hline(board_top, 0, 39, "gold")
-    s.rect(0, board_top + 1, 39, board_top + 2, "desk")
     s.hline(43, 0, 39, "shadow")
     return s
 
 
 def build_wall_neon() -> Sprite:
+    """HERO-FIDELITY MATCH: the outline-only tube gets the same dithered
+    bloom the room's own glow pool uses (`radial_dither_glow`) instead of
+    being a hard, unfilled ring - a neon sign should visibly bleed light,
+    the exact "soft dithering not a flat blob" standard the hero pass set."""
     s = Sprite(40, 44)
+    radial_dither_glow(s, 19.5, 21.0, 16, 20, 4, 2, 35, 41, "lamp", gain=1.6)
     s.outline(10, 6, 29, 37, "lamp")          # bloom halo, one step out
+    radial_dither_glow(s, 19.5, 21.0, 10, 14, 8, 4, 31, 39, "screen", gain=1.8)
     s.outline(12, 8, 27, 35, "screen")        # the tube glyph itself
     s.vline(19, 12, 31, "screen")
     s.vline(20, 12, 31, "screen")
@@ -1380,21 +1664,30 @@ def build_wall_neon() -> Sprite:
 # --------------------------------------------------------------------------
 
 def build_buddy_duck() -> Sprite:
+    """HERO-FIDELITY MATCH: the rubber body reads with a lit-left/shadow-
+    right dithered gradient instead of a flat gold fill."""
     s = Sprite(28, 30)
-    s.rect(9, 15, 18, 17, "gold")
-    s.rect(7, 17, 20, 27, "gold")
+    for y in range(15, 18):
+        for x in range(9, 19):
+            s.dot(x, y, hgrad(x, y, 9, 18, "pot", "gold"))          # head
+    for y in range(17, 28):
+        for x in range(7, 21):
+            s.dot(x, y, hgrad(x, y, 7, 20, "pot", "gold"))          # body
     s.hline(26, 8, 19, "pot")
     s.dot(20, 17, "pot")                      # beak
+    s.dot(21, 17, "lamp")                     # beak's own lit tip
     s.dot(17, 16, "shadow")                   # eye
     s.hline(29, 5, 22, "shadow")
     return s
 
 
 def _build_buddy_bot(eyes_open: bool) -> Sprite:
+    """HERO-FIDELITY MATCH: the chassis is a real bevel (lit upper-left,
+    shadow lower-right) instead of a flat metal block."""
     s = Sprite(28, 30)
     s.vline(13, 4, 9, "metal")                # antenna
     s.dot(13, 9, "metal")
-    s.rect(6, 10, 21, 26, "metal")
+    bevel_rect(s, 6, 10, 21, 26, "metal", "wall_light", "shadow", ratio=0.55)
     eye_colour = "screen" if eyes_open else "metal"
     s.dots([(10, 14), (17, 14)], eye_colour)
     s.dot(13, 4, "gold")                      # antenna bead
@@ -1411,17 +1704,20 @@ def build_buddy_bot_b() -> Sprite:
 
 
 def build_buddy_cat() -> Sprite:
+    """HERO-FIDELITY MATCH: the fur reads as a lit-left/shadow-right
+    dithered gradient (`hair` toward the dark/shadow side, `desk` - the
+    nearest warm-brown palette entry - toward the lit side) instead of a
+    flat single-tone silhouette."""
     s = Sprite(28, 30)
-    s.hline(10, 10, 17, "hair")
-    s.hline(11, 8, 19, "hair")
-    s.hline(12, 6, 21, "hair")
-    s.hline(13, 5, 22, "hair")
-    s.hline(14, 5, 22, "hair")
-    s.hline(15, 6, 21, "hair")
-    s.hline(16, 8, 19, "hair")
+    head_rows = ((10, 10, 17), (11, 8, 19), (12, 6, 21), (13, 5, 22),
+                 (14, 5, 22), (15, 6, 21), (16, 8, 19))
+    for y, x0, x1 in head_rows:
+        for x in range(x0, x1 + 1):
+            s.dot(x, y, hgrad(x, y, x0, x1, "hair", "desk"))
     s.dot(9, 9, "pot")                        # ear tips
     s.dot(16, 9, "pot")
     s.dots([(20, 13), (21, 14), (22, 15), (21, 16)], "hair")   # tail
+    s.dot(20, 13, "desk")                     # tail's own lit root
     s.dot(22, 15, "cream")                    # tail tip
     s.hline(17, 4, 23, "shadow")
     return s
