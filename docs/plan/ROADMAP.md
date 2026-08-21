@@ -23,8 +23,17 @@ Ground rules that hold across every phase (do not re-decide):
 - **v1.0.0** — core loop: activity -> sprints -> Dev Cash -> store modal ->
   buy/equip -> the character visibly changes. Honest moods, privacy,
   behind-view scene, loud failures. (tag `v1.0.0`)
-- **art track (in progress)** — pushing procedural pixel-art fidelity
-  (dithered shading); hero pass shipped, full rollout underway.
+- **art track — PARKED at current fidelity** (user decision 2026-08-21).
+  The desired reference (`/home/darkmirror/transfer/dev_companion_desired_fidelity.png`)
+  is an isometric, rich-palette, hand-crafted illustration our
+  procedural / 18-colour / behind-view approach structurally cannot reach
+  (palette lock, perspective, organic hand/fold/glass detail). Rather than
+  chase a ceiling, we keep the current cozy look and ship depth. The
+  in-flight dithering rollout is allowed to FINISH (it makes the *current*
+  style more consistent — not a chase) and is the last art change until a
+  deliberate future art pivot. When we revisit: the honest routes are
+  user-generated sprites + an integration pipeline, or CC0 iso packs, or a
+  bigger-palette iso generator rebuild (see the parked options in the log).
 
 ---
 
