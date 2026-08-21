@@ -127,14 +127,37 @@ impl ActivityProvider for FocusedWindowProvider {
 ///
 /// All arguments are plain values — no Bevy types — so unit tests call this
 /// directly without constructing an `App` (plan §3.2, `*` functions).
+/// How much "evidence of real work" one activity event is worth.
+///
+/// Typing is the strongest signal we have and is the unit (1.0). Mouse motion
+/// is deliberately worth a fraction: it is weak evidence (scrolling a page,
+/// nudging a window) and it arrives orders of magnitude more often, so any
+/// weight near 1.0 makes the mouse the dominant input by sheer event volume.
+/// Focus changes are bookkeeping, not work, and are worth nothing.
 #[must_use]
+pub fn event_weight(event: &ActivityEvent) -> f32 {
+    match event {
+        ActivityEvent::Keystroke => 1.0,
+        ActivityEvent::MouseMoved => MOUSE_WEIGHT,
+        ActivityEvent::FocusChanged(_) => 0.0,
+    }
+}
+
+/// Mouse motion's weight relative to a keystroke. See [`event_weight`].
+pub const MOUSE_WEIGHT: f32 = 0.25;
+
 pub fn decay_and_accumulate(previous_rate: f32, events: &[ActivityEvent], dt: Duration) -> f32 {
     if dt.is_zero() {
         return previous_rate;
     }
     let dt_secs = dt.as_secs_f32().max(f32::EPSILON); // guard: never divide by 0
-    // Add this frame's raw count as a new "events/second" bucket.
-    let added = events.len() as f32;
+    // Sum this frame's events by WEIGHT, not by count. Counting raw events
+    // treats one mouse twitch as equal to one keystroke, and a mouse reports
+    // motion at 125-1000 Hz while a fast typist manages ~5-10 keys/s — so an
+    // unweighted count lets a few seconds of aimless mouse movement out-earn
+    // a minute of real work, which is exactly the "idle game wearing a
+    // productivity costume" failure this project exists to avoid.
+    let added: f32 = events.iter().map(event_weight).sum();
     // Exponential decay toward zero over the elapsed dt.
     let decay = previous_rate * (-DECAY_PER_SECOND * dt_secs).exp();
     // Clamp: a sustained max-rate input converges to the ceiling instead of
@@ -150,7 +173,7 @@ pub const DECAY_PER_SECOND: f32 = 1.0;
 /// Finite upper bound of `recent_rate` (events/second) a sustained max-rate
 /// mash can reach. Steady input below this rate never touches the ceiling;
 /// an absurd mash converges here (plan §1's anti-mashing invariant).
-pub const MAX_RECENT_RATE: f32 = 120.0;
+pub const MAX_RECENT_RATE: f32 = 15.0;
 
 /// A scripted activity source used only in tests.
 ///

@@ -86,3 +86,34 @@ torso floating. Everything that rests ON the desk surface (`monitor_*`,
 `lamp`, `mug`, `plant`) must then come after the desk in turn. If you ever
 find the prose and the layer list disagreeing again, the prose wins: it
 describes the effect, the list is just an encoding of it.
+
+
+## Why PNG and not SVG
+
+Asked more than once, so recording the reasoning.
+
+**The source format is not PNG — it is `tools/gen_assets.py`.** The PNGs in
+`assets/` are build artifacts, like object files. Regenerate them with
+`python3 tools/gen_assets.py`.
+
+SVG would be the wrong tool here, for three concrete reasons:
+
+1. **Bevy cannot load SVG natively** (upstream issue #1139 is still open). The
+   community `bevy_svg` crate parses with `usvg` and *tessellates into meshes*
+   via Lyon — a vector pipeline, added dependency, and rasterisation step for
+   no benefit.
+2. **Vector rasterisation anti-aliases.** Hard nearest-neighbour edges ARE the
+   pixel-art look; a vector renderer works against it by design.
+3. **Pixel art is inherently raster.** Expressing a 320x200 room as vectors
+   means either ~64,000 one-pixel `<rect>` elements, or smooth vector shapes —
+   which is a different art style, not this one.
+
+**Recolouring is already better than SVG could manage.** The palette is one
+dict at the top of the generator: change a hex value, re-run, and all 15
+sprites update coherently, with the palette assertion proving nothing drifted.
+The SVG equivalent is hand-editing fill attributes across 15 files and hoping
+they stay consistent.
+
+For **runtime** recolouring (day/night themes, user-selectable palettes) the
+right mechanism is Bevy's per-sprite colour tint or a palette-swap shader —
+not a different asset format.

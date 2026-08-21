@@ -422,7 +422,7 @@ pub fn progress_delta(recent_rate: f32, fixed_dt: f32) -> f32 {
 /// (`total_work = 50`) completes in ≈ 8.3 s of continuous typing at the
 /// ceiling, which is a readable demo pace for M3's exit criterion without
 /// making the first project feel trivially short.
-pub const MIN_WORK_PER_EVENT: f32 = 0.05;
+pub const MIN_WORK_PER_EVENT: f32 = 0.008;
 
 /// The level the developer is at for `xp` total experience (plan §3.2,
 /// `xp_level_system`'s `*level_for_xp`). Pure and unit-testable with the
@@ -675,11 +675,36 @@ fn forward_keyboard_events(
 fn forward_mouse_events(
     mut source: ResMut<ActivitySource>,
     mut mouse_motion: MessageReader<MouseMotion>,
+    time: Res<Time>,
+    mut since_last: Local<f32>,
 ) {
-    for _event in mouse_motion.read() {
+    // Coalesce to at most ONE MouseMoved per MOUSE_SAMPLE_SECS, no matter how
+    // many motion messages arrived.
+    //
+    // A mouse reports motion at 125-1000 Hz, so recording one event per
+    // message let a couple of seconds of aimless wiggling pin `recent_rate` at
+    // its ceiling and burn through a whole project — the reported "bar goes
+    // burr on simple mouse move" bug. Emitting per FRAME is not enough either:
+    // at 60fps that is 60 events/s, which even at MOUSE_WEIGHT still reaches
+    // the ceiling on its own. Sampling on a wall-clock interval decouples the
+    // signal from both mouse polling rate and frame rate.
+    *since_last += time.delta_secs();
+    let moved = mouse_motion.read().count() > 0;
+    if moved && *since_last >= MOUSE_SAMPLE_SECS {
+        *since_last = 0.0;
         source.record([ActivityEvent::MouseMoved]);
+    } else if !moved {
+        // Cap the accumulator so a long still period cannot bank credit and
+        // make the first twitch after it count extra.
+        *since_last = since_last.min(MOUSE_SAMPLE_SECS);
     }
 }
+
+/// Minimum wall-clock gap between recorded `MouseMoved` events. At 0.1s the
+/// mouse contributes at most 10 events/s, i.e. `10 * MOUSE_WEIGHT = 2.5`
+/// weight/s — deliberately below a real typist's contribution, so moving the
+/// mouse supports progress without ever being the efficient way to earn it.
+pub const MOUSE_SAMPLE_SECS: f32 = 0.1;
 
 // ---------------------------------------------------------------------------
 // Systems — M2 activity bridge (unchanged except `has_activity` is read by
@@ -1457,7 +1482,6 @@ pub fn run() {
                 // OnBreak after IDLE_THRESHOLD seconds of silence.
                 idle_detection_system,
                 desk_upgrade_system,
-                desk_upgrade_system,
                 // M5: the desk plant upgrade — show the placeholder prop
                 // once the wallet crosses the coin threshold (plan §4/M5).
                 // Toggles the prop's `Visibility` component via a `Command`
@@ -1538,6 +1562,13 @@ pub fn build_app_with_seed(seed_wallet: u64, seed_xp: u32, seed_work_done: f32) 
             forward_mouse_events,
             activity_bridge_system,
             idle_detection_system,
+            // Was MISSING here while present in `run()`, so the desk
+            // upgrade could never appear in a shotcap capture no matter
+            // what DEV_COMPANION_SEED_COINS said — a visual-verification
+            // tool that cannot reproduce the real app's behaviour is
+            // worse than none, because it silently "proves" the wrong
+            // thing.
+            desk_upgrade_system,
             project_completion_system,
             xp_level_system,
             mood_render_system,

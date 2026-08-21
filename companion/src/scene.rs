@@ -18,7 +18,7 @@
 //! rendering at 1:1 on top of a 2x-upscaled room.
 
 // ---------------------------------------------------------------------------
-// WIRING REQUIRED (lib.rs) — this module is not yet referenced anywhere.
+// WIRING REQUIRED (lib.rs) — WIRED: lib.rs declares `pub mod scene;` and adds `ScenePlugin` in both `run()` and `build_app_with_seed()`.
 // ---------------------------------------------------------------------------
 //
 // 1. Declare the module, next to the other top-level items in lib.rs:
@@ -320,18 +320,25 @@ const DESK_POS: Vec2 = Vec2::new(24.0, DESK_TOP_Y - DESK_SIZE.y / 2.0);
 /// room to show on their left.
 const DEV_POS: Vec2 = Vec2::new(-6.0, DESK_TOP_Y - DEV_HANDS_ABOVE_BOTTOM + DEV_SIZE.y / 2.0);
 
-/// Chair centre — wheels on the floor line, 6 px left of the character so the
-/// backrest (which reaches `FLOOR_LINE_Y + 35`, i.e. 12 px clear of the
-/// tabletop) shows past their shoulder instead of hiding behind their torso.
-/// Its seat, visible in the gap between the desk's legs, is exactly where the
+/// Chair centre — wheels on the floor line, and only 2 px left of the
+/// character.
+///
+/// `chair.png` is drawn front-on (symmetric backrest over a centred column and
+/// a three-wheel base), so its column has to sit *under* the character or they
+/// read as sitting beside their chair rather than on it — an earlier 6 px
+/// offset was already enough for a reviewer to call them "not aligned with the
+/// chair". 2 px is the most that can be given up: it is what lets the backrest
+/// (which reaches `FLOOR_LINE_Y + 35`, i.e. 12 px clear of the tabletop) show
+/// past the character's left shoulder instead of vanishing behind their torso.
+/// The seat, visible in the gap between the desk's legs, is exactly where the
 /// character's bottom edge is: they sit *on* it.
-const CHAIR_POS: Vec2 = Vec2::new(DEV_POS.x - 6.0, FLOOR_LINE_Y + CHAIR_SIZE.y / 2.0);
+const CHAIR_POS: Vec2 = Vec2::new(DEV_POS.x - 2.0, FLOOR_LINE_Y + CHAIR_SIZE.y / 2.0);
 
 /// Monitor centre — bezel and stand standing on the tabletop, to the
 /// character's right (they face right, toward it), far enough right that the
 /// mug fits between them and near enough that the character is clearly working
 /// at *this* screen.
-const MONITOR_POS: Vec2 = Vec2::new(36.0, MONITOR_SIZE.y / 2.0 + DESK_TOP_Y);
+const MONITOR_POS: Vec2 = Vec2::new(36.0, DESK_TOP_Y + MONITOR_SIZE.y / 2.0);
 
 /// Desk lamp centre — at the desk's right end, sunk [`LAMP_SPILL_ROWS`] so its
 /// bottom row of spill lands on the tabletop instead of hovering one pixel
@@ -345,8 +352,9 @@ const MONITOR_POS: Vec2 = Vec2::new(36.0, MONITOR_SIZE.y / 2.0 + DESK_TOP_Y);
 const LAMP_POS: Vec2 = Vec2::new(72.0, DESK_TOP_Y - LAMP_SPILL_ROWS + LAMP_SIZE.y / 2.0);
 
 /// Mug centre — on the tabletop in the gap between the character's hands
-/// (which reach x = +4) and the monitor's left edge (x = +16), one pixel clear
-/// of each.
+/// (whose pixels reach x = +4) and the monitor's left edge (x = +16). The
+/// painted mug is narrower than its 10 px canvas, so it clears both by a
+/// pixel or two: close enough to read as *their* mug, touching neither.
 const MUG_POS: Vec2 = Vec2::new(10.0, DESK_TOP_Y + MUG_SIZE.y / 2.0);
 
 /// Book stack centre — standing on the floor line against the wall below the
@@ -606,7 +614,7 @@ fn spawn_room(mut commands: Commands, assets: Res<AssetServer>) {
     commands.spawn((
         Sprite::from_image(assets.load(SPRITE_PLANT)),
         Transform::from_xyz(PLANT_POS.x, PLANT_POS.y, Z_PLANT),
-        Visibility::Visible, // TEMP-VERIFY
+        Visibility::Hidden,
         PlantSprite,
         crate::DeskUpgradeProp,
     ));
