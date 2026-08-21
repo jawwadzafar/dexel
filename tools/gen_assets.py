@@ -1,22 +1,25 @@
 #!/usr/bin/env python3
-"""Generate every sprite listed in docs/art-direction.md as true pixel art.
+"""Generate every sprite listed in docs/art-direction.md v2 (behind-the-shoulder)
+as true pixel art.
 
-The sprites are generated rather than drawn by hand because the palette is a
-hard constraint - the art direction lists 18 exact hex values and forbids
-anything else on screen - and because a generator is reviewable in a diff
-while a PNG is not. Everything is authored at the native size from the
-art-direction table; nothing is ever resized here, because the game does the
-integer upscale at runtime with `ImageSampler::nearest` and a resize in this
-script is exactly what would introduce the soft edges and half-pixels that
-rule 1 of the art direction forbids.
+v2 is a full rewrite of the sprite *content*: the camera moved from a side-on
+profile to behind-and-above the hooded developer, so every silhouette, anchor
+and layer changed. None of the 29 v0.2 sprites survive (see "What survives
+from v0.2" in the art direction doc) but the *conventions* do: the palette is
+a hard constraint enforced by an assertion, nothing is ever resized here
+(the frontend/engine does the integer upscale with nearest-neighbour
+sampling), and a re-run with no source change rewrites the same bytes.
 
     python3 tools/gen_assets.py
 
 Output is deterministic: every pixel position is either literal or derived
 from integer arithmetic, so a re-run with no source change rewrites the same
-bytes. The run ends with a self-check (size, palette purity, opaque-pixel
-count) and exits non-zero if any sprite fails it, so a botched edit here
-cannot quietly ship a blank or off-palette asset.
+bytes. The run ends with a self-check (size, palette/ramp purity, opaque-pixel
+count, the chair hard-region constraint, the two frame-difference rules, the
+monitor's exact screen rect) and exits non-zero if any sprite fails it, so a
+botched edit here cannot quietly ship a blank, off-palette, or mis-anchored
+asset. It also deletes any stale file in assets/ that is not part of the v2
+manifest, so a rewrite like this one cannot leave v0.2 corpses behind.
 """
 
 from __future__ import annotations
@@ -29,9 +32,10 @@ from PIL import Image
 REPO = Path(__file__).resolve().parent.parent
 ASSETS = REPO / "assets"
 
-# The palette from docs/art-direction.md, verbatim. Sprites reference these by
-# name only - a hex literal anywhere below would be a palette violation that
-# the self-check at the bottom would then have to catch after the fact.
+# The palette from docs/art-direction.md, verbatim (18 colours). Sprites
+# reference these by name only - a hex literal anywhere below would be a
+# palette violation that the self-check at the bottom would then have to
+# catch after the fact.
 PALETTE: dict[str, tuple[int, int, int]] = {
     "wall_dark": (0x2F, 0x2A, 0x3D),
     "wall_light": (0x3D, 0x35, 0x50),
@@ -52,85 +56,122 @@ PALETTE: dict[str, tuple[int, int, int]] = {
     "cream": (0xF2, 0xE0, 0xC9),
     "shadow": (0x24, 0x1F, 0x2E),
 }
-
 RGB_TO_NAME = {rgb: name for name, rgb in PALETTE.items()}
 
-# The art-direction table, used both to author and to verify. Keep in sync
-# with docs/art-direction.md; the self-check compares against this.
+# The one scoped exception to palette purity (art-direction "Recolourable
+# parts"): `*_form.png` files paint ONLY this 5-step grayscale ramp, asserted
+# separately from the 18-colour check. The runtime tints (indigo/cobalt/...)
+# never appear in a PNG - they live in one place, the item catalog's tint
+# table, which is out of this generator's scope by design.
+RAMP: dict[str, tuple[int, int, int]] = {
+    "ramp1": (0x4D, 0x4D, 0x4D),   # deep fold / underside      - 30% of tint
+    "ramp2": (0x7A, 0x7A, 0x7A),   # shadow side                - 48%
+    "ramp3": (0xA8, 0xA8, 0xA8),   # mid tone                   - 66%
+    "ramp4": (0xD4, 0xD4, 0xD4),   # base fabric                - 83%
+    "ramp5": (0xFF, 0xFF, 0xFF),   # specular edge, <5% of px   - 100%
+}
+RGB_TO_RAMP = {rgb: name for name, rgb in RAMP.items()}
+
+# The 45-file v2 manifest (docs/art-direction.md, "Sprite manifest v2"), used
+# both to author and to verify. Keep in sync with the doc; the self-check
+# compares against this and the final assets/ directory listing must equal
+# exactly these files plus their derived thumbnails - nothing else survives.
 SPEC: list[tuple[str, int, int]] = [
-    ("room_bg.png", 320, 200),
-    ("desk.png", 120, 48),
-    ("monitor_on.png", 40, 36),
-    ("monitor_off.png", 40, 36),
-    ("chair.png", 28, 36),
-    ("dev_idle.png", 24, 32),
-    ("dev_type_a.png", 24, 32),
-    ("dev_type_b.png", 24, 32),
-    ("dev_coffee.png", 24, 32),
-    ("dev_sleep.png", 24, 32),
-    ("plant.png", 24, 32),
-    ("mug.png", 10, 10),
-    ("books.png", 32, 24),
-    ("lamp.png", 20, 28),
-    ("rug.png", 96, 32),
-    # Upgrade tracks (docs/upgrade-design.md, "Art manifest additions"). The
-    # design doc writes the mouse tier as "mouse_t1 8x6+pad 12x8" - reconciled
-    # here as ONE sprite: mouse_t1.png is the pad+mouse combo at 12x8, and
-    # mouse_t2.png is the standalone sleeker mouse at 8x6. See the game-artist
-    # handoff for why (the mechanics agent loads these exact filenames).
-    ("keyboard_t1.png", 20, 8),
-    ("keyboard_t2.png", 20, 8),
-    ("mouse_t1.png", 12, 8),
-    ("mouse_t2.png", 8, 6),
-    ("monitor_dual.png", 40, 36),
-    # 56x36, not the design doc's 56x30 - see build_monitor_ultra()'s
-    # docstring: this overlay must fully cover the tier-0 monitor sprite it
-    # renders in front of, sharing its exact centre, so it keeps that
-    # sprite's height and only widens.
-    ("monitor_ultra.png", 56, 36),
-    ("chair_t1.png", 28, 36),
-    ("chair_t2.png", 28, 38),
-    ("duck.png", 8, 8),
-    ("poster.png", 24, 30),
-    ("shelf.png", 40, 22),
-    ("cat_a.png", 20, 12),
-    ("cat_b.png", 20, 12),
-    # The mechanics agent's `pet` slot loads a single static "cat.png" (the
-    # tail-flick animation is deferred on their side) - pinned identical to
-    # cat_a.png/frame A, see build_cat()'s docstring.
-    ("cat.png", 20, 12),
+    # Fixed scenery (3)
+    ("room_back.png", 320, 200),
+    ("desk_back.png", 320, 58),
+    ("monitor.png", 132, 64),
+    # Developer (12), all 88x104, identical canvas and anchor
+    ("dev_form_idle.png", 88, 104),
+    ("dev_form_type_a.png", 88, 104),
+    ("dev_form_type_b.png", 88, 104),
+    ("dev_form_sleep.png", 88, 104),
+    ("dev_base_idle.png", 88, 104),
+    ("dev_base_type_a.png", 88, 104),
+    ("dev_base_type_b.png", 88, 104),
+    ("dev_base_sleep.png", 88, 104),
+    ("hoodie_classic.png", 88, 104),
+    ("hoodie_zip.png", 88, 104),
+    ("hoodie_tech.png", 88, 104),
+    ("hoodie_cloak.png", 88, 104),
+    # Chair (8), bottom-centre anchored at room row 200 / x=160
+    ("chair_basic_form.png", 136, 84),
+    ("chair_basic_detail.png", 136, 84),
+    ("chair_racer_form.png", 140, 88),
+    ("chair_racer_detail.png", 140, 88),
+    ("chair_exec_form.png", 144, 100),
+    ("chair_exec_detail.png", 144, 100),
+    ("chair_antigrav_form.png", 128, 72),
+    ("chair_antigrav_detail.png", 128, 72),
+    # Keyboard (4), 96x24 at (112, 90)
+    ("kb_membrane.png", 96, 24),
+    ("kb_mech.png", 96, 24),
+    ("kb_split.png", 96, 24),
+    ("kb_neon.png", 96, 24),
+    # Mouse (4), 44x24 at (224, 90)
+    ("mouse_stock.png", 44, 24),
+    ("mouse_gaming.png", 44, 24),
+    ("mouse_trackball.png", 44, 24),
+    ("mouse_vertical.png", 44, 24),
+    # Beverage (4), 20x24 at (56, 90)
+    ("bev_mug.png", 20, 24),
+    ("bev_thermos.png", 20, 24),
+    ("bev_teacup.png", 20, 24),
+    ("bev_energy.png", 20, 24),
+    # Plant (3 + empty slot), 40x44 at (244, 32), base row 76
+    ("plant_succulent.png", 40, 44),
+    ("plant_monstera.png", 40, 44),
+    ("plant_bonsai.png", 40, 44),
+    # Wall (3 + empty slot), 40x44 at (24, 16)
+    ("wall_poster.png", 40, 44),
+    ("wall_shelf.png", 40, 44),
+    ("wall_neon.png", 40, 44),
+    # Buddy (4 + empty slot), 28x30 at (288, 46), base row 76
+    ("buddy_duck.png", 28, 30),
+    ("buddy_bot_a.png", 28, 30),
+    ("buddy_bot_b.png", 28, 30),
+    ("buddy_cat.png", 28, 30),
 ]
+SPEC_NAMES = {name for name, _, _ in SPEC}
+assert len(SPEC) == 45, f"manifest drifted: {len(SPEC)} entries, expected 45"
 
-CHARACTERS = ("dev_idle.png", "dev_type_a.png", "dev_type_b.png",
-              "dev_coffee.png", "dev_sleep.png")
+# `*_form.png` files are palette-purity EXEMPT and ramp-purity CHECKED instead
+# (art-direction "Palette-purity exception (the only one)"). Covers both the
+# chair naming (`chair_<style>_form.png`) and the developer's
+# (`dev_form_<frame>.png`).
+FORM_FILES = {name for name in SPEC_NAMES
+              if name.endswith("_form.png") or name.startswith("dev_form_")}
 
-# There is deliberately no dither helper here any more. A 4x4 ordered Bayer
-# matrix used to live at this spot, as the way to fade one palette colour into
-# another without inventing an in-between entry, and every single thing it was
-# used for was rejected by a reviewer: the lamp's glow disc ("looks like a
-# clipping error", "particle sparks"), the floor's light spill ("messy and
-# inconsistent ... looks like a rendering artifact"), the rug's woven texture,
-# the desk's tabletop gradient. At this pixel scale a two-colour dither does
-# not read as a gradient, it reads as noise. Light is expressed here as flat
-# runs of a brighter palette entry with hard edges instead - see build_desk,
-# build_lamp and _monitor. Removing the helper rather than merely not calling
-# it is the point: the next person to reach for a soft glow has to re-derive
-# it, and will find this comment first.
+# The two frame-difference rules this generator must prove, not just assert
+# by convention (art-direction "Character rules" / buddy manifest note).
+TYPING_PAIR = ("dev_form_type_a.png", "dev_form_type_b.png")
+BLINK_PAIR = ("buddy_bot_a.png", "buddy_bot_b.png")
 
+
+# --------------------------------------------------------------------------
+# Sprite: an RGBA canvas that can only be painted in palette (or ramp) colours
+# --------------------------------------------------------------------------
 
 class Sprite:
     """An RGBA canvas that can only be painted in palette colours.
 
-    Every drawing call takes a palette *name*, so an off-palette pixel is
+    Every drawing call takes a colour *name*, so an off-palette pixel is
     impossible by construction rather than something to audit afterwards.
     Coordinates are inclusive and out-of-range writes are clipped: the poses
     below are hand-authored pixel lists, and a 1px overhang while tuning an
     arm should not abort the whole build.
+
+    `palette` defaults to the 18-colour PALETTE; `*_form.png` builders pass
+    `palette=RAMP` so the same drawing calls can only ever emit one of the
+    5 grayscale steps - the ramp exemption is enforced at construction time,
+    not just at audit time.
     """
 
-    def __init__(self, w: int, h: int, bg: str | None = None) -> None:
+    def __init__(self, w: int, h: int, bg: str | None = None,
+                 palette: dict[str, tuple[int, int, int]] | None = None) -> None:
         self.w = w
         self.h = h
+        self.palette = palette if palette is not None else PALETTE
         self.img = Image.new("RGBA", (w, h), (0, 0, 0, 0))
         self.buf = self.img.load()
         if bg is not None:
@@ -138,7 +179,14 @@ class Sprite:
 
     def dot(self, x: int, y: int, name: str) -> None:
         if 0 <= x < self.w and 0 <= y < self.h:
-            self.buf[x, y] = PALETTE[name] + (255,)
+            self.buf[x, y] = self.palette[name] + (255,)
+
+    def clear(self, x: int, y: int) -> None:
+        """Punch a hole back to full transparency - used to carve the
+        transparent gap between the developer's two arms/hands where the
+        keyboard must show through."""
+        if 0 <= x < self.w and 0 <= y < self.h:
+            self.buf[x, y] = (0, 0, 0, 0)
 
     def dots(self, coords, name: str) -> None:
         for x, y in coords:
@@ -156,24 +204,44 @@ class Sprite:
         self.rect(x, y0, x, y1, name)
 
     def outline(self, x0: int, y0: int, x1: int, y1: int, name: str) -> None:
-        """A 1px border of identical thickness on all four sides.
-
-        Used by the window frame: uniformity there is the whole point, and one
-        call is harder to get wrong than four `hline`/`vline` calls that can
-        drift apart edge by edge.
-        """
+        """A 1px border of identical thickness on all four sides."""
         self.hline(y0, x0, x1, name)
         self.hline(y1, x0, x1, name)
         self.vline(x0, y0, y1, name)
         self.vline(x1, y0, y1, name)
 
-    def dither(self, x: int, y: int, name: str, level: float) -> None:
-        """Paint (x, y) only if the ordered-dither threshold admits it.
-
-        `level` is 0..1 coverage; 1.0 always paints, 0.0 never does.
-        """
-        if BAYER4[y % 4][x % 4] < level * 16:
+    def line(self, x0: int, y0: int, x1: int, y1: int, name: str) -> None:
+        """Bresenham, hard-edged - no PIL `line()`, which anti-aliases."""
+        dx = x1 - x0
+        dy = y1 - y0
+        steps = max(abs(dx), abs(dy))
+        if steps == 0:
+            self.dot(x0, y0, name)
+            return
+        for i in range(steps + 1):
+            x = x0 + round(dx * i / steps)
+            y = y0 + round(dy * i / steps)
             self.dot(x, y, name)
+
+    def ellipse(self, cx: int, cy: int, rx: int, ry: int, name: str) -> None:
+        """A hard-edged pixel oval - PIL's ellipse would anti-alias the rim.
+
+        The 1.05 fudge rounds the shape outward slightly so small radii come
+        out as blobs rather than diamonds.
+        """
+        for y in range(cy - ry, cy + ry + 1):
+            for x in range(cx - rx, cx + rx + 1):
+                ddx, ddy = x - cx, y - cy
+                if (ddx * ddx) / float(rx * rx) + (ddy * ddy) / float(ry * ry) <= 1.05:
+                    self.dot(x, y, name)
+
+    def mask(self) -> list[list[bool]]:
+        """Opaque-pixel footprint as a [y][x] bool grid, for outline strokes
+        derived from the actual painted silhouette rather than hand-copied
+        coordinates (which drift the moment the silhouette they describe
+        changes)."""
+        px = self.img.load()
+        return [[px[x, y][3] != 0 for x in range(self.w)] for y in range(self.h)]
 
     def save(self, filename: str) -> Path:
         path = ASSETS / filename
@@ -181,1251 +249,1071 @@ class Sprite:
         return path
 
 
-# --------------------------------------------------------------------------
-# Room
-# --------------------------------------------------------------------------
-
-WALL_BOTTOM = 127
-SKIRT_TOP, SKIRT_BOTTOM = 128, 133
-FLOOR_TOP = 134
-
-# There is deliberately no LAMP_X here any more either. This file used to hold
-# the lamp's x in room-background pixels so the wall glow could be painted
-# behind it, and that constant went stale twice - once holding the monitor's x
-# (so the glow pooled beside the wrong object) and once holding the lamp's old
-# left-hand position after scene.rs moved it to the right end of the desk. The
-# background cannot know where the props are, because another agent moves them.
-# Every light in this scene is therefore baked into the sprite of the object
-# that emits or receives it, so it travels with that object; the background's
-# only lighting is full-width bands, which cannot go stale.
-
-# Hard horizon where the wall's lit band begins. Set just above the lamp's
-# shade so the lamp sits inside the lit part of the wall - that adjacency is
-# what makes the band read as the lamp's light rather than as paint. A
-# dead-straight boundary between the two wall purples reads as a deliberate
-# dado line; the long dithered fade it replaces read as stipple noise smeared
-# across the whole upper wall.
-WALL_BAND_TOP = 92
-
-# Top row of the window frame. Named because the wall's dark upper band stops
-# one row above it: a band that ran on behind the window would put `shadow`
-# wall against `shadow` sky with only the 3px frame between them, and the
-# window would stop reading as a hole in a wall.
-WINDOW_TOP = 22
-
-# Fixed star field, four to a pane. Hard-coded rather than seeded-random
-# because a literal list is the only version that survives a Python RNG change
-# unaltered - and because 22 semi-random dots read as stuck pixels: at this
-# scale a *placed* star field, evenly spread with no two stars sharing a row or
-# column, is the only one that reads as sky.
-STARS = [
-    (50, 32), (64, 28), (58, 42), (70, 47),          # top-left pane
-    (86, 30), (99, 36), (91, 46), (106, 41),         # top-right pane
-    (48, 62), (61, 72), (54, 79), (71, 66),          # bottom-left pane
-    (85, 64), (98, 74), (108, 61), (92, 80),         # bottom-right pane
-]
-# Two of them are `gold` instead of `cream`. Same single-pixel footprint as
-# every other star: the earlier 3px-wide version made those two read as
-# horizontal streaks - pixel bleed - rather than as brighter stars.
-TWINKLES = [(64, 28), (98, 74)]
-
-
-def build_room_bg() -> Sprite:
-    s = Sprite(320, 200, bg="wall_dark")
-
-    # The wall behind the desk is lit: one solid `wall_light` band with a
-    # hard top edge, and nothing else on the wall at all.
-    #
-    # Three things have been tried here and this is the only one that works.
-    # A 100px Bayer-dithered disc of `lamp` yellow read as a dense field of
-    # noise clipped flat at the desk line. Replacing it with a low-contrast
-    # `wall_light` dome read as "a giant mysterious semi-circle floating in
-    # the middle of the wall" - any closed shape on a bare wall reads as an
-    # object, however low its contrast. A sparse `lamp` dither hugging the
-    # shade read as particle sparks. So: no shape, no dither, no glow. The
-    # lamp stands inside the band's top edge (see WALL_BAND_TOP) and the band
-    # brightens the whole wall behind the desk, which is all the light this
-    # scene needs and the only version that cannot be mistaken for a bug.
-    s.rect(0, WALL_BAND_TOP, 319, WALL_BOTTOM, "wall_light")
-
-    # ...and a shadowed ceiling with a wooden cornice, mirroring the skirting
-    # board at the other end of the wall. With only two wall entries the room
-    # was one flat purple field; this gives it four values top to bottom
-    # (shadow, wall_dark, wall_light, wood) so it reads as darker away from
-    # the desk without any lamp-shaped geometry drawn on the wall. The cornice
-    # is what stops the dark band reading as letterboxing - a bare `shadow`
-    # strip across the top looked like a UI bar, a moulding looks like a room.
-    s.rect(0, 0, 319, 6, "shadow")
-    s.rect(0, 7, 319, 9, "desk_dark")
-    s.hline(7, 0, 319, "desk")          # lit top face of the moulding
-    s.hline(10, 0, 319, "shadow")       # the shadow it casts down the wall
-    # Both lights in this room stand on the desk, so the wall gets darker the
-    # further up it you look. That is a third value on the wall - `shadow`
-    # from the cornice down to just above the window - and it is what turns
-    # the wall from one flat field into a graded surface. It is a flat band
-    # with a hard bottom edge, deliberately: every *shaped* attempt at wall
-    # light here (a dithered disc, a low-contrast dome, a sparse spark field)
-    # was read as a bug, because any closed shape on a bare wall reads as an
-    # object. A full-width band cannot be mistaken for an object, and it
-    # stops exactly at the window's top edge so the two never interact.
-    s.rect(0, 11, 319, WINDOW_TOP - 1, "shadow")
-
-    _room_window(s)
-
-    # Skirting board: the wall/floor joint reads as a room rather than two
-    # flat fills only if there is a board with its own top highlight.
-    s.rect(0, SKIRT_TOP, 319, SKIRT_BOTTOM, "desk_dark")
-    s.hline(SKIRT_TOP, 0, 319, "desk")
-    s.hline(SKIRT_BOTTOM, 0, 319, "shadow")
-
-    # Floor. Side-on elevation means the boards run straight across with no
-    # perspective at all: evenly spaced full-width seams and nothing else.
-    # What this replaces was the other half of the projection clash - seam
-    # gaps that widened toward the viewer and staggered plank ends, i.e. a
-    # top-down floor under a side-on desk - plus a dithered light spill on
-    # top of it that read as a rendering artifact rather than as light.
-    s.rect(0, FLOOR_TOP, 319, 199, "floor")
-    # One board lighter than its neighbours, full width, hard edges on both
-    # sides. This is the floor's share of the same top-to-bottom ramp the wall
-    # has: the board nearest the wall sits in the wall's own shade, the next
-    # one out is in the open and catches the desk lamp. `floor_light` is the
-    # palette's own name for it. NOT a gradient and NOT dithered - the
-    # stippled version of this exact idea is the one reviewers called "messy
-    # and inconsistent ... looks like a rendering artifact".
-    s.rect(0, 149, 319, 165, "floor_light")
-    # No extra occlusion band under the skirting. The skirting's own `shadow`
-    # bottom row already darkens the joint, and a second two-row band on top
-    # of it made a 3px dark strip that anything standing on the floor line
-    # appeared to hover above - it read as a one-pixel gap under the books.
-    # Each seam is one dark line with a `floor_light` highlight on the near
-    # side of it - the least that reads as a joint between two boards.
-    for y in (148, 166, 184):
-        s.hline(y, 0, 319, "shadow")
-        s.hline(y + 1, 0, 319, "floor_light")
-    # The lit board's own seams are already `shadow`; its far side needs the
-    # highlight row put back on top of the lighter fill so the joint still
-    # reads, and `desk` is the only value lighter than `floor_light` that is
-    # still a wood colour.
-    s.hline(149, 0, 319, "desk")
-
-    return s
-
-
-def _room_window(s: Sprite) -> None:
-    """Night window: wooden frame, four panes of sky, a scatter of stars.
-
-    The frame is deliberately uniform - 3px of `desk_dark` on every side with
-    a 1px `desk` highlight right round the outer perimeter, and 3px mullions
-    to match. The earlier version lit the top and left edges, darkened the
-    bottom one, and then hung a five-row protruding sill off the bottom:
-    four different treatments on four edges, which is why the bottom ledge
-    read as a misplaced asset.
+def outline_from_mask(s: Sprite, mask: list[list[bool]], name: str = "shadow") -> None:
+    """Paint a 1px halo of `name` on every transparent pixel adjacent to a
+    `mask`-true pixel. This is how every silhouette outline in this file is
+    produced: derived from the shape that was actually painted, so the
+    outline cannot go stale relative to a silhouette that later changes
+    shape (the developer's per-frame arm offsets, a chair redesign, ...).
     """
-    x0, y0, x1, y1 = 40, WINDOW_TOP, 116, 86
-    s.rect(x0, y0, x1, y1, "desk_dark")
-    s.outline(x0, y0, x1, y1, "desk")                 # same lit edge all round
-    s.rect(x0 + 3, y0 + 3, x1 - 3, y1 - 3, "shadow")  # sky
-    # Mullions split the sky into four panes; without them the sky reads as a
-    # hole in the wall rather than glass. Centred in the 71x59 opening so the
-    # four panes come out the same size.
-    s.rect(77, y0 + 3, 79, y1 - 3, "desk_dark")
-    s.rect(x0 + 3, 53, x1 - 3, 55, "desk_dark")
-    # Each mullion gets the same 1px `desk` lit edge the outer frame has, on
-    # the side facing the light (left, and up). Without it the 3px mullions
-    # read as thinner than the 3px frame, because the frame's highlight made
-    # it look 4px wide - the same "different thickness" complaint the sill
-    # used to draw, one member in.
-    s.vline(77, y0 + 3, y1 - 3, "desk")
-    s.hline(53, x0 + 3, x1 - 3, "desk")
-    for x, y in STARS:
-        s.dot(x, y, "cream")
-    for x, y in TWINKLES:
-        s.dot(x, y, "gold")
-
-
-# --------------------------------------------------------------------------
-# Furniture
-# --------------------------------------------------------------------------
-
-def build_desk() -> Sprite:
-    """The desk as a flat side-on elevation - no tabletop surface at all.
-
-    This is the sprite the whole composition hangs on. The version before it
-    mixed projections: a slab lit along its top rows as though seen from
-    above, a `pot`-coloured gradient dithered across that top, and 9px legs
-    with a lit left face plus a 2px shaded right face - a box in three-quarter
-    view. Set against a side-on character and a side-on window, the desk
-    appeared to float. Now every part is a flat rectangle seen edge-on, so the
-    top row of the sprite *is* the front edge of the tabletop - which is also
-    the line scene.rs stands the monitor, lamp and mug on.
-
-    Note the distinction from that old failure, because it is one pixel row
-    wide and easy to undo by accident: the rows below ARE graded light-to-dark
-    now, but they are the graded front EDGE of a tabletop seen end-on, in flat
-    bands. What broke before was a lit top FACE - a visible horizontal
-    surface, which implies a camera looking down at the desk while the
-    character beside it is drawn from the side - plus a dither across it. A
-    value ramp down a vertical face is elevation shading; a value ramp across
-    a horizontal face is a second vanishing point.
-    """
-    s = Sprite(120, 48)
-    # Tabletop seen edge-on. Rows 0-9 are opaque across the full width because
-    # that is what hides the seated character's lower body
-    # (docs/art-direction.md, Layering), and those ten rows are also where this
-    # sprite does its lighting.
-    #
-    # Rows 0-2 are the part of the tabletop that points at the ceiling, and
-    # both lamps in this room stand on it, so it is the brightest wood in the
-    # room and darkens away from them: `gold`, `pot`, `desk`, `desk_dark`,
-    # `shadow` - five values over ten rows.
-    #
-    # Full width and position-independent on purpose. A *local* warm patch was
-    # tried here and it ends up glowing under an empty stretch of tabletop the
-    # moment scene.rs slides the lamp along; a full-width band cannot go stale
-    # however the props move. What stops it reading as gold trim rather than as
-    # light is that the ramp keeps going underneath it. The lit rows outnumber
-    # the shaded ones four to two, which is also what keeps the band as a whole
-    # clearly lighter than the purple wall it is silhouetted against - a darker
-    # desk was read as blending into the background. This top edge is also the
-    # line every desk prop's contact shadow lands against, which is what ties
-    # those props to the wood rather than to the wall behind them.
-    s.hline(0, 0, 119, "gold")
-    s.rect(0, 1, 119, 2, "pot")
-    s.rect(0, 3, 119, 6, "desk")
-    s.rect(0, 7, 119, 8, "desk_dark")
-    s.hline(9, 0, 119, "shadow")
-
-    for lx in (10, 103):
-        # The legs fall off in value from top to bottom, because both lamps in
-        # this room stand on the tabletop above them: `desk` for the stretch
-        # just under the top, `desk_dark` for the rest. Two flat bands, one
-        # hard edge, full width, so it holds wherever scene.rs puts the desk.
-        #
-        # The ramp runs *upward* from `desk_dark` rather than downward into
-        # `shadow`, and that direction is the whole point. The palette has no
-        # brown between `desk_dark` and `shadow`, so a downward ramp is a jump
-        # straight to near-black: it turned the bottom two thirds of each leg
-        # into a black rectangle that read as a hole in the rug, not as a leg
-        # in shadow. Lighting the top of the leg says the same thing about
-        # where the light is and leaves the leg looking like wood.
-        s.rect(lx, 10, lx + 6, 16, "desk")
-        s.rect(lx, 17, lx + 6, 46, "desk_dark")
-        s.vline(lx + 6, 10, 46, "shadow")
-        # Contact shadow: the foot's last row plus two pixels of floor either
-        # side of it, so the dark line is visibly WIDER than the leg. A shadow
-        # exactly as wide as the object it belongs to reads as the object's own
-        # bottom edge; one that spills sideways reads as a shadow, and that is
-        # the whole difference between a desk standing on the floor and a desk
-        # pasted in front of it.
-        s.hline(47, lx - 2, lx + 8, "shadow")
-
-    return s
-
-
-def _monitor(lit: bool) -> Sprite:
-    s = Sprite(40, 36)
-    # Stand first, so the bezel overlaps it and the neck disappears behind the
-    # panel instead of butting against it.
-    s.rect(16, 28, 23, 32, "metal")
-    s.rect(13, 33, 26, 34, "metal")
-    s.vline(23, 28, 32, "shadow")
-
-    # Row 35 is the bottom row of the sprite, and scene.rs stands that row on
-    # the desk's top edge - so it is the only row of this sprite that is in
-    # contact with the tabletop, and therefore the only place the screen's
-    # light can legitimately land on the wood.
-    #
-    # This is where the cool half of the scene's lighting lives. It is NOT in
-    # desk.png: another agent moves the props, and a teal pool baked into the
-    # desk at a fixed x glows under an empty stretch of tabletop the moment the
-    # monitor slides. Baked here it travels with the screen that emits it, and
-    # it is absent from monitor_off.png, which is what makes the mood switch
-    # read as the screen actually going dark rather than merely changing hue.
-    s.hline(35, 13, 26, "shadow")          # the stand's own contact shadow
-    if lit:
-        # The top face of the foot is lit by the panel directly above it. This
-        # matters more than it sounds: without it the pool is two separate
-        # teal blobs with a dark foot between them, and two blobs read as two
-        # objects. With it the light runs unbroken across the whole base.
-        s.hline(33, 13, 26, "screen_dim")
-        # One flat shape in one colour, 34px wide and 4px tall, stepped in by
-        # two pixels a row. Deliberately much wider than it is tall: a tall
-        # narrow version of the same wedge is a cone, and a cone of light drawn
-        # on a wall is the shape reviewers called "a giant mysterious
-        # semi-circle". Flat and wide, hugging the stand, it reads as a pool at
-        # the base of the monitor - which is where the light actually goes.
-        for row, inset in ((32, 8), (33, 6), (34, 4), (35, 3)):
-            s.hline(row, inset, 12, "screen_dim")
-            s.hline(row, 27, 39 - inset, "screen_dim")
-
-    s.rect(1, 0, 38, 27, "metal")
-    # The bezel's own lit edges. When the panel is on they pick up its glow
-    # (`screen_dim`), when it is off they pick up nothing but the room
-    # (`wall_light`) - a second, quieter tell that the light source is off.
-    edge = "screen_dim" if lit else "wall_light"
-    s.hline(0, 2, 37, edge)                # 1px top highlight gives it form
-    s.vline(0, 1, 26, edge)
-    s.hline(27, 2, 38, "shadow")
-    s.vline(39, 1, 27, "shadow")
-
-    # A real monitor has a thin bezel above and a deeper chin below; equal
-    # borders read as a picture frame.
-    face = "screen" if lit else "screen_dim"
-    s.rect(4, 3, 35, 22, face)
-    s.hline(2, 3, 35, "shadow")            # inset lip around the glass
-    s.vline(3, 2, 23, "shadow")
-    s.hline(23, 4, 36, "shadow")
-    s.vline(36, 3, 23, "shadow")
-
-    if lit:
-        # Four code lines plus a cursor block, indented like real source -
-        # enough to read as text at native size, not a UI mockup.
-        for y, x0, x1 in ((6, 7, 26), (9, 7, 19), (12, 10, 30), (15, 10, 22),
-                          (18, 7, 15)):
-            s.hline(y, x0, x1, "screen_dim")
-        s.rect(18, 18, 20, 18, "screen_dim")
-        s.hline(24, 5, 34, "screen_dim")   # screen light spilling on the chin
-        s.dot(35, 25, "gold")              # power LED
-    else:
-        s.dots([(6, 6), (7, 5), (8, 4), (7, 6)], "screen")  # glint on dark glass
-        s.dot(35, 25, "shadow")                      # LED off
-    return s
-
-
-def _monitor_panel(s: Sprite, x0: int, y0: int, x1: int, y1: int, lines) -> None:
-    """One glowing-teal bezel+screen, in the exact visual language of
-    `_monitor(lit=True)` above: `metal` bezel, a `screen_dim` lit top/left
-    edge and `shadow` bottom/right edge, a `shadow`-inset `screen` face, and a
-    `gold` power LED in the bottom-right corner.
-
-    Factored out for `monitor_dual`/`monitor_ultra`, which each need more
-    than one panel (or one panel at an arbitrary width) sharing that
-    language, rather than re-deriving the bezel by hand per tier and risking
-    the two ever drifting apart. `lines` is a list of `(dy, lo, hi)` code-line
-    segments in face-local coordinates, so callers vary line count/position
-    per panel size without touching the bezel/face construction.
-    """
-    s.rect(x0, y0, x1, y1, "metal")
-    s.hline(y0, x0 + 1, x1 - 1, "screen_dim")
-    s.vline(x0, y0 + 1, y1 - 1, "screen_dim")
-    s.hline(y1, x0 + 1, x1, "shadow")
-    s.vline(x1, y0 + 1, y1, "shadow")
-
-    fx0, fy0, fx1, fy1 = x0 + 3, y0 + 3, x1 - 3, y1 - 5
-    s.rect(fx0, fy0, fx1, fy1, "screen")
-    s.hline(fy0 - 1, fx0, fx1, "shadow")
-    s.vline(fx0 - 1, fy0 - 1, fy1, "shadow")
-    s.hline(fy1 + 1, fx0, fx1 + 1, "shadow")
-    s.vline(fx1 + 1, fy0 - 1, fy1 + 1, "shadow")
-
-    for dy, lo, hi in lines:
-        y = fy0 + dy
-        if y <= fy1:
-            s.hline(y, fx0 + lo, min(fx1, fx0 + hi), "screen_dim")
-    s.dot(x1 - 1, y1 - 1, "gold")   # power LED
-
-
-# The exact opaque footprint of `_monitor(lit=True)`/`_monitor(lit=False)`
-# (both identical in shape), row by row, measured off the rendered sprite
-# rather than re-derived from its drawing code so this cannot drift out of
-# sync with it. `monitor_dual`/`monitor_ultra` render as overlays IN FRONT OF
-# this same sprite at the same anchor (scene.rs, Z_MONITOR_UPGRADE over
-# Z_MONITOR) - an overlay with a transparent gap anywhere in this footprint
-# lets the tier-0 monitor peek out from behind it, so both tiers paint an
-# opaque backing across this exact shape before drawing their own look on
-# top of it.
-_MONITOR_BASE_FOOTPRINT = [
-    (0, 1, 38), (1, 0, 39), (2, 0, 39), (3, 0, 39), (4, 0, 39), (5, 0, 39),
-    (6, 0, 39), (7, 0, 39), (8, 0, 39), (9, 0, 39), (10, 0, 39), (11, 0, 39),
-    (12, 0, 39), (13, 0, 39), (14, 0, 39), (15, 0, 39), (16, 0, 39),
-    (17, 0, 39), (18, 0, 39), (19, 0, 39), (20, 0, 39), (21, 0, 39),
-    (22, 0, 39), (23, 0, 39), (24, 0, 39), (25, 0, 39), (26, 0, 39),
-    (27, 1, 39), (28, 16, 23), (29, 16, 23), (30, 16, 23), (31, 16, 23),
-    (32, 8, 31), (33, 6, 33), (34, 4, 35), (35, 3, 36),
-]
-
-
-def _monitor_base_backing(s: Sprite, dx: int = 0, dy: int = 0) -> None:
-    """Paint `_MONITOR_BASE_FOOTPRINT`, opaque, shifted by (dx, dy).
-
-    Bezel rows in `metal` (matching the base bezel), stand rows in `shadow`
-    (matching the base's own contact-shadow-toned foot) - either colour is
-    fine here since the overlay's own panels/stands paint over almost all of
-    it; only the gaps between them are left showing this backing, which then
-    reads as a shared mounting bar rather than as a hole.
-    """
-    for y, x0, x1 in _MONITOR_BASE_FOOTPRINT:
-        name = "metal" if y <= 27 else "shadow"
-        s.hline(y + dy, x0 + dx, x1 + dx, name)
-
-
-def build_chair() -> Sprite:
-    """Office chair, side-on.
-
-    The backrest and seat are a `metal` frame around `desk_dark` padding
-    rather than solid `metal`. Solid, they were two near-black rectangles
-    against a dark wall and read as an unfinished placeholder; the two-tone
-    version reads as a padded chair at the same silhouette.
-    """
-    s = Sprite(28, 36)
-    s.rect(7, 1, 21, 17, "metal")          # backrest frame
-    s.rect(9, 3, 19, 15, "desk_dark")      # padding inside the frame
-    # No horizontal cushion seams: two of them across a framed brown panel
-    # made the backrest read as a chest of drawers. One unbroken panel inside
-    # a dark frame is what reads as an upholstered chair back at this size.
-    s.hline(1, 8, 20, "wall_light")        # lit top edge
-    s.vline(7, 2, 16, "wall_light")        # lit near edge
-    s.vline(21, 1, 17, "shadow")
-    s.hline(17, 8, 21, "shadow")
-
-    s.rect(11, 18, 17, 21, "metal")        # back support into the seat
-    s.vline(17, 18, 21, "shadow")
-
-    s.rect(4, 21, 24, 25, "metal")         # seat frame
-    s.rect(6, 22, 22, 24, "desk_dark")     # seat padding
-    s.hline(21, 5, 23, "wall_light")
-    s.hline(25, 4, 24, "shadow")
-
-    s.rect(12, 26, 15, 30, "metal")        # gas post
-    s.vline(15, 26, 30, "shadow")
-    s.vline(12, 26, 30, "wall_light")
-
-    s.hline(31, 8, 19, "metal")            # spider base
-    s.hline(32, 5, 22, "metal")
-    s.hline(33, 3, 24, "shadow")
-    for wx in (3, 12, 21):                 # castors
-        s.rect(wx, 34, wx + 3, 35, "shadow")
-    # Contact shadow across the whole footprint and one pixel wider than the
-    # outermost castor, so the chair reads as sitting on the floorboards
-    # instead of hovering a pixel above them.
-    s.hline(35, 2, 25, "shadow")
-    return s
-
-
-# --------------------------------------------------------------------------
-# Character
-# --------------------------------------------------------------------------
-#
-# 24x32, three-quarter view facing right. The head is deliberately a third of
-# the height: at this size a realistic head would be four pixels wide and
-# read as noise. Draw order is torso then head, so a lowered head (the sleep
-# pose) sinks into the shoulders instead of floating above them.
-
-def _dev_torso(s: Sprite) -> None:
-    """Shoulders and back only; the arms are separate so the poses can share this.
-
-    The torso is deliberately narrow (right edge at x=16/17) so the reaching
-    arm has clear space outside the silhouette to live in - a wider torso
-    swallowed the arm entirely, and no shading rescues a shirt-coloured limb
-    on a shirt-coloured body at 24px.
-    """
-    s.rect(7, 16, 17, 16, "shirt")         # shoulder line
-    s.rect(6, 17, 17, 19, "shirt")
-    s.rect(6, 20, 16, 31, "shirt")
-    # The back is turned away from both light sources, so it is not a 1px
-    # outline but a genuine shadow side, two pixels wide. One pixel of shadow
-    # reads as a black keyline drawn round the sprite; two pixels read as the
-    # body being unlit on that side, which is the difference between an
-    # outlined sticker and a figure standing in a room with lamps in it.
-    s.vline(6, 17, 31, "shadow")
-    s.vline(7, 20, 31, "shadow")
-    s.rect(12, 16, 15, 16, "cream")        # collar under the chin
-    # Cool rim on the shoulder facing the monitor, one pixel of `screen`.
-    # `screen` rather than `screen_dim` because `screen_dim` and `shirt`
-    # happen to sit at the same luminance, so a rim in it is invisible - a rim
-    # light has to change value, not just hue. It starts at row 17 rather than
-    # row 16: on row 16 it landed immediately beside the cream collar and the
-    # two together read as a necklace. Rows 18-19 are included even though the
-    # arms usually cover them - the arms are drawn after this, so where a
-    # sleeve reaches over the rim the rim correctly vanishes behind it.
-    s.vline(17, 17, 19, "screen")
-
-
-def _dev_head(s: Sprite, dy: int = 0, eyes_closed: bool = False) -> None:
-    # Hair is one solid silhouette (crown plus the back of the skull on the
-    # left, since the character faces right) - strands do not survive at this
-    # size, a shape does.
-    s.rect(10, 3 + dy, 15, 3 + dy, "hair")
-    s.rect(9, 4 + dy, 16, 4 + dy, "hair")
-    s.rect(8, 5 + dy, 17, 7 + dy, "hair")
-    s.rect(8, 8 + dy, 9, 11 + dy, "hair")
-    # The lamp's bulb sits just above head height and to the right, so the
-    # crown and the whole right edge of the skull take a warm `gold` rim -
-    # the one place a rim can be a full colour rather than a value nudge,
-    # because `hair` is the darkest thing on the sprite. The monitor's cool
-    # light is deliberately NOT put here as well: a teal rim on the hair plus
-    # a teal rim on the shoulder joined up into what read as a headset rather
-    # than as light, so the cool half of the lighting is kept to the pixels
-    # that genuinely point at the panel - the nose, the shoulder edge and the
-    # hands.
-    s.rect(11, 3 + dy, 14, 3 + dy, "gold")        # crown, under the lamp
-    s.dots([(16, 4 + dy), (17, 5 + dy), (17, 6 + dy), (17, 7 + dy)], "gold")
-
-    s.rect(10, 8 + dy, 17, 12 + dy, "skin")
-    s.rect(11, 13 + dy, 16, 13 + dy, "skin")
-    s.rect(12, 14 + dy, 15, 14 + dy, "skin")      # chin
-    s.rect(18, 10 + dy, 18, 11 + dy, "skin")      # nose breaks the silhouette
-    # The face in three values instead of one flat fill of `skin`, because a
-    # flat face is the single loudest "nothing in this room is lit" signal on
-    # screen. The palette has no skin_light/skin_dark, so the nearest
-    # legitimate entries stand in - the same substitution the hair and shirt
-    # already use: `cream` for the side turned toward the lamp and the screen,
-    # `skin` as the mid-tone, `pot` for the side turned away from both.
-    # (Kept to x16-17 plus the nose column rather than a rect out to x18: rows
-    # 8, 9 and 12 have nothing at x18, and a rect there would silently widen
-    # the head instead of shading it.)
-    s.rect(16, 8 + dy, 17, 12 + dy, "cream")      # lit side, toward the lamp
-    s.rect(10, 8 + dy, 11, 12 + dy, "pot")        # shadow side, toward the back
-    s.dot(11, 13 + dy, "pot")                     # jaw turning away from us
-    s.dot(12, 14 + dy, "pot")
-
-    if eyes_closed:
-        s.rect(11, 10 + dy, 12, 10 + dy, "hair")
-        s.rect(15, 10 + dy, 16, 10 + dy, "hair")
-    else:
-        s.dot(13, 9 + dy, "hair")   # far eye
-        s.dot(16, 9 + dy, "hair")   # near eye
-
-    s.rect(12, 15 + dy, 15, 15 + dy, "skin")      # neck
-    s.dot(12, 15 + dy, "pot")
-
-    # The nose is the most forward point of the head and the only part of it
-    # pointing straight at the monitor, so it - and only it - takes the cool
-    # light. Two pixels: `screen` sits within a few points of `skin`'s
-    # luminance, so this reads as a hue shift on the leading edge rather than
-    # as a green stripe. The warm `cream` cheek beside it is the lamp; this is
-    # the screen. Having the two lights land on different pixels of the same
-    # face is what says they are both real.
-    s.dot(18, 10 + dy, "screen")
-    s.dot(18, 11 + dy, "screen")
-
-
-def _far_arm(s: Sprite, dx: int = 0, dy: int = 0) -> None:
-    """The arm on the far side of the body.
-
-    Drawn before the near arm so the near arm overlaps it, and painted in
-    `pot`/`shadow` rather than skin because darkening a limb wholesale is the
-    only depth cue available at 24px. It sits a row higher than the near hand
-    - further away means higher on screen.
-    """
-    s.rect(16 + dx, 19 + dy, 17 + dx, 19 + dy, "pot")     # forearm
-    s.rect(18 + dx, 18 + dy, 20 + dx, 20 + dy, "pot")     # hand
-    # The hand is placed clear of the torso so it has its own silhouette, and
-    # its underside is the 1px dark line that separates it from the near hand
-    # directly below.
-    s.hline(20 + dy, 18 + dx, 20 + dx, "shadow")
-    # Cool rim on the knuckles, which face the monitor. Muted (`screen_dim`)
-    # where the near hand's is bright: this hand is the far one, and keeping
-    # its highlight a step down is the same depth trick that makes it `pot`
-    # instead of `skin` in the first place.
-    s.vline(20 + dx, 18 + dy, 19 + dy, "screen_dim")
-
-
-def _near_arm(s: Sprite, dx: int = 0, dy: int = 0, curl: bool = True) -> None:
-    """The arm on the viewer's side, elbow down, forearm reaching right.
-
-    The character wears a short sleeve specifically so the arm can be bare
-    skin: an earlier pass drew a long shirt sleeve and it disappeared into the
-    shirt-coloured torso, and the `shadow` outline needed to rescue it read as
-    a black strap across the chest. Skin against shirt needs no outline.
-    `curl` raises the hand a row, as if resting on keys rather than flat.
-    """
-    s.hline(18 + dy, 15 + dx, 17 + dx, "shadow")          # sleeve hem
-    s.rect(15 + dx, 19 + dy, 17 + dx, 21 + dy, "skin")    # upper arm
-    s.rect(16 + dx, 22 + dy, 18 + dx, 23 + dy, "skin")    # forearm
-    hand_top = 21 + dy if curl else 22 + dy
-    s.rect(19 + dx, hand_top, 21 + dx, 23 + dy, "skin")
-    s.hline(23 + dy, 17 + dx, 21 + dx, "pot")             # underside/fingers
-    # Both lamps in this room are above the desk, so the arm is lit along its
-    # top and shaded along its underside - the one cue that turns a limb from
-    # a flat skin-coloured bar into a round one. `cream` and `pot` stand in
-    # for the skin_light/skin_dark the palette does not have.
-    s.hline(19 + dy, 15 + dx, 17 + dx, "cream")           # top of the upper arm
-    s.hline(22 + dy, 16 + dx, 18 + dx, "cream")           # top of the forearm
-    s.hline(hand_top, 19 + dx, 21 + dx, "cream")          # back of the hand
-    # The fingertips are the closest thing in the room to the screen, so they
-    # get the cool rim: the leading edge of the hand in `screen`. This is the
-    # pixel group that sells the whole idea - the character's hands are lit
-    # teal by the monitor they are typing on.
-    s.vline(21 + dx, hand_top, 22 + dy, "screen")
-
-
-def _typing_arms(s: Sprite, dx: int, dy: int) -> None:
-    """Both arms at the keyboard, offset by (dx, dy).
-
-    The two typing frames are this one function called with two offsets, which
-    is what guarantees the art-direction rule that the frames differ only in
-    arm and hand pixels - no other code path exists for them to drift through.
-    """
-    _far_arm(s, dx, dy)
-    _near_arm(s, dx, dy)
-
-
-def build_dev_idle() -> Sprite:
-    s = Sprite(24, 32)
-    _dev_torso(s)
-    # Hands off the keys: both arms drop a row and the near hand lies flat
-    # instead of curling over the keyboard, which is what makes this read as a
-    # pause rather than a typing frame.
-    _far_arm(s, 0, 2)
-    _near_arm(s, 0, 1, curl=False)
-    _dev_head(s)
-    return s
-
-
-def build_dev_type_a() -> Sprite:
-    s = Sprite(24, 32)
-    _dev_torso(s)
-    _typing_arms(s, 0, 1)      # hands left and down
-    _dev_head(s)
-    return s
-
-
-def build_dev_type_b() -> Sprite:
-    s = Sprite(24, 32)
-    _dev_torso(s)
-    _typing_arms(s, 1, 0)      # hands right and up
-    _dev_head(s)
-    return s
-
-
-def build_dev_coffee() -> Sprite:
-    s = Sprite(24, 32)
-    _dev_torso(s)
-    _far_arm(s, -1, 3)         # far hand stays down on the desk
-    _dev_head(s)
-    # The folded arm and the mug are drawn after the head, because a mug held
-    # to the mouth has to overlap the face to read as being drunk from.
-    s.hline(18, 15, 17, "shadow")          # sleeve hem
-    s.rect(15, 19, 17, 21, "skin")         # upper arm hangs down
-    s.rect(17, 15, 18, 20, "skin")         # forearm folded up
-    s.rect(17, 14, 19, 14, "skin")         # fist under the mug
-    s.dot(18, 15, "pot")
-    s.dot(19, 14, "screen")                # knuckle facing the monitor
-    s.hline(19, 15, 17, "cream")           # top of the arm, lit from above
-    s.rect(16, 10, 19, 13, "cream")        # mug body
-    s.hline(10, 16, 19, "desk_dark")       # coffee surface
-    s.vline(19, 11, 13, "pot")             # shaded side
-    s.hline(13, 16, 19, "pot")
-    # This pose covers the shoulder rim and most of the face with the raised
-    # arm and the mug, so without these three pixels the coffee frame would be
-    # the one frame in the set with no cool light on it at all - and a light
-    # that switches off when the character takes a break is not a light. The
-    # mug's monitor-facing side and the knuckle beneath it are what is left
-    # pointing at the screen in this pose, so they are what catches it.
-    s.dots([(19, 11), (19, 12)], "screen")
-    s.dots([(20, 11), (20, 12)], "cream")  # handle
-    s.dots([(17, 8), (18, 6), (17, 4)], "cream")   # steam
-    return s
-
-
-def build_dev_sleep() -> Sprite:
-    s = Sprite(24, 32)
-    _dev_torso(s)
-    # Slumped: the head sinks two rows into the shoulders and both arms go
-    # slack, hands flat on the desk instead of curled over keys.
-    _far_arm(s, -1, 4)
-    _near_arm(s, 0, 3, curl=False)
-    _dev_head(s, dy=2, eyes_closed=True)
-    # A single `z` above the head - the smallest readable sleep cue at 24px.
-    s.dots([(19, 1), (20, 1), (21, 1), (20, 2), (19, 3), (20, 3), (21, 3)],
-           "cream")
-    return s
-
-
-# --------------------------------------------------------------------------
-# Props
-# --------------------------------------------------------------------------
-
-def _leaf(s: Sprite, cx: int, cy: int, rx: int, ry: int, name: str) -> None:
-    """A hard-edged pixel oval - PIL's ellipse would anti-alias the rim.
-
-    The 1.05 fudge rounds the shape outward slightly so the small radii used
-    here come out as blobs rather than diamonds.
-    """
-    for y in range(cy - ry, cy + ry + 1):
-        for x in range(cx - rx, cx + rx + 1):
-            dx, dy = x - cx, y - cy
-            if (dx * dx) / float(rx * rx) + (dy * dy) / float(ry * ry) <= 1.05:
+    h = len(mask)
+    w = len(mask[0]) if h else 0
+    for y in range(h):
+        for x in range(w):
+            if mask[y][x]:
+                continue
+            near = False
+            for dx, dy in ((1, 0), (-1, 0), (0, 1), (0, -1)):
+                nx, ny = x + dx, y + dy
+                if 0 <= nx < w and 0 <= ny < h and mask[ny][nx]:
+                    near = True
+                    break
+            if near:
                 s.dot(x, y, name)
 
 
-def build_plant() -> Sprite:
-    s = Sprite(24, 32)
-    # Foliage first: the pot rim then overlaps the lowest leaves, which is
-    # what makes the plant look planted rather than balanced on top.
-    stems = ((11, 10), (8, 14), (15, 13), (12, 8))
-    for x, top in stems:
-        s.vline(x, top, 24, "desk_dark")
-    leaves = (
-        (11, 6, 4, 3, "plant"), (6, 11, 4, 3, "plant"),
-        (17, 12, 4, 3, "plant"), (8, 17, 3, 2, "plant"),
-        (16, 18, 3, 2, "screen_dim"), (13, 13, 3, 2, "screen_dim"),
-        (12, 20, 3, 2, "plant"),
-    )
-    for cx, cy, rx, ry, name in leaves:
-        _leaf(s, cx, cy, rx, ry, name)
-        s.hline(cy + ry, cx - rx + 1, cx + rx - 1, "shadow")  # underside
-    s.dots([(11, 4), (6, 9), (17, 10)], "gold")   # new growth catching light
-
-    s.rect(5, 23, 18, 24, "pot")                  # rim
-    s.hline(23, 5, 11, "gold")                    # lit lip
-    s.hline(24, 6, 17, "desk_dark")               # soil in shadow
-    body = ((5, 25, 18), (5, 26, 18), (6, 27, 17), (6, 28, 17),
-            (7, 29, 16), (7, 30, 16), (8, 31, 15))
-    for x0, y, x1 in body:
-        s.hline(y, x0, x1, "pot")
-        s.hline(y, x1 - 2, x1, "desk_dark")       # shaded right of the pot
-    # Contact shadow on the desk, two pixels wider than the pot's base on each
-    # side. The pot's own bottom row used to be `desk_dark`, which is a
-    # terracotta value and so read as more pot rather than as shadow - the
-    # plant appeared to be stuck onto the desk rather than standing on it.
-    s.hline(31, 6, 17, "shadow")
-    return s
-
-
-def build_mug() -> Sprite:
-    s = Sprite(10, 10)
-    s.rect(1, 2, 7, 9, "cream")
-    s.hline(2, 2, 6, "desk_dark")          # coffee seen through the opening
-    s.hline(3, 2, 6, "shadow")
-    s.vline(7, 3, 8, "pot")                # shaded side
-    s.hline(8, 1, 7, "pot")                # shaded bottom of the china
-    # Contact shadow, one pixel proud of the mug on the near side: this is a
-    # 10px sprite and a 7px mug, so there is room for the shadow to be
-    # visibly wider than the object casting it.
-    s.hline(9, 0, 8, "shadow")
-    s.dots([(8, 4), (8, 5), (8, 6)], "cream")   # handle
-    s.dot(8, 5, "pot")                     # the hole in the handle
-    return s
-
-
-def build_books() -> Sprite:
-    s = Sprite(32, 24)
-    # Four volumes, each offset a pixel or two so the stack leans slightly -
-    # a perfectly aligned stack reads as a single striped box.
-    volumes = (
-        (1, 19, 30, "shirt"), (3, 14, 29, "pot"),
-        (2, 9, 27, "plant"), (5, 5, 24, "gold"),
-    )
-    for x0, y0, x1, cover in volumes:
-        y1 = y0 + 4 if cover != "gold" else y0 + 3
-        s.rect(x0, y0, x1, y1, cover)
-        # `shadow` where a book casts onto the one below. The bottom volume's
-        # last row is the stack's contact with the floor and is re-painted
-        # wider after the loop; see the contact-shadow note below.
-        s.hline(y1, x0, x1, "shadow")
-        s.vline(x0, y0, y1 - 1, "shadow")  # spine in shadow
-        s.rect(x1 - 3, y0 + 1, x1, y1 - 1, "cream")   # page block
-        s.vline(x1 - 3, y0 + 1, y1 - 1, "desk_dark")  # gap before the pages
-        # Title dash on the spine face; gold-on-gold would be invisible.
-        s.hline(y0, x0 + 1, x1 - 4, "desk_dark" if cover == "gold" else "gold")
-    # Contact shadow, in the sprite's last row because that is the row that
-    # touches the floor. It spans the full 32px, one pixel proud of the bottom
-    # volume on each side, and that overhang is the entire point: a dark line
-    # exactly as wide as the book reads as the book's own bottom edge and the
-    # stack still floats, while a dark line you can see past the book reads as
-    # the book's shadow. (An earlier version put `shadow` here at exactly the
-    # book's width, on top of a separate dark band painted across the floor
-    # under the skirting, and the two together read as a 1px gap under the
-    # stack. That floor band is gone; this row is now the only dark thing at
-    # the stack's base.)
-    s.hline(23, 0, 31, "shadow")
-    return s
-
-
-def build_lamp() -> Sprite:
-    s = Sprite(20, 28)
-    # Conical shade: authored row by row so the slope is exact integers.
-    shade = ((8, 2, 11), (7, 3, 12), (6, 4, 13), (5, 5, 14),
-             (4, 6, 15), (3, 7, 16), (2, 8, 17), (2, 9, 17))
-    for x0, y, x1 in shade:
-        s.hline(y, x0, x1, "gold")
-        s.hline(y, x0, x0 + 1, "lamp")     # lit upper-left face
-        s.hline(y, x1 - 1, x1, "pot")      # shaded right face
-    s.hline(9, 3, 16, "desk_dark")         # under-rim, in its own shadow
-    # The mouth of the shade. This is the one place in the room where the
-    # viewer looks straight at a light source, so it is the brightest thing in
-    # the sprite: `cream` core, `lamp` around it, and two `lamp` pixels poking
-    # one column past the shade's rim on each side - a hard-edged 2px flare,
-    # which is as much bloom as this palette can express without the dithered
-    # disc that reviewers read as a clipping error.
-    s.hline(10, 1, 18, "gold")             # light escaping the whole rim
-    s.hline(10, 5, 14, "lamp")             # bulb glow spilling out
-    s.rect(8, 11, 11, 11, "lamp")
-    s.rect(9, 10, 10, 10, "cream")         # filament core
-
-    s.rect(9, 12, 10, 24, "metal")         # post
-    s.vline(9, 12, 24, "wall_light")
-    s.hline(25, 5, 14, "metal")            # weighted base
-    s.hline(26, 4, 15, "metal")
-    s.dots([(5, 25), (6, 25)], "wall_light")
-    # The pool rises three rows either side of the base, where nothing blocks
-    # it, stepping out a pixel a row. Stepped, not faded: flat runs of warm
-    # colour with hard edges, because the soft version of this idea - a Bayer
-    # disc of `lamp` yellow - is the one reviewers called particle sparks.
-    #
-    # `lamp` and not `gold`: desk.png's own top row is `gold`, so a gold pool
-    # on a gold tabletop is invisible. `lamp` is the palette's brightest warm
-    # value and the only one left that can be brighter than the surface it is
-    # falling on - which is what a pool of light has to be.
-    # ...and its two hottest pixels are `cream`, the palette's brightest entry,
-    # immediately beside the base where the light has the least distance to
-    # travel. Without them the pool's brightest value is `lamp`, one step off
-    # the tabletop's own `gold`, and at 2x the two are near enough that the
-    # pool stops reading as a hotspot and starts reading as more tabletop.
-    for row, inset in ((24, 2), (25, 1), (26, 0)):
-        s.hline(row, inset, 3, "lamp")
-        s.hline(row, 16, 19 - inset, "lamp")
-    s.dots([(3, 25), (3, 26), (16, 25), (16, 26)], "cream")
-    # Bottom row: the pool of light the lamp throws on whatever it stands on.
-    # It lives here rather than in desk.png so that it follows the lamp when
-    # scene.rs moves it, and it is exactly one row tall - the lamp's bottom
-    # edge is flush with the desk's top edge, so one row is all the tabletop
-    # this sprite can reach.
-    #
-    # Three values across that one row, brightest where the light is least
-    # obstructed: `pot` directly beneath the base (the part the base's own
-    # weight shades), `lamp` in the two gaps either side of it where the light
-    # gets straight out, `gold` at the far ends where it is running out. A
-    # flat single-colour line read as a decal; a three-step ramp with hard
-    # edges reads as a pool.
-    s.hline(27, 0, 19, "gold")
-    s.hline(27, 2, 17, "lamp")
-    s.hline(27, 5, 14, "pot")
-    return s
-
-
-def build_rug() -> Sprite:
-    """Concentric oval bands, hard-edged, no dither.
-
-    The bands used to be overlaid with a 25%-coverage `gold` dither ring for a
-    "woven" texture. In the game only the rug's top few rows clear the HUD,
-    and that sliver of dither read as a stippled artifact - the same failure
-    mode as the old floor stippling. Flat concentric rings are legible at any
-    crop and unmistakably deliberate.
-    """
-    s = Sprite(96, 32)
-    # The art direction exempts the rug from the transparency rule, but an
-    # opaque 96x32 rectangle would paint a box over the floorboards, so only
-    # the oval itself is opaque.
-    cx, cy = 47.5, 15.5
-    rx, ry = 47.5, 15.5
-    # Three zones only. Six concentric bands on a 96x32 oval put a stepped
-    # edge every couple of pixels, which read as a jagged gear rather than a
-    # rug, and the bright cream core read as a target. One muted field, one
-    # narrow accent ring and a dark rim is all this reads as at native size.
-    bands = ((0.58, "pot"), (0.68, "gold"), (0.92, "pot"), (1.00, "desk_dark"))
-    for y in range(32):
-        for x in range(96):
-            dx = (x - cx) / rx
-            dy = (y - cy) / ry
-            q = (dx * dx + dy * dy) ** 0.5
-            if q > 1.0:
-                continue
-            for edge, name in bands:
-                if q <= edge:
-                    s.dot(x, y, name)
-                    break
-            # A dark rim along the NEAR edge only, and only the bottom third
-            # of it. It used to run round the whole lower half, and a dark
-            # arc that long stopped reading as the rug pressing into the
-            # boards and started reading as an outline drawn round a sticker -
-            # `shadow` against `floor` is the highest-contrast edge in the
-            # room. Confined to the bottom, it is a contact shadow; the rest
-            # of the rim is `desk_dark`, which is close enough to the floor's
-            # own value to sit down into it.
-            if q > 0.88 and y >= 26:
-                s.dot(x, y, "shadow")
-    return s
+def union_mask(*masks: list[list[bool]]) -> list[list[bool]]:
+    h = len(masks[0])
+    w = len(masks[0][0])
+    return [[any(m[y][x] for m in masks) for x in range(w)] for y in range(h)]
 
 
 # --------------------------------------------------------------------------
-# Upgrade tracks (docs/upgrade-design.md)
+# Fixed scenery (3): room_back, desk_back, monitor
 # --------------------------------------------------------------------------
 #
-# One slot in the scene per track, tiered sprites swapped in as the player
-# buys up. Every sprite below still only paints palette names through the
-# `Sprite` helpers, and every one that sits on the desk or the floor ends in
-# a `shadow` contact-shadow row 1px wider than the object itself, per the
-# lighting-pass convention set by `build_desk`/`build_chair` above. Wall-
-# mounted pieces (`poster`, `shelf`) do not get a floor contact shadow -
-# nothing casts one onto a floor they are not standing on.
+# Coordinate system: room pixels, origin top-left, x right, y down, per
+# art-direction "Geometry". room_back and desk_back share the wall/floor line
+# at room row 132; desk_back is authored in its OWN local coordinates
+# (0..58), which is room row 74..132 once placed.
 
-def build_keyboard_t1() -> Sprite:
-    """Basic grey keyboard: a flat case with two rows of keycap highlights."""
-    s = Sprite(20, 8)
-    s.rect(1, 1, 18, 5, "metal")
-    s.hline(0, 1, 18, "wall_light")        # lit top edge of the case
-    s.vline(1, 1, 5, "shadow")             # near side, turned away from the lamp
-    s.vline(18, 1, 5, "shadow")
-    s.hline(5, 1, 18, "shadow")            # front face of the case
-    for x in (3, 6, 9, 12, 15):
-        s.dot(x, 2, "wall_light")          # row 1 of keys
-        s.dot(x, 4, "wall_light")          # row 2 of keys
-    s.hline(6, 1, 18, "desk_dark")         # front lip resting on the desk
-    s.hline(7, 0, 19, "shadow")            # contact shadow, wider than the case
-    return s
+def build_room_back() -> Sprite:
+    """320x200: wall rows 0..132, floor rows 132..200.
 
+    The wall gets a `wall_light` glow pool centred behind the monitor slot
+    (which sits at room x 94..226, centre x=160) with a `lamp` bloom at its
+    core - flat hard-edged bands, per this codebase's house style: every
+    dithered/soft version of "light on a wall" tried in v0.2 was rejected as
+    a rendering artifact (see the removed dither helper's old comment in
+    git history), so v2 keeps the same flat-band language.
 
-def build_keyboard_t2() -> Sprite:
-    """Mechanical keyboard: darker case, taller keycaps, per-key RGB accents.
-
-    The accents are 3 individual keycaps recoloured, not a stripe under the
-    case - a full-width glow band read as an underlight strip rather than
-    backlit keys, and the art direction explicitly bans a rainbow stripe.
+    The floor gets a matching warm patch directly under the pool (so the
+    light reads as falling all the way to the floor, not stopping dead at
+    the desk) and 3 evenly spaced board seams. Rows 132..134 are the desk
+    slab's own cast shadow, load-bearing per the derivation rules: even
+    though the desk slab (drawn in front, in desk_back.png) hides the wall
+    from 74..132, that band is still painted here so a narrower desk later
+    cannot punch a hole through the room.
     """
-    s = Sprite(20, 8)
-    s.rect(1, 0, 18, 5, "shadow")          # darker mechanical case
-    s.hline(0, 1, 18, "metal")             # subtle lit top edge
-    s.vline(18, 0, 5, "metal")
-    for x in (3, 6, 9, 12, 15):
-        s.dot(x, 2, "metal")               # row 1 of keys, tall mechanical caps
-    accents = {6: "screen", 9: "gold", 12: "plant"}
-    for x in (3, 6, 9, 12, 15):
-        s.dot(x, 4, accents.get(x, "metal"))   # row 2, 3 keys lit per-key RGB
-    s.hline(6, 1, 18, "metal")             # front lip
-    s.hline(7, 0, 19, "shadow")            # contact shadow, wider than the case
+    s = Sprite(320, 200, bg="wall_dark")
+
+    # Ceiling shadow band - the top few rows are always hidden behind the
+    # title bar (room rows 0..12), but painting it means a shorter title bar
+    # in a future revision cannot expose a flat, undecorated wall edge.
+    s.rect(0, 0, 319, 9, "shadow")
+
+    # Glow pool behind the monitor slot (94..226, centre 160): a broad
+    # `wall_light` halo, then a smaller warm `lamp` bloom at its core. Both
+    # bands run the full wall height so the desk slab (which sits in front)
+    # never exposes a seam where the pool would otherwise stop dead.
+    s.rect(112, 16, 208, 131, "wall_light")
+    s.rect(134, 20, 186, 64, "lamp")
+
+    # Floor.
+    s.rect(0, 132, 319, 199, "floor")
+    # The desk slab's cast shadow onto the floor - 2 rows, full width, this
+    # is the "shadow band" the derivation rules call out by name.
+    s.rect(0, 132, 319, 133, "shadow")
+    # A warm patch directly below the glow pool, tying the wall light to the
+    # floor rather than letting it stop dead at the desk edge.
+    s.rect(120, 134, 200, 150, "floor_light")
+    # 3 evenly spaced board seams, full width, hard edges (no dither - see
+    # the class docstring: this is a lesson already learned once in v0.2).
+    for y in (160, 175, 190):
+        s.hline(y, 0, 319, "shadow")
+        s.hline(y + 1, 0, 319, "floor_light")
     return s
 
 
-def build_mouse_t1() -> Sprite:
-    """Pad + small grey mouse, as one sprite (see the SPEC comment above).
+def build_desk_back() -> Sprite:
+    """320x58 (room rows 74..132): the desk slab seen from above-behind.
 
-    The mouse's shell is `wall_light`, not `metal`: `metal` sits so close to
-    the pad's `shadow` in value that a first pass here read as a single dark
-    blob at native size - contrast, not more detail, is what a 12x8 sprite
-    needs to read as two objects.
+    4 `desk_dark` grain rows across the surface, a `wall_light` sheen band
+    under the monitor's glow (local rows 0..7, room 74..81 - directly under
+    the wall glow pool built above), a `desk_dark` near lip (local 55..56)
+    and a 1px `shadow` under it (local row 57, room row 131) that abuts
+    room_back's own shadow band (room 132..133) to form one unbroken 3-row
+    cast-shadow line at the wall/floor seam.
     """
-    s = Sprite(12, 8)
-    s.rect(1, 4, 10, 6, "shadow")          # dark mousepad
-    s.hline(4, 1, 10, "metal")             # pad's lit top edge
-    s.rect(4, 1, 7, 2, "wall_light")       # mouse shell, lit and pale against the pad
-    s.vline(7, 1, 2, "shadow")             # shaded far flank
-    s.hline(3, 4, 7, "metal")              # underside, in contact with the pad
-    s.hline(7, 0, 11, "shadow")            # contact shadow, wider than the pad
+    s = Sprite(320, 58, bg="desk")
+    for y in (8, 20, 32, 44):
+        s.hline(y, 0, 319, "desk_dark")
+    s.rect(120, 0, 200, 7, "wall_light")   # sheen picking up the wall's glow
+    s.rect(0, 55, 319, 56, "desk_dark")    # near lip
+    s.hline(57, 0, 319, "shadow")          # 1px shadow under the lip
     return s
 
 
-def build_mouse_t2() -> Sprite:
-    """Sleeker standalone mouse, no pad, one screen-coloured accent pixel.
+# The monitor's exact inner screen rect, LOCAL to monitor.png. This is the
+# single most load-bearing number in the whole manifest: the frontend draws
+# 11 lines of live terminal text into this exact rect (in UI px, x2), and any
+# drift here lands text on the bezel. Placed at room (94, 20) this rect is
+# room (98, 24) 124x44, matching the placement table exactly.
+MONITOR_SCREEN_RECT = (4, 4, 127, 47)   # x0, y0, x1, y1 inclusive -> 124x44
 
-    Same contrast fix as `mouse_t1`: a pale `wall_light` shell rather than a
-    `metal` one, so it reads against the desk instead of disappearing into
-    its own shadow at this size.
+
+def build_monitor() -> Sprite:
+    """132x64: `metal` bezel (4px left/right/top), the exact inner screen
+    rect filled flat `shadow` (no text - the frontend draws that), an 8px
+    chin with one `screen` power LED, and a neck+foot with a `shadow`
+    contact row.
     """
-    s = Sprite(8, 6)
-    s.rect(1, 1, 6, 3, "wall_light")       # lit, pale shell
-    s.vline(6, 1, 3, "shadow")             # shaded far side
-    s.dot(3, 1, "screen")                  # single RGB accent (scroll wheel glow)
-    s.hline(4, 1, 6, "metal")              # underside
-    s.hline(5, 0, 7, "shadow")             # contact shadow, wider than the mouse
+    s = Sprite(132, 64)
+    x0, y0, x1, y1 = MONITOR_SCREEN_RECT
+    # Bezel block first (top + both sides down to the inner rect's bottom),
+    # then the inner rect punches the exact hole the UI text lands in. This
+    # order - and ONLY drawing the inner rect as this one rect call - is what
+    # keeps the rect exact and reviewable as a single line of code.
+    s.rect(0, 0, 131, y1, "metal")
+    s.rect(x0, y0, x1, y1, "shadow")
+    s.hline(0, 0, 131, "wall_light")       # top bezel catches the room's light
+
+    # Chin: 8px, full width, with the power LED.
+    s.rect(0, y1 + 1, 131, y1 + 8, "metal")
+    s.rect(64, y1 + 4, 65, y1 + 5, "screen")
+
+    # Neck + foot + contact shadow, the sprite's last 8 rows.
+    neck_y0, neck_y1 = y1 + 9, y1 + 12
+    foot_y0, foot_y1 = y1 + 13, y1 + 15
+    shadow_y = y1 + 16
+    s.rect(60, neck_y0, 72, neck_y1, "metal")
+    s.rect(46, foot_y0, 86, foot_y1, "metal")
+    s.hline(foot_y0, 46, 86, "screen_dim")     # foot's lit top face, catches the screen glow
+    s.hline(shadow_y, 36, 96, "shadow")        # contact shadow, wider than the foot
+    assert shadow_y == s.h - 1, "monitor's contact shadow must be the sprite's last row"
     return s
 
 
-def build_monitor_dual() -> Sprite:
-    """The tier-0 monitor's bezel language, twice: one main panel and one
-    smaller second panel beside it, both lit, sharing the same desk line.
+# --------------------------------------------------------------------------
+# Developer (12): dev_form_*, dev_base_*, hoodie_*
+# --------------------------------------------------------------------------
+#
+# 88x104, camera behind and slightly above. Anchor is FIXED at room (116, 92)
+# for every frame and every hoodie style - frames are same-canvas overlays,
+# never re-anchored (art-direction "Developer anchor").
+#
+# The pose that makes this read, per the doc's composition ASCII: the arms go
+# around the OUTSIDE of the hood dome. Hands rise to the keyboard (which sits
+# above the dome in room space), sleeves run down the dome's outer flanks,
+# and everything merges into one back/shoulder mass below the dome. The gap
+# directly above the dome, between the two hands, is left fully transparent
+# so the keyboard shows through it.
+#
+# All geometry below is expressed as (y, x0, x1) row spans for the LEFT half
+# only; the right half is the mirror `87 - x` of each span (canvas width 88,
+# symmetric about x=43.5), so left/right can never drift out of sync with
+# each other - they are the same numbers, reflected.
 
-    Each panel's foot/glow/contact-shadow widens a step at a time exactly as
-    `_monitor`'s single stand does, which is what makes each read as
-    standing on the desk rather than pasted onto it. Same size and same
-    anchor as the tier-0 monitor, so the backing needs no offset.
+DEV_W, DEV_H = 88, 104
+DEV_MIRROR = DEV_W - 1   # 87; mirrored x = DEV_MIRROR - x
+
+# Arm/hand region (local y 9..23): shared shape, offset per frame. Differs
+# ONLY in these rows across idle/type_a/type_b - exactly the "forearm/sleeve/
+# cuff/hand" pixels the frame-difference rule names.
+_ARM_BASE = [
+    (9, 10, 21), (10, 10, 21), (11, 10, 21), (12, 10, 21), (13, 10, 21),
+    (14, 10, 21), (15, 10, 21), (16, 10, 21),
+    (17, 10, 20), (18, 9, 20), (19, 8, 21), (20, 7, 22), (21, 7, 23),
+    (22, 6, 24), (23, 6, 25),
+]
+_HAND_BASE = (11, 20, 10, 17)   # x0, x1, y0, y1 - inset 1px from the arm block
+
+# Sleeve-to-dome transition (local y 24..29) and the dome/sleeve cylinder
+# (y 30..51): NEVER offset for idle/type_a/type_b (only the arm/hand region
+# above moves for those three); sleep shifts this whole block down 3px
+# ("dome tipped forward") in addition to the shoulders' own 4px drop.
+_SLEEVE_FIXED = [
+    (24, 6, 26), (25, 5, 27), (26, 5, 28), (27, 4, 29), (28, 4, 30), (29, 3, 29),
+]
+_DOME_TAPER = [
+    (24, 40, 47), (25, 37, 50), (26, 35, 52), (27, 33, 54), (28, 32, 55), (29, 30, 57),
+]
+_DOME_CYL_Y = range(30, 50)         # constant width rows
+_DOME_CYL_X = (29, 58)
+_SLEEVE_CYL_X = (3, 28)
+_DOME_FLARE = [(50, 27, 60), (51, 24, 63)]
+_SLEEVE_FLARE = [(50, 2, 26), (51, 2, 23)]
+# Shoulders/back (y 52..103): the dome and the two sleeves have fully merged
+# into one continuous mass by this row, so from here down it is a single
+# span, not a left/right pair. Sleep drops this 4px, per spec.
+_SHOULDER_ROWS = range(52, DEV_H)
+_SHOULDER_X = (14, 73)
+
+FRAME_ARM_OFFSET = {
+    "idle": (0, 0),
+    "type_a": (-1, 1),
+    "type_b": (1, -1),
+    "sleep": (5, 10),
+}
+DOME_DY = {"idle": 0, "type_a": 0, "type_b": 0, "sleep": 3}
+SHOULDER_DY = {"idle": 0, "type_a": 0, "type_b": 0, "sleep": 4}
+DOME_LEAN = {"idle": 0, "type_a": 0, "type_b": 0, "sleep": -1}   # "tipped forward"
+
+
+def _dev_rows(frame: str):
+    """Yield every (y, x0, x1) span of the developer's fabric silhouette for
+    `frame`, LEFT-side spans already expanded to their mirrored right-side
+    partner. This one generator is shared by the form (ramp-shaded fill),
+    the base (outline + hair), and the hoodie style overlay (dome/shoulder
+    rows only) builders, so the silhouette itself is defined exactly once.
     """
-    s = Sprite(40, 36)
-    _monitor_base_backing(s)
-    # Main panel: bezel rows 0-27, face inset from that.
-    _monitor_panel(s, 0, 0, 22, 27, [(2, 1, 11), (5, 1, 8), (8, 1, 13), (11, 1, 6)])
-    s.rect(9, 28, 11, 31, "metal")         # neck
-    s.vline(11, 28, 31, "shadow")
-    s.hline(32, 6, 14, "screen_dim")       # foot's lit top face
-    s.hline(33, 6, 14, "metal")            # foot body
-    s.hline(34, 5, 15, "screen_dim")       # glow pool spilling off the foot
-    s.hline(35, 3, 17, "shadow")           # contact shadow, wider still
+    adx, ady = FRAME_ARM_OFFSET[frame]
+    ddy = DOME_DY[frame]
+    lean = DOME_LEAN[frame]
+    sdy = SHOULDER_DY[frame]
 
-    # Second, smaller panel: same bottom bezel line (27) but starts lower, so
-    # it reads as both shorter and narrower than the main panel beside it.
-    _monitor_panel(s, 24, 9, 38, 27, [(2, 1, 6), (5, 1, 4)])
-    s.rect(30, 28, 32, 31, "metal")        # neck
-    s.vline(32, 28, 31, "shadow")
-    s.hline(32, 29, 33, "screen_dim")
-    s.hline(33, 29, 33, "metal")
-    s.hline(34, 28, 34, "screen_dim")
-    s.hline(35, 26, 36, "shadow")
+    for y, x0, x1 in _ARM_BASE:
+        yield (y + ady, x0 + adx, x1 + adx)
+        yield (y + ady, DEV_MIRROR - (x1 + adx), DEV_MIRROR - (x0 + adx))
+    for y, x0, x1 in _SLEEVE_FIXED:
+        yield (y + ddy, x0, x1)
+        yield (y + ddy, DEV_MIRROR - x1, DEV_MIRROR - x0)
+    for y, x0, x1 in _DOME_TAPER:
+        yield (y + ddy, x0 + lean, x1 + lean)
+    for y in _DOME_CYL_Y:
+        x0, x1 = _DOME_CYL_X
+        yield (y + ddy, x0 + lean, x1 + lean)
+        sx0, sx1 = _SLEEVE_CYL_X
+        yield (y + ddy, sx0, sx1)
+        yield (y + ddy, DEV_MIRROR - sx1, DEV_MIRROR - sx0)
+    for y, x0, x1 in _DOME_FLARE:
+        yield (y + ddy, x0 + lean, x1 + lean)
+    for y, x0, x1 in _SLEEVE_FLARE:
+        yield (y + ddy, x0, x1)
+        yield (y + ddy, DEV_MIRROR - x1, DEV_MIRROR - x0)
+    for y in _SHOULDER_ROWS:
+        x0, x1 = _SHOULDER_X
+        yield (y + sdy, x0, x1)
+
+
+def _dev_hand_rects(frame: str):
+    """Left/right skin hand rects (dev_base only) for `frame`."""
+    adx, ady = FRAME_ARM_OFFSET[frame]
+    x0, x1, y0, y1 = _HAND_BASE
+    left = (x0 + adx, x1 + adx, y0 + ady, y1 + ady)
+    right = (DEV_MIRROR - (x1 + adx), DEV_MIRROR - (x0 + adx), y0 + ady, y1 + ady)
+    return left, right
+
+
+def _dev_fabric_mask(frame: str) -> list[list[bool]]:
+    grid = [[False] * DEV_W for _ in range(DEV_H)]
+    for y, x0, x1 in _dev_rows(frame):
+        if 0 <= y < DEV_H:
+            for x in range(max(0, x0), min(DEV_W - 1, x1) + 1):
+                grid[y][x] = True
+    for rect in _dev_hand_rects(frame):
+        x0, x1, y0, y1 = rect
+        for y in range(max(0, y0), min(DEV_H - 1, y1) + 1):
+            for x in range(max(0, x0), min(DEV_W - 1, x1) + 1):
+                grid[y][x] = True
+    return grid
+
+
+# Ramp shading rule for dev_form: a simple, deliberate left/right split
+# (the room's ambient light in every mockup falls warmer on the right) plus a
+# 1-2px `ramp1` seam down the exact centre (the hoodie's back seam) and a
+# sparse `ramp5` specular catch on the crown and the lit shoulder - kept
+# under 5% of the sprite's opaque pixels per the ramp table's own limit.
+def _dev_ramp_for(x: int, y: int, frame: str) -> str:
+    if x in (43, 44) and y >= 24 + DOME_DY[frame]:
+        return "ramp1"          # centre-back seam / deep fold
+    if x < 22:
+        return "ramp2"          # left (shadow) side
+    if x > 66:
+        return "ramp4"          # right (lit) side stays base fabric
+    return "ramp4"              # everywhere else: base fabric, step 4
+
+
+_SPECULAR = {
+    "idle": [(48, 25), (49, 25), (60, 53)],
+    "type_a": [(48, 25), (49, 25), (60, 53)],
+    "type_b": [(48, 25), (49, 25), (60, 53)],
+    "sleep": [(48, 28), (49, 28)],
+}
+
+
+def build_dev_form(frame: str) -> Sprite:
+    s = Sprite(DEV_W, DEV_H, palette=RAMP)
+    for y, x0, x1 in _dev_rows(frame):
+        for x in range(x0, x1 + 1):
+            s.dot(x, y, _dev_ramp_for(x, y, frame))
+    for x, y in _SPECULAR[frame]:
+        s.dot(x, y, "ramp5")
     return s
 
 
-def build_monitor_ultra() -> Sprite:
-    """One wide ultrawide panel, same bezel language as the other tiers.
+def _dev_hair_crescent(s: Sprite, frame: str) -> None:
+    """A thin `hair` crescent where the hood meets the shoulders - the only
+    interior detail the character has (art-direction "Character rules": the
+    hood is a dome, not a head, no face, no ears)."""
+    ddy = DOME_DY[frame]
+    y = 51 + ddy + 1
+    for x in range(38, 51):
+        s.dot(x, y, "hair")
 
-    Authored 56x36 rather than the design doc's 56x30: sprites are centred
-    on their `Transform` in scene.rs, and the `monitor` upgrade slot shares
-    the tier-0 monitor's exact centre and z-order (drawn just in front of
-    it) regardless of tier size - a shorter-than-40x36 overlay would leave
-    the base `monitor_on`/`monitor_off` sprite's top and bottom rows peeking
-    out above and below it. Matching the tier-0 height keeps the vertical
-    footprint identical (only the width grows, symmetrically, which is the
-    part that should read as "ultrawide"), so `_monitor_base_backing`'s
-    coverage lines up exactly and nothing behind this overlay can show.
-    This is a sizing reconciliation like the mouse_t1 pad decision - see the
-    handoff report.
+
+def build_dev_base(frame: str) -> Sprite:
+    s = Sprite(DEV_W, DEV_H)
+    mask = _dev_fabric_mask(frame)
+    outline_from_mask(s, mask, "shadow")
+    _dev_hair_crescent(s, frame)
+    for x0, x1, y0, y1 in _dev_hand_rects(frame):
+        s.rect(x0, y0, x1, y1, "skin")
+    if frame == "sleep":
+        # A small `z` above the (now lower) dome's right shoulder - the
+        # smallest readable sleep cue at this size. A true zigzag (top bar,
+        # then a diagonal step down-left, then a bottom bar), not a
+        # symmetric bar-dot-bar glyph, which reads as an "I" rather than a
+        # "z" at this size.
+        s.hline(13, 60, 62, "cream")
+        s.dot(62, 14, "cream")
+        s.dot(61, 15, "cream")
+        s.dot(60, 16, "cream")
+        s.hline(17, 60, 62, "cream")
+    return s
+
+
+# --------------------------------------------------------------------------
+# Hoodie style overlays (4): frame-independent, back panel + hood only
+# --------------------------------------------------------------------------
+#
+# Per art-direction "Character rules": these may only paint the back panel
+# and hood, which are static across all four frames - so they are authored
+# once, against the `idle` geometry (dome rows 24..51, shoulder rows 52+),
+# and never reference the per-frame arm/hand offset. (The sleep frame's own
+# 3-4px drop of that same geometry is therefore not mirrored by the overlay
+# - a deliberate, documented v2 simplification; see the handoff report.)
+
+def build_hoodie_classic() -> Sprite:
+    """Shadow drawstrings hanging from the hood opening, kangaroo-pocket
+    side seams on the lower back."""
+    s = Sprite(DEV_W, DEV_H)
+    s.vline(40, 26, 38, "shadow")
+    s.dot(40, 39, "shadow")
+    s.vline(47, 26, 40, "shadow")
+    s.dot(47, 41, "shadow")
+    s.vline(24, 62, 92, "shadow")
+    s.vline(63, 62, 92, "shadow")
+    return s
+
+
+def build_hoodie_zip() -> Sprite:
+    """Metal zip teeth up the centre seam of the hood, a cream pull tab."""
+    s = Sprite(DEV_W, DEV_H)
+    for y in range(32, 96, 2):
+        s.dot(43, y, "metal")
+        s.dot(44, y, "metal")
+    s.rect(42, 90, 45, 92, "cream")
+    return s
+
+
+def build_hoodie_tech() -> Sprite:
+    """A desk_dark cross-strap over the shoulders with a metal buckle, one
+    screen reflective stripe."""
+    s = Sprite(DEV_W, DEV_H)
+    s.line(18, 58, 68, 78, "desk_dark")
+    s.line(19, 58, 69, 78, "desk_dark")
+    s.rect(40, 66, 47, 70, "metal")
+    s.hline(58, 22, 65, "screen")
+    return s
+
+
+def build_hoodie_cloak() -> Sprite:
+    """Gold hem trim across the shoulders, a draped shadow fold pattern down
+    the back panel."""
+    s = Sprite(DEV_W, DEV_H)
+    s.hline(66, 16, 71, "gold")
+    for x in (22, 32, 44, 55, 65):
+        s.vline(x, 68, 68 + (x % 3) * 6 + 12, "shadow")
+    return s
+
+
+# --------------------------------------------------------------------------
+# Chair (8): 4 styles x form/detail, bottom-centre anchored at room (160,200)
+# --------------------------------------------------------------------------
+#
+# HARD constraint (art-direction "Derivation rules"): above room row 120, a
+# chair sprite may only paint pixels at room x < 116 or x > 204 - so the
+# keyboard and hands, which sit between those columns, can never be
+# occluded by any chair style at any height. Converted to LOCAL sprite
+# coordinates (top = 200 - h, so room row 120 is local row h - 80; centred at
+# local x = w/2, so room x 116/204 are local w/2 - 44 / w/2 + 44):
+
+def chair_forbidden_zone(w: int, h: int) -> tuple[int, int, int] | None:
+    """Return (y_below, x_lo, x_hi) - the local (y, x-range) that must stay
+    fully transparent - or None if the style is short enough that its whole
+    canvas sits below room row 120 already."""
+    y_below = h - 80
+    if y_below <= 0:
+        return None
+    return y_below, w // 2 - 44, w // 2 + 44
+
+
+def assert_chair_region(name: str, s: Sprite) -> str:
+    zone = chair_forbidden_zone(s.w, s.h)
+    if zone is None:
+        return f"{name}: no restricted rows (top of canvas already below room row 120)"
+    y_below, x_lo, x_hi = zone
+    mask = s.mask()
+    violations = [(x, y) for y in range(0, y_below) for x in range(x_lo, x_hi + 1)
+                  if mask[y][x]]
+    if violations:
+        raise AssertionError(
+            f"{name}: {len(violations)} pixel(s) violate the chair hard region "
+            f"(local y<{y_below}, x in [{x_lo},{x_hi}]); first={violations[0]}")
+    return f"{name}: rows y<{y_below} clear outside x[{x_lo},{x_hi}] - OK"
+
+
+def _chair_star_base(s: Sprite, cx: int, hub_y: int, foot_y: int, spread: int) -> None:
+    """A simplified 5-star caster base: a hub under the gas cylinder and 5
+    short spokes radiating to foot blocks."""
+    feet_x = [cx - spread, cx - spread // 2, cx, cx + spread // 2, cx + spread]
+    for fx in feet_x:
+        s.line(cx, hub_y, fx, foot_y, "metal")
+        s.rect(fx - 2, foot_y, fx + 2, foot_y + 1, "metal")
+    s.hline(foot_y + 2, feet_x[0] - 4, feet_x[-1] + 4, "shadow")   # contact shadow
+
+
+def build_chair_basic_form() -> Sprite:
+    s = Sprite(136, 84, palette=RAMP)
+    s.rect(14, 10, 122, 3 + 37, "ramp4")            # mesh backrest, rows 10-40
+    # The rounded top of the backrest starts one row BELOW the restricted
+    # zone (y_below=4), not at it: the outline halo added in the detail
+    # layer extends 1px above whatever this shape's topmost row is, and a
+    # rect starting exactly at row 4 would put that halo at row 3, inside
+    # the forbidden band. Starting at row 5 puts the halo at row 4, which is
+    # not restricted.
+    s.rect(20, 5, 116, 9, "ramp4")
+    # Wing tips (rows 0-4): kept 1px inside the hard-region x boundary
+    # (x<24 / x>112), and extended down to row 4 so they meet the backrest
+    # above with no gap.
+    s.rect(14, 0, 22, 4, "ramp4")                   # left wing tip
+    s.rect(114, 0, 122, 4, "ramp4")                 # right wing tip
+    s.rect(18, 41, 118, 46, "ramp3")                # taper into the seat
+    s.rect(10, 47, 126, 60, "ramp4")                # seat pan, modest wings
+    s.rect(10, 47, 30, 60, "ramp2")                 # left seat wing, shadow side
+    return s
+
+
+def build_chair_basic_detail() -> Sprite:
+    s = Sprite(136, 84)
+    s.rect(60, 61, 76, 78, "metal")                 # gas cylinder
+    _chair_star_base(s, 68, 78, 82, 54)
+    fab = build_chair_basic_form()
+    outline_from_mask(s, union_mask(fab.mask(), s.mask()), "shadow")
+    return s
+
+
+def build_chair_racer_form() -> Sprite:
+    """High bolstered wings (two separate pillars, open gap between them -
+    a racing-seat headrest) that taper inward and MERGE into the "waisted"
+    (narrower-than-the-seat) backrest by row 13, which then broadens again
+    into the lower back. Each step below row 8 widens gradually so the
+    wings are never disconnected from the mass below them - an earlier
+    version jumped straight from two narrow wing blocks to a separate,
+    much-narrower centre panel and left a hole between them that read as
+    two shelf brackets floating above the chair, not a backrest.
     """
-    s = Sprite(56, 36)
-    _monitor_base_backing(s, dx=8)         # base monitor is 8px narrower, centred
-    _monitor_panel(s, 0, 0, 55, 27,
-                   [(2, 1, 35), (5, 1, 25), (8, 1, 42), (11, 1, 18), (14, 1, 30)])
-    s.rect(25, 28, 29, 31, "metal")        # neck
-    s.vline(29, 28, 31, "shadow")
-    s.hline(32, 18, 36, "screen_dim")      # foot's lit top face
-    s.hline(33, 18, 36, "metal")           # foot body
-    s.hline(34, 15, 39, "screen_dim")      # glow pool
-    s.hline(35, 10, 44, "shadow")          # contact shadow, on the sprite's last row
+    s = Sprite(140, 88, palette=RAMP)
+    s.rect(8, 0, 24, 8, "ramp4")                     # left bolstered wing (y<8, x<26)
+    s.rect(116, 0, 132, 8, "ramp4")                  # right bolstered wing (y<8, x>114)
+    taper = [(9, 8, 34, 106, 132), (10, 8, 44, 96, 132), (11, 10, 56, 84, 130),
+              (12, 14, 68, 72, 126)]
+    for y, lx0, lx1, rx0, rx1 in taper:
+        s.hline(y, lx0, lx1, "ramp4")
+        s.hline(y, rx0, rx1, "ramp4")
+    s.rect(20, 13, 120, 42, "ramp4")                 # waisted back, now one mass
+    s.rect(20, 13, 40, 42, "ramp2")                  # shadow side
+    s.rect(24, 43, 116, 48, "ramp3")                 # taper into the seat
+    s.rect(12, 49, 128, 62, "ramp4")                 # seat pan
     return s
 
 
-def build_chair_t1() -> Sprite:
-    """`build_chair`'s silhouette with a headrest block added above the back.
+def build_chair_racer_detail() -> Sprite:
+    s = Sprite(140, 88)
+    s.rect(62, 63, 78, 80, "metal")                 # gas cylinder
+    _chair_star_base(s, 70, 80, 84, 56)
+    for x0, x1, y0, y1 in ((20, 40, 18, 40), (100, 120, 18, 40)):
+        s.vline(x0 + 3, y0, y1, "cream")
+        s.vline(x1 - 3, y0, y1, "cream")
+    fab = build_chair_racer_form()
+    outline_from_mask(s, union_mask(fab.mask(), s.mask()), "shadow")
+    return s
 
-    The headrest+backrest occupy exactly the row budget the plain backrest
-    used in `build_chair` (rows 1-17); everything from the back-support down
-    is copied unchanged so the seat/post/base/castors stay in the same place
-    a chair tier swap would expect.
+
+def build_chair_exec_form() -> Sprite:
+    s = Sprite(144, 100, palette=RAMP)
+    s.rect(8, 0, 26, 20, "ramp4")                    # left headrest wing (y<20, x<28)
+    s.rect(118, 0, 136, 20, "ramp4")                 # right headrest wing (y<20, x>116)
+    # Starts one row below the restricted zone (y_below=20) for the same
+    # outline-halo reason as the other two chairs' top transition rows.
+    s.rect(14, 21, 130, 54, "ramp4")                # wide leather panels merge below
+    s.rect(14, 21, 60, 54, "ramp2")                 # left panel, shadow side
+    s.rect(84, 21, 130, 54, "ramp3")                # right panel, mid tone
+    s.rect(18, 55, 126, 62, "ramp3")                # taper into the seat
+    s.rect(6, 63, 138, 76, "ramp4")                 # seat with wide armrest tops
+    return s
+
+
+def build_chair_exec_detail() -> Sprite:
+    s = Sprite(144, 100)
+    s.vline(72, 21, 54, "shadow")                   # seam between the two panels
+    for gy in (28, 38, 48):
+        for gx in (30, 50, 94, 114):
+            s.dot(gx, gy, "gold")                   # button tufting
+    s.rect(0, 64, 13, 68, "desk_dark")               # armrest tops
+    s.rect(131, 64, 143, 68, "desk_dark")
+    s.rect(64, 77, 80, 92, "metal")                  # heavier gas cylinder
+    _chair_star_base(s, 72, 92, 96, 60)
+    fab = build_chair_exec_form()
+    outline_from_mask(s, union_mask(fab.mask(), s.mask()), "shadow")
+    return s
+
+
+def build_chair_antigrav_form() -> Sprite:
+    """Wingless floating pod shell - no restricted rows at all (the whole
+    canvas already sits below room row 120), so this is a single rounded
+    mass with no wing split needed. Built from 4 stacked, overlapping
+    ellipses (each drawn over the last) rather than rectangular tiers - a
+    stepped rectangular stack reads as a layered cake, not a pod; smoothly
+    overlapping ellipses are the pixel-art way to get a rounded silhouette
+    out of hard-edged fills.
     """
-    s = Sprite(28, 36)
-    s.rect(10, 1, 18, 4, "metal")          # headrest
-    s.rect(12, 2, 16, 3, "desk_dark")
-    s.hline(1, 11, 17, "wall_light")
-    s.vline(10, 1, 4, "wall_light")
-    s.vline(18, 1, 4, "shadow")
-    s.hline(4, 11, 18, "shadow")
-
-    s.rect(7, 5, 21, 17, "metal")          # backrest frame, shortened to make room
-    s.rect(9, 7, 19, 15, "desk_dark")
-    s.hline(5, 8, 20, "wall_light")
-    s.vline(7, 6, 16, "wall_light")
-    s.vline(21, 5, 17, "shadow")
-    s.hline(17, 8, 21, "shadow")
-
-    s.rect(11, 18, 17, 21, "metal")        # back support into the seat
-    s.vline(17, 18, 21, "shadow")
-
-    s.rect(4, 21, 24, 25, "metal")         # seat frame
-    s.rect(6, 22, 22, 24, "desk_dark")     # seat padding
-    s.hline(21, 5, 23, "wall_light")
-    s.hline(25, 4, 24, "shadow")
-
-    s.rect(12, 26, 15, 30, "metal")        # gas post
-    s.vline(15, 26, 30, "shadow")
-    s.vline(12, 26, 30, "wall_light")
-
-    s.hline(31, 8, 19, "metal")            # spider base
-    s.hline(32, 5, 22, "metal")
-    s.hline(33, 3, 24, "shadow")
-    for wx in (3, 12, 21):                 # castors
-        s.rect(wx, 34, wx + 3, 35, "shadow")
-    s.hline(35, 2, 25, "shadow")           # contact shadow, wider than the base
+    s = Sprite(128, 72, palette=RAMP)
+    tiers = [
+        (64, 14, 22, 14, "ramp4"),   # rounded cap
+        (64, 28, 30, 16, "ramp4"),   # upper body
+        (64, 42, 32, 16, "ramp3"),   # mid body
+        (64, 53, 26, 13, "ramp2"),   # lower taper, shadow side
+    ]
+    for cx, cy, rx, ry, name in tiers:
+        s.ellipse(cx, cy, rx, ry, name)
     return s
 
 
-def build_chair_t2() -> Sprite:
-    """Taller gaming-chair back, 2 `pot` accent stripes down the padding.
-
-    2 rows taller than `chair_t1` (38 vs 36); the extra height goes entirely
-    into the backrest, which is what "gaming chair energy" means here - a
-    tier a player buys should look like it, not just cost more.
-    """
-    s = Sprite(28, 38)
-    s.rect(9, 0, 19, 4, "metal")           # headrest
-    s.rect(11, 1, 17, 3, "desk_dark")
-    s.hline(0, 10, 18, "wall_light")
-    s.vline(9, 0, 4, "wall_light")
-    s.vline(19, 0, 4, "shadow")
-    s.hline(4, 10, 19, "shadow")
-
-    s.rect(7, 5, 21, 21, "metal")          # tall backrest frame
-    s.rect(9, 7, 19, 19, "desk_dark")
-    s.hline(5, 8, 20, "wall_light")
-    s.vline(7, 6, 20, "wall_light")
-    s.vline(21, 5, 21, "shadow")
-    s.hline(21, 8, 21, "shadow")
-    s.vline(12, 7, 19, "pot")              # 2 racing-stripe accents
-    s.vline(16, 7, 19, "pot")
-
-    s.rect(11, 22, 17, 25, "metal")        # back support into the seat
-    s.vline(17, 22, 25, "shadow")
-
-    s.rect(4, 25, 24, 29, "metal")         # seat frame
-    s.rect(6, 26, 22, 28, "desk_dark")     # seat padding
-    s.hline(25, 5, 23, "wall_light")
-    s.hline(29, 4, 24, "shadow")
-
-    s.rect(12, 30, 15, 34, "metal")        # gas post
-    s.vline(15, 30, 34, "shadow")
-    s.vline(12, 30, 34, "wall_light")
-
-    s.hline(35, 8, 19, "metal")            # spider base
-    for wx in (3, 12, 21):                 # castors
-        s.rect(wx, 36, wx + 3, 36, "shadow")
-    s.hline(37, 2, 25, "shadow")           # contact shadow, the sprite's last row
+def build_chair_antigrav_detail() -> Sprite:
+    s = Sprite(128, 72)
+    s.outline(38, 65, 89, 68, "screen")               # glow ring, levitation tell
+    s.dots([(22, 67), (64, 70), (106, 67)], "lamp")   # 3 drifting float motes
+    s.hline(71, 30, 97, "shadow")                     # ground-facing glow shadow
+    fab = build_chair_antigrav_form()
+    outline_from_mask(s, union_mask(fab.mask(), s.mask()), "shadow")
     return s
 
 
-def build_duck() -> Sprite:
-    """Unmistakable rubber duck: `gold` body, 1px `pot` beak, 1px `shadow` eye."""
-    s = Sprite(8, 8)
-    s.rect(3, 1, 5, 1, "gold")             # head crown
-    s.rect(2, 2, 6, 2, "gold")             # head, widening toward the beak
-    s.rect(1, 3, 6, 6, "gold")             # body
-    s.hline(6, 2, 5, "pot")                # belly shading, underside of the body
-    s.dot(7, 2, "pot")                     # beak
-    s.dot(5, 1, "shadow")                  # eye
-    s.hline(7, 0, 7, "shadow")             # contact shadow, wider than the body
+# --------------------------------------------------------------------------
+# Keyboard (4): 96x24 at (112, 90); desk-surface baseline = room row 114
+# --------------------------------------------------------------------------
+
+def build_kb_membrane() -> Sprite:
+    s = Sprite(96, 24)
+    s.rect(2, 2, 93, 18, "metal")
+    s.hline(1, 2, 93, "wall_light")
+    for ky in (5, 9, 13, 17):
+        for kx in range(5, 91, 4):
+            s.dot(kx, ky, "desk_dark")
+    s.rect(2, 19, 93, 20, "desk_dark")
+    s.hline(23, 0, 95, "shadow")
     return s
 
 
-def build_poster() -> Sprite:
-    """A dark-framed poster: a taped-on screenshot plus ragged paragraph
-    lines that read as text/diagram without spelling anything out.
-
-    Wall-mounted, so it gets no floor contact shadow - see the section note.
-    """
-    s = Sprite(24, 30)
-    s.rect(0, 0, 23, 29, "metal")          # frame
-    s.hline(0, 0, 23, "wall_light")
-    s.vline(0, 0, 29, "wall_light")
-    s.hline(29, 0, 23, "shadow")
-    s.vline(23, 0, 29, "shadow")
-    s.rect(2, 2, 21, 27, "cream")          # paper
-    s.rect(4, 4, 9, 9, "screen")           # the one screen accent: a taped-on screenshot
-    for y, x1 in ((12, 18), (14, 15), (16, 19), (18, 12), (20, 17), (22, 10),
-                  (24, 14)):
-        s.hline(y, 4, x1, "shadow")        # ragged paragraph lines, no legible words
+def build_kb_mech() -> Sprite:
+    s = Sprite(96, 24)
+    s.rect(2, 1, 93, 19, "shadow")          # visible plate, darker than the caps
+    for ky in (4, 9, 14):
+        for kx in range(5, 91, 4):
+            s.rect(kx, ky, kx + 2, ky + 2, "metal")
+            s.dot(kx + 1, ky + 1, "cream")  # legend pixel
+    s.hline(23, 0, 95, "shadow")
     return s
 
 
-def build_shelf() -> Sprite:
-    """A wooden wall shelf: a board carrying book spines (books.png's own
-    cover/spine/page-block/title-dash approach, reused at a smaller scale)
-    plus one gold trophy shape.
+def build_kb_split() -> Sprite:
+    s = Sprite(96, 24)
+    s.rect(2, 4, 20, 19, "metal")            # left outer, lower
+    s.rect(21, 2, 42, 17, "metal")           # left inner, tented 2px higher
+    s.rect(53, 2, 74, 17, "metal")           # right inner
+    s.rect(75, 4, 93, 19, "metal")           # right outer
+    for ky in (7, 11):
+        for kx in (5, 9, 13, 17, 24, 28, 32, 36, 57, 61, 65, 69, 78, 82, 86, 90):
+            s.dot(kx, ky, "wall_light")
+    s.hline(23, 0, 95, "shadow")
+    return s
 
-    Wall-mounted, so the shadow at its base is the board's own cast shadow
-    onto the wall beneath it, not a floor contact shadow - see the section
-    note above.
-    """
-    s = Sprite(40, 22)
-    board_top = 18
-    volumes = ((2, 6, 7, "shirt"), (9, 8, 13, "pot"), (15, 4, 19, "plant"),
-               (21, 9, 24, "gold"))
+
+def build_kb_neon() -> Sprite:
+    s = Sprite(96, 24)
+    s.rect(12, 4, 83, 16, "metal")           # 60% footprint (72px), centred
+    third = (83 - 12 + 1) // 3
+    s.hline(17, 12, 12 + third - 1, "screen")
+    s.hline(17, 12 + third, 12 + 2 * third - 1, "gold")
+    s.hline(17, 12 + 2 * third, 83, "plant")
+    s.hline(23, 8, 87, "shadow")
+    return s
+
+
+# --------------------------------------------------------------------------
+# Mouse (4): 44x24 at (224, 90)
+# --------------------------------------------------------------------------
+
+def build_mouse_stock() -> Sprite:
+    s = Sprite(44, 24)
+    s.rect(2, 10, 41, 21, "shadow")
+    s.rect(15, 4, 28, 16, "metal")
+    s.vline(21, 5, 15, "shadow")             # 2-button seam
+    s.hline(23, 0, 43, "shadow")
+    return s
+
+
+def build_mouse_gaming() -> Sprite:
+    s = Sprite(44, 24)
+    s.rect(2, 9, 41, 21, "shadow")
+    s.rect(13, 3, 30, 17, "metal")
+    s.vline(21, 3, 6, "shadow")               # scroll notch
+    s.dot(21, 9, "screen")                    # accent
+    s.hline(23, 0, 43, "shadow")
+    return s
+
+
+def build_mouse_trackball() -> Sprite:
+    s = Sprite(44, 24)
+    s.rect(2, 10, 41, 21, "shadow")
+    s.rect(10, 5, 33, 16, "metal")
+    s.ellipse(21, 11, 3, 3, "gold")
+    s.hline(23, 0, 43, "shadow")
+    return s
+
+
+def build_mouse_vertical() -> Sprite:
+    s = Sprite(44, 24)
+    s.rect(2, 12, 41, 21, "shadow")
+    for i, y in enumerate(range(4, 17)):
+        inset = i // 3
+        s.hline(y, 17 + inset, 26 - inset, "metal")
+    s.hline(23, 0, 43, "shadow")
+    return s
+
+
+# --------------------------------------------------------------------------
+# Beverage (4): 20x24 at (56, 90)
+# --------------------------------------------------------------------------
+
+def build_bev_mug() -> Sprite:
+    s = Sprite(20, 24)
+    s.rect(4, 10, 15, 21, "cream")
+    s.hline(14, 4, 15, "pot")
+    s.dot(4, 10, "shadow")                    # chip
+    s.dots([(6, 6), (9, 4)], "cream")         # steam
+    s.dots([(16, 12), (16, 13), (16, 14)], "cream")   # handle
+    s.dot(16, 13, "pot")
+    s.hline(23, 2, 17, "shadow")
+    return s
+
+
+def build_bev_thermos() -> Sprite:
+    s = Sprite(20, 24)
+    s.rect(6, 6, 13, 21, "metal")
+    s.rect(6, 3, 13, 5, "desk_dark")
+    s.vline(7, 7, 20, "wall_light")
+    s.hline(23, 3, 16, "shadow")
+    return s
+
+
+def build_bev_teacup() -> Sprite:
+    s = Sprite(20, 24)
+    s.rect(2, 19, 17, 21, "cream")
+    s.rect(6, 11, 14, 19, "cream")
+    s.hline(11, 6, 14, "pot")
+    s.dot(15, 13, "cream")                    # handle
+    s.hline(23, 0, 19, "shadow")
+    return s
+
+
+def build_bev_energy() -> Sprite:
+    s = Sprite(20, 24)
+    s.rect(6, 5, 13, 21, "screen")
+    s.vline(13, 5, 21, "screen_dim")
+    s.dots([(9, 5), (10, 5)], "gold")
+    s.hline(23, 3, 16, "shadow")
+    return s
+
+
+# --------------------------------------------------------------------------
+# Plant (3): 40x44 at (244, 32), base row 76 (local row 44)
+# --------------------------------------------------------------------------
+
+def build_plant_succulent() -> Sprite:
+    """Only the lower 24 rows (20..43) are painted; the tall empty slot
+    above is intentional - a small plant in a tall slot."""
+    s = Sprite(40, 44)
+    s.rect(14, 32, 25, 41, "pot")
+    s.hline(32, 14, 25, "gold")
+    for cx, cy in ((16, 24), (22, 22), (19, 27)):
+        s.ellipse(cx, cy, 4, 4, "plant")
+    s.hline(42, 10, 29, "shadow")
+    return s
+
+
+def build_plant_monstera() -> Sprite:
+    s = Sprite(40, 44)
+    s.rect(12, 38, 27, 43, "pot")
+    s.vline(19, 20, 38, "desk_dark")
+    s.vline(23, 22, 38, "desk_dark")
+    leaves = ((14, 10, 8, 6), (26, 8, 8, 6), (20, 20, 10, 7), (12, 26, 7, 5), (28, 26, 7, 5))
+    for cx, cy, rx, ry in leaves:
+        s.ellipse(cx, cy, rx, ry, "plant")
+        s.vline(cx, cy - ry, cy + ry, "desk_dark")   # the monstera split
+    s.hline(43, 8, 31, "shadow")
+    return s
+
+
+def build_plant_bonsai() -> Sprite:
+    s = Sprite(40, 44)
+    s.rect(4, 38, 35, 42, "pot")           # wide shallow tray
+    s.hline(38, 4, 35, "gold")
+    s.vline(18, 24, 38, "desk_dark")        # gnarled trunk
+    s.vline(19, 20, 25, "desk_dark")
+    s.vline(22, 18, 22, "desk_dark")
+    for cx, cy, rx, ry in ((16, 14, 9, 4), (24, 12, 8, 4)):
+        s.ellipse(cx, cy, rx, ry, "plant")
+    s.hline(43, 2, 37, "shadow")
+    return s
+
+
+# --------------------------------------------------------------------------
+# Wall (3): 40x44 at (24, 16) - wall-mounted, no floor contact shadow
+# --------------------------------------------------------------------------
+
+def build_wall_poster() -> Sprite:
+    s = Sprite(40, 44)
+    s.rect(2, 2, 37, 41, "shadow")
+    s.rect(5, 5, 34, 38, "cream")
+    for y, x1 in ((10, 28), (13, 25), (16, 30), (19, 22), (22, 27), (25, 20),
+                  (28, 26), (31, 24)):
+        s.hline(y, 8, x1, "desk_dark")
+    return s
+
+
+def build_wall_shelf() -> Sprite:
+    s = Sprite(40, 44)
+    board_top = 30
+    volumes = ((3, 14, 8, "shirt"), (10, 12, 15, "plant"),
+               (17, 16, 22, "pot"), (24, 13, 27, "metal"))
     for x0, y0, x1, cover in volumes:
-        y1 = board_top - 1
-        s.rect(x0, y0, x1, y1, cover)
-        s.vline(x0, y0, y1 - 1, "shadow")               # spine in shadow
-        s.rect(x1 - 1, y0 + 1, x1, y1 - 1, "cream")     # page block
-        s.hline(y0, x0 + 1, x1 - 2,
-                "desk_dark" if cover == "gold" else "gold")   # title dash
-
-    s.rect(29, 9, 32, 11, "gold")          # trophy cup
-    s.dot(28, 10, "gold")                  # handles
-    s.dot(33, 10, "gold")
-    s.vline(30, 12, 14, "gold")            # stem
-    s.vline(31, 12, 14, "gold")
-    s.rect(29, 15, 32, board_top - 1, "gold")  # base
-    s.vline(32, 9, 11, "pot")              # shaded side of the cup
-    s.dot(32, board_top - 1, "pot")        # shaded side of the base
-
-    s.hline(board_top, 0, 39, "gold")      # board's own lit top edge
+        s.rect(x0, y0, x1, board_top - 1, cover)
+        s.vline(x0, y0, board_top - 2, "shadow")
+        s.rect(x1 - 1, y0 + 1, x1, board_top - 2, "cream")
+    s.rect(31, 20, 34, 22, "gold")           # trophy cup
+    s.vline(32, 23, 25, "gold")
+    s.rect(31, 26, 34, board_top - 1, "gold")
+    s.hline(board_top, 0, 39, "gold")
     s.rect(0, board_top + 1, 39, board_top + 2, "desk")
-    s.hline(21, 0, 39, "shadow")           # the board's cast shadow on the wall
+    s.hline(43, 0, 39, "shadow")
     return s
 
 
-def build_cat() -> Sprite:
-    """The `pet` track's static sprite. The mechanics side has only wired a
-    tier-swap, not the two-frame tail-flick loop yet, so this is pinned
-    identical to `cat_a.png` (frame A) rather than an independent drawing -
-    two call sites drawing "the same cat" independently is exactly the drift
-    `_build_cat` exists to prevent. `cat_a.png`/`cat_b.png` stay generated
-    too, ready for when the animation lands.
-    """
-    return _build_cat(tail="up")
-
-
-def build_cat_a() -> Sprite:
-    return _build_cat(tail="up")
-
-
-def build_cat_b() -> Sprite:
-    return _build_cat(tail="down")
-
-
-def _build_cat(tail: str) -> Sprite:
-    """Sleeping curled cat. `tail` selects which of the two frames' tail
-    pixels get painted; every other pixel is shared code so the two PNGs
-    cannot drift anywhere except the tail, matching the typing-frame rule.
-
-    `hair` (0x3a2a20) sits close enough in value to `wall_dark` (0x2f2a3d)
-    that a first pass here read as a dark blob rather than a cat at native
-    size - the same rim-light trick `_dev_head`'s hair crown already uses
-    (`gold`, "under the lamp") is applied here too, tracing the top of the
-    curl, so the silhouette reads against the room instead of vanishing
-    into it.
-    """
-    s = Sprite(20, 12)
-    s.dot(5, 3, "pot")                     # ear tips
-    s.dot(8, 3, "pot")
-    s.hline(4, 6, 9, "hair")
-    s.hline(5, 4, 12, "hair")
-    s.hline(6, 3, 13, "hair")
-    s.hline(7, 2, 14, "hair")
-    s.hline(8, 2, 14, "hair")
-    s.hline(9, 3, 13, "hair")
-    s.hline(10, 4, 12, "hair")
-    s.hline(11, 1, 15, "shadow")           # contact shadow, wider than the body
-
-    # Gold rim, lamp-lit from above, tracing the top of the curl only - the
-    # same substitution `_dev_head` makes for the hair crown, kept to the
-    # apex pixels so the body itself stays `hair`-coloured as specified.
-    s.hline(4, 6, 9, "gold")
-    s.dots([(4, 5), (12, 5), (3, 6), (13, 6)], "gold")
-
-    if tail == "up":
-        s.dots([(14, 5), (15, 5), (16, 6), (16, 7), (15, 8)], "hair")
-    else:
-        s.dots([(14, 5), (15, 6), (16, 7), (17, 8), (16, 9)], "hair")
+def build_wall_neon() -> Sprite:
+    s = Sprite(40, 44)
+    s.outline(10, 6, 29, 37, "lamp")          # bloom halo, one step out
+    s.outline(12, 8, 27, 35, "screen")        # the tube glyph itself
+    s.vline(19, 12, 31, "screen")
+    s.vline(20, 12, 31, "screen")
     return s
 
+
+# --------------------------------------------------------------------------
+# Buddy (4): 28x30 at (288, 46), base row 76 (local row 30)
+# --------------------------------------------------------------------------
+
+def build_buddy_duck() -> Sprite:
+    s = Sprite(28, 30)
+    s.rect(9, 15, 18, 17, "gold")
+    s.rect(7, 17, 20, 27, "gold")
+    s.hline(26, 8, 19, "pot")
+    s.dot(20, 17, "pot")                      # beak
+    s.dot(17, 16, "shadow")                   # eye
+    s.hline(29, 5, 22, "shadow")
+    return s
+
+
+def _build_buddy_bot(eyes_open: bool) -> Sprite:
+    s = Sprite(28, 30)
+    s.vline(13, 4, 9, "metal")                # antenna
+    s.dot(13, 9, "metal")
+    s.rect(6, 10, 21, 26, "metal")
+    eye_colour = "screen" if eyes_open else "metal"
+    s.dots([(10, 14), (17, 14)], eye_colour)
+    s.dot(13, 4, "gold")                      # antenna bead
+    s.hline(29, 4, 23, "shadow")
+    return s
+
+
+def build_buddy_bot_a() -> Sprite:
+    return _build_buddy_bot(eyes_open=True)
+
+
+def build_buddy_bot_b() -> Sprite:
+    return _build_buddy_bot(eyes_open=False)
+
+
+def build_buddy_cat() -> Sprite:
+    s = Sprite(28, 30)
+    s.hline(10, 10, 17, "hair")
+    s.hline(11, 8, 19, "hair")
+    s.hline(12, 6, 21, "hair")
+    s.hline(13, 5, 22, "hair")
+    s.hline(14, 5, 22, "hair")
+    s.hline(15, 6, 21, "hair")
+    s.hline(16, 8, 19, "hair")
+    s.dot(9, 9, "pot")                        # ear tips
+    s.dot(16, 9, "pot")
+    s.dots([(20, 13), (21, 14), (22, 15), (21, 16)], "hair")   # tail
+    s.dot(22, 15, "cream")                    # tail tip
+    s.hline(17, 4, 23, "shadow")
+    return s
+
+
+# --------------------------------------------------------------------------
+# Builders table + thumbnail catalog
+# --------------------------------------------------------------------------
 
 BUILDERS = {
-    "room_bg.png": build_room_bg,
-    "desk.png": build_desk,
-    "monitor_on.png": lambda: _monitor(True),
-    "monitor_off.png": lambda: _monitor(False),
-    "chair.png": build_chair,
-    "dev_idle.png": build_dev_idle,
-    "dev_type_a.png": build_dev_type_a,
-    "dev_type_b.png": build_dev_type_b,
-    "dev_coffee.png": build_dev_coffee,
-    "dev_sleep.png": build_dev_sleep,
-    "plant.png": build_plant,
-    "mug.png": build_mug,
-    "books.png": build_books,
-    "lamp.png": build_lamp,
-    "rug.png": build_rug,
-    "keyboard_t1.png": build_keyboard_t1,
-    "keyboard_t2.png": build_keyboard_t2,
-    "mouse_t1.png": build_mouse_t1,
-    "mouse_t2.png": build_mouse_t2,
-    "monitor_dual.png": build_monitor_dual,
-    "monitor_ultra.png": build_monitor_ultra,
-    "chair_t1.png": build_chair_t1,
-    "chair_t2.png": build_chair_t2,
-    "duck.png": build_duck,
-    "poster.png": build_poster,
-    "shelf.png": build_shelf,
-    "cat_a.png": build_cat_a,
-    "cat_b.png": build_cat_b,
-    "cat.png": build_cat,
+    "room_back.png": build_room_back,
+    "desk_back.png": build_desk_back,
+    "monitor.png": build_monitor,
+    "dev_form_idle.png": lambda: build_dev_form("idle"),
+    "dev_form_type_a.png": lambda: build_dev_form("type_a"),
+    "dev_form_type_b.png": lambda: build_dev_form("type_b"),
+    "dev_form_sleep.png": lambda: build_dev_form("sleep"),
+    "dev_base_idle.png": lambda: build_dev_base("idle"),
+    "dev_base_type_a.png": lambda: build_dev_base("type_a"),
+    "dev_base_type_b.png": lambda: build_dev_base("type_b"),
+    "dev_base_sleep.png": lambda: build_dev_base("sleep"),
+    "hoodie_classic.png": build_hoodie_classic,
+    "hoodie_zip.png": build_hoodie_zip,
+    "hoodie_tech.png": build_hoodie_tech,
+    "hoodie_cloak.png": build_hoodie_cloak,
+    "chair_basic_form.png": build_chair_basic_form,
+    "chair_basic_detail.png": build_chair_basic_detail,
+    "chair_racer_form.png": build_chair_racer_form,
+    "chair_racer_detail.png": build_chair_racer_detail,
+    "chair_exec_form.png": build_chair_exec_form,
+    "chair_exec_detail.png": build_chair_exec_detail,
+    "chair_antigrav_form.png": build_chair_antigrav_form,
+    "chair_antigrav_detail.png": build_chair_antigrav_detail,
+    "kb_membrane.png": build_kb_membrane,
+    "kb_mech.png": build_kb_mech,
+    "kb_split.png": build_kb_split,
+    "kb_neon.png": build_kb_neon,
+    "mouse_stock.png": build_mouse_stock,
+    "mouse_gaming.png": build_mouse_gaming,
+    "mouse_trackball.png": build_mouse_trackball,
+    "mouse_vertical.png": build_mouse_vertical,
+    "bev_mug.png": build_bev_mug,
+    "bev_thermos.png": build_bev_thermos,
+    "bev_teacup.png": build_bev_teacup,
+    "bev_energy.png": build_bev_energy,
+    "plant_succulent.png": build_plant_succulent,
+    "plant_monstera.png": build_plant_monstera,
+    "plant_bonsai.png": build_plant_bonsai,
+    "wall_poster.png": build_wall_poster,
+    "wall_shelf.png": build_wall_shelf,
+    "wall_neon.png": build_wall_neon,
+    "buddy_duck.png": build_buddy_duck,
+    "buddy_bot_a.png": build_buddy_bot_a,
+    "buddy_bot_b.png": build_buddy_bot_b,
+    "buddy_cat.png": build_buddy_cat,
 }
+assert set(BUILDERS) == SPEC_NAMES, "BUILDERS and SPEC have drifted apart"
+
+CHAIR_STYLES = ("basic", "racer", "exec", "antigrav")
+
+# Store thumbnails (art-direction "Store thumbnails (derived, not
+# authored)"). The doc names the mechanism (derive 40x40 from the real
+# sprite, nearest-neighbour, ÷1/÷2/÷4 then centre-crop; tintable items need
+# BOTH a _form and a _detail thumb) but does not enumerate the catalog's
+# item ids - that list lives in the (out of scope, Go-side) item catalog.
+# This generator's own catalog is reconstructed here from the manifest
+# groups themselves: one thumbnail per distinct purchasable sprite. Two
+# judgment calls, spelled out because they are not literally in the doc:
+#   * `buddy_bot` is ONE catalog item (bot_a is its sprite); bot_b is the
+#     blink animation frame, not a second purchasable companion.
+#   * the hoodie's tintable "form" thumbnail is derived from
+#     dev_form_idle.png (the shared, frame-independent fabric layer every
+#     hoodie style tints), not from a per-style form file - there isn't one,
+#     by design (art-direction "hoodie styles share one silhouette").
+NONTINT_ITEMS: dict[str, str] = {
+    "kb_membrane": "kb_membrane.png", "kb_mech": "kb_mech.png",
+    "kb_split": "kb_split.png", "kb_neon": "kb_neon.png",
+    "mouse_stock": "mouse_stock.png", "mouse_gaming": "mouse_gaming.png",
+    "mouse_trackball": "mouse_trackball.png", "mouse_vertical": "mouse_vertical.png",
+    "bev_mug": "bev_mug.png", "bev_thermos": "bev_thermos.png",
+    "bev_teacup": "bev_teacup.png", "bev_energy": "bev_energy.png",
+    "plant_succulent": "plant_succulent.png", "plant_monstera": "plant_monstera.png",
+    "plant_bonsai": "plant_bonsai.png",
+    "wall_poster": "wall_poster.png", "wall_shelf": "wall_shelf.png",
+    "wall_neon": "wall_neon.png",
+    "buddy_duck": "buddy_duck.png", "buddy_bot": "buddy_bot_a.png",
+    "buddy_cat": "buddy_cat.png",
+}
+TINT_ITEMS: dict[str, tuple[str, str]] = {
+    "hoodie_classic": ("dev_form_idle.png", "hoodie_classic.png"),
+    "hoodie_zip": ("dev_form_idle.png", "hoodie_zip.png"),
+    "hoodie_tech": ("dev_form_idle.png", "hoodie_tech.png"),
+    "hoodie_cloak": ("dev_form_idle.png", "hoodie_cloak.png"),
+    "chair_basic": ("chair_basic_form.png", "chair_basic_detail.png"),
+    "chair_racer": ("chair_racer_form.png", "chair_racer_detail.png"),
+    "chair_exec": ("chair_exec_form.png", "chair_exec_detail.png"),
+    "chair_antigrav": ("chair_antigrav_form.png", "chair_antigrav_detail.png"),
+}
+
+
+def derive_thumbnail(img: Image.Image) -> Image.Image:
+    """40x40, integer nearest-neighbour downsample (÷1/÷2/÷4 only, and only
+    when it divides evenly) then centre-crop; a sprite smaller than 40px in
+    either dimension is centred on a transparent 40x40 canvas instead (the
+    doc's "centre-crop" does not define what to do when there is nothing to
+    crop - this generator's choice, noted in the handoff).
+    """
+    w, h = img.size
+    d = 1
+    for cand in (4, 2, 1):
+        if w % cand == 0 and h % cand == 0 and w // cand >= 40 and h // cand >= 40:
+            d = cand
+            break
+    if w // d >= 40 and h // d >= 40:
+        scaled = img.resize((w // d, h // d), Image.NEAREST) if d > 1 else img
+        sw, sh = scaled.size
+        x0, y0 = (sw - 40) // 2, (sh - 40) // 2
+        return scaled.crop((x0, y0, x0 + 40, y0 + 40))
+    canvas = Image.new("RGBA", (40, 40), (0, 0, 0, 0))
+    canvas.paste(img, ((40 - w) // 2, (40 - h) // 2), img)
+    return canvas
+
+
+# Authored-override escape hatch (art-direction "Store thumbnails"): if a
+# derived thumbnail fails the vision self-check at 40x40, the fix is a
+# hand-authored replacement at the same filename rather than a smarter crop.
+#
+# The vision self-check on this run's derived thumbnails found exactly the
+# casualty the doc predicts by name: "the chair sprites at ÷4 are the likely
+# casualties". At the ÷2 downsample this generator actually uses (÷4 would
+# undershoot 40px on every chair), a centre-crop of chair_basic/_racer/_exec
+# lands in the middle of a wide, flat backrest panel and shows neither the
+# wings nor the base - it reads as an unidentifiable rectangle, tinted or
+# not (checked as the real store card would show it: tinted form + detail
+# composited together). chair_antigrav's rounded pod and every hoodie style
+# (whose _form thumb is a recognisable garment silhouette on its own)
+# survived the crop and are NOT overridden.
+#
+# These 8 overrides are still procedurally built - by the small, purpose-
+# built icon functions below, each its own miniature chair drawn directly at
+# 40x40 rather than derived - so they stay deterministic, diffable, and
+# palette/ramp-pure like every other file in this generator, without
+# resurrecting the "N pre-coloured PNGs" pattern the doc forbids for tinted
+# parts: each is still a form/detail pair, tintable by the same CSS recipe.
+THUMB_OVERRIDES: set[str] = {
+    "thumb_chair_basic_form.png", "thumb_chair_basic_detail.png",
+    "thumb_chair_racer_form.png", "thumb_chair_racer_detail.png",
+    "thumb_chair_exec_form.png", "thumb_chair_exec_detail.png",
+}
+
+
+def _thumb_chair_generic_form(seat_w: int) -> Sprite:
+    """Shared shape for the 3 overridden chair thumbnails: backrest, seat,
+    a cylinder and a base foot-line, all clearly inside a 40x40 icon (unlike
+    the full sprites, an icon has no hard chair-region constraint to keep
+    clear of, since there is no keyboard drawn at this scale)."""
+    s = Sprite(40, 40, palette=RAMP)
+    half = seat_w // 2
+    s.rect(20 - half, 4, 20 + half, 22, "ramp4")
+    s.rect(20 - half, 4, 20 + half, 8, "ramp3")     # top shading
+    s.rect(20 - half + 2, 23, 20 + half - 2, 27, "ramp3")   # seat
+    s.rect(18, 28, 22, 33, "ramp2")                 # cylinder
+    return s
+
+
+def build_thumb_chair_basic_form() -> Sprite:
+    return _thumb_chair_generic_form(14)
+
+
+def build_thumb_chair_basic_detail() -> Sprite:
+    s = Sprite(40, 40)
+    s.hline(34, 10, 30, "metal")
+    s.hline(35, 8, 32, "shadow")
+    fab = build_thumb_chair_basic_form()
+    outline_from_mask(s, union_mask(fab.mask(), s.mask()), "shadow")
+    return s
+
+
+def build_thumb_chair_racer_form() -> Sprite:
+    s = _thumb_chair_generic_form(15)
+    s.rect(4, 2, 10, 10, "ramp4")                   # bolstered wing tips
+    s.rect(30, 2, 36, 10, "ramp4")
+    return s
+
+
+def build_thumb_chair_racer_detail() -> Sprite:
+    s = Sprite(40, 40)
+    s.vline(15, 6, 20, "cream")                     # double stitching
+    s.vline(25, 6, 20, "cream")
+    s.hline(34, 10, 30, "metal")
+    s.hline(35, 8, 32, "shadow")
+    fab = build_thumb_chair_racer_form()
+    outline_from_mask(s, union_mask(fab.mask(), s.mask()), "shadow")
+    return s
+
+
+def build_thumb_chair_exec_form() -> Sprite:
+    s = _thumb_chair_generic_form(15)
+    s.rect(3, 1, 10, 14, "ramp4")                   # tall headrest wings
+    s.rect(30, 1, 37, 14, "ramp4")
+    return s
+
+
+def build_thumb_chair_exec_detail() -> Sprite:
+    s = Sprite(40, 40)
+    for gx, gy in ((14, 12), (26, 12), (14, 18), (26, 18)):
+        s.dot(gx, gy, "gold")                       # button tufting
+    s.hline(34, 8, 32, "metal")
+    s.hline(35, 6, 34, "shadow")
+    fab = build_thumb_chair_exec_form()
+    outline_from_mask(s, union_mask(fab.mask(), s.mask()), "shadow")
+    return s
+
+
+THUMB_BUILDERS = {
+    "thumb_chair_basic_form.png": build_thumb_chair_basic_form,
+    "thumb_chair_basic_detail.png": build_thumb_chair_basic_detail,
+    "thumb_chair_racer_form.png": build_thumb_chair_racer_form,
+    "thumb_chair_racer_detail.png": build_thumb_chair_racer_detail,
+    "thumb_chair_exec_form.png": build_thumb_chair_exec_form,
+    "thumb_chair_exec_detail.png": build_thumb_chair_exec_detail,
+}
+assert THUMB_OVERRIDES == set(THUMB_BUILDERS), "override set and its builders drifted apart"
+
+
+def thumbnail_plan() -> dict[str, list[str]]:
+    """Map every thumbnail filename this run must produce to the source
+    file(s) it is derived from, so main() can both write them and account
+    for every file that should exist in assets/ afterwards."""
+    plan: dict[str, list[str]] = {}
+    for item_id, src in NONTINT_ITEMS.items():
+        plan[f"thumb_{item_id}.png"] = [src]
+    for item_id, (form_src, detail_src) in TINT_ITEMS.items():
+        plan[f"thumb_{item_id}_form.png"] = [form_src]
+        plan[f"thumb_{item_id}_detail.png"] = [detail_src]
+    return plan
 
 
 # --------------------------------------------------------------------------
@@ -1433,16 +1321,24 @@ BUILDERS = {
 # --------------------------------------------------------------------------
 
 def check(filename: str, want_w: int, want_h: int) -> tuple[bool, str]:
-    """Verify one written PNG: size, palette purity, and that it is not blank."""
+    """Verify one written PNG: size, ramp/palette purity, partial alpha."""
     img = Image.open(ASSETS / filename).convert("RGBA")
     w, h = img.size
     problems = []
     if (w, h) != (want_w, want_h):
         problems.append(f"size {w}x{h} != {want_w}x{want_h}")
 
+    # Covers both manifest form files and the two overridden chair thumbnail
+    # form icons (thumb_chair_<style>_form.png), which are also built with
+    # palette=RAMP and must be ramp-audited, not palette-audited.
+    is_form = filename in FORM_FILES or (filename.startswith("thumb_") and
+                                          filename.endswith("_form.png"))
+    valid = RGB_TO_RAMP if is_form else RGB_TO_NAME
+    label = "off-ramp" if is_form else "off-palette"
+
     opaque = 0
     partial = 0
-    offpalette: dict[tuple[int, int, int], int] = {}
+    offlist: dict[tuple[int, int, int], int] = {}
     for _count, colour in img.getcolors(maxcolors=1 << 20):
         r, g, b, a = colour
         if a == 0:
@@ -1450,40 +1346,173 @@ def check(filename: str, want_w: int, want_h: int) -> tuple[bool, str]:
         if a != 255:
             partial += _count
         opaque += _count
-        if (r, g, b) not in RGB_TO_NAME:
-            offpalette[(r, g, b)] = offpalette.get((r, g, b), 0) + _count
+        if (r, g, b) not in valid:
+            offlist[(r, g, b)] = offlist.get((r, g, b), 0) + _count
     if partial:
         problems.append(f"{partial}px with partial alpha")
-    if offpalette:
+    if offlist:
         listed = ", ".join(f"#{r:02x}{g:02x}{b:02x} x{n}"
-                           for (r, g, b), n in sorted(offpalette.items()))
-        problems.append(f"off-palette: {listed}")
-    if filename in CHARACTERS and opaque < 100:
+                           for (r, g, b), n in sorted(offlist.items()))
+        problems.append(f"{label}: {listed}")
+    if opaque < 4:
         problems.append(f"only {opaque} opaque px - looks blank")
-    if filename in ("room_bg.png",) and opaque != w * h:
+    if filename == "room_back.png" and opaque != w * h:
         problems.append("background must be fully opaque")
 
-    detail = f"{w}x{h}".ljust(9) + f"{opaque:>6} opaque"
+    kind = "ramp " if is_form else "pal  "
+    detail = f"{w}x{h}".ljust(9) + f"{opaque:>6} opaque  {kind}"
     if problems:
-        return False, detail + "  FAIL: " + "; ".join(problems)
-    return True, detail + "  ok"
+        return False, detail + "FAIL: " + "; ".join(problems)
+    return True, detail + "ok"
+
+
+def check_monitor_screen_rect() -> str:
+    img = Image.open(ASSETS / "monitor.png").convert("RGBA")
+    x0, y0, x1, y1 = MONITOR_SCREEN_RECT
+    px = img.load()
+    shadow = PALETTE["shadow"] + (255,)
+    bad = [(x, y) for y in range(y0, y1 + 1) for x in range(x0, x1 + 1)
+           if px[x, y] != shadow]
+    w, h = x1 - x0 + 1, y1 - y0 + 1
+    if bad:
+        raise AssertionError(f"monitor.png screen rect has {len(bad)} wrong px; first={bad[0]}")
+    return (f"monitor.png inner screen rect local ({x0},{y0})-({x1},{y1}) = {w}x{h}, "
+            f"room (98,24) 124x44 once placed at (94,20) - OK, all flat shadow")
+
+
+def check_frame_diff(name_a: str, name_b: str, expect_max_px: int | None = None) -> str:
+    a = Image.open(ASSETS / name_a).convert("RGBA")
+    b = Image.open(ASSETS / name_b).convert("RGBA")
+    if a.size != b.size:
+        raise AssertionError(f"{name_a} and {name_b} differ in size")
+    w, h = a.size
+    pa, pb = a.load(), b.load()
+    xs, ys, n = [], [], 0
+    for y in range(h):
+        for x in range(w):
+            if pa[x, y] != pb[x, y]:
+                xs.append(x)
+                ys.append(y)
+                n += 1
+    if n == 0:
+        raise AssertionError(f"{name_a} and {name_b} are byte-identical - not a real 2-frame pair")
+    bbox = (min(xs), min(ys), max(xs), max(ys))
+    if expect_max_px is not None and n != expect_max_px:
+        raise AssertionError(
+            f"{name_a} vs {name_b}: expected exactly {expect_max_px} differing px, got {n} "
+            f"(bbox {bbox})")
+    return f"{name_a} vs {name_b}: {n} differing px, bbox {bbox}"
+
+
+def cleanup_stale(expected: set[str]) -> list[str]:
+    """Delete any file in assets/ that is not part of this run's expected
+    output (the 45-file manifest plus its derived thumbnails). This is what
+    guarantees assets/ contains EXACTLY the v2 files after a run - the v0.2
+    corpses (room_bg.png, dev_idle.png, chair.png, ...) do not survive a
+    rewrite by omission, they are actively removed."""
+    removed = []
+    for path in sorted(ASSETS.glob("*.png")):
+        if path.name not in expected:
+            path.unlink()
+            removed.append(path.name)
+    return removed
 
 
 def main() -> int:
     ASSETS.mkdir(parents=True, exist_ok=True)
+
+    built: dict[str, Sprite] = {}
     for filename, _w, _h in SPEC:
-        BUILDERS[filename]().save(filename)
+        sprite = BUILDERS[filename]()
+        sprite.save(filename)
+        built[filename] = sprite
 
     ok = True
-    print(f"{'file':<16}{'size':<9}{'opaque':>13}")
+    print(f"{'file':<28}{'size':<9}{'opaque':>8}  {'kind':<5}status")
     for filename, want_w, want_h in SPEC:
         passed, detail = check(filename, want_w, want_h)
         ok = ok and passed
-        print(f"{filename:<16}{detail}")
+        print(f"{filename:<28}{detail}")
+
+    print(f"\n{len(SPEC)} manifest sprites written to {ASSETS}")
+
+    print("\n-- chair hard-region assertion --")
+    for style in CHAIR_STYLES:
+        for layer in ("form", "detail"):
+            name = f"chair_{style}_{layer}.png"
+            try:
+                print(" ", assert_chair_region(name, built[name]))
+            except AssertionError as exc:
+                ok = False
+                print("  FAIL:", exc)
+
+    print("\n-- monitor screen rect --")
+    try:
+        print(" ", check_monitor_screen_rect())
+    except AssertionError as exc:
+        ok = False
+        print("  FAIL:", exc)
+
+    print("\n-- frame-difference assertions --")
+    try:
+        print(" ", check_frame_diff(*TYPING_PAIR))
+    except AssertionError as exc:
+        ok = False
+        print("  FAIL:", exc)
+    try:
+        print(" ", check_frame_diff(*BLINK_PAIR, expect_max_px=2))
+    except AssertionError as exc:
+        ok = False
+        print("  FAIL:", exc)
+
+    print("\n-- derived store thumbnails --")
+    plan = thumbnail_plan()
+    thumb_names = set()
+    derived_count = 0
+    override_ok = True
+    for thumb_name, sources in sorted(plan.items()):
+        thumb_names.add(thumb_name)
+        if thumb_name in THUMB_OVERRIDES:
+            thumb_sprite = THUMB_BUILDERS[thumb_name]()
+            thumb_sprite.save(thumb_name)
+            passed, detail = check(thumb_name, 40, 40)
+            override_ok = override_ok and passed
+            print(f"  {thumb_name:<32} <- authored override builder      {detail}")
+            continue
+        src_img = Image.open(ASSETS / sources[0]).convert("RGBA")
+        thumb = derive_thumbnail(src_img)
+        thumb.save(ASSETS / thumb_name)
+        derived_count += 1
+        print(f"  {thumb_name:<32} <- {sources[0]:<28} {thumb.size[0]}x{thumb.size[1]}")
+    ok = ok and override_ok
+    print(f"{derived_count} thumbnails derived, {len(THUMB_OVERRIDES)} authored override(s) "
+          "(chair_basic/racer/exec form+detail - see THUMB_OVERRIDES comment)")
+
+    expected = SPEC_NAMES | thumb_names
+    removed = cleanup_stale(expected)
+    print("\n-- stale file cleanup --")
+    if removed:
+        for name in removed:
+            print(f"  removed {name}")
+    else:
+        print("  nothing stale found")
+
+    on_disk = {p.name for p in ASSETS.glob("*.png")}
+    if on_disk != expected:
+        ok = False
+        missing = expected - on_disk
+        extra = on_disk - expected
+        if missing:
+            print("MISSING:", sorted(missing))
+        if extra:
+            print("UNEXPECTED EXTRA:", sorted(extra))
+    else:
+        print(f"\nassets/ contains exactly {len(expected)} files "
+              f"({len(SPEC)} manifest + {len(thumb_names)} thumbnails)")
+
     if not ok:
         print("\nSELF-CHECK FAILED", file=sys.stderr)
         return 1
-    print(f"\n{len(SPEC)} sprites written to {ASSETS}")
     return 0
 
 
