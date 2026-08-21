@@ -28,5 +28,8 @@ dirs = "6.0.0"
 # must be a PASS-THROUGH: a bare `features = [...]` on the activity dep would
 # leave `cfg(feature = "global-input")` FALSE inside this crate, so the enum
 # arms below would never compile in.
-default = ["global-input"]
+default = ["global-input", "active-app"]
 global-input = ["activity/global-input"]
+# Foreground-application identity for the HUD's activity line (ADR 0009).
+# Same pass-through rule as global-input.
+active-app = ["activity/active-app"]

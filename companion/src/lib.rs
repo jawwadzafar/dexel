@@ -864,6 +864,117 @@ fn spawn_desk(commands: &mut Commands) -> Entity {
         .id()
 }
 
+/// The HUD's activity line: what the user is ACTUALLY doing (ADR 0009).
+///
+/// v0.2 showed generated fiction here ("Project: Fix login flow"). The line
+/// now names the real foreground application when the OS will tell us —
+/// application identity only, never window titles, which leak file names and
+/// page contents. When the compositor declines (Wayland-native focus, no
+/// window server, feature off) the line falls back to a generic label rather
+/// than a guess or a stale value.
+#[derive(Resource)]
+struct ActiveAppHud {
+    /// `None` when construction failed or the `active-app` feature is off.
+    #[cfg(feature = "active-app")]
+    watcher: Option<activity::ActiveAppWatcher>,
+    /// The watcher refreshes internally at 1 Hz, so polling faster buys
+    /// nothing; this timer keeps the system honest about that.
+    refresh: Timer,
+    line: String,
+}
+
+impl Default for ActiveAppHud {
+    fn default() -> Self {
+        Self {
+            #[cfg(feature = "active-app")]
+            watcher: match activity::ActiveAppWatcher::new() {
+                Ok(watcher) => Some(watcher),
+                // Caller-actionable message (stale XAUTHORITY, headless…);
+                // not fatal — the HUD just stays generic.
+                Err(err) => {
+                    warn!(
+                        "active-app detection unavailable ({err}); HUD shows \
+                         a generic activity line"
+                    );
+                    None
+                }
+            },
+            refresh: Timer::from_seconds(1.0, TimerMode::Repeating),
+            line: activity_line(None),
+        }
+    }
+}
+
+impl ActiveAppHud {
+    /// Fixture for `build_app_with_seed`: no watcher, so captures are
+    /// deterministic instead of depending on what the build machine happens
+    /// to have focused.
+    fn disconnected() -> Self {
+        Self {
+            #[cfg(feature = "active-app")]
+            watcher: None,
+            refresh: Timer::from_seconds(1.0, TimerMode::Repeating),
+            line: activity_line(None),
+        }
+    }
+}
+
+/// The verb map: raw app id -> a line that doesn't lie. "Coding in Firefox"
+/// would be fiction, so the verb comes from the id and the name from the
+/// friendly display string. Plain `fn` so it is unit-testable (plan §3.2).
+fn activity_line(app: Option<(&str, &str)>) -> String {
+    let Some((id, display)) = app else {
+        // Unknown is an honest state, not an error — never guess, never
+        // hold a stale name (the watcher already clears its own cache).
+        return "Working...".to_string();
+    };
+    let coding = [
+        "code", "codium", "cursor", "zed", "sublime", "gvim", "neovide", "emacs",
+    ];
+    let browsing = [
+        "firefox",
+        "chromium",
+        "google-chrome",
+        "brave",
+        "vivaldi",
+        "epiphany",
+    ];
+    let terminal = [
+        "kitty",
+        "alacritty",
+        "gnome-terminal",
+        "konsole",
+        "ghostty",
+        "wezterm",
+        "xterm",
+    ];
+    if coding.iter().any(|c| id.starts_with(c)) || id.starts_with("jetbrains-") {
+        format!("Coding in {display}")
+    } else if browsing.contains(&id) {
+        format!("Browsing in {display}")
+    } else if terminal.contains(&id) {
+        "In the terminal".to_string()
+    } else {
+        format!("In {display}")
+    }
+}
+
+/// Refresh the activity line once a second from the watcher.
+fn active_app_hud_system(time: Res<Time>, mut hud: ResMut<ActiveAppHud>) {
+    if !hud.refresh.tick(time.delta()).just_finished() {
+        return;
+    }
+    #[cfg(feature = "active-app")]
+    {
+        let app: Option<(String, String)> = hud
+            .watcher
+            .as_mut()
+            .and_then(|w| w.current())
+            .map(|a| (a.id().to_string(), a.display().to_string()));
+        hud.line = activity_line(app.as_ref().map(|(i, d)| (i.as_str(), d.as_str())));
+    }
+}
+
 /// Toggle always-on-top with F10.
 ///
 /// Deliberately a keybinding rather than a setting: the moments you need it
@@ -1204,6 +1315,7 @@ fn mood_render_system(
 )]
 fn hud_render_system(
     project: Res<CurrentProject>,
+    app_hud: Res<ActiveAppHud>,
     wallet: Res<Wallet>,
     xp: Res<PlayerXp>,
     mut fill: Query<&mut Node, With<ProgressBarFill>>,
@@ -1221,10 +1333,13 @@ fn hud_render_system(
         *text = Text::new(format!("Coins: {}", wallet.0));
     }
     for mut text in &mut texts.p1() {
-        *text = Text::new(format!("Lv {} · {} XP", xp.level, xp.xp));
+        *text = Text::new(format!("Lv {} | {} XP", xp.level, xp.xp));
     }
     for mut text in &mut texts.p2() {
-        *text = Text::new(format!("Project: {}", project.name));
+        // The real activity line (ADR 0009), not the internal project's
+        // fictional name — the project still exists mechanically (work,
+        // rewards), it just no longer masquerades as what the user is doing.
+        *text = Text::new(app_hud.line.clone());
     }
 }
 
@@ -1479,7 +1594,7 @@ fn spawn_hud(parent: &mut ChildSpawnerCommands) {
                 ));
                 // Xp / level (hardcoded Lv 1, 0 XP for M1; `XpLevel` — M3).
                 row.spawn((
-                    Text::new("Lv 1 · 0 XP"),
+                    Text::new("Lv 1 | 0 XP"),
                     TextFont::from_font_size(px(14.0)),
                     TextColor(Color::srgb(0.949, 0.878, 0.788)),
                     XpLevel,
@@ -1498,7 +1613,7 @@ fn spawn_hud(parent: &mut ChildSpawnerCommands) {
             // --- Project name row (M3: shows which static-list project is
             //     in progress, updated by the real `hud_render_system`) ---
             hud.spawn((
-                Text::new("Project: Fix login flow"),
+                Text::new("Working..."),
                 TextFont::from_font_size(px(14.0)),
                 TextColor(Color::srgb(0.949, 0.878, 0.788)),
                 ProjectName,
@@ -1857,6 +1972,7 @@ pub fn run() {
         // M2 activity resources — inserted during construction, so they
         // exist before any Update frame runs.
         .init_resource::<ActivitySource>()
+        .init_resource::<ActiveAppHud>()
         .init_resource::<ActivityMeter>()
         // M3 progression resources — same rule: present before the first
         // FixedUpdate/Update. `CurrentProject` starts at the first static
@@ -1952,6 +2068,7 @@ pub fn run() {
                 xp_level_system,
                 // M3: mood → label text + color (plan §3.2); v0.3: also
                 // shows/ticks the purchase-confirmation flash.
+                active_app_hud_system,
                 mood_render_system,
                 // M3: the real HUD — progress-bar fill width, coin /
                 // xp-level / project-name text from resources (plan §3.2).
@@ -1997,6 +2114,7 @@ pub fn build_app_with_seed(
     app.add_plugins(configured_default_plugins());
     app.add_plugins(scene::ScenePlugin);
     app.init_resource::<ActivitySource>();
+    app.insert_resource(ActiveAppHud::disconnected());
     app.init_resource::<ActivityMeter>();
     // Seeded progression state — present before the first frame so the HUD
     // shows real numbers immediately.
@@ -2036,6 +2154,7 @@ pub fn build_app_with_seed(
             shop_input_system,
             project_completion_system,
             xp_level_system,
+            active_app_hud_system,
             mood_render_system,
             hud_render_system,
             shop_render_system,
@@ -3347,5 +3466,33 @@ mod tests {
             "the HUD root's parent must be the desk root (flex-column stacks \
              it below the desk area); got a different parent"
         );
+    }
+
+    // ------------------------------------------------------------------
+    // ADR 0009 — the activity line (verb map)
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn activity_line_maps_editors_browsers_terminals_and_unknowns() {
+        assert_eq!(
+            activity_line(Some(("code", "VS Code"))),
+            "Coding in VS Code"
+        );
+        assert_eq!(
+            activity_line(Some(("jetbrains-idea", "IntelliJ"))),
+            "Coding in IntelliJ"
+        );
+        assert_eq!(
+            activity_line(Some(("firefox", "Firefox"))),
+            "Browsing in Firefox"
+        );
+        assert_eq!(activity_line(Some(("kitty", "kitty"))), "In the terminal");
+        // Unknown apps get the honest generic verb, with the display name.
+        assert_eq!(activity_line(Some(("blender", "blender"))), "In blender");
+    }
+
+    #[test]
+    fn activity_line_none_is_generic_and_never_a_guess() {
+        assert_eq!(activity_line(None), "Working...");
     }
 }
