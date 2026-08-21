@@ -22,9 +22,14 @@
       <span id="mood-dot"></span>
       <span id="hud-level">LV 1</span>
       <span id="hud-cash"><i class="nes-icon coin is-small"></i><span class="value">0</span></span>
-      <button id="activity-open" class="nes-btn">[A] ACTIVITY</button>
-      <button id="history-open" class="nes-btn">[H] HISTORY</button>
-      <button id="store-open" class="nes-btn">[S] STORE</button>
+      <button id="menu-open" class="nes-btn" aria-haspopup="true" aria-expanded="false" aria-label="Menu">
+        <span class="menu-icon"><span class="bar"></span><span class="bar"></span><span class="bar"></span></span>
+      </button>
+      <div id="menu-panel">
+        <button id="store-open" class="nes-btn menu-item">[S] STORE</button>
+        <button id="activity-open" class="nes-btn menu-item">[A] ACTIVITY</button>
+        <button id="history-open" class="nes-btn menu-item">[H] HISTORY</button>
+      </div>
     </div>
 
     <div id="panel-sprint" class="pixel-panel">

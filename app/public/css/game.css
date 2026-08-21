@@ -241,77 +241,110 @@ img, .sprite {
   background: var(--screen);
 }
 
+/* Title-bar redesign: the coin/level HUD moves next to the wordmark
+   (top-left) and the three separate [A]/[H]/[S] launcher buttons are
+   replaced by a single hamburger (#menu-open, top-right) that opens
+   #menu-panel — see below. #hud-level/#hud-cash keep their ids and
+   left-align now that they sit in the wordmark cluster instead of
+   right-aligned against the titlebar's far edge. */
 #hud-level {
   position: absolute;
-  left: 456px;
+  left: 136px;
   top: 8px;
   width: 40px;
   height: 8px;
   font-size: 8px;
   color: var(--cream);
-  text-align: right;
+  text-align: left;
   white-space: nowrap;
 }
 
 #hud-cash {
   position: absolute;
-  left: 500px;
+  left: 184px;
   top: 4px;
-  width: 44px;
+  width: 64px;
   height: 16px;
   font-size: 8px;
   color: var(--gold);
-  text-align: right;
+  text-align: left;
   white-space: nowrap;
   line-height: 16px;
 }
 #hud-cash .nes-icon { vertical-align: middle; margin-right: 2px; }
 
-#store-open {
+/* Hamburger button (top-right). Per the A2 lesson (a fancy glyph like ☰
+   can render blurry/inconsistent at this app's 1x DPI in the pixel font),
+   the icon is three plain 1px-tall divs (.menu-icon .bar), not a
+   character — solid-color rectangles are crisp at any thickness because
+   they're drawn on exact pixel boundaries, unlike font glyph
+   anti-aliasing. 600 + 32 = 632, an 8px right margin matching the
+   wordmark's 8px left margin (nothing needs to sit flush at 640 anymore
+   now that #store-open has moved into #menu-panel). */
+#menu-open {
   position: absolute;
-  left: 552px;
+  left: 600px;
   top: 4px;
-  /* ui-spec.md §2.1 gives width 80, but the label is 9 chars (`[S] STORE`)
-     which at the spec's own 8px/char rule needs 72px of content, plus the
-     global .nes-btn 4px border (8px) and this row's "padding 0 4px" (8px)
-     = 88px minimum, or the label wraps/overflows. 552 + 88 = 640 lands
-     exactly flush with the titlebar's right edge, matching the flush-right
-     bracket in the §2 ASCII mockup, so widen to 88 rather than shrink the
-     label or drop the padding. */
-  width: 88px;
+  width: 32px;
   height: 16px;
-  padding: 0 4px;
-  font-size: 8px;
-  white-space: nowrap;
+  padding: 0;
 }
-
-#activity-open {
-  /* Same box-model reasoning as #store-open's comment above: "[A] ACTIVITY"
-     is 12 chars * 8px/char = 96px content + 4px border (8px) + this row's
-     "padding 0 4px" (8px) = 112px minimum. Placed in the wide gap between
-     #mood-dot (ends at 128) and #hud-level (starts at 456) so it can't
-     collide with any of the titlebar's other pixel-exact rects. */
-  position: absolute;
-  left: 136px;
-  top: 4px;
-  width: 112px;
-  height: 16px;
-  padding: 0 4px;
-  font-size: 8px;
-  white-space: nowrap;
+.menu-icon {
+  position: relative;
+  display: inline-block;
+  width: 16px;
+  height: 7px;
 }
-
-#history-open {
-  /* Analytics track Phase A3 (docs/plan/A3-design.md §6/§7 Task TS-1) —
-     "[H] HISTORY" is 11 chars * 8px/char = 88px content + 4px border
-     (8px) + this row's "padding 0 4px" (8px) = 104px minimum. #activity-
-     open ends at 136+112=248; #hud-level starts at 456 — this sits in
-     that same gap, 8px clear of #activity-open, well clear of #hud-level. */
+.menu-icon .bar {
   position: absolute;
-  left: 256px;
-  top: 4px;
-  width: 104px;
-  height: 16px;
+  left: 0;
+  width: 16px;
+  height: 1px;
+  background: var(--cream);
+}
+.menu-icon .bar:nth-child(1) { top: 0; }
+.menu-icon .bar:nth-child(2) { top: 3px; }
+.menu-icon .bar:nth-child(3) { top: 6px; }
+
+/* Dropdown panel listing every section launcher. Hidden by default (same
+   .visible toggle idiom as #scrim/#assets-error-overlay); right edge
+   lines up with #menu-open's right edge (632px) so it never overflows the
+   640px-wide titlebar. #store-open/#activity-open/#history-open are the
+   pre-existing modal-launcher buttons owned by their own feature modules
+   (store-modal.ts etc.) — relocating them in here only changes their CSS
+   box (position/size), never their ids or their click -> open() wiring,
+   which those read-only modules still own. A future entry (Sessions,
+   Goals, ...) is just one more `.menu-item` button added here — no CSS
+   change needed since the rule below targets the class, not an id list. */
+#menu-panel {
+  position: absolute;
+  left: 496px;
+  top: 26px;
+  width: 136px;
+  box-sizing: border-box;
+  background: var(--metal);
+  border: 4px solid var(--wall-light);
+  padding: 6px;
+  z-index: 950;
+  display: none;
+  flex-direction: column;
+  gap: 4px;
+}
+#menu-panel.visible { display: flex; }
+#menu-panel .menu-item {
+  /* Deliberately NOT `position: static` here: NES.css's base `.nes-btn`
+     rule sets `position: relative` because its `::after` pixel-shadow
+     pseudo-element is `position: absolute; inset: -4px` relative to the
+     button itself. Overriding that to `static` sends `::after` looking
+     for the next positioned ancestor instead — `#menu-panel`
+     (position: absolute) — so every item's shadow pseudo balloons out
+     to nearly the whole panel and swallows clicks for whichever item
+     paints last (found by testing a real click in a headless browser,
+     per feature-build-and-verify's gate: it opened History no matter
+     which item was visually clicked). Leaving `position` alone keeps
+     each button its own containing block. */
+  width: 100%;
+  height: 20px;
   padding: 0 4px;
   font-size: 8px;
   white-space: nowrap;
