@@ -76,6 +76,7 @@ use std::io;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::thread::JoinHandle;
+use std::time::Instant;
 
 use crate::{ActivityEvent, ActivityProvider};
 
@@ -287,6 +288,17 @@ impl Drop for GlobalInputProvider {
 
 /// A started hook: the thread to join on drop, plus how many devices it
 /// watches.
+/// Has [`crate::MOUSE_SAMPLE_SECS`] elapsed since the last recorded
+/// mouse event? Plain `fn` over plain values so the coalescing RATE —
+/// the thing the blocking review finding was about — is directly
+/// unit-testable without a hook thread.
+fn mouse_sample_elapsed(last: Option<Instant>, now: Instant) -> bool {
+    match last {
+        None => true,
+        Some(at) => now.duration_since(at).as_secs_f32() >= crate::MOUSE_SAMPLE_SECS,
+    }
+}
+
 struct Hook {
     handle: JoinHandle<()>,
     watched_devices: usize,
@@ -432,20 +444,9 @@ mod backend {
             Err(_) => false,
         });
 
-        if mouse_moved && mouse_sample_elapsed(*last_mouse_recorded, Instant::now()) {
+        if mouse_moved && super::mouse_sample_elapsed(*last_mouse_recorded, Instant::now()) {
             *last_mouse_recorded = Some(Instant::now());
             tally.record_mouse_move();
-        }
-    }
-
-    /// Has [`crate::MOUSE_SAMPLE_SECS`] elapsed since the last recorded
-    /// mouse event? Plain `fn` over plain values so the coalescing RATE —
-    /// the thing the blocking review finding was about — is directly
-    /// unit-testable without a hook thread.
-    pub(super) fn mouse_sample_elapsed(last: Option<Instant>, now: Instant) -> bool {
-        match last {
-            None => true,
-            Some(at) => now.duration_since(at).as_secs_f32() >= crate::MOUSE_SAMPLE_SECS,
         }
     }
 
@@ -491,7 +492,111 @@ mod backend {
     }
 }
 
-#[cfg(not(target_os = "linux"))]
+#[cfg(target_os = "macos")]
+mod backend {
+    //! macOS backend: poll `CGEventSourceSecondsSinceLastEventType` — the HID
+    //! system's "seconds since the last event of type T" — from a plain
+    //! thread (ADR 0010).
+    //!
+    //! Chosen over a CGEventTap deliberately: this needs ZERO permissions
+    //! (no Accessibility prompt), no run loop, no Objective-C, and no new
+    //! crates — the entire platform surface is one C function that has been
+    //! stable since macOS 10.4. The user's earlier Go prototype proved the
+    //! tap route works but pays the permission prompt; the tap remains a
+    //! possible opt-in accuracy upgrade behind the same trait.
+    //!
+    //! Sampling semantics: "the seconds-since counter is younger than the
+    //! poll window" means at least one event happened in that window, which
+    //! we count as ONE. Two honest consequences, both bounded and both
+    //! anti-mash-friendly:
+    //! - more than one keystroke inside a window counts once, so counted
+    //!   typing tops out at 1/KEY_SAMPLE_SECS = 10/s — a fast typist's rate;
+    //! - macOS key auto-repeat also resets the counter, so LEANING on a key
+    //!   reads as (at most) fast typing. The Linux backend excludes repeats
+    //!   exactly (it sees value==1 presses); this one cannot without a tap,
+    //!   so it bounds the damage instead. The economy's decay ceiling does
+    //!   the rest.
+    //!
+    //! Privacy: the API answers "how long since a key was pressed". Key
+    //! identity does not exist in this backend, not even transiently.
+
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::thread;
+    use std::time::{Duration, Instant};
+
+    use super::{ActivityTally, GlobalInputError, Hook};
+
+    #[link(name = "CoreGraphics", kind = "framework")]
+    unsafe extern "C" {
+        /// CGEventSource.h. `state` is a CGEventSourceStateID; `event_type`
+        /// a CGEventType. Returns seconds since the last such event.
+        fn CGEventSourceSecondsSinceLastEventType(state: i32, event_type: u32) -> f64;
+    }
+
+    /// kCGEventSourceStateHIDSystemState: the global hardware event state,
+    /// not one login session's filtered view.
+    const HID_SYSTEM_STATE: i32 = 1;
+    // CGEventTypes.h values (stable public ABI):
+    const KEY_DOWN: u32 = 10; // kCGEventKeyDown
+    const MOUSE_MOVED: u32 = 5; // kCGEventMouseMoved
+    const LEFT_DRAG: u32 = 6; // kCGEventLeftMouseDragged
+    const SCROLL_WHEEL: u32 = 22; // kCGEventScrollWheel
+
+    /// Poll cadence. 50ms keeps stop-flag latency and idle detection snappy.
+    const POLL: Duration = Duration::from_millis(50);
+    /// Minimum gap between counted keystrokes — the sampling cap described
+    /// in the module docs. Mouse uses the crate-wide
+    /// [`crate::MOUSE_SAMPLE_SECS`] like every other provider.
+    const KEY_SAMPLE_SECS: f32 = 0.1;
+
+    fn secs_since(event_type: u32) -> f64 {
+        // SAFETY: a pure read of a system counter; no pointers cross the
+        // boundary and no state is retained.
+        unsafe { CGEventSourceSecondsSinceLastEventType(HID_SYSTEM_STATE, event_type) }
+    }
+
+    pub(super) fn spawn_hook(
+        tally: Arc<ActivityTally>,
+        stop: Arc<AtomicBool>,
+    ) -> Result<Hook, GlobalInputError> {
+        let handle = thread::Builder::new()
+            .name("activity-global-input".to_owned())
+            .spawn(move || {
+                let window = POLL.as_secs_f64();
+                let mut last_key: Option<Instant> = None;
+                let mut last_mouse: Option<Instant> = None;
+                while !stop.load(Ordering::Acquire) {
+                    let now = Instant::now();
+                    if secs_since(KEY_DOWN) < window
+                        && last_key.is_none_or(|at| {
+                            now.duration_since(at).as_secs_f32() >= KEY_SAMPLE_SECS
+                        })
+                    {
+                        last_key = Some(now);
+                        tally.record_keystroke();
+                    }
+                    let mouse_active = secs_since(MOUSE_MOVED) < window
+                        || secs_since(LEFT_DRAG) < window
+                        || secs_since(SCROLL_WHEEL) < window;
+                    if mouse_active && super::mouse_sample_elapsed(last_mouse, now) {
+                        last_mouse = Some(now);
+                        tally.record_mouse_move();
+                    }
+                    thread::sleep(POLL);
+                }
+            })
+            .map_err(GlobalInputError::HookThreadFailed)?;
+        Ok(Hook {
+            handle,
+            // One logical "device": the HID system state itself. The count
+            // exists for the startup log line, nothing else keys off it.
+            watched_devices: 1,
+        })
+    }
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "macos")))]
 mod backend {
     //! Stub backend for platforms with no global hook implementation yet.
     //!
@@ -667,9 +772,8 @@ mod tests {
     /// pins the activity rate at its ceiling and lets mouse-only wiggling
     /// out-earn a real typist — on the DEFAULT build.
     #[test]
-    #[cfg(target_os = "linux")] // mouse_sample_elapsed lives in the evdev backend
     fn mouse_coalescing_is_wall_clock_not_per_sweep() {
-        use super::backend::mouse_sample_elapsed;
+        use super::mouse_sample_elapsed;
         use std::time::{Duration, Instant};
 
         let start = Instant::now();

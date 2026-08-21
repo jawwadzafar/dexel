@@ -240,6 +240,30 @@ impl ActivitySource {
         }
     }
 
+    /// Does this source see activity beyond the game's own window?
+    ///
+    /// The honesty rules key off this (ADR 0010): a focused-only source
+    /// cannot distinguish "user on a break" from "user working in another
+    /// app", so several conclusions are forbidden to it.
+    fn is_global(&self) -> bool {
+        match self {
+            Self::Focused(_) => false,
+            #[cfg(feature = "global-input")]
+            Self::Global(_) => true,
+        }
+    }
+
+    /// True only when this source is focused-only AND the game window is
+    /// currently unfocused — the exact blind spot where the idle clock must
+    /// freeze rather than accuse the user of slacking (ADR 0010).
+    fn blind_right_now(&self) -> bool {
+        match self {
+            Self::Focused(provider) => !provider.is_focused(),
+            #[cfg(feature = "global-input")]
+            Self::Global(_) => false,
+        }
+    }
+
     /// Drain whatever has accumulated since the last call.
     fn poll(&mut self) -> Vec<ActivityEvent> {
         match self {
@@ -257,30 +281,45 @@ impl ActivitySource {
 /// `activity::decay_and_accumulate` (a plain `fn`, unit-tested directly in
 /// the `activity` crate).
 ///
-/// `idle_timer` is consumed by M3: `activity_bridge_system` resets it on
-/// fresh activity (see [`non_focus_event`]), and `idle_detection_system`
-/// reads its completion to flip the developer's mood to `OnBreak` after
-/// [`IDLE_THRESHOLD`] seconds.
+/// `idle_secs` is consumed by M3: `bridge_step` resets it to `0.0` on fresh
+/// activity (see [`non_focus_event`]), and `idle_detection_system` compares
+/// it against [`IDLE_THRESHOLD`] to flip the developer's mood to `OnBreak`.
+///
+/// This is a plain elapsed-seconds counter, not a `Timer` — a `Timer` in
+/// `TimerMode::Repeating` wraps its elapsed time back below `duration` the
+/// tick after it finishes, so `is_finished()` is only true on the exact
+/// crossing tick (an *edge*) and reverts to false the next tick even though
+/// the user is still idle. `OnBreak` needs a sustained *level* — "has it
+/// been at least `IDLE_THRESHOLD` seconds since the last reset" — which a
+/// monotonically-growing counter compared with `>=` gives for free, with no
+/// wraparound to flicker on.
 #[derive(Resource)]
 struct ActivityMeter {
     recent_rate: f32,
-    idle_timer: Timer,
+    idle_secs: f32,
+    /// Seconds since the last KEYSTROKE specifically (ADR 0010). The blended
+    /// `recent_rate` cannot answer "is the user typing?" — mouse motion
+    /// contributes to it too, and "Coding" while merely mousing around was
+    /// the field-tested lie this exists to fix. Starts at INFINITY: nobody
+    /// has typed yet.
+    secs_since_keystroke: f32,
 }
 
 impl Default for ActivityMeter {
     fn default() -> Self {
         Self {
             recent_rate: 0.0,
-            idle_timer: Timer::from_seconds(IDLE_THRESHOLD, TimerMode::Repeating),
+            idle_secs: 0.0,
+            secs_since_keystroke: f32::INFINITY,
         }
     }
 }
 
 /// How long without any activity before the mood flips from
-/// `Coding`/`Idle` to `OnBreak` (plan §3.2: "60s, make it a named const").
-/// Named const so the M3 integration test and the milestone log can share
-/// the same tuning.
-pub const IDLE_THRESHOLD: f32 = 60.0;
+/// `Coding`/`Idle` to `OnBreak` (PDF design: sleep/AFK at ~30s without
+/// keystrokes). Named const so the M3 integration test and the milestone
+/// log can share the same tuning.
+pub const IDLE_THRESHOLD: f32 = 30.0;
 
 /// How often the autosave fires (plan §3.4: "Write on a `SaveTimer` (e.g.
 /// every 30s)"). Named const so the M4 test and the milestone log share the
@@ -761,6 +800,24 @@ const PURCHASE_FLASH_SECS: f32 = 3.0;
 /// `CoinCount` / `XpLevel` / `ProjectName` markers on the three text nodes
 /// the real `hud_render_system` writes, and inserts every M3 resource /
 /// event (see `main()`).
+/// One startup line stating which activity source is live and what that
+/// means for honesty (ADR 0010) — so a puzzled tester's first question
+/// ("why does it say Idle when I'm typing in my editor?") is answered by
+/// the log rather than by reading source.
+fn log_activity_source(source: Res<ActivitySource>) {
+    if source.is_global() {
+        info!("activity source: GLOBAL — typing anywhere counts; OnBreak means real idleness");
+    } else {
+        warn!(
+            "activity source: game window only — typing in other apps does NOT \
+             count, and the idle clock freezes while this window is unfocused \
+             (the game refuses to guess). On Linux join the `input` group; on \
+             macOS this build should have global capture — if you see this \
+             there, report it."
+        );
+    }
+}
+
 fn setup_scene(mut commands: Commands) {
     // A UI camera is required to render UI nodes.
     commands.spawn(Camera2d);
@@ -1055,11 +1112,13 @@ fn forward_mouse_events(
 // ---------------------------------------------------------------------------
 
 /// Drains the provider once per frame, updates `ActivityMeter.recent_rate`
-/// via `decay_and_accumulate`, and handles the idle timer (plan §3.2 /
-/// §4/M2): fresh activity **resets** `idle_timer` (the idle clock starts
-/// over); no activity merely ticks the already-running timer, so
-/// `idle_timer.finished()` in [`idle_detection_system`] fires exactly
-/// [`IDLE_THRESHOLD`] seconds after the *last* activity.
+/// via `decay_and_accumulate`, and handles the idle clock (plan §3.2 /
+/// §4/M2): fresh activity **resets** `idle_secs` to `0.0` (the idle clock
+/// starts over); no activity merely grows it, so `idle_secs >=
+/// IDLE_THRESHOLD` in [`idle_detection_system`] holds from exactly
+/// [`IDLE_THRESHOLD`] seconds after the *last* activity onward — a level,
+/// not a one-frame edge, so `OnBreak` stays put until real activity clears
+/// it.
 ///
 /// The M2 session event counter is no longer accumulated here — it drove
 /// only the temporary `[debug]` HUD counter, which M5 removed (plan
@@ -1069,14 +1128,37 @@ fn activity_bridge_system(
     mut meter: ResMut<ActivityMeter>,
     times: Res<Time>,
 ) {
-    let dt = times.delta();
+    bridge_step(&mut source, &mut meter, times.delta());
+}
+
+/// The bridge's whole per-frame job, shared verbatim by
+/// [`activity_bridge_system`] and the deterministic test fixture. It used to
+/// live inline in both — and the fixture's private copy silently missed the
+/// keystroke-recency field when it was added, which is exactly the
+/// duplicated-logic drift that made shotcap "prove" the wrong thing once
+/// already. One body, two callers, no drift channel.
+fn bridge_step(source: &mut ActivitySource, meter: &mut ActivityMeter, dt: Duration) {
     let events = source.poll();
     meter.recent_rate = decay_and_accumulate(meter.recent_rate, &events, dt);
+
+    // Keystroke recency drives the Coding mood (ADR 0010): typing means
+    // coding; mouse motion alone never does.
+    if events.iter().any(|e| matches!(e, ActivityEvent::Keystroke)) {
+        meter.secs_since_keystroke = 0.0;
+    } else {
+        meter.secs_since_keystroke += dt.as_secs_f32();
+    }
+
     let fresh = non_focus_event(&events);
     if fresh {
-        meter.idle_timer.reset();
+        meter.idle_secs = 0.0;
+    } else if source.blind_right_now() {
+        // Focused-only source + unfocused window: the game cannot see
+        // anything, so the idle clock FREEZES. Advancing it here is how
+        // v0.2 ended up declaring "On break" the moment the user minimized
+        // the game to go work — the exact opposite of the truth (ADR 0010).
     } else {
-        meter.idle_timer.tick(dt);
+        meter.idle_secs += dt.as_secs_f32();
     }
 }
 
@@ -1087,7 +1169,7 @@ fn activity_bridge_system(
 /// true if any non-focus event arrived on this frame — a *filter* so a
 /// lone focus flip (a common OS artifact with no keyboard/mouse) does not
 /// count as "fresh activity" for the idle mood. Used by
-/// `activity_bridge_system` (timer reset) and (transitively) by
+/// `activity_bridge_system` (idle-clock reset) and (transitively) by
 /// [`idle_detection_system`].
 #[must_use]
 fn non_focus_event(events: &[ActivityEvent]) -> bool {
@@ -1098,31 +1180,53 @@ fn non_focus_event(events: &[ActivityEvent]) -> bool {
 
 /// `Developer.mood` ↔ idle (plan §3.2):
 ///
-/// * `idle_timer.finished()` (i.e. it has been [`IDLE_THRESHOLD`] seconds
-///   since the bridge last reset it on fresh activity) sets mood to
-///   `OnBreak`;
-/// * fresh activity this frame (the bridge reset the timer — detectable
-///   because the finished/elapsed state collapsed back to non-finished)
-///   sets mood back to `Coding` **immediately**, not one tick later.
+/// * `idle_secs >= IDLE_THRESHOLD` (i.e. it has been at least
+///   [`IDLE_THRESHOLD`] seconds since the bridge last reset it on fresh
+///   activity) sets mood to `OnBreak`, and — because `idle_secs` only ever
+///   grows or gets reset to `0.0`, never wraps — it *stays* `OnBreak` on
+///   every subsequent frame until real activity resets the clock, unlike a
+///   `TimerMode::Repeating` timer's `is_finished()`, which is only true on
+///   the single tick it crosses the threshold;
+/// * fresh activity this frame (the bridge reset `idle_secs`) sets mood
+///   back to `Coding` **immediately**, not one tick later.
 ///
-/// Chained after `activity_bridge_system` (see `main()`) so the timer
-/// state this system reads is from *this* frame.
+/// Chained after `activity_bridge_system` (see `main()`) so the idle state
+/// this system reads is from *this* frame.
+/// How long after the last keystroke the character keeps visibly coding.
+/// Long enough to bridge think-pauses between typing bursts, short enough
+/// that reading docs for a minute honestly shows Idle.
+const CODING_HOLD_SECS: f32 = 10.0;
+
+/// The mood, as a plain testable function of the two signals (ADR 0010):
+///
+/// - typed recently                    -> Coding
+/// - no input at all past the idle bar -> OnBreak
+/// - anything else (mouse, reading)    -> Idle
+///
+/// "Coding" requires a KEYSTROKE — mouse motion alone never shows it,
+/// because scrolling documentation is not typing. And OnBreak comes only
+/// from `idle_secs >= IDLE_THRESHOLD`, a level rather than an edge, so it
+/// holds steady across repeated evaluations once crossed — and the bridge
+/// freezes `idle_secs` when the source is blind, so minimizing the game
+/// can never read as slacking.
+#[must_use]
+fn mood_for(secs_since_keystroke: f32, idle_secs: f32) -> Mood {
+    if secs_since_keystroke <= CODING_HOLD_SECS {
+        Mood::Coding
+    } else if idle_secs >= IDLE_THRESHOLD {
+        Mood::OnBreak
+    } else {
+        Mood::Idle
+    }
+}
+
 fn idle_detection_system(meter: Res<ActivityMeter>, mut developer: Query<&mut Developer>) {
     let Ok(mut dev) = developer.single_mut() else {
         return;
     };
-    // Fresh-activity path: the bridge's `reset()` left the timer at
-    // elapsed 0 / not-finished, which (given the last observed state) is
-    // itself the "activity just happened" signal — the previous frame
-    // either ticked it (elapsed >= frame dt, never < 1 ms for realistic
-    // frame rates) or had it finished, so a non-finished near-zero state
-    // means a reset happened *this* frame.
-    let fresh_activity =
-        !meter.idle_timer.is_finished() && meter.idle_timer.elapsed() < Duration::from_millis(1);
-    if fresh_activity && dev.mood != Mood::Coding {
-        dev.mood = Mood::Coding;
-    } else if !fresh_activity && meter.idle_timer.is_finished() && dev.mood != Mood::OnBreak {
-        dev.mood = Mood::OnBreak;
+    let mood = mood_for(meter.secs_since_keystroke, meter.idle_secs);
+    if dev.mood != mood {
+        dev.mood = mood;
     }
 }
 
@@ -1997,7 +2101,13 @@ pub fn run() {
             // explicit per the M2 bug notes), and Playing begins immediately
             // after the load so the first Update frame's save_system gate
             // passes.
-            (setup_scene, load_or_init_save, enter_playing).chain(),
+            (
+                setup_scene,
+                log_activity_source,
+                load_or_init_save,
+                enter_playing,
+            )
+                .chain(),
         )
         .add_systems(
             FixedUpdate,
@@ -2016,7 +2126,7 @@ pub fn run() {
             //   1. forward_focus_events    (input → provider, plan §3.1)
             //   2. forward_keyboard_events (input → provider)
             //   3. forward_mouse_events    (input → provider)
-            //   4. activity_bridge_system  (drain → rate, reset/tick timer)
+            //   4. activity_bridge_system  (drain → rate, reset/grow idle clock)
             //   5. idle_detection_system   (mood ↔ idle, M3)
             //   6. shop_input_system       (v0.3: Tab/arrows/digits/Enter —
             //                               open/select/buy)
@@ -2041,11 +2151,13 @@ pub fn run() {
                 forward_focus_events,
                 forward_keyboard_events,
                 forward_mouse_events,
-                // Drain the provider, update the meter, reset/tick the
-                // idle timer.
+                // Drain the provider, update the meter, reset/grow the
+                // idle clock (ADR 0010: frozen instead while the source is
+                // blind and the window unfocused).
                 activity_bridge_system,
-                // M3: flip the mood to Coding on fresh activity, to
-                // OnBreak after IDLE_THRESHOLD seconds of silence.
+                // M3/ADR 0010: mood from the two pure signals — Coding
+                // while a keystroke was recent, OnBreak once idle_secs
+                // reaches IDLE_THRESHOLD, Idle otherwise.
                 idle_detection_system,
                 toggle_always_on_top,
                 // v0.3: open/close the shop, move the selection, buy on
@@ -2133,7 +2245,13 @@ pub fn build_app_with_seed(
     app.init_state::<AppState>();
     app.add_systems(
         Startup,
-        (setup_scene, load_or_init_save, enter_playing).chain(),
+        (
+            setup_scene,
+            log_activity_source,
+            load_or_init_save,
+            enter_playing,
+        )
+            .chain(),
     );
     app.add_systems(FixedUpdate, project_progress_system);
     app.add_systems(
@@ -2318,7 +2436,7 @@ mod tests {
     }
 
     // ------------------------------------------------------------------
-    // has_activity — the mood-reset filter (idle timer resets on real
+    // has_activity — the mood-reset filter (the idle clock resets on real
     // input, *not* on a lone focus flip — a common OS artifact)
     // ------------------------------------------------------------------
 
@@ -2333,6 +2451,66 @@ mod tests {
             ActivityEvent::FocusChanged(true),
             ActivityEvent::Keystroke
         ]));
+    }
+
+    // ------------------------------------------------------------------
+    // mood_for — the pure mood derivation (ADR 0010). Regression coverage
+    // for the bug where deriving OnBreak from a `TimerMode::Repeating`
+    // timer's `is_finished()` made it flicker for a single frame and
+    // revert to Idle, because that edge goes false again the very next
+    // tick once the timer wraps. `mood_for` takes a plain elapsed-seconds
+    // level instead, so these assert the level, not an edge.
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn mood_for_recent_keystroke_is_coding() {
+        // Just typed: well inside CODING_HOLD_SECS regardless of idle_secs.
+        assert_eq!(mood_for(0.0, 0.0), Mood::Coding);
+        assert_eq!(mood_for(CODING_HOLD_SECS, 0.0), Mood::Coding);
+    }
+
+    #[test]
+    fn mood_for_mouse_only_never_shows_coding() {
+        // No keystroke ever recorded (secs_since_keystroke stays at the
+        // ActivityMeter default of INFINITY) — mouse motion alone must
+        // never produce Coding, no matter how fresh idle_secs is.
+        assert_ne!(mood_for(f32::INFINITY, 0.0), Mood::Coding);
+        assert_eq!(mood_for(f32::INFINITY, 0.0), Mood::Idle);
+        assert_ne!(mood_for(f32::INFINITY, IDLE_THRESHOLD / 2.0), Mood::Coding);
+    }
+
+    #[test]
+    fn mood_for_long_idle_is_on_break() {
+        // Past the coding hold and at/over the idle threshold -> OnBreak.
+        assert_eq!(
+            mood_for(CODING_HOLD_SECS + 0.01, IDLE_THRESHOLD),
+            Mood::OnBreak
+        );
+        // Just under the threshold is still Idle, not OnBreak.
+        assert_eq!(
+            mood_for(CODING_HOLD_SECS + 0.01, IDLE_THRESHOLD - 0.01),
+            Mood::Idle
+        );
+    }
+
+    #[test]
+    fn mood_for_on_break_is_stable_across_repeated_evaluations() {
+        // The regression itself: a Timer in TimerMode::Repeating wraps its
+        // elapsed time below `duration` the tick after finishing, so a
+        // level derived from `is_finished()` would go true, then false,
+        // then true again every IDLE_THRESHOLD seconds. `idle_secs` only
+        // grows (or gets reset by real activity), so evaluating mood_for
+        // repeatedly at ever-larger idle_secs values must hold OnBreak
+        // steady, never revert to Idle.
+        let no_keystroke = CODING_HOLD_SECS + 1.0;
+        for extra_secs in [0.0, 0.01, 1.0, 5.0, IDLE_THRESHOLD, IDLE_THRESHOLD * 3.0] {
+            let idle_secs = IDLE_THRESHOLD + extra_secs;
+            assert_eq!(
+                mood_for(no_keystroke, idle_secs),
+                Mood::OnBreak,
+                "OnBreak must hold at idle_secs = {idle_secs}, not flicker back to Idle"
+            );
+        }
     }
 
     // ------------------------------------------------------------------
@@ -2388,7 +2566,17 @@ mod tests {
             // depending on whether this machine has readable input
             // devices, which is exactly the kind of ambient dependency a
             // unit test must not have.
-            .insert_resource(ActivitySource::Focused(FocusedWindowProvider::default()))
+            .insert_resource({
+                // FOCUSED window, explicitly: the honesty rule freezes the
+                // idle clock while a focused-only source is unfocused (ADR
+                // 0010), so an unfocused fixture could never reach OnBreak —
+                // these tests simulate a user AT the game window who then
+                // walks away, which requires focus.
+                let mut provider = FocusedWindowProvider::default();
+                provider.record([ActivityEvent::FocusChanged(true)]);
+                let _ = provider.poll();
+                ActivitySource::Focused(provider)
+            })
             .init_resource::<ActivityMeter>()
             .insert_resource(Wallet(0))
             .insert_resource(PlayerXp::default())
@@ -2416,14 +2604,9 @@ mod tests {
                 |mut source: ResMut<ActivitySource>,
                  mut meter: ResMut<ActivityMeter>,
                  dt: Res<FrameDt>| {
-                    let events = source.poll();
-                    meter.recent_rate = decay_and_accumulate(meter.recent_rate, &events, dt.0);
-                    let fresh = non_focus_event(&events);
-                    if fresh {
-                        meter.idle_timer.reset();
-                    } else {
-                        meter.idle_timer.tick(dt.0);
-                    }
+                    // The REAL bridge body — see bridge_step's doc for why
+                    // this must never be a copy again.
+                    bridge_step(&mut source, &mut meter, dt.0);
                 },
                 idle_detection_system,
             )
@@ -2533,38 +2716,82 @@ mod tests {
         );
 
         // One keystroke resets to Coding *immediately* (no second-tick
-        // delay) and restarts the idle timer.
+        // delay) and restarts the idle clock.
         step_m3(&mut app, dt, 1);
         assert_eq!(
             dev_mood(&mut app).unwrap(),
             Mood::Coding,
             "fresh activity must flip OnBreak → Coding"
         );
-        let timer = app.world().resource::<ActivityMeter>().idle_timer.clone();
+        let idle_secs = app.world().resource::<ActivityMeter>().idle_secs;
         assert_eq!(
-            timer.elapsed(),
-            Duration::ZERO,
-            "the idle timer must be reset by fresh activity"
+            idle_secs, 0.0,
+            "the idle clock must be reset by fresh activity"
         );
 
-        // And the flip back requires a *full* threshold of silence again —
-        // one frame short must not flip it.
-        let mut idle_ms = 0u64;
-        while idle_ms < (IDLE_THRESHOLD * 1000.0) as u64 - 100 {
-            step_m3(&mut app, dt, 0);
-            idle_ms += 100;
-        }
+        // 100 ms steps accumulate `idle_secs`/`secs_since_keystroke` as f32
+        // sums, which drift by a tiny epsilon from the "exact" boundary —
+        // so these checks use a 1 s margin on either side of each
+        // threshold rather than landing exactly on it (the sharp boundary
+        // itself is covered exactly, with controlled float literals, by
+        // the `mood_for` unit tests above).
+        let margin = Duration::from_secs(1);
+        let mut elapsed_silence = Duration::ZERO;
+
+        // Well inside CODING_HOLD_SECS of silence: Coding must hold.
+        elapsed_silence += step_m3_silence_for(
+            &mut app,
+            dt,
+            Duration::from_secs_f32(CODING_HOLD_SECS) - margin,
+        );
         assert_eq!(
             dev_mood(&mut app).unwrap(),
             Mood::Coding,
-            "no flip-back one frame before the full threshold"
+            "Coding must hold through most of CODING_HOLD_SECS after the keystroke"
         );
-        step_m3(&mut app, dt, 0);
+
+        // Well past CODING_HOLD_SECS but well short of IDLE_THRESHOLD:
+        // honestly Idle — nobody's still typing, but it's not yet a break.
+        elapsed_silence += step_m3_silence_for(&mut app, dt, margin * 2);
+        assert_eq!(
+            dev_mood(&mut app).unwrap(),
+            Mood::Idle,
+            "past the coding hold but well under the idle threshold must be Idle"
+        );
+
+        // Approaching IDLE_THRESHOLD (from the keystroke) but a full
+        // second short of it: still Idle, not OnBreak.
+        let target = Duration::from_secs_f32(IDLE_THRESHOLD) - margin;
+        elapsed_silence += step_m3_silence_for(&mut app, dt, target - elapsed_silence);
+        assert_eq!(
+            dev_mood(&mut app).unwrap(),
+            Mood::Idle,
+            "no flip to OnBreak a full second before the idle threshold"
+        );
+
+        // Past IDLE_THRESHOLD of silence since the keystroke: OnBreak.
+        step_m3_silence_for(&mut app, dt, margin * 2);
         assert_eq!(
             dev_mood(&mut app).unwrap(),
             Mood::OnBreak,
-            "flips back at the full threshold of silence"
+            "flips to OnBreak once past the full idle threshold of silence"
         );
+    }
+
+    /// Step `app` with zero keystrokes, `dt` at a time, until at least
+    /// `duration` of simulated silence has elapsed; returns the actual
+    /// (whole-`dt`-multiple) silence elapsed. A helper for the boundary
+    /// checks above, which advance the shared idle clock in stages rather
+    /// than one big jump.
+    fn step_m3_silence_for(app: &mut App, dt: Duration, duration: Duration) -> Duration {
+        let mut remaining = duration;
+        let mut advanced = Duration::ZERO;
+        while remaining > Duration::ZERO {
+            step_m3(app, dt, 0);
+            remaining = remaining.saturating_sub(dt);
+            advanced += dt;
+        }
+        advanced
     }
 
     // ------------------------------------------------------------------
