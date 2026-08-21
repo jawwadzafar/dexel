@@ -77,6 +77,52 @@ Three phases, each shippable.
 
 ---
 
+## Frontend architecture track — "a real build, not a hand-written monolith"
+
+User roadmap (2026-08-21): move off hand-written `game.js` to a proper
+system — TypeScript source, split into well-organized files, compiled +
+bundled + minified; industry-standard separation (rendering engine / data /
+logic); and eventually a desktop app via **Tauri** instead of the local
+web server. "See how others do it" — research standard patterns.
+
+**Sequencing decision (overseer):** do the build+TS foundation BEFORE more
+feature phases (analytics A2/A3, new menus). Building features on the JS
+monolith and converting later is rework; a clean typed foundation makes
+every later phase cheaper. So the order is F1 -> F2 -> (resume A2) -> ... ,
+with Tauri (F3) explicitly later, after the web version is solid.
+
+### F1 (v1.2-arch) — build pipeline + TypeScript, behaviour-identical
+- Introduce a lightweight standard toolchain (esbuild preferred: one dep,
+  fast, compiles+bundles+minifies TS with sourcemaps — vs the weight of
+  webpack). Source in `app/frontend/src/`, output bundled+minified to
+  `app/public/js/` (what the Go server already serves).
+- Convert `game.js` to TypeScript **with identical behaviour** — a
+  mechanical, gated port, not a redesign. Type the WS wire contract (a TS
+  module mirroring ui-spec §6 / the Go StateMessage) so state handling is
+  type-checked.
+- A `make`/npm script builds; document it; CI builds the frontend too.
+- Exit: `go run .` still serves an identical-looking, identical-behaving
+  game from the compiled bundle; `tsc --noEmit` clean; the in-game gate
+  passes (default + store + activity states unchanged).
+
+### F2 (v1.3-arch) — modular separation of concerns
+- Split the ported TS into industry-standard layers: a RENDER layer (scene
+  compositor, sprite/tint drawing, the terminal), a DATA/STATE layer (WS
+  client + a typed state store), and FEATURE/LOGIC modules (store modal,
+  activity modal, input/keybinds), with the typed contract shared. Small,
+  framework-free; no React unless a later phase justifies it.
+- Light research step first ("how others do it") — a survey of how
+  comparable local-web/pixel games structure render/data/logic + build, to
+  pick conventions rather than invent them.
+- Exit: each layer is independently testable; adding a menu touches only a
+  feature module + the contract; no cross-layer reach-through.
+
+### F3 (later) — Tauri desktop shell
+- Wrap the SAME frontend + Go backend as a native desktop app via Tauri
+  (Go backend as a Tauri sidecar, or the webview pointing at the local
+  server). Floating/always-on-top like the original vision. Deferred until
+  the web version + architecture are solid; planned, not scheduled.
+
 ## Menus & content track (enabled by the skills below)
 Future menus (settings, achievements, more store categories, themes) reuse
 the "add-a-modal" skill + the WS-contract-extension pattern. Added as the
