@@ -179,35 +179,45 @@ const PIXEL_SCALE: f32 = 2.0;
 /// World-space y of the floor plane's *back* edge in `room_bg.png` — the line
 /// anything standing at the back of the room puts its bottom edge on.
 ///
-/// Measured from the background rather than guessed: rows 128-135 of
-/// `room_bg.png` are the skirting board (wall trim) and row 136 is the first
-/// floorboard row, so the boards start at `100 - 136 = -36`. The previous
-/// `-30` sat *inside* the skirting, which is why floor props looked pasted
-/// onto the wall trim rather than standing on the boards.
+/// Measured from the background rather than guessed: rows 128-132 of
+/// `room_bg.png` are the skirting board (wall trim), row 133 is its contact
+/// shadow, and row 134 is the first floorboard row — so the boards start at
+/// `100 - 134 = -34`. The previous `-30` sat *inside* the skirting, which is
+/// why floor props looked pasted onto the wall trim rather than standing on
+/// the boards.
 ///
 /// Everything on the floor is positioned from this line, so re-drawing the
 /// background with a higher or lower horizon stays a one-constant fix here
 /// instead of a hunt through fourteen `Transform`s.
-const FLOOR_LINE_Y: f32 = -36.0;
+const FLOOR_LINE_Y: f32 = -34.0;
 
 // ---------------------------------------------------------------------------
 // Layer order (docs/art-direction.md § "Layering")
 // ---------------------------------------------------------------------------
 //
-//   room_bg -> rug -> books -> chair -> desk -> dev_* -> monitor_* -> lamp
+//   room_bg -> rug -> books -> chair -> dev_* -> desk -> monitor_* -> lamp
 //           -> mug -> plant
 //
 // Sprites at equal z draw in an unspecified order in Bevy's 2D pipeline, so
 // the layering is enforced by giving every layer its own integer z rather
 // than by spawn order. One unit apart is plenty: the 2D orthographic
 // projection spans z -1000..1000.
+//
+// The load-bearing pair is `dev_* -> desk`: the desk draws IN FRONT of the
+// character, which is the only reason the character's lower body is hidden and
+// they read as seated *at* the desk rather than standing behind it. This file
+// used to have it the other way round (`desk` at 4, `dev` at 5) and the result
+// was exactly what the manifest's prose warns about — a blue torso painted
+// over the tabletop, with the arms in front of a desk their waist was behind.
+// Everything that rests ON the desk (`monitor_*`, `lamp`, `mug`, `plant`) has
+// to come after the desk in turn, or the tabletop paints over its own props.
 
 const Z_ROOM_BG: f32 = 0.0;
 const Z_RUG: f32 = 1.0;
 const Z_BOOKS: f32 = 2.0;
 const Z_CHAIR: f32 = 3.0;
-const Z_DESK: f32 = 4.0;
-const Z_DEV: f32 = 5.0;
+const Z_DEV: f32 = 4.0;
+const Z_DESK: f32 = 5.0;
 const Z_MONITOR: f32 = 6.0;
 const Z_LAMP: f32 = 7.0;
 const Z_MUG: f32 = 8.0;
@@ -223,28 +233,31 @@ const Z_PLANT: f32 = 9.0;
 //
 //     centre_y = surface_y + own_height / 2
 //
-// Nothing here is hand-tuned; each constant names the surface it came from.
-// Every value stays a whole pixel — a half-pixel placement re-samples the
-// texture and defeats the nearest-neighbour sampler (non-negotiable #1) — and
-// that falls out of the arithmetic on its own because all the sprite heights
-// are even.
+// Nothing here is hand-tuned; each constant names the surface it came from and
+// why its x is where it is. Every value stays a whole pixel — a half-pixel
+// placement re-samples the texture and defeats the nearest-neighbour sampler
+// (non-negotiable #1) — and that falls out of the arithmetic on its own,
+// because every sprite height in the manifest is even.
 //
 // Two surfaces matter and everything hangs off them:
 //
 //   * [`FLOOR_LINE_Y`], the back edge of the floor plane — the chair, the book
 //     stack and the rug are placed against it;
-//   * [`DESK_TOP_Y`], the desk's surface — the monitor, lamp, mug and the
-//     plant upgrade are placed against it.
+//   * [`DESK_TOP_Y`], the tabletop's front edge — the monitor, lamp, mug and
+//     the plant upgrade are placed against it, and it is the line that hides
+//     the character's lower body.
 //
-// The room is a flat elevation, so "further from the viewer" is "higher up the
-// image". That is why the desk's feet land *below* [`FLOOR_LINE_Y`]: the desk
-// stands in front of the chair (it occludes it — see the layer order), so its
-// floor contact is nearer the viewer and therefore lower down. Depth ordering
-// and vertical placement have to agree or the room stops reading as a room.
+// The room is a flat side-on elevation, so "further from the viewer" is
+// "higher up the image". That is why the desk's feet land *below*
+// [`FLOOR_LINE_Y`]: the desk stands in front of the chair (it occludes it —
+// see the layer order), so its floor contact is nearer the viewer and
+// therefore lower down. Depth ordering and vertical placement have to agree or
+// the room stops reading as a room.
 //
-// The composition is off-centre to the right, which is what makes the
-// character read as *seated at* the desk: chair behind, desk in front, monitor
-// to the character's right.
+// Horizontally the composition is one group off-centre to the right — chair
+// behind the character, desk in front, monitor to the character's right — with
+// the window (x -120..-43 in `room_bg.png`) and the book stack carrying the
+// left third so the room does not look like furniture pushed into one corner.
 
 /// How far the chair's seat is above the chair's own floor contact.
 ///
@@ -260,64 +273,81 @@ const CHAIR_SEAT_ABOVE_FLOOR: f32 = 15.0;
 /// decides whether the character types *on* the desk or in mid-air.
 const DEV_HANDS_ABOVE_BOTTOM: f32 = 8.0;
 
-/// The desk's surface: the line every object *on* the desk rests on, and the
-/// line that occludes the character's lower body.
+/// Rows of `lamp.png` that are light spill rather than lamp.
 ///
-/// Derived rather than chosen. The character sits on the chair — bottom edge
-/// on the seat, which is [`CHAIR_SEAT_ABOVE_FLOOR`] above the floor — and
-/// types with their hands [`DEV_HANDS_ABOVE_BOTTOM`] above that bottom edge,
-/// so the surface has to be exactly there. Floor -> seat -> hands -> desk top
-/// is the whole chain; change any link and the desk follows.
+/// The bottom row (row 27) is the warm pool the bulb throws on whatever the
+/// lamp stands on — the art deliberately moved it out of `desk.png` so it
+/// follows the lamp. Spill has to be painted *onto* the tabletop, so the lamp
+/// is sunk by exactly this much: one row of overlap, which the layer order
+/// resolves in the lamp's favour (`Z_LAMP > Z_DESK`).
+const LAMP_SPILL_ROWS: f32 = 1.0;
+
+/// The desk's surface: the tabletop's front edge (`desk.png` row 0), which is
+/// both the line every object *on* the desk rests on and the line that
+/// occludes the character's lower body (`Z_DESK > Z_DEV`).
+///
+/// Derived rather than chosen. The character sits on the chair — bottom edge on
+/// the seat, which is [`CHAIR_SEAT_ABOVE_FLOOR`] above the floor — and types
+/// with their hands [`DEV_HANDS_ABOVE_BOTTOM`] above that bottom edge, so the
+/// tabletop has to be exactly there. Floor -> seat -> hands -> tabletop is the
+/// whole chain; change any link and the desk follows.
 const DESK_TOP_Y: f32 = FLOOR_LINE_Y + CHAIR_SEAT_ABOVE_FLOOR + DEV_HANDS_ABOVE_BOTTOM;
 
 /// Desk centre.
 ///
-/// y: `desk.png` draws its surface slab flush with the sprite's top edge
-/// (rows 0-9) and its two legs below it, so the centre is exactly half a
-/// sprite below [`DESK_TOP_Y`]. That puts the feet 25 px in front of (below)
-/// the chair's wheels — the depth offset the layer order already claims.
+/// y: `desk.png` is a flat elevation whose top row *is* the tabletop's front
+/// edge, opaque across all 120 px down to row 9, with the two legs below — so
+/// the centre is exactly half a sprite below [`DESK_TOP_Y`]. That also puts its
+/// feet 25 px in front of (below) the chair's wheels, the depth offset the
+/// layer order already claims.
 ///
-/// x: off-centre right, so that the lamp standing at the desk's right end
-/// lands under the warm light `room_bg.png` already paints on the wall and
-/// pools on the floor (centred on x = +73). The empty left third of the room
-/// is carried by the window and the book stack instead.
+/// x: off-centre right by 24 px. Two reasons, both about what is *behind* the
+/// group: it puts the desk's left edge at -36, clear of the window's right
+/// frame at -43, so the whole desk group reads against bare wall instead of
+/// against window panes; and it leaves the left third to the window and the
+/// book stack rather than dead-centring the furniture.
 const DESK_POS: Vec2 = Vec2::new(24.0, DESK_TOP_Y - DESK_SIZE.y / 2.0);
 
 /// Character centre.
 ///
-/// y: their bottom edge sits [`DEV_HANDS_ABOVE_BOTTOM`] below the desk
-/// surface, which is what lands the hands *on* it; the desk slab then hides
-/// rows 24-31 — everything from the waist down — which is the single cue that
-/// reads as "seated at the desk" (docs/art-direction.md § Layering).
+/// y: their bottom edge sits [`DEV_HANDS_ABOVE_BOTTOM`] below the tabletop,
+/// which is what lands the hands *on* it. The desk then draws over rows 24-31
+/// — everything from the waist down — which is the single cue that reads as
+/// "seated at the desk" (docs/art-direction.md § Layering).
 ///
-/// x: just left of the desk's middle, so the character's right side faces the
-/// monitor with the mug in the gap between them.
+/// x: just left of the desk's middle, so the character faces right into the
+/// monitor with the mug in the gap between them, and the chair's backrest has
+/// room to show on their left.
 const DEV_POS: Vec2 = Vec2::new(-6.0, DESK_TOP_Y - DEV_HANDS_ABOVE_BOTTOM + DEV_SIZE.y / 2.0);
 
 /// Chair centre — wheels on the floor line, 6 px left of the character so the
-/// backrest (which reaches `FLOOR_LINE_Y + 35`, i.e. 12 px clear of the desk
-/// surface) shows past their shoulder instead of hiding behind their torso.
+/// backrest (which reaches `FLOOR_LINE_Y + 35`, i.e. 12 px clear of the
+/// tabletop) shows past their shoulder instead of hiding behind their torso.
 /// Its seat, visible in the gap between the desk's legs, is exactly where the
 /// character's bottom edge is: they sit *on* it.
 const CHAIR_POS: Vec2 = Vec2::new(DEV_POS.x - 6.0, FLOOR_LINE_Y + CHAIR_SIZE.y / 2.0);
 
-/// Monitor centre — bezel standing on the desk surface, to the character's
-/// right (they face right, toward it).
-const MONITOR_POS: Vec2 = Vec2::new(36.0, DESK_TOP_Y + MONITOR_SIZE.y / 2.0);
+/// Monitor centre — bezel and stand standing on the tabletop, to the
+/// character's right (they face right, toward it), far enough right that the
+/// mug fits between them and near enough that the character is clearly working
+/// at *this* screen.
+const MONITOR_POS: Vec2 = Vec2::new(36.0, MONITOR_SIZE.y / 2.0 + DESK_TOP_Y);
 
-/// Desk lamp centre — base on the desk surface at its right end, directly
-/// under the glow `room_bg.png` paints on the wall (x 20..136, centred on
-/// x = +73).
+/// Desk lamp centre — at the desk's right end, sunk [`LAMP_SPILL_ROWS`] so its
+/// bottom row of spill lands on the tabletop instead of hovering one pixel
+/// above it.
 ///
-/// WHY the right end and not the left, where it used to be: a lamp that is not
-/// standing under its own light pool is the loudest possible "this scene was
-/// assembled rather than composed", and it was also sitting on top of the
-/// chair, hiding it completely.
-const LAMP_POS: Vec2 = Vec2::new(72.0, DESK_TOP_Y + LAMP_SIZE.y / 2.0);
+/// WHY the right end and not the left, where it used to be: on the left it sat
+/// exactly on top of the chair (x -40..-20 against the chair's -40..-12) and,
+/// drawing later, hid it completely — the chair was in the scene and invisible.
+/// On the right it lights the empty end of the desk and balances the plant at
+/// the other end.
+const LAMP_POS: Vec2 = Vec2::new(72.0, DESK_TOP_Y - LAMP_SPILL_ROWS + LAMP_SIZE.y / 2.0);
 
-/// Mug centre — on the desk surface in the gap between the character's hands
-/// (which reach x = +3) and the monitor's left edge (x = +16).
-const MUG_POS: Vec2 = Vec2::new(9.0, DESK_TOP_Y + MUG_SIZE.y / 2.0);
+/// Mug centre — on the tabletop in the gap between the character's hands
+/// (which reach x = +4) and the monitor's left edge (x = +16), one pixel clear
+/// of each.
+const MUG_POS: Vec2 = Vec2::new(10.0, DESK_TOP_Y + MUG_SIZE.y / 2.0);
 
 /// Book stack centre — standing on the floor line against the wall below the
 /// window, filling the otherwise empty left third of the room.
@@ -325,24 +355,25 @@ const BOOKS_POS: Vec2 = Vec2::new(-104.0, FLOOR_LINE_Y + BOOKS_SIZE.y / 2.0);
 
 /// Rug centre.
 ///
-/// A rug *lies on* the floor rather than standing on it, so it is its far
-/// (top) edge that meets [`FLOOR_LINE_Y`] and the sprite extends from there
-/// toward the viewer — the one prop whose height is subtracted rather than
-/// added. Centred on the desk so the desk's legs visibly cross it
-/// (`Z_DESK > Z_RUG`), which is what grounds the desk on the floor.
+/// A rug *lies on* the floor rather than standing on it, so it is its far (top)
+/// edge that meets [`FLOOR_LINE_Y`] and the sprite runs toward the viewer from
+/// there — the one prop whose half-height is subtracted rather than added.
+/// Centred on the desk so the desk's legs visibly cross it (`Z_DESK > Z_RUG`),
+/// which is what grounds the desk on the floor instead of leaving it standing
+/// on a bare band of boards.
 const RUG_POS: Vec2 = Vec2::new(DESK_POS.x, FLOOR_LINE_Y - RUG_SIZE.y / 2.0);
 
-/// Plant centre — the desk upgrade, standing on the desk surface at its left
-/// end, immediately beside the character.
+/// Plant centre — the desk upgrade, standing on the tabletop at its left end,
+/// immediately beside the character.
 ///
 /// WHY here: it used to sit on the floor to the right of the desk, which was
 /// both wrong (the manifest calls it the *desk* upgrade) and invisible in
-/// practice — green-and-terracotta against the brown floor boards, with its
-/// lower half behind the HUD bar. The desk's left end is the only stretch of
-/// surface with 24 px of clear width whose background is bare wall, so the
-/// plant is silhouetted against the wall at the character's eye level: the
-/// frame the wallet crosses [`crate::DESK_UPGRADE_COST`], a new object
-/// unmistakably appears on the desk.
+/// practice — green-and-terracotta against brown floorboards with its lower
+/// half behind the HUD bar. The desk's left end is the one stretch of tabletop
+/// with 24 px of clear width whose background is bare wall (the window stops at
+/// x -43), so the plant is silhouetted at the character's eye level: the frame
+/// the wallet crosses [`crate::DESK_UPGRADE_COST`], a new object unmistakably
+/// appears on the desk next to them.
 const PLANT_POS: Vec2 = Vec2::new(-24.0, DESK_TOP_Y + PLANT_SIZE.y / 2.0);
 
 /// Frames per second of the two-frame typing loop. The manifest's brief is
@@ -516,7 +547,10 @@ fn setup_pixel_camera(
     }
 }
 
-/// Spawns the whole room, back to front, one sprite per manifest entry.
+/// Spawns the whole room, one sprite per manifest entry.
+///
+/// Spawn order is only for readability — the draw order is the `Z_*`
+/// constants, because sprites at equal z draw in an unspecified order.
 ///
 /// Every image is requested through the `AssetServer` here — `load` is
 /// non-blocking and returns a handle immediately, so a sprite whose PNG does
@@ -691,7 +725,7 @@ mod tests {
     #[test]
     fn layer_z_values_follow_the_manifest_order() {
         let order = [
-            Z_ROOM_BG, Z_RUG, Z_BOOKS, Z_CHAIR, Z_DESK, Z_DEV, Z_MONITOR, Z_LAMP, Z_MUG, Z_PLANT,
+            Z_ROOM_BG, Z_RUG, Z_BOOKS, Z_CHAIR, Z_DEV, Z_DESK, Z_MONITOR, Z_LAMP, Z_MUG, Z_PLANT,
         ];
         for pair in order.windows(2) {
             assert!(
@@ -712,12 +746,21 @@ mod tests {
             head > DESK_TOP_Y,
             "the character's head must clear the desk"
         );
-        // Not just *any* straddle: the surface has to cut the sprite below the
-        // hands, or the desk edge saws through the character's arms.
+        // Not just *any* straddle: the tabletop has to cut the sprite below
+        // the hands, or the desk edge saws through the character's arms.
         assert!(
             DESK_TOP_Y < feet + DEV_SIZE.y / 2.0,
             "the desk must not hide the character's upper body"
         );
+        // …and the occlusion only happens at all because the desk draws over
+        // the character. With these two swapped the geometry is unchanged and
+        // the render is wrong: the torso paints over the tabletop.
+        const {
+            assert!(
+                Z_DESK > Z_DEV,
+                "the desk must draw in front of the character to occlude it"
+            )
+        };
     }
 
     /// The bug class this whole section exists to prevent: a prop whose centre
@@ -729,19 +772,35 @@ mod tests {
     /// an even whole number.
     #[test]
     fn every_prop_rests_on_the_surface_it_belongs_to() {
-        // Standing on the desk surface.
+        // Standing on the tabletop.
         for (name, pos, size) in [
             ("monitor", MONITOR_POS, MONITOR_SIZE),
-            ("lamp", LAMP_POS, LAMP_SIZE),
             ("mug", MUG_POS, MUG_SIZE),
             ("plant", PLANT_POS, PLANT_SIZE),
         ] {
             assert_eq!(
                 pos.y - size.y / 2.0,
                 DESK_TOP_Y,
-                "{name} must rest on the desk surface, not hover above it"
+                "{name} must rest on the tabletop, not hover above it"
             );
         }
+        // The lamp is the one exception, and only by the height of the light
+        // spill baked into its bottom row: spill has to land *on* the tabletop,
+        // so the lamp's own base — one row up — is what rests on the surface.
+        assert_eq!(
+            LAMP_POS.y - LAMP_SIZE.y / 2.0 + LAMP_SPILL_ROWS,
+            DESK_TOP_Y,
+            "the lamp's base must rest on the tabletop, with only its spill row \
+             overlapping"
+        );
+        // Every one of them has to draw over the desk, or the tabletop paints
+        // across the props standing on it.
+        const {
+            assert!(
+                Z_MONITOR > Z_DESK && Z_LAMP > Z_DESK && Z_MUG > Z_DESK && Z_PLANT > Z_DESK,
+                "props resting on the desk must draw in front of it"
+            )
+        };
 
         // Standing on the floor plane's back edge.
         for (name, pos, size) in [

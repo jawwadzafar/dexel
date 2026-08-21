@@ -308,6 +308,13 @@ def build_desk() -> Sprite:
     s.rect(0, 0, 119, 5, "desk")
     s.rect(0, 6, 119, 8, "desk_dark")
     s.hline(9, 0, 119, "shadow")
+    # Row 0 is the top edge of the tabletop, i.e. the one line of this sprite
+    # that points at the ceiling. Everything in this room is under a lamp, so
+    # that line is warm: one flat `pot` band with hard edges, full width, so it
+    # cannot be read as a glow at a particular x the way a local lit patch was.
+    # It is also the line every desk prop's contact shadow lands against, which
+    # is what ties the props to the wood instead of to the wall behind them.
+    s.hline(0, 0, 119, "pot")
 
     # No lit patch is painted here. The warm pool the lamp throws on the wood
     # lives in the LAST ROW OF lamp.png instead: scene.rs is free to slide the

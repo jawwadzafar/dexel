@@ -30,7 +30,7 @@ Before starting, load your skill(s): **milestone-driven-rust-implementation**. T
 Coordination is file-based under `_fleet/local/handoffs/`. You did not see other agents' conversations — the handoff files are your only shared memory, so treat them as the contract.
 
 **On start:**
-1. Read your incoming handoff(s) from `game-architect` in `_fleet/local/handoffs/` (files matching `*-to-game-engineer.md`). If one is missing or its acceptance criteria are unclear, say so in your output and proceed with explicit assumptions rather than silently guessing.
+1. Read your incoming handoff(s) from `game-architect`, `game-artist` in `_fleet/local/handoffs/` (files matching `*-to-game-engineer.md`). If one is missing or its acceptance criteria are unclear, say so in your output and proceed with explicit assumptions rather than silently guessing.
 2. Read `_fleet/local/LEDGER.md` to see fleet state before starting.
 
 **On finish:**

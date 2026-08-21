@@ -5,7 +5,7 @@ tools: Read, Grep, Glob, Bash
 model: inherit
 skills:
   - pr-merge-decision
-color: yellow
+color: red
 x-fleetsmith-origin: human
 ---
 
