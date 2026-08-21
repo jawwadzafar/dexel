@@ -13,3 +13,4 @@ alone. The master plan lives in `v0.4-behind-view-plan.md`.
 | 2026-08-21 | User's design PDF ingested: behind-view + store modal + own/equip. v0.4 plan written (this dir). Standing rule recorded: overseer orchestrates only; subagents implement. |
 | 2026-08-21 | W1-A (mechanics green-up, Sonnet) and W1-B (PDF→specs, Opus) launched in parallel with disjoint ownership. |
 | 2026-08-21 | **ADR 0011: engine pivot.** The PDF design ships on its native stack (Go + HTML/NES.css) in `app/`; Bevy game frozen as legacy; opencode fleet retired from critical path. W1-B redirected mid-flight to spec for the web frontend. Plan Waves 2-3 rewritten. |
+| 2026-08-21 | W1-A landed and committed: Rust legacy freeze, fully green. Verification tooling gap found: no pip/pypi access on this box — headless-browser plan may need npx playwright or an alternative; resolve before W2-β verification. |
