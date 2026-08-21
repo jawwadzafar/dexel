@@ -1,4 +1,4 @@
-# dev-companion
+# dexel
 
 A cozy pixel-art desktop companion whose workday runs on *your* real typing.
 
@@ -6,7 +6,7 @@ A cozy pixel-art desktop companion whose workday runs on *your* real typing.
 
 ## What is this
 
-`dev-companion` is a small pixel-art developer character who lives at a desk
+`dexel` is a small pixel-art developer character who lives at a desk
 on your screen. Real typing — in **any** app on your machine, not just the
 game window — advances their current sprint. Finishing a sprint pays out
 Dev Cash, which you spend in a store on hoodies, chairs, keyboards, mice,
@@ -49,8 +49,8 @@ frontend over a WebSocket at `http://127.0.0.1:8080`.
 Requires [Go 1.27](https://go.dev/dl/) or newer.
 
 ```bash
-git clone git@github.com:jawwadzafar/dev-companion.git
-cd dev-companion/app
+git clone git@github.com:jawwadzafar/dexel.git
+cd dexel/app
 go run .
 ```
 
@@ -86,7 +86,7 @@ focus, and the honesty rules above freeze rather than guess at idle time.
 - **`ASSETS NOT FOUND` banner in the scene:** the server couldn't locate the
   repo's `assets/` directory (the sprite PNGs). This happens if the binary
   is run from somewhere other than a full checkout. Set
-  `DEVCOMPANION_ASSETS_DIR=/path/to/dev-companion/assets`, or run from
+  `DEXEL_ASSETS_DIR=/path/to/dexel/assets`, or run from
   `app/` inside the checkout as shown above.
 - **Check what the server actually found:** `GET /api/health` returns the
   resolved `assetsDir`, whether `public/index.html` was found, and the
@@ -199,15 +199,15 @@ This is the project's defining constraint, not a footnote:
 | `-addr` | `127.0.0.1:8080` | Listen address. Binding beyond `127.0.0.1`/`localhost` exposes the activity monitor and save to your LAN/tailnet. |
 | `-public` | `./public` | Static frontend directory. |
 | `-provider` | `auto` | Activity provider: `auto` (native provider for this OS) or `fake`. |
-| `-fake-script` | `""` | Explicit fake-provider script, e.g. `type:20s,idle:40s,mouse:15s`. Overrides `DEVCOMPANION_FAKE_SCRIPT` and implies `-provider=fake`. |
+| `-fake-script` | `""` | Explicit fake-provider script, e.g. `type:20s,idle:40s,mouse:15s`. Overrides `DEXEL_FAKE_SCRIPT` and implies `-provider=fake`. |
 | `-insecure-origin` | `false` | Accept WebSocket connections from **any** Origin, skipping same-origin verification. For embedded webviews only (e.g. a `file://`/`app://` frontend); never combine with an `-addr` bound beyond loopback. |
 
 ### Environment variables
 
 | Variable | Purpose |
 |---|---|
-| `DEVCOMPANION_FAKE_SCRIPT` | Same script format as `-fake-script`, used when `-provider=fake` and no `-fake-script` flag is given. |
-| `DEVCOMPANION_ASSETS_DIR` | Overrides where the server looks for the repo's `assets/` directory. |
+| `DEXEL_FAKE_SCRIPT` | Same script format as `-fake-script`, used when `-provider=fake` and no `-fake-script` flag is given. |
+| `DEXEL_ASSETS_DIR` | Overrides where the server looks for the repo's `assets/` directory. |
 
 ### Health endpoint
 
@@ -217,7 +217,7 @@ for diagnosing "it looks broken" reports without guessing.
 
 ### Save file
 
-State persists to `~/.config/devcompanion/state.json`: Dev Cash, XP, current
+State persists to `~/.config/dexel/state.json`: Dev Cash, XP, current
 sprint progress, owned/equipped items and tints, and the activity
 counters/history described above. The save schema is versioned; migrations
 are additive and non-destructive, and a save from a *future* schema version
@@ -285,9 +285,12 @@ Tracked in [`docs/plan/ROADMAP.md`](docs/plan/ROADMAP.md). Current state:
 
 ## License
 
-No `LICENSE` file exists in this repository yet, so **there is currently no
-license for the code in `app/`** (the active Go/TypeScript product). The
-root `Cargo.toml` declares `MIT OR Apache-2.0` as SPDX metadata for the
-frozen legacy Rust crates, but no corresponding `LICENSE-MIT`/`LICENSE-APACHE`
-text is checked in either. Treat this repository as **all rights reserved**
-until a `LICENSE` file is added.
+[![License: Apache 2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
+
+dexel is licensed under the [Apache License 2.0](LICENSE). Code is
+Copyright 2026 Jawwad Zafar.
+
+Third-party components bundled with or used to build dexel (fonts,
+CSS frameworks, and build/runtime dependencies) are listed with their own
+licenses in [`THIRD-PARTY-LICENSES.md`](THIRD-PARTY-LICENSES.md); see also
+[`NOTICE`](NOTICE).

@@ -75,7 +75,7 @@ export function equippedItemFor(slotId: string): CatalogItem | undefined {
   const eq = state!.equipped && state!.equipped[slotId];
   const item = eq && itemsById[eq.itemId];
   if (!item && eq && eq.itemId) {
-    console.warn('[dev-companion] unknown item id "' + eq.itemId + '" equipped in slot "' + slotId + '" — rendering the slot default instead');
+    console.warn('[dexel] unknown item id "' + eq.itemId + '" equipped in slot "' + slotId + '" — rendering the slot default instead');
   }
   return item || freeDefaultItem(slotId);
 }

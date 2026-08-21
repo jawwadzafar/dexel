@@ -1,8 +1,8 @@
 {
-  "name": "dev-companion-frontend",
+  "name": "dexel-frontend",
   "private": true,
   "version": "1.0.0",
-  "description": "TypeScript source for dev-companion's frontend (app/public/js/game.js), built with esbuild. See docs/plan/ROADMAP.md Frontend architecture track F1.",
+  "description": "TypeScript source for dexel's frontend (app/public/js/game.js), built with esbuild. See docs/plan/ROADMAP.md Frontend architecture track F1.",
   "type": "module",
   "scripts": {
     "build": "node build.mjs",

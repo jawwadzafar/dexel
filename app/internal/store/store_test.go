@@ -8,7 +8,7 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/jawwadzafar/dev-companion/app/internal/game"
+	"github.com/jawwadzafar/dexel/app/internal/game"
 )
 
 func strp(s string) *string { return &s }

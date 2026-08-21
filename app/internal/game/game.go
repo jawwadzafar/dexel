@@ -13,7 +13,7 @@ import (
 	"sort"
 	"time"
 
-	"github.com/jawwadzafar/dev-companion/app/internal/engine"
+	"github.com/jawwadzafar/dexel/app/internal/engine"
 )
 
 // EquippedRef is one slot's equipped item + tint (docs/ui-spec.md §6.1:

@@ -1,4 +1,4 @@
-# Upgrade system design — dev-companion v2 (own-many / equip-one)
+# Upgrade system design — dexel v2 (own-many / equip-one)
 
 The product loop in one line, unchanged: **real activity earns Dev Cash; Dev
 Cash buys visible customisation of the character, the desk and the room; every
@@ -294,7 +294,7 @@ off the hoodie slot for the style and tint.
 
 | | |
 |---|---|
-| Path | `~/.config/devcompanion/state.json` |
+| Path | `~/.config/dexel/state.json` |
 | Write | atomically: write `state.json.tmp`, `fsync`, `rename` |
 | Cadence | on every mutation, plus a 30 s safety flush |
 | On malformed/unreadable | log once, start fresh. **Never** panic, never delete the bad file — rename it to `state.json.corrupt` so a user can send it in |
@@ -350,7 +350,7 @@ Linux   ~/.local/share/dev-companion/save.json
   "upgrades": { "chair": 2, "keyboard": 1, "monitor": 1, "wall": 2 } }
 ```
 
-**Import rule.** On startup, **if and only if** `~/.config/devcompanion/state.json`
+**Import rule.** On startup, **if and only if** `~/.config/dexel/state.json`
 does not exist, look for the Rust save. If it parses, import it, set
 `importedFromRust: true`, and write the new state file. Then never look again.
 

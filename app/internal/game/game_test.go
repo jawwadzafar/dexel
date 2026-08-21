@@ -4,7 +4,7 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/jawwadzafar/dev-companion/app/internal/engine"
+	"github.com/jawwadzafar/dexel/app/internal/engine"
 )
 
 // TestCatalogIntegrity guards the transcribed table itself against the

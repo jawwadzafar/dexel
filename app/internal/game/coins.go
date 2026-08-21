@@ -3,7 +3,7 @@ package game
 import (
 	"sort"
 
-	"github.com/jawwadzafar/dev-companion/app/internal/engine"
+	"github.com/jawwadzafar/dexel/app/internal/engine"
 )
 
 // CoinBreakdown is the per-signal split of coins ("Dev Cash") attributed

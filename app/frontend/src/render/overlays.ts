@@ -19,7 +19,7 @@ function showAssetsErrorBanner(detail?: string): void {
   if (assetsErrorShown) return; // one banner is enough; don't refetch per failed sprite
   assetsErrorShown = true;
   let msg = 'ASSETS NOT FOUND — the server could not locate the assets/ directory. ' +
-    'Run from the repo, or set DEVCOMPANION_ASSETS_DIR.';
+    'Run from the repo, or set DEXEL_ASSETS_DIR.';
   if (detail) msg += ' (' + detail + ')';
   (assetsErrorOverlay.querySelector('span') as HTMLElement).textContent = msg;
   assetsErrorOverlay.classList.add('visible');

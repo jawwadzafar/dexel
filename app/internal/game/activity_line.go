@@ -3,7 +3,7 @@ package game
 import (
 	"strings"
 
-	"github.com/jawwadzafar/dev-companion/app/internal/engine"
+	"github.com/jawwadzafar/dexel/app/internal/engine"
 )
 
 // ActivityLine composes ADR 0009's verb map — "Coding in X / Browsing in X

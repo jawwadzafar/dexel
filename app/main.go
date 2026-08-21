@@ -1,4 +1,4 @@
-// Command app is the dev-companion server (ADR 0011): a Go backend that
+// Command app is the dexel server (ADR 0011): a Go backend that
 // samples real activity, runs the ADR 0005/0010 economy+honesty engine,
 // and serves the live game state over HTTP/WebSocket to the NES.css
 // frontend in ./public, per docs/ui-spec.md's wire contract.
@@ -20,11 +20,11 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/jawwadzafar/dev-companion/app/internal/activity"
-	"github.com/jawwadzafar/dev-companion/app/internal/assets"
-	"github.com/jawwadzafar/dev-companion/app/internal/engine"
-	"github.com/jawwadzafar/dev-companion/app/internal/game"
-	"github.com/jawwadzafar/dev-companion/app/internal/store"
+	"github.com/jawwadzafar/dexel/app/internal/activity"
+	"github.com/jawwadzafar/dexel/app/internal/assets"
+	"github.com/jawwadzafar/dexel/app/internal/engine"
+	"github.com/jawwadzafar/dexel/app/internal/game"
+	"github.com/jawwadzafar/dexel/app/internal/store"
 )
 
 // Cadences from docs/ui-spec.md: the 1Hz state tick/autosave gate is the
@@ -40,7 +40,7 @@ func main() {
 	addr := flag.String("addr", "127.0.0.1:8080", "listen address (loopback by default — binding beyond 127.0.0.1/localhost exposes the activity monitor and save to your LAN/tailnet)")
 	publicDir := flag.String("public", "./public", "static frontend directory (owned by the frontend agent)")
 	providerKind := flag.String("provider", "auto", `activity provider: "auto" (native for this OS) or "fake"`)
-	fakeScript := flag.String("fake-script", "", "explicit fake-provider script (e.g. type:20s,idle:40s,mouse:15s); overrides DEVCOMPANION_FAKE_SCRIPT; implies -provider=fake")
+	fakeScript := flag.String("fake-script", "", "explicit fake-provider script (e.g. type:20s,idle:40s,mouse:15s); overrides DEXEL_FAKE_SCRIPT; implies -provider=fake")
 	insecureOrigin := flag.Bool("insecure-origin", false, "accept WebSocket connections from ANY Origin, skipping same-origin verification entirely — for embedded webviews only (e.g. a file:// or app:// frontend whose Origin header, if any, will never match a loopback host pattern); never enable this if -addr binds beyond 127.0.0.1/localhost")
 	flag.Parse()
 
@@ -86,7 +86,7 @@ func main() {
 
 	httpSrv := &http.Server{Addr: *addr, Handler: mux}
 	go func() {
-		log.Printf("dev-companion listening on http://%s (serving %s)", *addr, *publicDir)
+		log.Printf("dexel listening on http://%s (serving %s)", *addr, *publicDir)
 		if err := httpSrv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			log.Fatalf("http server: %v", err)
 		}
@@ -242,7 +242,7 @@ func wsOriginPatterns(addr string) []string {
 }
 
 // selectProvider builds the activity.Provider for this run. -fake-script
-// (or DEVCOMPANION_FAKE_SCRIPT) always wins so a scripted demo/test run is
+// ((or DEXEL_FAKE_SCRIPT)) always wins so a scripted demo/test run is
 // never accidentally overridden by a real capture path; otherwise "auto"
 // picks this OS's native provider (see provider_select_*.go) and "fake"
 // uses the env-driven fake provider.
@@ -257,7 +257,7 @@ func selectProvider(kind, fakeScript string) (activity.Provider, string) {
 	}
 	switch kind {
 	case "fake":
-		return activity.NewFakeProviderFromEnv(), "fake (DEVCOMPANION_FAKE_SCRIPT or built-in demo)"
+		return activity.NewFakeProviderFromEnv(), "fake (DEXEL_FAKE_SCRIPT or built-in demo)"
 	case "auto":
 		return platformProvider(), platformProviderName
 	default:
@@ -283,7 +283,7 @@ func selectProvider(kind, fakeScript string) (activity.Provider, string) {
 // where the checkout root is).
 //
 // Every attempt LocateVerbose made is logged, in order, so a broken lookup
-// (most commonly: $DEVCOMPANION_ASSETS_DIR set to a stale or wrong path,
+// (most commonly: $DEXEL_ASSETS_DIR set to a stale or wrong path,
 // which is trusted verbatim with no existence check) is diagnosable from
 // the log alone instead of just "sprite requests will 404".
 //

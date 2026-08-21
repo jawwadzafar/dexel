@@ -8,7 +8,7 @@ import (
 	"runtime"
 	"sort"
 
-	"github.com/jawwadzafar/dev-companion/app/internal/game"
+	"github.com/jawwadzafar/dexel/app/internal/game"
 )
 
 // LegacyPath returns the frozen Rust/Bevy build's save location (ADR

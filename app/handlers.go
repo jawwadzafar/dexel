@@ -7,7 +7,7 @@ import (
 
 	"nhooyr.io/websocket"
 
-	"github.com/jawwadzafar/dev-companion/app/internal/game"
+	"github.com/jawwadzafar/dexel/app/internal/game"
 )
 
 // handleWS upgrades to a WebSocket, sends the `catalog` message once (it

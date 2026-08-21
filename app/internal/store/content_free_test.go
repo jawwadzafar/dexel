@@ -9,7 +9,7 @@ import (
 // TestSaveDataIsContentFree is S3's clone of
 // internal/activity/content_free_test.go's TestSnapshotIsContentFree,
 // applied to the thing that actually persists to disk: SaveData is the
-// exact on-disk shape at ~/.config/devcompanion/state.json (store.go's doc
+// exact on-disk shape at ~/.config/dexel/state.json (store.go's doc
 // comment: "this file contains no user content"). Being content-free
 // upstream (Snapshot, StateMessage) is meaningless if the one thing
 // actually written to a file on the user's disk is free to grow a raw

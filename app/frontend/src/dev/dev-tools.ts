@@ -16,7 +16,7 @@ declare global {
 }
 
 export function installDevTools(renderAll: () => void): void {
-  document.title = 'dev companion [DEV MODE]';
+  document.title = 'dexel [DEV MODE]';
   store.setCatalog(DEV_CATALOG);
   store.setState(DEV_STATE);
   hideConnOverlay();

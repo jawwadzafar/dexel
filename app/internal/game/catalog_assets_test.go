@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/jawwadzafar/dev-companion/app/internal/assets"
+	"github.com/jawwadzafar/dexel/app/internal/assets"
 )
 
 // TestCatalogSpriteFilesExistOnDisk walks every filename the catalog

@@ -2,7 +2,7 @@
 
 package main
 
-import "github.com/jawwadzafar/dev-companion/app/internal/activity"
+import "github.com/jawwadzafar/dexel/app/internal/activity"
 
 // platformProvider returns this OS's native activity capture strategy.
 // Split into one file per GOOS (this house rule mirrors the activity

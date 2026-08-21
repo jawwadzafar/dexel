@@ -8,7 +8,7 @@ package engine
 import (
 	"time"
 
-	"github.com/jawwadzafar/dev-companion/app/internal/activity"
+	"github.com/jawwadzafar/dexel/app/internal/activity"
 )
 
 // Economy calibration, ported EXACTLY from ADR 0005's rebalance (the

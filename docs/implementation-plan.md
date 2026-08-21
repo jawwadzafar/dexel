@@ -1,4 +1,4 @@
-# dev-companion — Implementation Plan v0.1
+# dexel — Implementation Plan v0.1
 
 Author: game-architect · Status: ready for implementation
 

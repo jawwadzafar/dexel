@@ -1,6 +1,6 @@
 package game
 
-import "github.com/jawwadzafar/dev-companion/app/internal/engine"
+import "github.com/jawwadzafar/dexel/app/internal/engine"
 
 // Ticker and terminal pools are STATIC, GAME-FLAVOR text only
 // (docs/ui-spec.md §3: "No string rendered in #ticker or #terminal may be

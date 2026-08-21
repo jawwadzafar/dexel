@@ -1,4 +1,4 @@
-# dev-companion roadmap
+# dexel roadmap
 
 The overseer executes this autonomously, phase by phase, without asking the
 user what to build. The user supplies roadmaps; the overseer plans, delegates

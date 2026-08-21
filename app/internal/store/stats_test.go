@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jawwadzafar/dev-companion/app/internal/engine"
-	"github.com/jawwadzafar/dev-companion/app/internal/game"
+	"github.com/jawwadzafar/dexel/app/internal/engine"
+	"github.com/jawwadzafar/dexel/app/internal/game"
 )
 
 // TestStatsRoundTripThroughSaveLoadApply is Phase A1's (Analytics track,

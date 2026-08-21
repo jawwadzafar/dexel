@@ -73,12 +73,12 @@ func (p *FakeProvider) WithActiveApp(id, display string) *FakeProvider {
 	return p
 }
 
-// NewFakeProviderFromEnv reads DEVCOMPANION_FAKE_SCRIPT (format
+// NewFakeProviderFromEnv reads DEXEL_FAKE_SCRIPT (format
 // "type:30s,idle:40s,mouse:10s") and builds a looping FakeProvider from it.
 // An unset or unparseable script falls back to a short built-in demo
 // timeline so `go run` always has something to show.
 func NewFakeProviderFromEnv() *FakeProvider {
-	steps, err := ParseFakeScript(os.Getenv("DEVCOMPANION_FAKE_SCRIPT"))
+	steps, err := ParseFakeScript(os.Getenv("DEXEL_FAKE_SCRIPT"))
 	if err != nil {
 		steps = DefaultFakeScript()
 	}

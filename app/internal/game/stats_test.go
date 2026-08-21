@@ -4,7 +4,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jawwadzafar/dev-companion/app/internal/engine"
+	"github.com/jawwadzafar/dexel/app/internal/engine"
 )
 
 // TestTickAccumulatesDailyAndLifetimeStats is Phase A1's (Analytics track,

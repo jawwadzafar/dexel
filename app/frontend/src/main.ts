@@ -1,4 +1,4 @@
-// dev-companion frontend — thin entry point (F2, docs/plan/ROADMAP.md
+// dexel frontend — thin entry point (F2, docs/plan/ROADMAP.md
 // "Frontend architecture track"). Wires the three layers together and
 // nothing else:
 //   - DATA/STATE:   state/store.ts (central typed state) + state/ws-client.ts

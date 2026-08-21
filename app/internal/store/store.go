@@ -13,7 +13,7 @@ import (
 	"sort"
 	"time"
 
-	"github.com/jawwadzafar/dev-companion/app/internal/game"
+	"github.com/jawwadzafar/dexel/app/internal/game"
 )
 
 // ErrFutureSchema is Load's error (wrapped with detail) when the save
@@ -141,7 +141,7 @@ type StreakSave struct {
 	LastActiveDate string `json:"lastActiveDate"`
 }
 
-// SaveData is the on-disk shape at ~/.config/devcompanion/state.json,
+// SaveData is the on-disk shape at ~/.config/dexel/state.json,
 // transcribed field-for-field from docs/upgrade-design.md's "Persistence"
 // section. This IS the save format — changing a field name silently
 // orphans existing saves.
@@ -208,13 +208,13 @@ type SaveData struct {
 // is still renamed to ".future" and refused, never silently downgraded.
 const CurrentSchema = 4
 
-// DefaultPath returns ~/.config/devcompanion/state.json.
+// DefaultPath returns ~/.config/dexel/state.json.
 func DefaultPath() (string, error) {
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return "", fmt.Errorf("resolve home dir: %w", err)
 	}
-	return filepath.Join(home, ".config", "devcompanion", "state.json"), nil
+	return filepath.Join(home, ".config", "dexel", "state.json"), nil
 }
 
 // Snapshot extracts a SaveData from the live game state. Arrays are

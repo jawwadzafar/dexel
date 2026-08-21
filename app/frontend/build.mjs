@@ -1,4 +1,4 @@
-// Build script for the dev-companion frontend (F1, docs/plan/ROADMAP.md).
+// Build script for the dexel frontend (F1, docs/plan/ROADMAP.md).
 // Bundles + minifies app/frontend/src/main.ts into app/public/js/game.js
 // (what the Go server already serves — no change needed on that side) with
 // a sourcemap alongside it. `iife` format mirrors the old hand-written

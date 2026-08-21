@@ -1,4 +1,4 @@
-# UI spec — dev-companion v2 (HTML / NES.css frontend)
+# UI spec — dexel v2 (HTML / NES.css frontend)
 
 Target stack per **ADR 0011**: Go backend, HTML/JS/NES.css frontend served
 over `localhost:8080`, later wrapped by Wails v3 as a floating frameless
@@ -53,7 +53,7 @@ verification harness and the spec both address elements by id.
     </div>
 
     <div id="titlebar">
-      <span id="title-text">dev companion</span>
+      <span id="title-text">dexel</span>
       <span id="mood-dot"></span>
       <span id="hud-level">LV 1</span>
       <span id="hud-cash"><i class="nes-icon coin is-small"></i> 0</span>
@@ -101,7 +101,7 @@ screen, the answer is no.
 ```
  x=0        128       256       384       512       640
   +----------------------------------------------------------------+ y=0
-  | dev companion  ●                    LV 5  ◆ 2150  [ [S] STORE ]|
+  | dexel          ●                    LV 5  ◆ 2150  [ [S] STORE ]|
   +----------------------------------------------------------------+ 24
   |                                                                |
   |                                                                |
@@ -125,7 +125,7 @@ screen, the answer is no.
 | Element | Rect (x, y, w, h) | Content |
 |---|---|---|
 | `#titlebar` | 0, 0, 640, 24 | `background: var(--metal)`; 2px bottom border `var(--wall-light)` |
-| `#title-text` | 8, 8, 104, 8 | `dev companion`, 8px, `var(--cream)` (13 chars) |
+| `#title-text` | 8, 8, 104, 8 | `dexel`, 8px, `var(--cream)` (5 chars) |
 | `#mood-dot` | 120, 8, 8, 8 | solid square, colour per the `activeState` table in docs/art-direction.md ("Visual states"). `border-radius: 0` — an 8px circle is mush |
 | `#hud-level` | 456, 8, 40, 8 | `LV 5`, 8px, `var(--cream)`, right-aligned |
 | `#hud-cash` | 500, 8, 44, 8 | coin icon + `2150`, 8px, `var(--gold)`, right-aligned |

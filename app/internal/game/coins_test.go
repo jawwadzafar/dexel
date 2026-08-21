@@ -3,7 +3,7 @@ package game
 import (
 	"testing"
 
-	"github.com/jawwadzafar/dev-companion/app/internal/engine"
+	"github.com/jawwadzafar/dexel/app/internal/engine"
 )
 
 // tr builds an engine.TickResult whose WorkUnits is computed by the exact

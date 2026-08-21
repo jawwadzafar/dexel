@@ -23,7 +23,7 @@ import (
 // existence check. The escape hatch for a packaged install (e.g. a Wails
 // bundle's Resources dir) where no upward walk from the executable or the
 // cwd could ever find assets/.
-const EnvOverride = "DEVCOMPANION_ASSETS_DIR"
+const EnvOverride = "DEXEL_ASSETS_DIR"
 
 // sentinelFile is a file every real assets/ directory must contain
 // (docs/art-direction.md "Fixed scenery") — used to tell a real assets/
@@ -55,7 +55,7 @@ func Locate() (string, error) {
 // during development, a built binary sitting somewhere under (or beside)
 // the repo once packaged, or a binary run from a completely unrelated cwd:
 //
-//  1. $DEVCOMPANION_ASSETS_DIR, if set — used as-is, no existence check.
+//  1. $DEXEL_ASSETS_DIR, if set — used as-is, no existence check.
 //     The escape hatch for a packaged install where no upward walk or
 //     derived candidate could ever find assets/; trusted verbatim on
 //     purpose, so a typo'd or stale value here is reported as "found" by

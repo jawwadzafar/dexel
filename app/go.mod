@@ -1,4 +1,4 @@
-module github.com/jawwadzafar/dev-companion/app
+module github.com/jawwadzafar/dexel/app
 
 go 1.27.0
 

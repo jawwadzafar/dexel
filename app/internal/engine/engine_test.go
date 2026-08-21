@@ -4,7 +4,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jawwadzafar/dev-companion/app/internal/activity"
+	"github.com/jawwadzafar/dexel/app/internal/activity"
 )
 
 // stubProvider is a minimal activity.Provider test double: it hands back

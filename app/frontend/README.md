@@ -1,4 +1,4 @@
-# dev-companion frontend build
+# dexel frontend build
 
 TypeScript source for the frontend the Go server serves from `app/public/`
 (docs/plan/ROADMAP.md, Frontend architecture track). F1 was a mechanical,

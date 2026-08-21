@@ -1,4 +1,4 @@
-# Standing run brief for the dev-companion fleet
+# Standing run brief for the dexel fleet
 
 This file exists so invoking the fleet doesn't require re-pasting the full
 brief every time — just point the orchestrator at this file:
@@ -150,7 +150,7 @@ same time.
 
 ## Repo
 
-`origin` is `git@github.com:jawwadzafar/dev-companion.git` (private). All
+`origin` is `git@github.com:jawwadzafar/dexel.git` (private). All
 commits, branches, and PRs go there under the current git identity
 (`git config user.name`/`user.email`) and the `gh` CLI's already-authenticated
 account — no credentials need to be supplied by hand.

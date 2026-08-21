@@ -1,8 +1,8 @@
-# dev-companion — agent harness
+# dexel — agent harness
 
 **Goal:** Rust + Bevy developer companion desktop game
 
-For implementing, extending, or re-planning the dev-companion Rust/Bevy game, run the fleet orchestrator instead of working solo. Simple questions can be answered directly.
+For implementing, extending, or re-planning the dexel Rust/Bevy game, run the fleet orchestrator instead of working solo. Simple questions can be answered directly.
 
 ## Invoking the fleet
 
