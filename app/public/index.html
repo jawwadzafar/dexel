@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>dev companion</title>
+<meta name="viewport" content="width=640, initial-scale=1">
+<link rel="stylesheet" href="css/nes.min.css">
+<link rel="stylesheet" href="css/game.css">
+</head>
+<body class="nes-pointer">
+  <div id="root">
+
+    <div id="scene-sprites"></div>
+    <div id="scene-text">
+      <div id="terminal"></div>
+    </div>
+    <div id="conn-overlay"><span>CONNECTING...</span></div>
+
+    <div id="titlebar">
+      <span id="title-text">dev companion</span>
+      <span id="mood-dot"></span>
+      <span id="hud-level">LV 1</span>
+      <span id="hud-cash"><i class="nes-icon coin is-small"></i><span class="value">0</span></span>
+      <button id="store-open" class="nes-btn">[S] STORE</button>
+    </div>
+
+    <div id="panel-sprint" class="pixel-panel">
+      <div id="sprint-name"><span class="label">SPRINT: </span><span class="value">—</span></div>
+      <progress id="sprint-bar" class="nes-progress is-success" value="0" max="1"></progress>
+      <div id="sprint-units">0 / 0 units</div>
+    </div>
+
+    <div id="panel-status" class="pixel-panel">
+      <div id="status-real">
+        <span id="status-dot"></span>
+        <span id="status-line">Working...</span>
+      </div>
+      <hr id="status-rule">
+      <ul id="ticker"><li></li><li></li><li></li></ul>
+    </div>
+
+    <div id="flash"></div>
+
+    <div id="scrim"></div>
+
+    <dialog id="store" class="nes-dialog is-dark">
+      <div id="store-title">DEV STORE &amp; CUSTOMIZATION</div>
+      <button id="store-close" class="nes-btn">X</button>
+      <div id="store-cash"><span class="label">TOTAL DEV CASH: </span><i class="nes-icon coin is-small"></i><span class="value">0</span></div>
+
+      <div id="store-cats">
+        <div class="cat-list"></div>
+        <div class="store-help">
+          <div>^v MOVE</div>
+          <div>1-6 COLOUR</div>
+          <div>ENTER ACT</div>
+          <div>ESC CLOSE</div>
+        </div>
+      </div>
+
+      <div id="store-grid"></div>
+
+      <div id="store-scroll"><div class="thumb-bar"></div></div>
+
+      <div id="store-preview">
+        <div class="label">PREVIEW</div>
+        <div id="store-preview-viewport"></div>
+        <div id="store-preview-name"></div>
+        <div id="store-preview-state"></div>
+        <div id="store-preview-color"></div>
+      </div>
+    </dialog>
+
+  </div>
+  <script src="js/game.js"></script>
+</body>
+</html>

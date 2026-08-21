@@ -1,0 +1,721 @@
+/* dev-companion — game.css (W2-β, frontend)
+ * Built against docs/ui-spec.md + docs/art-direction.md + docs/upgrade-design.md.
+ * Every length below is an integer px. No %, em, rem, vh in the chrome.
+ *
+ * NES.css overrides live in ONE block, marked "NES.CSS OVERRIDES" below,
+ * per ui-spec.md §1's instruction to not scatter them.
+ */
+
+@font-face {
+  font-family: 'Press Start 2P';
+  font-style: normal;
+  font-weight: 400;
+  font-display: block;
+  src: url('../fonts/PressStart2P.woff2') format('woff2');
+}
+
+/* ---------- Palette (18 colours, art-direction.md) ---------- */
+:root {
+  --wall-dark: #2f2a3d;
+  --wall-light: #3d3550;
+  --floor: #5b4433;
+  --floor-light: #6d5240;
+  --desk: #8b5e3c;
+  --desk-dark: #6b452b;
+  --metal: #2b2b33;
+  --screen: #7fd4c1;
+  --screen-dim: #4a8f83;
+  --skin: #e8b48c;
+  --hair: #3a2a20;
+  --shirt: #4a7fa8;
+  --plant: #4e8b4f;
+  --pot: #a45c3a;
+  --gold: #e8c46a;
+  --lamp: #ffd98a;
+  --cream: #f2e0c9;
+  --shadow: #241f2e;
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  padding: 0;
+  background: var(--shadow);
+  overflow: hidden;
+}
+
+body {
+  width: 640px;
+  height: 400px;
+  font-family: 'Press Start 2P', monospace;
+  -webkit-font-smoothing: none;
+  font-smooth: never;
+}
+
+img, .sprite {
+  image-rendering: pixelated;
+  image-rendering: -moz-crisp-edges;
+  image-rendering: crisp-edges;
+}
+
+/* No animation longer than 400ms; no transitions on colour or position.
+   Retro UI snaps. (Exceptions explicitly called out in the spec — the
+   blink cursor and the 5fps dev frame swap — are driven by JS timers,
+   not CSS transitions, so this rule holds globally.) */
+* { transition: none !important; }
+
+#root {
+  position: relative;
+  width: 640px;
+  height: 400px;
+  background: var(--shadow);
+  overflow: hidden;
+  cursor: url(data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAYAAABzenr0AAAAzElEQVRYR+2X0Q6AIAhF5f8/2jYXZkwEjNSVvVUjDpcrGgT7FUkI2D9xRfQETwNIiWO85wfINfQUEyxBG2ArsLwC0jioGt5zFcwF4OYDPi/mBYKm4t0U8ATgRm3ThFoAqkhNgWkA0jJLvaOVSs7j3qMnSgXWBMiWPXe94QqMBMBc1VZIvaTu5u5pQewq0EqNZvIEMCmxAawK0DNkay9QmfFNAJUXfgGgUkLaE7j/h8fnASkxHTz0DGIBMCnBeeM7AArpUd3mz2x3C7wADglA8BcWMZhZAAAAAElFTkSuQmCC) 14 0, pointer;
+}
+
+/* ================= Scene ================= */
+
+#scene-sprites {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 320px;
+  height: 200px;
+  transform: scale(2);
+  transform-origin: top left;
+  overflow: hidden;
+  background: var(--wall-dark);
+}
+
+#scene-sprites .layer {
+  position: absolute;
+  image-rendering: pixelated;
+}
+
+#scene-sprites .tintable {
+  position: absolute;
+  isolation: isolate; /* mandatory: without it multiply reaches the whole scene */
+}
+
+.tint-fill {
+  position: absolute;
+  inset: 0;
+  background: var(--tint);
+  mask-image: var(--form);
+  -webkit-mask-image: var(--form);
+  mask-size: 100% 100%;
+  -webkit-mask-size: 100% 100%;
+  mask-mode: alpha;
+}
+
+.tint-shade {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  mix-blend-mode: multiply;
+  image-rendering: pixelated;
+}
+
+.monitor-onbreak { filter: brightness(0.55); }
+
+#scene-text {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 640px;
+  height: 400px;
+  pointer-events: none;
+}
+
+#terminal {
+  /* Spec gives the text-area rect as (200,52) 240x84, but also locks
+     11 lines at an 8px line-height (88px) — 84 is 4px short of 11*8.
+     [DESIGN CALL] height is 88px (11 * 8, no clipped line) rather than the
+     literal 84, since clipping the newest (bottom) line would hide the
+     single most important row in the panel; see game.js report notes. */
+  position: absolute;
+  left: 200px;
+  top: 52px;
+  width: 240px;
+  height: 88px;
+  overflow: hidden;
+  font-size: 8px;
+  line-height: 8px;
+}
+
+#terminal .line {
+  height: 8px;
+  white-space: pre;
+  overflow: hidden;
+  color: var(--screen-dim);
+}
+
+#terminal .line.recent { color: var(--screen); }
+
+#terminal .cursor {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  background: var(--screen);
+  vertical-align: text-top;
+}
+#terminal .cursor.off { visibility: hidden; }
+
+/* dim-scene overlay shown while the WS is not yet connected / retrying */
+#conn-overlay {
+  position: absolute;
+  left: 0;
+  top: 24px;
+  width: 640px;
+  height: 296px;
+  background: rgba(36, 31, 46, 0.7);
+  display: none;
+  align-items: center;
+  justify-content: center;
+  z-index: 500;
+  color: var(--cream);
+  font-size: 8px;
+  text-align: center;
+}
+#conn-overlay.visible { display: flex; }
+
+/* ================= Title bar ================= */
+
+#titlebar {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 640px;
+  height: 24px;
+  background: var(--metal);
+  border-bottom: 2px solid var(--wall-light);
+  z-index: 100;
+}
+
+#title-text {
+  position: absolute;
+  left: 8px;
+  top: 8px;
+  width: 104px;
+  height: 8px;
+  font-size: 8px;
+  color: var(--cream);
+  white-space: nowrap;
+}
+
+#mood-dot {
+  position: absolute;
+  left: 120px;
+  top: 8px;
+  width: 8px;
+  height: 8px;
+  border-radius: 0;
+  background: var(--screen);
+}
+
+#hud-level {
+  position: absolute;
+  left: 456px;
+  top: 8px;
+  width: 40px;
+  height: 8px;
+  font-size: 8px;
+  color: var(--cream);
+  text-align: right;
+  white-space: nowrap;
+}
+
+#hud-cash {
+  position: absolute;
+  left: 500px;
+  top: 4px;
+  width: 44px;
+  height: 16px;
+  font-size: 8px;
+  color: var(--gold);
+  text-align: right;
+  white-space: nowrap;
+  line-height: 16px;
+}
+#hud-cash .nes-icon { vertical-align: middle; margin-right: 2px; }
+
+#store-open {
+  position: absolute;
+  left: 552px;
+  top: 4px;
+  width: 80px;
+  height: 16px;
+}
+
+/* ================= pixel-panel (NOT nes-container) ================= */
+
+.pixel-panel {
+  background: var(--metal);
+  border: 4px solid var(--wall-light);
+  box-sizing: border-box;
+  padding: 6px;
+  position: absolute;
+}
+
+#panel-sprint {
+  left: 8px;
+  top: 322px;
+  width: 308px;
+  height: 74px;
+}
+
+#sprint-name {
+  position: absolute;
+  left: 6px;
+  top: 6px;
+  width: 288px;
+  height: 8px;
+  font-size: 8px;
+  white-space: nowrap;
+  overflow: hidden;
+}
+#sprint-name .label { color: var(--screen-dim); }
+#sprint-name .value { color: var(--cream); }
+
+#sprint-bar {
+  position: absolute;
+  left: 6px;
+  top: 22px;
+  width: 288px;
+  height: 16px;
+}
+
+#sprint-units {
+  position: absolute;
+  left: 6px;
+  top: 46px;
+  width: 288px;
+  height: 8px;
+  font-size: 8px;
+  color: var(--screen-dim);
+  white-space: nowrap;
+}
+
+#panel-status {
+  left: 324px;
+  top: 322px;
+  width: 308px;
+  height: 74px;
+}
+
+#status-dot {
+  position: absolute;
+  left: 6px;
+  top: 6px;
+  width: 8px;
+  height: 8px;
+  background: var(--screen);
+}
+
+#status-line {
+  position: absolute;
+  left: 18px;
+  top: 6px;
+  width: 276px;
+  height: 8px;
+  font-size: 8px;
+  color: var(--cream);
+  white-space: nowrap;
+  overflow: hidden;
+}
+
+#status-rule {
+  position: absolute;
+  left: 6px;
+  top: 18px;
+  width: 288px;
+  height: 1px;
+  border: none;
+  margin: 0;
+  background: var(--wall-light);
+}
+
+#ticker {
+  position: absolute;
+  left: 6px;
+  top: 24px;
+  width: 288px;
+  height: 32px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+#ticker li {
+  height: 8px;
+  line-height: 8px;
+  font-size: 8px;
+  color: var(--screen-dim);
+  white-space: nowrap;
+  overflow: hidden;
+}
+
+/* ================= flash toast ================= */
+
+#flash {
+  position: absolute;
+  font-size: 8px;
+  white-space: nowrap;
+  display: none;
+  z-index: 900;
+}
+#flash.visible { display: block; }
+#flash.kind-purchase, #flash.kind-sprint { color: var(--gold); }
+#flash.kind-equip { color: var(--cream); }
+#flash.kind-error { color: var(--pot); }
+
+/* ================= scrim ================= */
+
+#scrim {
+  position: absolute;
+  left: 0;
+  top: 24px;
+  width: 640px;
+  height: 296px;
+  background: rgba(36, 31, 46, 0.45);
+  display: none;
+  z-index: 400;
+  pointer-events: none; /* clicking the scrim does nothing (§4.5) */
+}
+#scrim.visible { display: block; }
+
+/* ================= store modal ================= */
+
+#store {
+  position: fixed;
+  left: 40px;
+  top: 28px;
+  width: 560px;
+  height: 288px;
+  margin: 0;
+  padding: 12px;
+  border: 4px solid var(--wall-light);
+  background: var(--metal);
+  color: var(--cream);
+  z-index: 1000;
+}
+
+#store::backdrop { background: transparent; }
+
+#store-title {
+  position: absolute;
+  left: 12px;
+  top: 12px;
+  width: 400px;
+  height: 16px;
+  font-size: 8px;
+  color: var(--cream);
+  line-height: 16px;
+}
+
+#store-close {
+  position: absolute;
+  left: 524px;
+  top: 12px;
+  width: 16px;
+  height: 16px;
+  padding: 0;
+  font-size: 8px;
+  line-height: 6px;
+}
+
+#store-cash {
+  position: absolute;
+  left: 340px;
+  top: 32px;
+  width: 200px;
+  height: 8px;
+  font-size: 8px;
+  color: var(--gold);
+  text-align: right;
+  white-space: nowrap;
+}
+#store-cash.flash-insufficient { color: var(--pot); }
+
+#store-cats {
+  position: absolute;
+  left: 12px;
+  top: 56px;
+  width: 120px;
+  height: 212px;
+  font-size: 8px;
+  overflow: hidden;
+}
+
+.cat-row {
+  position: relative;
+  height: 20px;
+  line-height: 20px;
+  padding-left: 8px;
+  color: var(--screen-dim);
+  white-space: nowrap;
+  overflow: hidden;
+}
+.cat-row .gutter {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 8px;
+  height: 20px;
+  line-height: 20px;
+}
+.cat-row .check {
+  position: absolute;
+  right: 0;
+  top: 0;
+  width: 8px;
+  height: 20px;
+  line-height: 20px;
+  color: var(--gold);
+  text-align: right;
+}
+.cat-row.selected { background: var(--wall-light); color: var(--cream); }
+.cat-row.hovered:not(.selected) { background: var(--wall-dark); }
+
+.store-help {
+  position: absolute;
+  left: 0;
+  top: 168px;
+  width: 120px;
+  font-size: 8px;
+  color: var(--screen-dim);
+  line-height: 12px;
+}
+.store-help div { height: 12px; }
+
+#store-grid {
+  position: absolute;
+  left: 140px;
+  top: 56px;
+  width: 232px;
+  height: 212px;
+  overflow-y: auto;
+  scrollbar-width: none;
+}
+#store-grid::-webkit-scrollbar { display: none; }
+
+.card {
+  position: relative;
+  width: 232px;
+  height: 64px;
+  margin-bottom: 8px;
+  background: var(--wall-dark);
+  outline: 2px solid transparent;
+}
+.card:last-child { margin-bottom: 0; }
+.card.selected { outline: 2px solid var(--screen); }
+.card.hovered { outline: 2px solid var(--gold); }
+
+.card .thumb {
+  position: absolute;
+  left: 6px;
+  top: 6px;
+  width: 40px;
+  height: 40px;
+  background: var(--shadow);
+  overflow: hidden;
+}
+.card .thumb img { width: 100%; height: 100%; object-fit: contain; }
+
+.card .name {
+  position: absolute;
+  left: 52px;
+  top: 6px;
+  width: 174px;
+  height: 8px;
+  font-size: 8px;
+  color: var(--cream);
+  white-space: nowrap;
+  overflow: hidden;
+}
+
+.card .price-state {
+  position: absolute;
+  left: 52px;
+  top: 20px;
+  width: 174px;
+  height: 8px;
+  font-size: 8px;
+  color: var(--screen-dim);
+  white-space: nowrap;
+}
+
+.card .swatches {
+  position: absolute;
+  left: 52px;
+  top: 34px;
+  width: 70px;
+  height: 10px;
+  display: flex;
+  gap: 2px;
+}
+
+.swatch {
+  width: 10px;
+  height: 10px;
+  position: relative;
+  cursor: pointer;
+}
+.swatch.selected { outline: 2px solid var(--cream); }
+.swatch.unowned::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(to top right, transparent calc(50% - 1px), var(--shadow) 50%, transparent calc(50% + 1px));
+}
+
+.card .action {
+  position: absolute;
+  left: 130px;
+  top: 30px;
+  width: 96px;
+  height: 24px;
+  padding: 0;
+  font-size: 8px;
+  white-space: nowrap;
+  overflow: hidden;
+  line-height: 1;
+}
+
+#store-scroll {
+  position: absolute;
+  left: 374px;
+  top: 56px;
+  width: 6px;
+  height: 212px;
+}
+#store-scroll .thumb-bar {
+  position: absolute;
+  left: 0;
+  width: 6px;
+  background: var(--wall-light);
+}
+
+#store-preview {
+  position: absolute;
+  left: 380px;
+  top: 56px;
+  width: 160px;
+  height: 212px;
+}
+#store-preview .label {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 160px;
+  height: 8px;
+  font-size: 8px;
+  color: var(--screen-dim);
+}
+#store-preview-viewport {
+  position: absolute;
+  left: 4px;
+  top: 16px;
+  width: 152px;
+  height: 152px;
+  border: 1px solid var(--metal);
+  background: var(--shadow);
+  overflow: hidden;
+}
+#store-preview-viewport .scene {
+  position: absolute;
+  image-rendering: pixelated;
+}
+#store-preview-viewport .nothing {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--screen-dim);
+  font-size: 8px;
+}
+#store-preview-name {
+  position: absolute;
+  left: 0;
+  top: 176px;
+  width: 160px;
+  height: 8px;
+  font-size: 8px;
+  color: var(--cream);
+  white-space: nowrap;
+  overflow: hidden;
+}
+#store-preview-state {
+  position: absolute;
+  left: 0;
+  top: 188px;
+  width: 160px;
+  height: 8px;
+  font-size: 8px;
+  color: var(--cream);
+}
+#store-preview-color {
+  position: absolute;
+  left: 0;
+  top: 200px;
+  width: 160px;
+  height: 8px;
+  font-size: 8px;
+  color: var(--screen-dim);
+  white-space: nowrap;
+  overflow: hidden;
+}
+
+/* ============ NES.CSS OVERRIDES (single block, ui-spec.md §1) ============ */
+/* NES.css's default .nes-btn/.nes-progress/.nes-dialog carry ~1rem padding,
+   border-image outsets and margins tuned for a full-size retro UI; at our
+   fixed 640x400 pixel-exact layout those eat the rects the spec gives. We
+   keep the class for font/cursor/is-disabled/is-dark behaviour and replace
+   sizing with an explicit 4px solid border + zero margin. */
+.nes-btn {
+  margin: 0;
+  border-image-source: none;
+  border-style: solid;
+  border-width: 4px;
+  border-color: var(--wall-light);
+  background-color: var(--wall-dark);
+  color: var(--cream);
+  font-family: 'Press Start 2P', monospace;
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.nes-btn:hover, .nes-btn:focus { background-color: var(--wall-light); }
+.nes-btn.is-disabled, .nes-btn.is-disabled:hover, .nes-btn.is-disabled:focus {
+  background-color: var(--shadow);
+  color: var(--screen-dim);
+  border-color: var(--metal);
+  cursor: not-allowed;
+  opacity: 1;
+  box-shadow: none;
+}
+
+.nes-progress {
+  margin: 0;
+  border-image-source: none;
+  border-style: solid;
+  border-width: 2px;
+  border-color: var(--wall-light);
+  background-color: var(--shadow);
+  height: 16px;
+  border-radius: 0;
+}
+.nes-progress::-webkit-progress-bar { background-color: var(--shadow); }
+.nes-progress.is-success::-webkit-progress-value { background-color: var(--screen); }
+.nes-progress.is-success::-moz-progress-bar { background-color: var(--screen); }
+
+.nes-dialog {
+  border-image-source: none;
+  border-style: solid;
+}
+.nes-dialog.is-dark::before { display: none; }
+
+.nes-icon.coin.is-small { transform: scale(1); }
