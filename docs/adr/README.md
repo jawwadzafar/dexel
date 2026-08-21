@@ -16,3 +16,4 @@ say something different — supersede it with a new one and cross-link.
 | [0008](0008-upgrade-tracks.md) | Upgrades as data-driven tracks, bought not unlocked | accepted |
 | [0009](0009-app-identity-not-titles.md) | Show app identity, never window titles | accepted |
 | [0010](0010-mac-first-honest-mechanics.md) | Mac-first rescue: permissionless global signals, honest moods | accepted |
+| [0011](0011-engine-pivot-to-pdf-native-stack.md) | Engine pivot: ship the PDF design on Go + HTML/NES.css | accepted |
