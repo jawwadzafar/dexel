@@ -319,7 +319,7 @@ Card: **232 x 64**, 8px vertical gap. Three cards fully visible
 
 | Part | Rect | Content |
 |---|---|---|
-| thumbnail | 6, 6, 40, 40 | `thumb_<itemId>.png`; for tintable slots the two-layer tint recipe in `docs/art-direction.md`, showing the **selected** tint |
+| thumbnail | 6, 6, 40, 40 | the item's `thumb` (flat `<img>`), or its `thumbForm`/`thumbDetail` pair under the mask+multiply tint recipe in `docs/art-direction.md`, showing the **selected** tint. Branch on `thumb == null` — see §6.1 |
 | name | 52, 6, 174, 8 | item name, 8px `var(--cream)`, **21 chars max** |
 | price / state | 52, 20, 174, 8 | `100 ◆` / `OWNED` / `EQUIPPED`, 8px |
 | swatch row | 52, 34, 70, 10 | up to 6 chips, 10x10, 2px gap |
@@ -536,9 +536,24 @@ broadcast.
       "price": 100,
       "sprite": "chair_racer_form.png",
       "detail": "chair_racer_detail.png",
-      "thumb": "thumb_chair_racer.png",
+      "thumb": null,
+      "thumbForm": "thumb_chair_racer_form.png",
+      "thumbDetail": "thumb_chair_racer_detail.png",
       "defaultTint": "ember",
       "flavor": "Bolstered wings. Zero laps completed."
+    },
+    {
+      "id": "kb_mech",
+      "slot": "keyboard",
+      "name": "Mechanical",
+      "price": 60,
+      "sprite": "kb_mech.png",
+      "detail": null,
+      "thumb": "thumb_kb_mech.png",
+      "thumbForm": null,
+      "thumbDetail": null,
+      "defaultTint": null,
+      "flavor": "Audible from the next room. Intentionally."
     }
   ]
 }
@@ -548,6 +563,25 @@ broadcast.
 all. The frontend renders slots and items **in the order given** and hardcodes
 nothing about either. `sprite` is null for the `none` items; `detail` is null
 for untinted slots.
+
+**Thumbnail fields.** The two examples above are the only two shapes, and which
+one an item uses is decided by its slot, never guessed by the frontend:
+
+* **Non-tintable slot with a real sprite** — `thumb` is
+  `"thumb_<itemId>.png"`, and `thumbForm` / `thumbDetail` are `null`.
+* **The two tintable slots (`hoodie`, `chair`)** — `thumb` is `null`, and
+  `thumbForm` / `thumbDetail` are `"thumb_<itemId>_form.png"` /
+  `"thumb_<itemId>_detail.png"`. This is the same two-file tint recipe as the
+  full-size sprite (`docs/art-direction.md`, "Recolourable parts"), applied to
+  the 40x40 thumbnail — which is what lets a store card **re-tint its own
+  thumbnail live** as the player clicks through swatches, instead of showing a
+  colour the card is not selling.
+* **The three `*_none` items** (`plant_none`, `wall_bare`, `buddy_none`) — all
+  three fields are `null`, as is `sprite`.
+
+So the card's thumbnail render is a two-branch decision on `thumb == null`, and
+nothing else: one `<img>` for the flat case, the mask+multiply pair for the
+tinted case.
 
 **`state`** — on connect, then every **1 s**, and **immediately** after any
 mutation (purchase, equip, sprint completion) so the UI never waits up to a
