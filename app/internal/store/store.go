@@ -1,7 +1,13 @@
-// Package store persists game.Game to disk as JSON and imports the legacy
-// Rust save on first run, per docs/upgrade-design.md's "Persistence"
-// section. It knows about game.Game's public API but nothing about the
-// engine or activity packages — persistence is a leaf, not a hub.
+// Package store persists game.Game to a local SQLite database
+// (docs/plan/DB-1-design.md, docs/adr/0016-sqlite-persistence.md) and
+// imports the legacy Rust save on first run, per
+// docs/upgrade-design.md's "Persistence" section. It knows about
+// game.Game's public API but nothing about the engine or activity
+// packages — persistence is a leaf, not a hub. config.json (config.go)
+// stays plain, unsigned, hand-editable JSON — DB-1 only moves the
+// protected economy snapshot at state.db; a one-time migration reads a
+// pre-DB-1 state.json exactly once (db.go's importJSON) and never
+// touches it again afterward.
 package store
 
 import (
@@ -232,13 +238,18 @@ type SaveData struct {
 // TestFutureSchema6RefusalStillFiresAfterTheSchema5Bump).
 const CurrentSchema = 5
 
-// DefaultPath returns ~/.config/dexel/state.json.
+// DefaultPath returns ~/.config/dexel/state.db (DB-1,
+// docs/plan/DB-1-design.md §5 — the one behavioural change to this
+// package's contract: everything else Load/Save/Snapshot/Apply exposed
+// before DB-1 is unchanged). Prior builds wrote ~/.config/dexel/state.json
+// at this same basename-minus-extension; see jsonImportPath and Load's
+// doc comment for the one-time migration from that file into this one.
 func DefaultPath() (string, error) {
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return "", fmt.Errorf("resolve home dir: %w", err)
 	}
-	return filepath.Join(home, ".config", "dexel", "state.json"), nil
+	return filepath.Join(home, ".config", "dexel", "state.db"), nil
 }
 
 // quantizeUnits rounds v to 6 decimal places (SEC-1 design §2.3):
@@ -492,28 +503,44 @@ func splitTintKey(key string) (itemID, tintID string, ok bool) {
 	return "", "", false
 }
 
-// Save writes d to path atomically: write state.json.tmp, fsync, rename
-// over the destination (docs/upgrade-design.md's exact recipe, factored
-// out as writeFileAtomically below so SaveConfig — config.go — can reuse
-// it verbatim for config.json). A crash mid-write can never leave a
-// half-written, unparseable state.json behind.
+// Save writes d to path (state.db) via one SQLite transaction — an
+// upsert of the single signed row plus PRAGMA user_version, both
+// committed together (db.go's writeStateRow; DB-1 design §2.3/§4.5).
+// This replaces the old write-temp-file + fsync + rename + dir-fsync
+// recipe for THIS file only: config.json still uses that recipe verbatim
+// (writeFileAtomically below, used by SaveConfig in config.go) because
+// DB-1 does not touch config.json at all. A SQLite transaction gives the
+// same "never a half-written, unparseable file" guarantee state.json's
+// atomic-rename dance gave, obtained from the engine rather than from
+// ~50 lines we maintain by hand.
 //
-// SEC-1 (docs/plan/SEC-1-design.md §2, ADR 0014): before marshaling, Save
-// quantizes d.Sprint.UnitsDone (quantizeUnits — a no-op if Snapshot
-// already quantized it, but this makes Save itself correct for any
-// caller, not just ones that went through Snapshot) and then computes and
-// sets d.Mac via computeMAC (integrity.go), so every file Save writes is
-// self-consistently signed regardless of what schema value it carries —
-// verification of that tag is Load's job, gated on schema >= 5.
+// SEC-1's integrity scheme carries over unchanged (docs/plan/SEC-1-design.md
+// §2, ADR 0014, DB-1 design §3.1): before marshaling, Save quantizes
+// d.Sprint.UnitsDone (quantizeUnits — a no-op if Snapshot already
+// quantized it, but this makes Save itself correct for any caller, not
+// just ones that went through Snapshot) and computes the MAC over
+// canonicalBody(d) (integrity.go), writing both the payload bytes and the
+// resulting tag into the row — self-consistently signed regardless of
+// what schema value d carries. Verification of that tag is Load's job.
 func Save(path string, d SaveData) error {
 	d.Sprint.UnitsDone = quantizeUnits(d.Sprint.UnitsDone)
-	d.Mac = computeMAC(d)
+	d.Mac = ""
+	payload := canonicalBody(d)
+	mac := computeMACBytes(payload)
 
-	data, err := json.MarshalIndent(d, "", "  ")
+	db, err := openDB(path)
 	if err != nil {
-		return fmt.Errorf("marshal save: %w", err)
+		return fmt.Errorf("open state.db: %w", err)
 	}
-	return writeFileAtomically(path, data)
+	defer func() { _ = db.Close() }()
+
+	if err := ensureStateTable(db); err != nil {
+		return fmt.Errorf("create state table: %w", err)
+	}
+	if err := writeStateRow(db, d.Schema, payload, mac); err != nil {
+		return fmt.Errorf("write state.db: %w", err)
+	}
+	return nil
 }
 
 // writeFileAtomically writes data to path via the tmp-write + fsync +
@@ -579,48 +606,87 @@ func syncDir(dir string) error {
 	return d.Sync()
 }
 
-// Load reads and parses path. A missing file returns (SaveData{}, false,
-// nil) — "no save yet" is not an error. A malformed file is renamed to
-// "state.json.corrupt" (never deleted, so a user can send it in) and
-// reported as "no save" rather than an error the caller must handle —
-// docs/upgrade-design.md: "log once, start fresh... never delete the bad
-// file."
+// Load implements DB-1's full decision tree (docs/plan/DB-1-design.md
+// §4.2): state.db is the source of truth once it exists (loadDB, db.go,
+// §3.2's exact open-gate order); a state.db-less machine that still has
+// a state.json runs the one-time import (importJSON, db.go, §4.3),
+// reusing loadJSON below verbatim for verification; neither existing is
+// the ONLY "no save" case — (SaveData{}, false, nil) — that may reach
+// the caller's legacy Rust import (main.go's loadOrImport). A stat
+// failure other than "does not exist" (e.g. a permission error) is
+// surfaced as an error, exactly as it always was.
+//
+// Every quarantine/tamper/future-schema property loadJSON's own doc
+// comment describes below still holds — Load just decides FIRST which
+// of the two files (or neither) it's evaluating.
+func Load(path string) (SaveData, bool, error) {
+	exists, err := fileExists(path)
+	if err != nil {
+		return SaveData{}, false, fmt.Errorf("stat %s: %w", path, err)
+	}
+	if exists {
+		return loadDB(path)
+	}
+
+	jsonPath := jsonImportPath(path)
+	jsonExists, err := fileExists(jsonPath)
+	if err != nil {
+		return SaveData{}, false, fmt.Errorf("stat %s: %w", jsonPath, err)
+	}
+	if !jsonExists {
+		return SaveData{}, false, nil
+	}
+	return importJSON(path, jsonPath)
+}
+
+// loadJSON reads and parses a JSON save file directly — this is
+// pre-DB-1's entire Load function, renamed verbatim (DB-1 design
+// §4.3/§5/§7: "Reuse today's Load body verbatim... this is the single
+// highest-leverage decision in the migration"). DB-1's Load (above) only
+// ever calls this for the one-time state.json -> state.db import
+// (importJSON, db.go); state.db itself is never touched by this
+// function.
+//
+// A missing file returns (SaveData{}, false, nil) — "no save yet" is not
+// an error. A malformed file is renamed to "state.json.corrupt" (never
+// deleted, so a user can send it in) and reported as "no save" rather
+// than an error the caller must handle — docs/upgrade-design.md: "log
+// once, start fresh... never delete the bad file."
 //
 // A save whose Schema is NEWER than CurrentSchema (i.e. written by a
 // build ahead of this one — the classic "ran an older build once after
 // upgrading" scenario) is handled differently from a malformed file:
 // this build does not understand every field that save might carry, so
 // silently returning (SaveData{}, false, nil) — "no save, start fresh" —
-// would be actively dangerous. main.go's loadOrImport, seeing "no save,"
-// would go on to either start completely fresh OR run the legacy-import
-// path, and either way its very next autosave (or the immediate
-// legacy-import Save call) would overwrite path with a schema-1-shaped
-// rewrite of what used to be newer data — a silent downgrade that
-// destroys progress the moment someone runs an older build once, with no
-// error and no way back. Instead: the original file is renamed to
-// "<path>.future" completely untouched, and Load returns an error (never
-// (_, true, _) for a future schema) so the caller treats this as a load
-// FAILURE, not "no save" — the same way an unreadable file is surfaced —
-// while the future-schema data sits recoverable at its own path rather
-// than being silently clobbered by whatever this older build does next.
+// would be actively dangerous. The caller, seeing "no save," would go on
+// to either start completely fresh OR run the legacy-import path, and
+// either way its very next write would overwrite the newer data — a
+// silent downgrade that destroys progress the moment someone runs an
+// older build once, with no error and no way back. Instead: the
+// original file is renamed to "<path>.future" completely untouched, and
+// this function returns an error (never (_, true, _) for a future
+// schema) so the caller treats this as a load FAILURE, not "no save" —
+// the same way an unreadable file is surfaced — while the future-schema
+// data sits recoverable at its own path rather than being silently
+// clobbered by whatever this older build does next.
 //
 // SEC-1 (docs/plan/SEC-1-design.md §4, ADR 0014): a save whose Schema is
 // >= 5 (i.e. this build's or a prior SEC-1-era build's) that parses fine
 // but whose Mac does not verify (integrity.go's verifyMAC) is handled the
 // same way as a future schema, and deliberately NOT the same way as a
 // missing file: the original is renamed to "<path>.invalid" (never
-// deleted) and Load returns an error wrapping ErrTampered, never
-// (_, true, _) and never (SaveData{}, false, nil). That last distinction
-// is the entire point — collapsing a tamper failure into "no save" would
-// let main.go's loadOrImport fall through to the legacy-import path,
+// deleted) and this function returns an error wrapping ErrTampered,
+// never (_, true, _) and never (SaveData{}, false, nil). That last
+// distinction is the entire point — collapsing a tamper failure into "no
+// save" would let the caller fall through to the legacy-import path,
 // which grants items and refunds Dev Cash, so a hand-edited state.json
 // could trigger a legacy re-grant. Returning a distinct sentinel closes
 // that vector the exact same way ErrFutureSchema already does: the
 // caller must treat "load failed" and "no save yet" as different things.
 // A schema-4-or-earlier file has no Mac to check at all — it is
-// grandfathered in as trusted, and the next Save call re-persists it
-// signed at schema 5 (see CurrentSchema's doc comment).
-func Load(path string) (SaveData, bool, error) {
+// grandfathered in as trusted; importJSON (db.go) is what re-persists it
+// signed at CurrentSchema when this is reached via the one-time import.
+func loadJSON(path string) (SaveData, bool, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {

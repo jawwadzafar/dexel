@@ -15,7 +15,7 @@ func strp(s string) *string { return &s }
 
 func TestSaveLoadRoundTrip(t *testing.T) {
 	dir := t.TempDir()
-	path := filepath.Join(dir, "state.json")
+	path := filepath.Join(dir, "state.db")
 
 	g := game.New()
 	g.DevCash = 1000
@@ -71,7 +71,7 @@ func TestSaveLoadRoundTrip(t *testing.T) {
 }
 
 func TestLoadMissingFileIsNotAnError(t *testing.T) {
-	d, ok, err := Load(filepath.Join(t.TempDir(), "nope.json"))
+	d, ok, err := Load(filepath.Join(t.TempDir(), "nope.db"))
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
@@ -83,9 +83,17 @@ func TestLoadMissingFileIsNotAnError(t *testing.T) {
 	}
 }
 
+// TestSaveIsAtomicViaDotTmpAndLeavesNoTempFile is DB-1's retarget of the
+// pre-DB-1 write-temp-file-then-rename atomicity proof: state.db's write
+// path is now one SQLite transaction (db.go's writeStateRow) rather than
+// a hand-rolled tmp+rename, and journal_mode=DELETE (design §4.5) means
+// the rollback journal SQLite creates during that transaction is removed
+// again on commit — so the directory holds exactly one file at rest,
+// same "no leftover temp artifact" property as before, achieved by a
+// different mechanism.
 func TestSaveIsAtomicViaDotTmpAndLeavesNoTempFile(t *testing.T) {
 	dir := t.TempDir()
-	path := filepath.Join(dir, "state.json")
+	path := filepath.Join(dir, "state.db")
 	if err := Save(path, SaveData{DevCash: 5}); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
@@ -93,15 +101,20 @@ func TestSaveIsAtomicViaDotTmpAndLeavesNoTempFile(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ReadDir: %v", err)
 	}
-	if len(entries) != 1 || entries[0].Name() != "state.json" {
-		t.Errorf("dir contents = %v, want exactly [state.json] (no leftover .tmp file)", entries)
+	if len(entries) != 1 || entries[0].Name() != "state.db" {
+		t.Errorf("dir contents = %v, want exactly [state.db] (no leftover .tmp/-journal/-wal/-shm file)", entries)
 	}
 }
 
+// TestLoadMalformedFileIsRenamedToCorruptNotDeleted proves the corrupt
+// gate (design §3.2 step 2) fires for a state.db that isn't a SQLite
+// file at all — garbled bytes fail at openDB's very first pragma Exec
+// (db.go's doc comment), which loadDB treats exactly like a failed
+// PRAGMA quick_check: quarantine to ".corrupt", never delete.
 func TestLoadMalformedFileIsRenamedToCorruptNotDeleted(t *testing.T) {
 	dir := t.TempDir()
-	path := filepath.Join(dir, "state.json")
-	if err := os.WriteFile(path, []byte("{not valid json"), 0o644); err != nil {
+	path := filepath.Join(dir, "state.db")
+	if err := os.WriteFile(path, []byte("not a sqlite database, just garbage bytes"), 0o644); err != nil {
 		t.Fatalf("WriteFile: %v", err)
 	}
 	_, ok, err := Load(path)
@@ -129,7 +142,7 @@ func TestLoadMalformedFileIsRenamedToCorruptNotDeleted(t *testing.T) {
 // FAILURE rather than quietly discarding newer data.
 func TestLoadFutureSchemaIsBackedUpNeverDowngradedInPlace(t *testing.T) {
 	dir := t.TempDir()
-	path := filepath.Join(dir, "state.json")
+	path := filepath.Join(dir, "state.db")
 
 	future := SaveData{Schema: CurrentSchema + 1, DevCash: 999999}
 	if err := Save(path, future); err != nil {

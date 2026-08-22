@@ -18,7 +18,7 @@ import (
 // Load, Apply onto a freshly-constructed game.New().
 func TestStatsRoundTripThroughSaveLoadApply(t *testing.T) {
 	dir := t.TempDir()
-	path := filepath.Join(dir, "state.json")
+	path := filepath.Join(dir, "state.db")
 
 	g := game.New()
 	fakeNow := time.Date(2026, 6, 15, 10, 0, 0, 0, time.Local)
@@ -105,9 +105,17 @@ func TestApplyRollsOverStatsAcrossASavedMidnight(t *testing.T) {
 // bucket rather than panicking or leaving stale/garbage data — the exact
 // same "no stats recorded yet" state a brand-new game.New() already
 // starts in.
+// This is one of the raw-JSON-fixture migration tests DB-1 retargets to
+// the one-time import branch (docs/plan/DB-1-design.md §6): the fixture
+// is written as a state.json sibling of a not-yet-existing state.db, and
+// Load(dbPath) — finding no DB but a JSON file — runs db.go's importJSON,
+// which itself calls loadJSON (this function's pre-DB-1 body, unchanged)
+// against the fixture. Strictly more coverage than before: this also
+// proves the import path.
 func TestSchema1FileHasNoStatsKeyAndMigratesToZero(t *testing.T) {
 	dir := t.TempDir()
-	path := filepath.Join(dir, "state.json")
+	dbPath := filepath.Join(dir, "state.db")
+	jsonPath := filepath.Join(dir, "state.json")
 	// Deliberately hand-written, WITHOUT a "stats" key — exactly what a
 	// pre-Phase-A1 (schema 1) build wrote to disk.
 	raw := `{
@@ -119,13 +127,13 @@ func TestSchema1FileHasNoStatsKeyAndMigratesToZero(t *testing.T) {
 		"ownedTints": [],
 		"equipped": {}
 	}`
-	if err := os.WriteFile(path, []byte(raw), 0o644); err != nil {
+	if err := os.WriteFile(jsonPath, []byte(raw), 0o644); err != nil {
 		t.Fatalf("WriteFile: %v", err)
 	}
 
-	d, ok, err := Load(path)
+	d, ok, err := Load(dbPath)
 	if err != nil {
-		t.Fatalf("Load a schema-1 file (older than CurrentSchema %d) should not error: %v", CurrentSchema, err)
+		t.Fatalf("Load (import) a schema-1 file (older than CurrentSchema %d) should not error: %v", CurrentSchema, err)
 	}
 	if !ok {
 		t.Fatal("Load reported no save for a valid schema-1 file")
@@ -146,12 +154,12 @@ func TestSchema1FileHasNoStatsKeyAndMigratesToZero(t *testing.T) {
 		t.Errorf("after migrating a schema-1 save: devCash/xp = (%d,%d), want (250,100)", g.DevCash, g.XP)
 	}
 
-	// Re-saving now writes the current (2) schema — the actual migration:
-	// the NEXT save this build makes is schema-2-shaped, stats key and all.
-	if err := Save(path, Snapshot(g)); err != nil {
+	// The next Save this build makes writes straight to the now-imported
+	// DB, current-schema-shaped, stats key and all.
+	if err := Save(dbPath, Snapshot(g)); err != nil {
 		t.Fatalf("Save after migration: %v", err)
 	}
-	reloaded, ok, err := Load(path)
+	reloaded, ok, err := Load(dbPath)
 	if err != nil || !ok {
 		t.Fatalf("reload after migration: ok=%v err=%v", ok, err)
 	}
@@ -173,7 +181,8 @@ func TestSchema1FileHasNoStatsKeyAndMigratesToZero(t *testing.T) {
 // invariant the task spec calls out explicitly.
 func TestSchema2FileMigratesToSchema3WithNewCountersAndCoinsZero(t *testing.T) {
 	dir := t.TempDir()
-	path := filepath.Join(dir, "state.json")
+	dbPath := filepath.Join(dir, "state.db")
+	jsonPath := filepath.Join(dir, "state.json")
 	// Deliberately hand-written, schema 2 shaped: has "stats" with A1's
 	// five counters, but no focusSessions/appSwitches/coinsToday keys —
 	// exactly what a pre-Phase-A2 build wrote to disk.
@@ -203,13 +212,13 @@ func TestSchema2FileMigratesToSchema3WithNewCountersAndCoinsZero(t *testing.T) {
 			}
 		}
 	}`
-	if err := os.WriteFile(path, []byte(raw), 0o644); err != nil {
+	if err := os.WriteFile(jsonPath, []byte(raw), 0o644); err != nil {
 		t.Fatalf("WriteFile: %v", err)
 	}
 
-	d, ok, err := Load(path)
+	d, ok, err := Load(dbPath)
 	if err != nil {
-		t.Fatalf("Load a schema-2 file (older than CurrentSchema %d) should not error: %v", CurrentSchema, err)
+		t.Fatalf("Load (import) a schema-2 file (older than CurrentSchema %d) should not error: %v", CurrentSchema, err)
 	}
 	if !ok {
 		t.Fatal("Load reported no save for a valid schema-2 file")
@@ -266,11 +275,12 @@ func TestSchema2FileMigratesToSchema3WithNewCountersAndCoinsZero(t *testing.T) {
 		t.Errorf("after migrating a schema-2 save: CoinsToday = %+v, want the zero value", state.Stats.CoinsToday)
 	}
 
-	// Re-saving now writes the current (3) schema — the actual migration.
-	if err := Save(path, Snapshot(g)); err != nil {
+	// The next Save this build makes writes straight to the now-imported
+	// DB, at the current (3) schema.
+	if err := Save(dbPath, Snapshot(g)); err != nil {
 		t.Fatalf("Save after migration: %v", err)
 	}
-	reloaded, ok, err := Load(path)
+	reloaded, ok, err := Load(dbPath)
 	if err != nil || !ok {
 		t.Fatalf("reload after migration: ok=%v err=%v", ok, err)
 	}
@@ -288,7 +298,7 @@ func TestSchema2FileMigratesToSchema3WithNewCountersAndCoinsZero(t *testing.T) {
 // counters and CoinsToday).
 func TestSchema3SaveRoundTripsWithNewCountersAndCoins(t *testing.T) {
 	dir := t.TempDir()
-	path := filepath.Join(dir, "state.json")
+	path := filepath.Join(dir, "state.db")
 
 	g := game.New()
 	fakeNow := time.Date(2026, 6, 15, 10, 0, 0, 0, time.Local)
@@ -354,19 +364,26 @@ func TestSchema3SaveRoundTripsWithNewCountersAndCoins(t *testing.T) {
 // fixture deliberately carries no "mac" key — schema 6 must be refused as
 // a FUTURE save before MAC verification is ever considered, exactly like
 // every other future-schema save regardless of SEC-1.
+// DB-1 retargets this to the one-time import branch (docs/plan/
+// DB-1-design.md §6/§4.3): the raw fixture is written as a state.json
+// sibling of a not-yet-existing state.db, so Load(dbPath) reaches
+// importJSON, which calls loadJSON(jsonPath) — this function's pre-DB-1
+// body, unchanged — and propagates its ErrFutureSchema verbatim without
+// ever creating a DB (§4.2's "failure branches create no DB").
 func TestFutureSchema6RefusalStillFiresAfterTheSchema5Bump(t *testing.T) {
 	if CurrentSchema != 5 {
 		t.Fatalf("CurrentSchema = %d, want 5 — this test's literal schema-6 refusal check assumes the SEC-1 bump landed at exactly 5", CurrentSchema)
 	}
 	dir := t.TempDir()
-	path := filepath.Join(dir, "state.json")
+	dbPath := filepath.Join(dir, "state.db")
+	jsonPath := filepath.Join(dir, "state.json")
 
 	raw := `{"schema": 6, "devCash": 999999}`
-	if err := os.WriteFile(path, []byte(raw), 0o644); err != nil {
+	if err := os.WriteFile(jsonPath, []byte(raw), 0o644); err != nil {
 		t.Fatalf("WriteFile: %v", err)
 	}
 
-	d, ok, err := Load(path)
+	d, ok, err := Load(dbPath)
 	if err == nil {
 		t.Fatal("expected an error loading a schema-6 save against CurrentSchema 5, got nil")
 	}
@@ -379,11 +396,14 @@ func TestFutureSchema6RefusalStillFiresAfterTheSchema5Bump(t *testing.T) {
 	if !reflect.DeepEqual(d, SaveData{}) {
 		t.Errorf("d = %+v, want the zero value", d)
 	}
-	if _, statErr := os.Stat(path); !os.IsNotExist(statErr) {
-		t.Error("schema-6 file should have been moved away from path (renamed to .future), not left in place")
+	if _, statErr := os.Stat(jsonPath); !os.IsNotExist(statErr) {
+		t.Error("schema-6 file should have been moved away from jsonPath (renamed to .future), not left in place")
 	}
-	if _, statErr := os.Stat(path + ".future"); statErr != nil {
-		t.Errorf("expected %s.future to exist (schema-6 original must be preserved, never deleted): %v", path, statErr)
+	if _, statErr := os.Stat(jsonPath + ".future"); statErr != nil {
+		t.Errorf("expected %s.future to exist (schema-6 original must be preserved, never deleted): %v", jsonPath, statErr)
+	}
+	if _, statErr := os.Stat(dbPath); !os.IsNotExist(statErr) {
+		t.Error("a future-schema import failure must create NO state.db")
 	}
 }
 
@@ -401,7 +421,8 @@ func TestFutureSchema6RefusalStillFiresAfterTheSchema5Bump(t *testing.T) {
 // the 2->3 bump.
 func TestSchema3FileMigratesToSchema4WithEmptyHistoryAndZeroStreak(t *testing.T) {
 	dir := t.TempDir()
-	path := filepath.Join(dir, "state.json")
+	dbPath := filepath.Join(dir, "state.db")
+	jsonPath := filepath.Join(dir, "state.json")
 	// Deliberately hand-written, schema 3 shaped: has "stats" with all of
 	// A1+A2's counters and coinsToday, but no "history"/"streak" keys —
 	// exactly what a pre-Phase-A3 build wrote to disk.
@@ -436,13 +457,13 @@ func TestSchema3FileMigratesToSchema4WithEmptyHistoryAndZeroStreak(t *testing.T)
 			"coinsToday": {"keystrokes": 6, "mouse": 2, "focusSessions": 4, "appSwitches": 0}
 		}
 	}`
-	if err := os.WriteFile(path, []byte(raw), 0o644); err != nil {
+	if err := os.WriteFile(jsonPath, []byte(raw), 0o644); err != nil {
 		t.Fatalf("WriteFile: %v", err)
 	}
 
-	d, ok, err := Load(path)
+	d, ok, err := Load(dbPath)
 	if err != nil {
-		t.Fatalf("Load a schema-3 file (older than CurrentSchema %d) should not error: %v", CurrentSchema, err)
+		t.Fatalf("Load (import) a schema-3 file (older than CurrentSchema %d) should not error: %v", CurrentSchema, err)
 	}
 	if !ok {
 		t.Fatal("Load reported no save for a valid schema-3 file")
@@ -495,11 +516,12 @@ func TestSchema3FileMigratesToSchema4WithEmptyHistoryAndZeroStreak(t *testing.T)
 		t.Errorf("after migrating a schema-3 save: CoinsToday = %+v, want {6,2,4,0}", state.Stats.CoinsToday)
 	}
 
-	// Re-saving now writes the current (4) schema — the actual migration.
-	if err := Save(path, Snapshot(g)); err != nil {
+	// The next Save this build makes writes straight to the now-imported
+	// DB, at the current (4) schema.
+	if err := Save(dbPath, Snapshot(g)); err != nil {
 		t.Fatalf("Save after migration: %v", err)
 	}
-	reloaded, ok, err := Load(path)
+	reloaded, ok, err := Load(dbPath)
 	if err != nil || !ok {
 		t.Fatalf("reload after migration: ok=%v err=%v", ok, err)
 	}
@@ -517,7 +539,7 @@ func TestSchema3FileMigratesToSchema4WithEmptyHistoryAndZeroStreak(t *testing.T)
 // History/Streak).
 func TestSchema4RoundTripsHistoryAndStreak(t *testing.T) {
 	dir := t.TempDir()
-	path := filepath.Join(dir, "state.json")
+	path := filepath.Join(dir, "state.db")
 
 	g := game.New()
 	fakeNow := time.Date(2026, 6, 15, 10, 0, 0, 0, time.Local)
@@ -583,7 +605,7 @@ func TestSchema4RoundTripsHistoryAndStreak(t *testing.T) {
 // Apply cycle.
 func TestHistoryRetentionSurvivesASaveReload(t *testing.T) {
 	dir := t.TempDir()
-	path := filepath.Join(dir, "state.json")
+	path := filepath.Join(dir, "state.db")
 
 	dateOf := func(dayOffset int) string {
 		return time.Date(2026, 6, 1, 0, 0, 0, 0, time.Local).AddDate(0, 0, dayOffset).Format("2006-01-02")

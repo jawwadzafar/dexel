@@ -101,8 +101,8 @@ func TestConfigPathIsASiblingOfStatePathNamedConfigJSON(t *testing.T) {
 	if filepath.Base(configPath) != "config.json" {
 		t.Errorf("ConfigPath basename = %q, want config.json", filepath.Base(configPath))
 	}
-	if filepath.Base(statePath) != "state.json" {
-		t.Errorf("DefaultPath basename = %q, want state.json", filepath.Base(statePath))
+	if filepath.Base(statePath) != "state.db" {
+		t.Errorf("DefaultPath basename = %q, want state.db (DB-1, docs/plan/DB-1-design.md §5)", filepath.Base(statePath))
 	}
 }
 
@@ -113,7 +113,7 @@ func TestConfigPathIsASiblingOfStatePathNamedConfigJSON(t *testing.T) {
 // different file entirely), not merely "currently untested."
 func TestConfigNameEditDoesNotAffectStateIntegrity(t *testing.T) {
 	dir := t.TempDir()
-	statePath := filepath.Join(dir, "state.json")
+	statePath := filepath.Join(dir, "state.db")
 	configPath := filepath.Join(dir, "config.json")
 
 	if err := SaveConfig(configPath, ConfigData{Name: "Original Name"}); err != nil {

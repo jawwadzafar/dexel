@@ -1,0 +1,339 @@
+// db.go implements DB-1's SQLite persistence container
+// (docs/plan/DB-1-design.md, docs/adr/0016-sqlite-persistence.md): the
+// single signed snapshot row at state.db, the full open-gate (§3.2), and
+// the one-time JSON->DB migration (§4.3). integrity.go's byte-level MAC
+// helpers do the signing; store.go's Load/Save are the public
+// dispatchers that call into this file.
+//
+// Driver: modernc.org/sqlite — a transpiled-C, pure-Go SQLite (no cgo),
+// chosen specifically because scripts/build-release.sh cross-compiles
+// linux/windows × amd64/arm64 with CGO_ENABLED=0 from a single Linux
+// runner (design §1). It registers under the driver name "sqlite".
+package store
+
+import (
+	"database/sql"
+	"encoding/json"
+	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
+
+	_ "modernc.org/sqlite"
+)
+
+// stateDDL is the DB-1 table layout (design §2.3): exactly one row,
+// STRICT typed (SQLite >= 3.37; we embed 3.53.3), CHECK(id=1) enforced
+// by the engine itself. `payload` is BLOB, not TEXT, so the column
+// round-trips bytes with zero encoding interpretation — the MAC is
+// verified against exactly those stored bytes (§3.1), never a
+// re-encoding. `schema` mirrors the signed `payload.schema` for a
+// support query that doesn't need the MAC key; the payload field is the
+// authority (a disagreement is a tamper signal, §3.3 row 4).
+const stateDDL = `CREATE TABLE IF NOT EXISTS state (
+	id      INTEGER PRIMARY KEY CHECK (id = 1),
+	schema  INTEGER NOT NULL,
+	payload BLOB    NOT NULL,
+	mac     TEXT    NOT NULL
+) STRICT`
+
+// jsonImportPath returns dbPath's JSON sibling for the one-time
+// migration (§4.3): ".../state.db" -> ".../state.json". Falls back to
+// appending ".json" for a path that doesn't end in ".db" (defensive; in
+// practice every caller passes DefaultPath()'s "state.db" or a test's
+// own "*.db" fixture).
+func jsonImportPath(dbPath string) string {
+	if strings.HasSuffix(dbPath, ".db") {
+		return strings.TrimSuffix(dbPath, ".db") + ".json"
+	}
+	return dbPath + ".json"
+}
+
+// fileExists is a small os.Stat wrapper distinguishing "doesn't exist"
+// from a real stat error (permissions, etc.) — Load's decision tree
+// (§4.2) needs that distinction at both the state.db and state.json
+// checks, the same way the pre-DB-1 Load already did via os.IsNotExist.
+func fileExists(path string) (bool, error) {
+	_, err := os.Stat(path)
+	if err == nil {
+		return true, nil
+	}
+	if os.IsNotExist(err) {
+		return false, nil
+	}
+	return false, err
+}
+
+// quarantine renames path to path+suffix — never a copy, never a delete
+// (§3.2's "Quarantine mechanics"): the poisoned file is moved aside so
+// the next Save creates a fresh one. Also moves a "-journal" sibling
+// alongside it if one happens to be at rest (a mid-commit crash can
+// leave one even under journal_mode=DELETE), so the quarantined pair
+// stays openable for support and no stray journal sits beside the file
+// that replaces it.
+func quarantine(path, suffix string) error {
+	dest := path + suffix
+	if err := os.Rename(path, dest); err != nil {
+		return err
+	}
+	journalSrc := path + "-journal"
+	if _, err := os.Stat(journalSrc); err == nil {
+		_ = os.Rename(journalSrc, dest+"-journal")
+	}
+	return nil
+}
+
+// openDB opens path with DB-1's fixed pragmas (§4.5): DELETE journal
+// mode (never WAL, so no -wal/-shm files are ever left at rest —
+// important for the quarantine story), synchronous=FULL,
+// busy_timeout=5000, immediate-lock transactions (_txlock=immediate on
+// the DSN, matching the design's DDL "BEGIN IMMEDIATE"), and exactly one
+// connection (SetMaxOpenConns(1)) — dexel is single-process,
+// single-writer, so pooling adds surface area for no benefit.
+//
+// Pragmas are set as explicit statements, not only via a DSN _pragma=
+// form (a DSN typo fails silently; an Exec failure does not), and this
+// is where a corrupt / non-SQLite file surfaces: opening a garbled file
+// fails at the very first pragma Exec (verified empirically against
+// modernc.org/sqlite — it rejects the statement with "file is not a
+// database"), which callers must treat as the corrupt gate (§3.2 step 2)
+// alongside the explicit PRAGMA quick_check that follows for a file
+// whose header is intact but whose pages are not.
+//
+// openDB deliberately does NOT create the state table — only a write
+// path (Save, the JSON importer, via ensureStateTable) is allowed to
+// bring the table into existence, so a read-only Load never mutates a
+// file it might go on to quarantine.
+func openDB(path string) (*sql.DB, error) {
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return nil, fmt.Errorf("create save dir: %w", err)
+	}
+	db, err := sql.Open("sqlite", path+"?_txlock=immediate")
+	if err != nil {
+		return nil, fmt.Errorf("open %s: %w", path, err)
+	}
+	db.SetMaxOpenConns(1)
+	for _, pragma := range []string{
+		"PRAGMA journal_mode = DELETE",
+		"PRAGMA synchronous = FULL",
+		"PRAGMA busy_timeout = 5000",
+	} {
+		if _, err := db.Exec(pragma); err != nil {
+			_ = db.Close()
+			return nil, fmt.Errorf("set %s: %w", pragma, err)
+		}
+	}
+	return db, nil
+}
+
+// ensureStateTable creates the state table if it does not already
+// exist. Called only from write paths (Save, importJSON) — see openDB's
+// doc comment for why Load never calls this.
+func ensureStateTable(db *sql.DB) error {
+	_, err := db.Exec(stateDDL)
+	return err
+}
+
+// writeStateRow upserts the single signed row and mirrors schema into
+// PRAGMA user_version, in one transaction (design §2.3's write path): a
+// crash between the two statements cannot leave them disagreeing,
+// because SQLite's own journal makes the pair atomic — a transaction
+// replaces the old tmp+fsync+rename+dir-fsync dance entirely for this
+// file (config.json keeps that recipe; see writeFileAtomically).
+func writeStateRow(db *sql.DB, schema int, payload []byte, mac string) error {
+	tx, err := db.Begin()
+	if err != nil {
+		return fmt.Errorf("begin transaction: %w", err)
+	}
+	if _, err := tx.Exec(
+		`INSERT INTO state (id, schema, payload, mac) VALUES (1, ?, ?, ?)
+		   ON CONFLICT(id) DO UPDATE
+		     SET schema = excluded.schema, payload = excluded.payload, mac = excluded.mac`,
+		schema, payload, mac,
+	); err != nil {
+		_ = tx.Rollback()
+		return fmt.Errorf("upsert state row: %w", err)
+	}
+	// PRAGMA statements don't take bound parameters; schema is our own
+	// validated int (CurrentSchema, or a payload's already-parsed schema
+	// field), never attacker-controlled string data, so Sprintf here is
+	// not an injection risk.
+	if _, err := tx.Exec(fmt.Sprintf("PRAGMA user_version = %d", schema)); err != nil {
+		_ = tx.Rollback()
+		return fmt.Errorf("set user_version: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit: %w", err)
+	}
+	return nil
+}
+
+// failClosed closes db, quarantines path to path+suffix, and returns
+// Load's (SaveData{}, false, err) shape — the exact phrasing the
+// pre-DB-1 JSON Load used for its own quarantine branches (see loadJSON),
+// carried forward so every "original preserved untouched at %s" style
+// assertion still reads true against a state.db path.
+func failClosed(db *sql.DB, path, suffix string, reason error) (SaveData, bool, error) {
+	_ = db.Close()
+	dest := path + suffix
+	if qErr := quarantine(path, suffix); qErr != nil {
+		return SaveData{}, false, fmt.Errorf("%w, and backing up %s to %s failed: %v", reason, path, dest, qErr)
+	}
+	return SaveData{}, false, fmt.Errorf("%w; original preserved untouched at %s (NOT loaded, NOT deleted, NOT overwritten)", reason, dest)
+}
+
+// loadDB implements §3.2's exact open-gate order against an existing
+// state.db: corrupt (open/quick_check) -> future (user_version) ->
+// tampered (row count, MAC, unmarshal, schema cross-check) -> ok. It is
+// read-only until the moment it decides to quarantine: no write, no
+// CREATE TABLE, ever happens on this path (see openDB's doc comment).
+func loadDB(path string) (SaveData, bool, error) {
+	db, err := openDB(path)
+	if err != nil {
+		// A non-SQLite / garbled file fails at the very first pragma
+		// Exec inside openDB — that IS this build's corrupt gate, just
+		// surfaced one statement earlier than PRAGMA quick_check itself
+		// would run (there is no open *sql.DB left to quarantine-close in
+		// this branch; os.Rename alone is safe here since sql.Open is
+		// lazy and openDB already closed the handle on its own error
+		// path).
+		if qErr := quarantine(path, ".corrupt"); qErr != nil {
+			return SaveData{}, false, fmt.Errorf("state.db is corrupt, and backing up %s to %s.corrupt failed: %v (original error: %v)", path, path, qErr, err)
+		}
+		return SaveData{}, false, fmt.Errorf("state.db is corrupt (moved to %s.corrupt): %w", path, err)
+	}
+
+	var quickCheck string
+	if err := db.QueryRow("PRAGMA quick_check").Scan(&quickCheck); err != nil {
+		return failClosed(db, path, ".corrupt", fmt.Errorf("state.db failed integrity check: %w", err))
+	}
+	if quickCheck != "ok" {
+		return failClosed(db, path, ".corrupt", fmt.Errorf("state.db failed integrity check: quick_check reported %q", quickCheck))
+	}
+
+	var userVersion int
+	if err := db.QueryRow("PRAGMA user_version").Scan(&userVersion); err != nil {
+		return failClosed(db, path, ".corrupt", fmt.Errorf("state.db: reading user_version: %w", err))
+	}
+	if userVersion > CurrentSchema {
+		return failClosed(db, path, ".future", fmt.Errorf("%w: user_version %d > this build's %d", ErrFutureSchema, userVersion, CurrentSchema))
+	}
+
+	var count int
+	if err := db.QueryRow("SELECT count(*) FROM state").Scan(&count); err != nil {
+		// Most commonly "no such table: state" — a dropped table (§3.3
+		// row 6) is structurally identical to an emptied one for our
+		// purposes here, and must not be mistaken for "no save" any more
+		// than DELETE FROM state is.
+		return failClosed(db, path, ".invalid", fmt.Errorf("%w: state table missing or unreadable: %v", ErrTampered, err))
+	}
+	if count != 1 {
+		return failClosed(db, path, ".invalid", fmt.Errorf("%w: state row count %d, want exactly 1", ErrTampered, count))
+	}
+
+	var schemaCol int
+	var payload []byte
+	var macHex string
+	if err := db.QueryRow("SELECT schema, payload, mac FROM state WHERE id = 1").Scan(&schemaCol, &payload, &macHex); err != nil {
+		return failClosed(db, path, ".invalid", fmt.Errorf("%w: reading the state row: %v", ErrTampered, err))
+	}
+
+	if !verifyMACBytes(payload, macHex) {
+		return failClosed(db, path, ".invalid", fmt.Errorf("%w: MAC mismatch", ErrTampered))
+	}
+
+	var d SaveData
+	if err := json.Unmarshal(payload, &d); err != nil {
+		// A valid MAC over unparseable bytes means our own bug, not a
+		// cheat — but the response is identical and must never degrade
+		// to "no save" (§3.2 step 6).
+		return failClosed(db, path, ".invalid", fmt.Errorf("%w: payload did not parse despite a valid MAC: %v", ErrTampered, err))
+	}
+	// payload is canonicalBody's output, which has Mac zeroed by
+	// construction (it's the preimage minus the tag) — so d.Mac is ""
+	// straight out of Unmarshal. Restore it from the row's own mac
+	// column so callers see the same populated SaveData.Mac they always
+	// have (verifyMACBytes above already proved this is the tag that
+	// actually matches payload).
+	d.Mac = macHex
+
+	if d.Schema != schemaCol || d.Schema != userVersion {
+		return failClosed(db, path, ".invalid", fmt.Errorf("%w: schema disagreement (payload=%d, column=%d, user_version=%d)", ErrTampered, d.Schema, schemaCol, userVersion))
+	}
+	if d.Schema > CurrentSchema {
+		// Defence in depth (§3.2 step 8) — step 3's user_version check
+		// already catches every way this can actually happen.
+		return failClosed(db, path, ".future", fmt.Errorf("%w: payload schema %d > this build's %d", ErrFutureSchema, d.Schema, CurrentSchema))
+	}
+
+	if err := db.Close(); err != nil {
+		return SaveData{}, false, fmt.Errorf("close state.db: %w", err)
+	}
+	return d, true, nil
+}
+
+// importJSON is DB-1's one-time migration (§4.3). The caller (Load) has
+// already confirmed dbPath does not exist and jsonPath does. It reuses
+// loadJSON verbatim for verification — MAC check at schema>=5,
+// grandfathering at schema<=4, and every existing .corrupt/.future/
+// .invalid quarantine behaviour on the JSON side — and only a passing
+// file is ever written into the DB; failure branches create no DB and
+// propagate loadJSON's sentinel unchanged.
+func importJSON(dbPath, jsonPath string) (SaveData, bool, error) {
+	d, ok, err := loadJSON(jsonPath)
+	if err != nil {
+		return SaveData{}, false, err
+	}
+	if !ok {
+		// loadJSON's only (false, nil) case is "file missing", already
+		// ruled out by the caller having confirmed jsonPath exists — kept
+		// as a defensive fallback rather than assumed unreachable.
+		return SaveData{}, false, nil
+	}
+
+	mac := d.Mac
+	if mac == "" {
+		// Grandfathered schema<=4 source: no tag existed. DB-1 has no
+		// grandfather branch of its own (§3.2's "No grandfathering in
+		// the DB path") — sign it now, at CurrentSchema, exactly what the
+		// next JSON-world Save would have done (SEC-1 §5,
+		// TestImportOfSchema4JSONIsGrandfatheredThenStoredSignedInTheDB).
+		d.Schema = CurrentSchema
+	}
+	payload := canonicalBody(d)
+	if mac == "" {
+		mac = computeMACBytes(payload)
+	}
+	// For a schema>=5 source, mac is the file's own tag, carried across
+	// VERBATIM (§3.1): d.Mac already verified equal to computeMAC(d)
+	// inside loadJSON's verifyMAC call, and canonicalBody(d) — a
+	// deterministic re-encoding of the exact struct loadJSON parsed —
+	// reproduces byte-identical preimage bytes, so this is a carry-across,
+	// not a re-sign.
+
+	db, err := openDB(dbPath)
+	if err != nil {
+		return SaveData{}, false, fmt.Errorf("open state.db for import: %w", err)
+	}
+	if err := ensureStateTable(db); err != nil {
+		_ = db.Close()
+		return SaveData{}, false, fmt.Errorf("create state table for import: %w", err)
+	}
+	if err := writeStateRow(db, d.Schema, payload, mac); err != nil {
+		_ = db.Close()
+		return SaveData{}, false, fmt.Errorf("write state.db for import: %w", err)
+	}
+	if err := db.Close(); err != nil {
+		return SaveData{}, false, fmt.Errorf("close state.db after import: %w", err)
+	}
+
+	d.Mac = mac
+	// DB written and committed FIRST, rename second (§4.3): a crash
+	// between them leaves a valid DB and an ignored JSON, and the DB
+	// branch never consults jsonPath again regardless — so a rename
+	// failure here (e.g. a permissions oddity) is logged-worthy but not
+	// fatal to the caller: the imported data is already durably and
+	// correctly persisted in state.db.
+	_ = os.Rename(jsonPath, jsonPath+".imported")
+	return d, true, nil
+}

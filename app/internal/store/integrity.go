@@ -50,8 +50,8 @@ func integrityKey() []byte {
 // free without needing to fold it into this tag too.
 const macDomain = "dexel-save-integrity-v1"
 
-// macPreimage builds the exact byte sequence the MAC is computed over:
-// domainTag ‖ 0x00 ‖ json.Marshal(d with Mac zeroed). d is a value
+// canonicalBody returns the exact JSON bytes the MAC is computed over,
+// minus the domain tag: json.Marshal(d with Mac zeroed). d is a value
 // parameter, so zeroing its Mac field here never mutates the caller's
 // copy. Marshaling COMPACT (encoding/json's plain Marshal, not
 // MarshalIndent — Save's on-disk formatting is a separate concern) means
@@ -60,9 +60,14 @@ const macDomain = "dexel-save-integrity-v1"
 // struct, never raw file bytes (SEC-1 design §2.2). encoding/json is
 // deterministic (struct fields in declaration order, map keys sorted,
 // and every slice on SaveData is already sorted by Snapshot), and
-// float64 round-trips bit-exactly, so this preimage is stable across
+// float64 round-trips bit-exactly, so this body is stable across
 // Save/Load/Save for a logically-unchanged save.
-func macPreimage(d SaveData) []byte {
+//
+// DB-1 (docs/plan/DB-1-design.md §2.3/§3.1): this is byte-for-byte what
+// the sqlite `payload` BLOB column stores — the DB's MAC is verified
+// against these exact stored bytes, not a re-serialization, which is why
+// this split from the old single-shot macPreimage exists.
+func canonicalBody(d SaveData) []byte {
 	d.Mac = ""
 	body, err := json.Marshal(d)
 	if err != nil {
@@ -71,6 +76,13 @@ func macPreimage(d SaveData) []byte {
 		// short of a programming error introducing something exotic.
 		panic("store: marshal SaveData for MAC preimage failed: " + err.Error())
 	}
+	return body
+}
+
+// macPreimage builds the exact byte sequence the MAC is computed over
+// given an already-canonicalized body (canonicalBody's output, or a
+// DB row's stored `payload` bytes verbatim): domainTag ‖ 0x00 ‖ body.
+func macPreimage(body []byte) []byte {
 	preimage := make([]byte, 0, len(macDomain)+1+len(body))
 	preimage = append(preimage, macDomain...)
 	preimage = append(preimage, 0x00)
@@ -78,30 +90,44 @@ func macPreimage(d SaveData) []byte {
 	return preimage
 }
 
-// computeMAC returns the hex-encoded HMAC-SHA256 tag for d (Mac zeroed
-// before computing, via macPreimage, so the tag never covers itself).
-func computeMAC(d SaveData) string {
+// computeMACBytes returns the hex-encoded HMAC-SHA256 tag over body (via
+// macPreimage, so the tag never covers itself when body already has Mac
+// zeroed out, e.g. canonicalBody's output).
+func computeMACBytes(body []byte) string {
 	mac := hmac.New(sha256.New, integrityKey())
-	mac.Write(macPreimage(d))
+	mac.Write(macPreimage(body))
 	return hex.EncodeToString(mac.Sum(nil))
 }
 
-// verifyMAC reports whether d.Mac matches computeMAC(d), compared in
-// constant time via hmac.Equal on the decoded digest bytes — never on the
-// hex strings themselves, and never with ==. An empty or non-hex d.Mac
-// (e.g. a hand-edited tag) fails cleanly rather than panicking; schema<5
-// grandfathered saves must never reach this function in the first place
-// (see Load in store.go).
-func verifyMAC(d SaveData) bool {
-	got, err := hex.DecodeString(d.Mac)
+// verifyMACBytes reports whether macHex matches computeMACBytes(body),
+// compared in constant time via hmac.Equal on the decoded digest bytes —
+// never on the hex strings themselves, and never with ==. An empty or
+// non-hex macHex (e.g. a hand-edited tag) fails cleanly rather than
+// panicking.
+func verifyMACBytes(body []byte, macHex string) bool {
+	got, err := hex.DecodeString(macHex)
 	if err != nil {
 		return false
 	}
-	want, err := hex.DecodeString(computeMAC(d))
+	want, err := hex.DecodeString(computeMACBytes(body))
 	if err != nil {
-		return false // unreachable: computeMAC always returns valid hex
+		return false // unreachable: computeMACBytes always returns valid hex
 	}
 	return hmac.Equal(got, want)
+}
+
+// computeMAC returns the hex-encoded HMAC-SHA256 tag for d (Mac zeroed
+// before computing). Unchanged behaviour from pre-DB-1: a thin wrapper
+// over the byte-level helpers above.
+func computeMAC(d SaveData) string {
+	return computeMACBytes(canonicalBody(d))
+}
+
+// verifyMAC reports whether d.Mac matches computeMAC(d). Unchanged
+// behaviour from pre-DB-1; schema<5 grandfathered saves must never reach
+// this function in the first place (see loadJSON in store.go).
+func verifyMAC(d SaveData) bool {
+	return verifyMACBytes(canonicalBody(d), d.Mac)
 }
 
 // ErrTampered is Load's error (wrapped with detail) when a schema>=5 save

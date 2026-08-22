@@ -22,7 +22,7 @@ import (
 // non-adversarial path must be completely unaffected by the new MAC.
 func TestSaveLoadRoundTripVerifiesCleanly(t *testing.T) {
 	dir := t.TempDir()
-	path := filepath.Join(dir, "state.json")
+	path := filepath.Join(dir, "state.db")
 
 	g := game.New()
 	g.DevCash = 12345
@@ -49,16 +49,18 @@ func TestSaveLoadRoundTripVerifiesCleanly(t *testing.T) {
 	}
 }
 
-// TestTamperedDevCashIsDetectedAndFileRenamedToInvalid is SEC-1's central
-// anti-cheat exit criterion (docs/plan/SEC-1-design.md §4/§8): a valid
-// signed save, hand-edited in the raw JSON to inflate devCash (exactly
-// the "opened state.json in a text editor" scenario the whole feature
-// exists to catch), must fail verification on Load, be renamed to
-// "state.json.invalid" (never deleted), and yield ErrTampered rather than
-// silently accepting the inflated value.
+// TestTamperedDevCashIsDetectedAndFileRenamedToInvalid is SEC-1/DB-1's
+// central anti-cheat exit criterion (docs/plan/SEC-1-design.md §4/§8,
+// docs/plan/DB-1-design.md §3.3 row 1): a valid signed row, hand-edited
+// at the sqlite level to inflate devCash (exactly the "opened state.db
+// with sqlite3" scenario the whole feature exists to catch — the DB-era
+// analogue of "opened state.json in a text editor"), must fail
+// verification on Load, be renamed to "state.db.invalid" (never
+// deleted), and yield ErrTampered rather than silently accepting the
+// inflated value.
 func TestTamperedDevCashIsDetectedAndFileRenamedToInvalid(t *testing.T) {
 	dir := t.TempDir()
-	path := filepath.Join(dir, "state.json")
+	path := filepath.Join(dir, "state.db")
 
 	g := game.New()
 	g.DevCash = 100
@@ -66,27 +68,20 @@ func TestTamperedDevCashIsDetectedAndFileRenamedToInvalid(t *testing.T) {
 		t.Fatalf("Save: %v", err)
 	}
 
-	// Hand-edit the written JSON, the way a curious player would: bump
-	// devCash without touching mac.
-	raw, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatalf("ReadFile: %v", err)
-	}
+	// Hand-edit the row at the sqlite level, the way a curious player
+	// with sqlite3 would: bump devCash in the payload without touching
+	// the (now stale) mac.
+	schema, origPayload, origMac := rawReadStateRow(t, path)
 	var d SaveData
-	if err := json.Unmarshal(raw, &d); err != nil {
+	if err := json.Unmarshal(origPayload, &d); err != nil {
 		t.Fatalf("Unmarshal: %v", err)
 	}
 	if d.DevCash != 100 {
 		t.Fatalf("precondition: DevCash = %d, want 100 before tampering", d.DevCash)
 	}
 	d.DevCash = 999999 // the cheat
-	tampered, err := json.MarshalIndent(d, "", "  ")
-	if err != nil {
-		t.Fatalf("Marshal: %v", err)
-	}
-	if err := os.WriteFile(path, tampered, 0o644); err != nil {
-		t.Fatalf("WriteFile (simulating hand-edit): %v", err)
-	}
+	tamperedPayload := canonicalBody(d)
+	rawUpdateStateRow(t, path, schema, tamperedPayload, origMac)
 
 	got, ok, err := Load(path)
 	if err == nil {
@@ -105,12 +100,8 @@ func TestTamperedDevCashIsDetectedAndFileRenamedToInvalid(t *testing.T) {
 	if _, statErr := os.Stat(path); !os.IsNotExist(statErr) {
 		t.Error("tampered file should have been moved away from path, not left in place")
 	}
-	invalidRaw, statErr := os.ReadFile(path + ".invalid")
-	if statErr != nil {
-		t.Fatalf("expected %s.invalid to exist (tampered original must be preserved, never deleted): %v", path, statErr)
-	}
-	if string(invalidRaw) != string(tampered) {
-		t.Error(".invalid backup content differs from the hand-edited file — it must be preserved byte-for-byte")
+	if _, statErr := os.Stat(path + ".invalid"); statErr != nil {
+		t.Errorf("expected %s.invalid to exist (tampered original must be preserved, never deleted): %v", path, statErr)
 	}
 }
 
@@ -121,29 +112,21 @@ func TestTamperedDevCashIsDetectedAndFileRenamedToInvalid(t *testing.T) {
 // inflating devCash.
 func TestAddingAnOwnedItemIsAlsoDetected(t *testing.T) {
 	dir := t.TempDir()
-	path := filepath.Join(dir, "state.json")
+	path := filepath.Join(dir, "state.db")
 
 	g := game.New()
 	if err := Save(path, Snapshot(g)); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
 
-	raw, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatalf("ReadFile: %v", err)
-	}
+	schema, origPayload, origMac := rawReadStateRow(t, path)
 	var d SaveData
-	if err := json.Unmarshal(raw, &d); err != nil {
+	if err := json.Unmarshal(origPayload, &d); err != nil {
 		t.Fatalf("Unmarshal: %v", err)
 	}
 	d.OwnedItems = append(d.OwnedItems, "chair_racer") // the cheat: grant an unowned item
-	tampered, err := json.MarshalIndent(d, "", "  ")
-	if err != nil {
-		t.Fatalf("Marshal: %v", err)
-	}
-	if err := os.WriteFile(path, tampered, 0o644); err != nil {
-		t.Fatalf("WriteFile: %v", err)
-	}
+	tamperedPayload := canonicalBody(d)
+	rawUpdateStateRow(t, path, schema, tamperedPayload, origMac)
 
 	_, ok, err := Load(path)
 	if !errors.Is(err, ErrTampered) {
@@ -171,7 +154,7 @@ func TestErrTamperedIsDistinctFromNotFoundAndFromEachOther(t *testing.T) {
 	dir := t.TempDir()
 
 	// Case 1: no save at all.
-	_, okMissing, errMissing := Load(filepath.Join(dir, "nope.json"))
+	_, okMissing, errMissing := Load(filepath.Join(dir, "nope.db"))
 	if okMissing {
 		t.Error("ok=true for a missing file, want false")
 	}
@@ -180,28 +163,20 @@ func TestErrTamperedIsDistinctFromNotFoundAndFromEachOther(t *testing.T) {
 	}
 
 	// Case 2: a tampered, schema>=5 save.
-	tamperedPath := filepath.Join(dir, "tampered.json")
+	tamperedPath := filepath.Join(dir, "tampered.db")
 	g := game.New()
 	g.DevCash = 50
 	if err := Save(tamperedPath, Snapshot(g)); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
-	raw, err := os.ReadFile(tamperedPath)
-	if err != nil {
-		t.Fatalf("ReadFile: %v", err)
-	}
+	schema, origPayload, origMac := rawReadStateRow(t, tamperedPath)
 	var d SaveData
-	if err := json.Unmarshal(raw, &d); err != nil {
+	if err := json.Unmarshal(origPayload, &d); err != nil {
 		t.Fatalf("Unmarshal: %v", err)
 	}
 	d.DevCash = 999999
-	tampered, err := json.Marshal(d)
-	if err != nil {
-		t.Fatalf("Marshal: %v", err)
-	}
-	if err := os.WriteFile(tamperedPath, tampered, 0o644); err != nil {
-		t.Fatalf("WriteFile: %v", err)
-	}
+	tamperedPayload := canonicalBody(d)
+	rawUpdateStateRow(t, tamperedPath, schema, tamperedPayload, origMac)
 	_, okTampered, errTampered := Load(tamperedPath)
 	if okTampered {
 		t.Error("ok=true for a tampered file, want false")
@@ -266,7 +241,7 @@ func TestDomainSeparationCausesVerificationFailure(t *testing.T) {
 // the value fed to the MAC identical every time.
 func TestUnitsDoneQuantizationMakesMacStableAcrossSaveLoadSave(t *testing.T) {
 	dir := t.TempDir()
-	path := filepath.Join(dir, "state.json")
+	path := filepath.Join(dir, "state.db")
 
 	// Sprint index 1's target is 75 (internal/game/sprint.go) — every value
 	// here stays under that so RestoreSprint's [0, target] clamp (a
@@ -313,7 +288,7 @@ func TestUnitsDoneQuantizationMakesMacStableAcrossSaveLoadSave(t *testing.T) {
 // exact float round-trip) holds for more than a trivial empty struct.
 func TestRichStateSaveLoadRoundTripHasNoFalsePositive(t *testing.T) {
 	dir := t.TempDir()
-	path := filepath.Join(dir, "state.json")
+	path := filepath.Join(dir, "state.db")
 
 	g := game.New()
 	g.DevCash = 5000
@@ -352,14 +327,19 @@ func TestRichStateSaveLoadRoundTripHasNoFalsePositive(t *testing.T) {
 	}
 }
 
-// TestSchema4FileIsGrandfatheredThenResavedSignedSchema5 is SEC-1's
-// migration exit criterion (docs/plan/SEC-1-design.md §5/§8): an unsigned
-// schema-4 file (no "mac" key, predating this feature) must load as
-// trusted with no MAC check and no error, and the next Save must
-// re-persist it as a signed schema-5 file that then verifies normally.
+// TestSchema4FileIsGrandfatheredThenResavedSignedSchema5 is SEC-1/DB-1's
+// migration exit criterion (docs/plan/SEC-1-design.md §5/§8,
+// docs/plan/DB-1-design.md §3.2/§4.3): an unsigned schema-4 state.json
+// (no "mac" key, predating SEC-1) has no state.db yet, so Load takes the
+// one-time import branch (db.go's importJSON), which reuses loadJSON's
+// existing grandfather behaviour verbatim — no MAC check, no error — and
+// then, because "DB-1 has no grandfather branch of its own" (§3.2), signs
+// the imported row at CurrentSchema=5 immediately, during the import
+// itself, rather than waiting for a later Save to upgrade it.
 func TestSchema4FileIsGrandfatheredThenResavedSignedSchema5(t *testing.T) {
 	dir := t.TempDir()
-	path := filepath.Join(dir, "state.json")
+	dbPath := filepath.Join(dir, "state.db")
+	jsonPath := filepath.Join(dir, "state.json")
 
 	raw := `{
 		"schema": 4,
@@ -371,22 +351,33 @@ func TestSchema4FileIsGrandfatheredThenResavedSignedSchema5(t *testing.T) {
 		"equipped": {},
 		"stats": {"date": "", "today": {}, "lifetime": {}, "coinsToday": {}, "history": [], "streak": {}}
 	}`
-	if err := os.WriteFile(path, []byte(raw), 0o644); err != nil {
+	if err := os.WriteFile(jsonPath, []byte(raw), 0o644); err != nil {
 		t.Fatalf("WriteFile: %v", err)
 	}
 
-	d, ok, err := Load(path)
+	d, ok, err := Load(dbPath)
 	if err != nil {
-		t.Fatalf("Load of a grandfathered schema-4 file should not error: %v", err)
+		t.Fatalf("Load (import) of a grandfathered schema-4 file should not error: %v", err)
 	}
 	if !ok {
 		t.Fatal("Load reported no save for a valid schema-4 file")
 	}
-	if d.Mac != "" {
-		t.Errorf("grandfathered schema-4 file's Mac = %q, want empty (no mac key existed)", d.Mac)
-	}
 	if d.DevCash != 777 || d.XP != 300 {
 		t.Errorf("devCash/xp = (%d,%d), want (777,300) — grandfathered balances must survive intact", d.DevCash, d.XP)
+	}
+	// Unlike the pre-DB-1 world, the import signs it AT IMPORT TIME —
+	// there is no unsigned intermediate state once a state.db exists.
+	if d.Schema != CurrentSchema {
+		t.Errorf("d.Schema = %d, want CurrentSchema (%d) — the import must upgrade the schema immediately", d.Schema, CurrentSchema)
+	}
+	if d.Mac == "" {
+		t.Error("d.Mac is empty, want a signed tag written by the import — DB-1 has no grandfather branch of its own")
+	}
+	if _, statErr := os.Stat(jsonPath); !os.IsNotExist(statErr) {
+		t.Error("state.json should have been renamed away by the one-time import, not left in place")
+	}
+	if _, statErr := os.Stat(jsonPath + ".imported"); statErr != nil {
+		t.Errorf("expected %s.imported to exist after the one-time import: %v", jsonPath, statErr)
 	}
 
 	g := game.New()
@@ -395,11 +386,12 @@ func TestSchema4FileIsGrandfatheredThenResavedSignedSchema5(t *testing.T) {
 		t.Fatalf("after Apply: DevCash = %d, want 777", g.DevCash)
 	}
 
-	// The actual migration: the next Save writes a signed schema-5 file.
-	if err := Save(path, Snapshot(g)); err != nil {
+	// Ordinary subsequent operation (an autosave) writes straight to the
+	// now-established DB — no more importing, no more grandfathering.
+	if err := Save(dbPath, Snapshot(g)); err != nil {
 		t.Fatalf("Save after migration: %v", err)
 	}
-	reloaded, ok, err := Load(path)
+	reloaded, ok, err := Load(dbPath)
 	if err != nil {
 		t.Fatalf("Load after migration should verify with no error: %v", err)
 	}
@@ -407,10 +399,10 @@ func TestSchema4FileIsGrandfatheredThenResavedSignedSchema5(t *testing.T) {
 		t.Fatal("Load reported no save after migration")
 	}
 	if reloaded.Schema != 5 {
-		t.Errorf("reloaded.Schema = %d, want 5 — migration must upgrade the file on next save", reloaded.Schema)
+		t.Errorf("reloaded.Schema = %d, want 5", reloaded.Schema)
 	}
 	if reloaded.Mac == "" {
-		t.Error("reloaded.Mac is empty, want a signed tag after the grandfathered file was re-saved")
+		t.Error("reloaded.Mac is empty, want a signed tag")
 	}
 	if reloaded.DevCash != 777 {
 		t.Errorf("reloaded.DevCash = %d, want 777 — migration must not lose balances", reloaded.DevCash)
@@ -427,29 +419,21 @@ func TestSchema4FileIsGrandfatheredThenResavedSignedSchema5(t *testing.T) {
 // import." This test simulates exactly the branch loadOrImport takes.
 func TestLegacyImportIsNotReachableViaATamperedFile(t *testing.T) {
 	dir := t.TempDir()
-	path := filepath.Join(dir, "state.json")
+	path := filepath.Join(dir, "state.db")
 
 	g := game.New()
 	g.DevCash = 10
 	if err := Save(path, Snapshot(g)); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
-	raw, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatalf("ReadFile: %v", err)
-	}
+	schema, origPayload, origMac := rawReadStateRow(t, path)
 	var d SaveData
-	if err := json.Unmarshal(raw, &d); err != nil {
+	if err := json.Unmarshal(origPayload, &d); err != nil {
 		t.Fatalf("Unmarshal: %v", err)
 	}
 	d.DevCash = 999999
-	tampered, err := json.Marshal(d)
-	if err != nil {
-		t.Fatalf("Marshal: %v", err)
-	}
-	if err := os.WriteFile(path, tampered, 0o644); err != nil {
-		t.Fatalf("WriteFile: %v", err)
-	}
+	tamperedPayload := canonicalBody(d)
+	rawUpdateStateRow(t, path, schema, tamperedPayload, origMac)
 
 	// This mirrors main.go's loadOrImport: `data, ok, err := store.Load(...)`
 	// followed by branching on ok, with err inspected for the error cases.
