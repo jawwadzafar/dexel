@@ -30,8 +30,23 @@ type actionMessage struct {
 // flashMessage is the transient toast (docs/ui-spec.md §6.1 "flash").
 type flashMessage struct {
 	Type string `json:"type"` // "flash"
-	Kind string `json:"kind"` // purchase | equip | sprint | error
+	Kind string `json:"kind"` // purchase | equip | sprint | session | error
 	Text string `json:"text"`
+}
+
+// sessionCompleteMessage is the one-shot event a completed session
+// broadcasts (Phase P2, docs/plan/P2-design.md §3.1/§6.1; docs/ui-spec.md
+// §9.6) immediately after the `state` broadcast that cleared it. It is
+// deliberately its own message rather than another flash: the client
+// must never have to INFER which entry of `sessions.recent` just
+// finished ("the client never asserts state the server didn't send"), so
+// the server hands over the exact SessionView instead. The ordinary gold
+// `flash{kind:"session"}` toast is still sent alongside it, as its own
+// separate message — see main.go's popEndedSession.
+type sessionCompleteMessage struct {
+	Type    string           `json:"type"` // "sessionComplete"
+	V       int              `json:"v"`
+	Session game.SessionView `json:"session"`
 }
 
 // actionRequest is how a WS/HTTP handler goroutine asks the single owning
@@ -160,6 +175,19 @@ func (h *Hub) setInitialState(state game.StateMessage) {
 func (h *Hub) broadcastFlash(f flashMessage) {
 	for id, c := range h.snapshot() {
 		if !h.send(c, f) {
+			h.remove(id)
+			_ = c.Close(websocket.StatusInternalError, "write failed")
+		}
+	}
+}
+
+// broadcastSessionComplete pushes a `sessionComplete` message to every
+// connected client — mirrors broadcastFlash exactly (docs/plan/P2-design.md
+// §3.1: "handleWS/hub.go gain one broadcast method mirroring
+// broadcastFlash"). Called only from the single-owner loop (main.go).
+func (h *Hub) broadcastSessionComplete(msg sessionCompleteMessage) {
+	for id, c := range h.snapshot() {
+		if !h.send(c, msg) {
 			h.remove(id)
 			_ = c.Close(websocket.StatusInternalError, "write failed")
 		}

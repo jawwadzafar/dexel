@@ -264,6 +264,43 @@ img, .sprite {
   white-space: nowrap;
 }
 
+/* Phase P2 (docs/ui-spec.md §9.5): the always-visible session indicator
+   — "a session the user cannot see from the main screen is a feature
+   they forget is running". Sits between #hud-level (ends 120) and
+   #menu-open (starts 600), so the coin/level cluster stays untouched.
+   Hidden by default (the same display:none/.visible idiom as
+   #assets-error-overlay/#menu-panel above) rather than relying on empty
+   text alone, because the gold dot must disappear along with the text
+   when no session is active — the #status-name idiom of "empty text" is
+   not enough here since the dot is a separate always-present element. */
+#session-pill {
+  display: none;
+  position: absolute;
+  left: 132px;
+  top: 8px;
+  width: 240px;
+  height: 8px;
+  line-height: 8px;
+  font-size: 8px;
+  color: var(--gold);
+  white-space: nowrap;
+  overflow: hidden;
+}
+#session-pill.visible { display: block; }
+/* An 8px solid gold SQUARE — border-radius explicitly 0 (the #mood-dot
+   lesson: an unstyled dot can inherit a rounding from elsewhere and read
+   as a circle instead of the pixel-art square everything else here is
+   drawn as). */
+#session-pill-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  margin-right: 4px;
+  background: var(--gold);
+  border-radius: 0;
+  vertical-align: top;
+}
+
 /* Hamburger button (top-right). Per the A2 lesson (a fancy glyph like ☰
    can render blurry/inconsistent at this app's 1x DPI in the pixel font),
    the icon is three plain 1px-tall divs (.menu-icon .bar), not a

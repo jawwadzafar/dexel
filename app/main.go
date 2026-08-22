@@ -113,23 +113,34 @@ func main() {
 	if err != nil {
 		log.Fatalf("resolve save path: %v", err)
 	}
-	saveExisted := loadOrImport(g, savePath)
 
 	// SEC-1 (docs/plan/SEC-1-design.md §7 GO-2, ADR 0014): config.json is
-	// loaded on a path fully independent of state.json/state.db above —
+	// loaded on a path fully independent of state.json/state.db below —
 	// it is never blocked by, and never blocks, a tampered or
 	// future-schema state load.
 	//
 	// Phase P1 (docs/plan/PRODUCT-EVOLUTION.md §5) is what finally reads
-	// this name for something: SEC-1 deliberately shipped it with "no
-	// wire change in this stage", and P1 puts it on StateMessage.Config —
-	// still the user-authored, unsigned side of ADR 0014's split, still
-	// never a SaveData field.
+	// the dexel's own name for something: SEC-1 deliberately shipped it
+	// with "no wire change in this stage", and P1 puts it on
+	// StateMessage.Config — still the user-authored, unsigned side of ADR
+	// 0014's split, still never a SaveData field.
+	//
+	// This load moves AHEAD of loadOrImport below (it used to run after)
+	// because Phase P2 (docs/plan/P2-design.md §8's GO-3 task, extending
+	// store.Apply's own doc comment) adds a real ordering requirement on
+	// top of that independence: RestoreSessionNames must run before
+	// store.Apply's RestoreStats, the same A3 rule RestoreHistory/
+	// RestoreStreak already follow — so the config (which carries
+	// sessionNames) has to be in hand before loadOrImport ever calls
+	// store.Apply.
 	cfgPath, cfg := loadOrInitConfig()
 	g.RestoreConfigName(cfg.Name)
+	g.RestoreSessionNames(store.SessionNamesFromConfig(cfg))
 	if g.ConfigName() != "" {
 		log.Printf("dexel name: %q", g.ConfigName())
 	}
+
+	saveExisted := loadOrImport(g, savePath)
 
 	// THE first-launch decision, made exactly once, here, by the server
 	// (docs/ui-spec.md §7): show onboarding only when this really is a
@@ -200,24 +211,33 @@ func main() {
 		}
 	}
 
-	// persistConfig writes the dexel's name through to config.json
-	// IMMEDIATELY after SET_NAME — deliberately not on the 30s autosave
-	// timer the protected save uses. Naming your dexel is a one-shot
+	// persistConfig writes BOTH halves of config.json through to disk
+	// IMMEDIATELY: the dexel's own name (Phase P1, after SET_NAME) and
+	// the P2 per-session project-name map (docs/plan/P2-design.md §2.7,
+	// after SESSION_START) — deliberately not on the 30s autosave timer
+	// the protected save uses, and deliberately as ONE write for the one
+	// shared file, so writing either half never clobbers the other.
+	// Naming something (a dexel, or a session) is a one-shot
 	// first-minutes moment; if the process died in the next 30 seconds
-	// the user would be asked again, which is the one thing Phase P1's
-	// "returning users never see it" criterion forbids.
+	// the user would be asked again (or the name would silently vanish),
+	// which is the one thing Phase P1's "returning users never see it"
+	// criterion — and P2's "a declared intention that silently fails to
+	// survive a crash is worse than no name at all" — both forbid.
 	//
-	// This is the ONLY place a name is written, and it writes
-	// game.Game.ConfigName() — the value NormalizeName already
-	// sanitised — never the raw client payload. cfgPath == "" means the
-	// home directory could not be resolved at boot (already logged
-	// there); the game still runs, the name just cannot outlive the
-	// process.
+	// This is the ONLY place either half is written, and it writes
+	// game.Game.ConfigName()/SessionNames() — values NormalizeName/
+	// NormalizeSessionName already sanitised — never a raw client
+	// payload. cfgPath == "" means the home directory could not be
+	// resolved at boot (already logged there); the game still runs, the
+	// name(s) just cannot outlive the process.
 	persistConfig := func() error {
 		if cfgPath == "" {
 			return errors.New("no config path (home directory unresolved at startup)")
 		}
-		return store.SaveConfig(cfgPath, store.ConfigData{Name: g.ConfigName()})
+		return store.SaveConfig(cfgPath, store.ConfigData{
+			Name:         g.ConfigName(),
+			SessionNames: store.SessionNamesToConfig(g.SessionNames()),
+		})
 	}
 
 	// Single-owner loop: every mutation of g happens on this goroutine
@@ -239,6 +259,17 @@ func main() {
 					Text: fmt.Sprintf("%s complete! +%d Dev Cash", prevSprintName, reward),
 				})
 			}
+			// P2 (docs/plan/P2-design.md §2.2's pending-record seam):
+			// g.Tick above runs checkSessionAutoEnd at its own top, which
+			// may have just queued a completed session (idle or
+			// maxDuration). Popped and celebrated HERE, immediately after
+			// Tick, exactly as GO-1's session.go doc comment says. No
+			// fallback flash on a discard: an auto-ended session is
+			// always far longer than SessionMinDurationSeconds in
+			// practice (the idle/cap constants are hours; the min is a
+			// minute), so this branch is defensive only, not
+			// user-facing — nothing here can be a mashed start/stop.
+			popEndedSession(g, hub, savePath)
 
 		case <-terminalTicker.C:
 			g.AdvanceTerminal()
@@ -251,19 +282,24 @@ func main() {
 
 		case req := <-actions:
 			mutated, flash := applyAction(g, req.msg, req.connID)
-			// Phase P1 write-through. Kept HERE rather than inside
+			// Phase P1/P2 write-through. Kept HERE rather than inside
 			// applyAction for the same reason the protected save is: this
 			// loop owns all I/O, applyAction stays a pure state
 			// transition over *game.Game (which is what lets
 			// store_gate_test.go drive it with no filesystem at all). A
-			// failed write is surfaced honestly — the in-memory name
-			// stands so the session still works, but the success toast is
-			// replaced by an error flash, because a warm "hello" for a
-			// name that silently will not survive a restart is a lie.
-			if mutated && req.msg.Action == actionSetName {
+			// failed write is surfaced honestly — the in-memory name(s)
+			// stand so the session still works, but the success toast is
+			// replaced by an error flash, because a warm "hello"/"session
+			// started" for a name that silently will not survive a
+			// restart is a lie.
+			if mutated && (req.msg.Action == actionSetName || req.msg.Action == actionSessionStart) {
 				if err := persistConfig(); err != nil {
 					log.Printf("save config failed: %v", err)
-					flash = &flashMessage{Type: "flash", Kind: "error", Text: "could not save name"}
+					errText := "could not save name"
+					if req.msg.Action == actionSessionStart {
+						errText = "could not save session name"
+					}
+					flash = &flashMessage{Type: "flash", Kind: "error", Text: errText}
 				}
 			}
 			if mutated {
@@ -271,6 +307,20 @@ func main() {
 			}
 			if flash != nil {
 				hub.broadcastFlash(*flash)
+			}
+			// P2's pending-record seam, the applyAction half: a
+			// SESSION_STOP may have just queued a completed session (or
+			// discarded a too-short one — Fork P2-E). Popped and
+			// celebrated HERE, immediately after applyAction, exactly as
+			// GO-1's session.go doc comment says; every OTHER action is a
+			// guaranteed no-op pop (only StartSession/StopSession/
+			// checkSessionAutoEnd ever populate the pending slot).
+			popped := popEndedSession(g, hub, savePath)
+			if mutated && req.msg.Action == actionSessionStop && !popped {
+				// Fork P2-E: a session under SessionMinDurationSeconds is
+				// discarded outright — no log row, no counter, and
+				// "never a scold" (docs/plan/P2-design.md §2.2 step 3).
+				hub.broadcastFlash(flashMessage{Type: "flash", Kind: "session", Text: "Session ended — too short to keep."})
 			}
 			close(req.done)
 
@@ -291,6 +341,17 @@ func main() {
 // a typo — the loop has to recognise the same action applyAction handled
 // in order to know a config write is owed.
 const actionSetName = "SET_NAME"
+
+// actionSessionStart/actionSessionStop are SESSION_START/SESSION_STOP's
+// wire literals (docs/plan/P2-design.md §6.2, docs/ui-spec.md §9.6),
+// PINNED names per §8's contract seam. Named once for the same reason
+// actionSetName is: applyAction and main's action-loop (the config
+// write-through, the pending-record pop, the discard flash) must
+// recognise the exact same literal, never a re-typed copy of it.
+const (
+	actionSessionStart = "SESSION_START"
+	actionSessionStop  = "SESSION_STOP"
+)
 
 // applyAction runs one client action against g and reports whether state
 // changed plus the flash it produced (docs/ui-spec.md §6.2: "no dedicated
@@ -358,9 +419,137 @@ func applyAction(g *game.Game, msg actionMessage, connID uint64) (mutated bool, 
 		g.CloseStore(connID)
 		return true, nil
 
+	case actionSessionStart:
+		// Phase P2 (docs/plan/P2-design.md §2.2 "Start", §6.2;
+		// docs/ui-spec.md §9.6). Server-side validation only
+		// (game.NormalizeSessionName): control characters dropped,
+		// trimmed, capped at MaxSessionNameLen runes — and unlike
+		// SET_NAME, an EMPTY result is legal ("unnamed" is a first-class
+		// session, not a rejection), so StartSession only ever errors
+		// when a session is already active (exactly one at a time). The
+		// flash text is fixed and composed here, never assembled
+		// client-side (ui-spec §6.1's "no client-side assembly" rule).
+		// This does not yet WRITE the name to config.json — main's
+		// action-loop write-through (mirroring SET_NAME's persistConfig
+		// call) does that immediately after this returns, whether or not
+		// the name ended up empty.
+		if err := g.StartSession(msg.Name); err != nil {
+			return false, errFlash(err)
+		}
+		return true, &flashMessage{Type: "flash", Kind: "session", Text: "Session started."}
+
+	case actionSessionStop:
+		// Phase P2 (docs/plan/P2-design.md §2.2 "Stop", §6.2;
+		// docs/ui-spec.md §9.6). StopSession's only rejection is "no
+		// session is active" — no state change. On success the session
+		// is ALWAYS cleared; whether it produced a poppable record (a
+		// session under SessionMinDurationSeconds never does — Fork
+		// P2-E) is decided entirely inside game.Game. main's action-loop
+		// pops it via g.TakeEndedSession() immediately after this
+		// returns (the pending-record seam) — which is also where the
+		// "too short to keep" flash and the real sessionComplete
+		// celebration are decided, so this case deliberately returns no
+		// flash of its own.
+		if err := g.StopSession(); err != nil {
+			return false, errFlash(err)
+		}
+		return true, nil
+
 	default:
 		return false, errFlash(fmt.Errorf("unknown action %q", msg.Action))
 	}
+}
+
+// popEndedSession implements P2's pending-record seam end to end
+// (docs/plan/P2-design.md §2.2, §3.1; ADR 0017 Decision 5): called
+// immediately after every g.Tick and every applyAction (main's select
+// loop, both call sites), it pops at most one completed-session record
+// via g.TakeEndedSession and, if there is one, persists it — via
+// store.AppendSession, GO-2's one-transaction API, so the log row and the
+// rewritten signed snapshot land together or not at all — and celebrates
+// it: a `state` broadcast (the just-appended record is already reflected
+// there — g.State()'s Sessions.Recent is built straight from the same
+// in-memory sessionLog finishSession appended to, see game/session.go),
+// then the dedicated `sessionComplete` message, then the ordinary gold
+// `flash{kind:"session"}` toast with server-composed text. This is the
+// SAME path whether the record came from a user's SESSION_STOP or an
+// automatic idle/maxDuration end (docs/plan/P2-design.md §2.2's "both...
+// must be persisted and celebrated identically").
+//
+// Returns whether a record was actually popped, so the SESSION_STOP call
+// site can tell a genuine completion apart from a discarded (< 60s)
+// session, for which it owes its own "too short to keep" flash instead.
+func popEndedSession(g *game.Game, hub *Hub, savePath string) bool {
+	rec, ok := g.TakeEndedSession()
+	if !ok {
+		return false
+	}
+
+	d := store.Snapshot(g)
+	newHead, err := store.AppendSession(savePath, d, store.SessionSaveFromRecord(rec))
+	if err != nil {
+		// The record is already safely sitting in g's in-memory
+		// sessionLog (finishSession appended it there before ever
+		// setting the pending pointer this function just cleared) — only
+		// the DURABLE, chained-MAC copy failed to land. Surfacing this as
+		// an honest error flash, rather than fabricating a "complete"
+		// celebration for a write that did not actually happen, matches
+		// every other write-failure in this file (see persistConfig's
+		// callers above): the in-memory state stands, the toast tells the
+		// truth about persistence instead.
+		log.Printf("append session failed: %v", err)
+		hub.broadcastFlash(flashMessage{Type: "flash", Kind: "error", Text: "could not save session"})
+		return true
+	}
+	g.SetSessionLogHead(newHead)
+
+	state := g.State()
+	hub.broadcastState(state)
+
+	// state.Sessions.Recent[0] IS this record's own wire view: finishSession
+	// (game/session.go) appended rec to g.sessionLog synchronously, before
+	// this function ever ran, and nothing else can finish a session
+	// between that append and this g.State() call (main's select loop is
+	// the single owner of g, and this function runs entirely within one
+	// iteration of it) — so this is the exact SessionView the design's
+	// `sessionComplete` message and gold flash need, with none of
+	// game/session.go's private sessionViewFromRecord duplicated here.
+	var view game.SessionView
+	if len(state.Sessions.Recent) > 0 {
+		view = state.Sessions.Recent[0]
+	}
+	hub.broadcastSessionComplete(sessionCompleteMessage{Type: "sessionComplete", V: 1, Session: view})
+	hub.broadcastFlash(flashMessage{Type: "flash", Kind: "session", Text: sessionCompleteFlashText(view)})
+	return true
+}
+
+// sessionCompleteFlashText composes the gold toast's text for a completed
+// session (docs/plan/P2-design.md §3.1: "e.g. 'auth refactor — 1h 24m
+// together.', or 'Session complete — 1h 24m together.' when unnamed") —
+// server-side, never assembled by the client (ui-spec §6.1).
+func sessionCompleteFlashText(v game.SessionView) string {
+	dur := formatSessionDuration(v.DurationSeconds)
+	if v.Name != "" {
+		return fmt.Sprintf("%s — %s together.", v.Name, dur)
+	}
+	return fmt.Sprintf("Session complete — %s together.", dur)
+}
+
+// formatSessionDuration renders a whole-seconds duration as "XhYm"
+// (dropping the hours segment under an hour) for the session-complete
+// flash — e.g. 5040s -> "1h 24m", matching docs/plan/P2-design.md §3.1's
+// own worked example. Every session this ever runs against is already
+// >= game.SessionMinDurationSeconds (60s), since a shorter one is
+// discarded before a record is ever produced, so the minutes segment is
+// always meaningful even with no hours.
+func formatSessionDuration(totalSeconds uint64) string {
+	d := time.Duration(totalSeconds) * time.Second
+	h := int(d / time.Hour)
+	m := int((d % time.Hour) / time.Minute)
+	if h > 0 {
+		return fmt.Sprintf("%dh %dm", h, m)
+	}
+	return fmt.Sprintf("%dm", m)
 }
 
 // wsOriginPatterns derives the WebSocket Origin patterns handleWS should
@@ -693,7 +882,14 @@ func buildVersion() string {
 // missing it. Only "no state.db, no state.json, no legacy Rust save"
 // reports false.
 func loadOrImport(g *game.Game, savePath string) bool {
-	data, ok, err := store.Load(savePath)
+	// P2 (docs/plan/P2-design.md §5.4/§8, store.Apply's own doc comment):
+	// store.LoadAll instead of the pre-P2 store.Load, so the finished
+	// session log — verified by the same chained-MAC gate as everything
+	// else in state.db — comes back alongside SaveData rather than being
+	// silently discarded. Every failure branch below behaves exactly like
+	// store.Load's thin-wrapper equivalent (Load = LoadAll, log
+	// discarded), since LoadAll's error/ok shape is otherwise identical.
+	data, sessions, ok, err := store.LoadAll(savePath)
 	if err != nil {
 		// SEC-1 (docs/plan/SEC-1-design.md §4, ADR 0014): ErrTampered and
 		// ErrFutureSchema are NOT "no save" — store.Load never returns
@@ -730,8 +926,25 @@ func loadOrImport(g *game.Game, savePath string) bool {
 		return true
 	}
 	if ok {
+		// RestoreSessionLog BEFORE store.Apply — per §8's ordering rule
+		// and store.Apply's own doc comment: Apply triggers RestoreStats,
+		// and the log must already be in place before that runs, the
+		// same A3 rule RestoreHistory/RestoreStreak already follow.
+		// RestoreSessionNames already ran above, before this function was
+		// even called, for the identical reason.
+		recs, err := store.SessionRecordsFromSave(sessions)
+		if err != nil {
+			// Per SessionRecordsFromSave's own doc comment this should
+			// never actually fire against a chain that already verified
+			// — degrade to an honest empty log rather than failing the
+			// whole boot over it, matching this file's general "a
+			// corrupted save degrades field-by-field" stance.
+			log.Printf("convert verified session log failed (starting with an empty session log): %v", err)
+			recs = nil
+		}
+		g.RestoreSessionLog(recs)
 		store.Apply(g, data)
-		log.Printf("loaded save from %s (dev_cash=%d)", savePath, g.DevCash)
+		log.Printf("loaded save from %s (dev_cash=%d, sessions=%d)", savePath, g.DevCash, len(recs))
 		return true
 	}
 
@@ -751,6 +964,12 @@ func loadOrImport(g *game.Game, savePath string) bool {
 	}
 
 	imported := store.ImportLegacy(legacy, g.Catalog())
+	// A legacy Rust save predates P2 by construction (state.db did not
+	// exist yet — LoadAll's own doc comment: "the import branch always
+	// returns a nil session log"), so g's session log is already the
+	// honest empty default from game.New() and needs no restore call
+	// here. RestoreSessionNames already ran above, before this function
+	// was even called.
 	store.Apply(g, imported)
 	log.Printf("imported legacy save from %s (dev_cash=%d, owned=%v)", legacyPath, imported.DevCash, imported.OwnedItems)
 	if err := store.Save(savePath, imported); err != nil {

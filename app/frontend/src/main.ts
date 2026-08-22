@@ -103,15 +103,16 @@ if (DEV_MODE) {
     onFlash(msg) {
       showFlash(msg);
     },
+    onSessionComplete(msg) {
+      // GO-3 (docs/plan/P2-design.md §8): ws-client.ts now routes a real
+      // server's `sessionComplete` message straight here — the exact
+      // function the ?dev=1 fixture (window.devSessionComplete) above
+      // already exercises.
+      onSessionComplete(msg.session);
+    },
     onConnecting(reconnecting) {
       showConnOverlay(reconnecting);
     }
-    // NOTE: a real server's `sessionComplete` message cannot be routed
-    // here yet — ws-client.ts's WsClientHandlers/message switch is
-    // outside this task's file ownership (see docs/plan/P2-design.md §8's
-    // GO-3 dependency). Once that lands, its handler should call this
-    // file's onSessionComplete(msg.session) — the exact function the dev
-    // fixture above already exercises.
   });
 }
 

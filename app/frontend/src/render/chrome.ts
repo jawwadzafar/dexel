@@ -23,6 +23,9 @@ const ticker = byId<HTMLUListElement>('ticker');
 // coin-then-level and nothing else, by owner directive.
 const statusName = byId('status-name');
 const menuPanelTitle = byId('menu-panel-title');
+// Phase P2 (docs/ui-spec.md §9.5) — the always-visible session indicator.
+const sessionPill = byId('session-pill');
+const sessionPillText = byId('session-pill-text');
 
 export function renderChrome(): void {
   const state = store.getState();
@@ -58,4 +61,35 @@ export function renderChrome(): void {
     const raw = (state.tickerLines || [])[i] || '';
     lis[i].textContent = raw ? truncate('> ' + raw, 36) : '';
   }
+
+  // Phase P2 (docs/ui-spec.md §9.5): the pill is EMPTY, and therefore
+  // invisible, whenever no session is active — a pre-P2 server that
+  // omits `sessions` entirely degrades the same way (state.sessions is
+  // optional on the wire). The name is truncated to 16 chars with '…'
+  // (the pill's own budget, independent of #status-name's 24); the clock
+  // is server-computed elapsedSeconds, never derived client-side.
+  const active = state.sessions && state.sessions.active;
+  if (active) {
+    const name = active.name ? truncate(active.name, 16) + ' ' : '';
+    sessionPillText.textContent = name + fmtClock(active.elapsedSeconds);
+    sessionPill.classList.add('visible');
+  } else {
+    sessionPillText.textContent = '';
+    sessionPill.classList.remove('visible');
+  }
+}
+
+// fmtClock renders a whole-seconds duration as "H:MM:SS" for the
+// titlebar pill (docs/ui-spec.md §9.5) — deliberately NOT format.ts's
+// fmtDuration ("Xm Ys" prose, used by the Sessions modal's own longer-form
+// numbers): a live titlebar clock reads better as a clock face. Hours are
+// unpadded (a session can run up to the 16h cap); minutes/seconds are
+// always two digits.
+function fmtClock(totalSeconds: number | undefined): string {
+  const s = Math.max(0, Math.floor(Number(totalSeconds) || 0));
+  const h = Math.floor(s / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  const sec = s % 60;
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return h + ':' + pad(m) + ':' + pad(sec);
 }

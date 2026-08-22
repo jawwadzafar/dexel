@@ -20,6 +20,13 @@
     <div id="titlebar">
       <span id="hud-cash"><i class="nes-icon coin is-small"></i><span class="value">0</span></span>
       <span id="hud-level">LV 1</span>
+      <!-- Phase P2 (docs/ui-spec.md §9.5): the always-visible session
+           indicator. Owned by render/chrome.ts, which fills
+           #session-pill-text and toggles the .visible class — empty and
+           therefore invisible when no session is active. Sits in the
+           titlebar's empty space between #hud-level (ends 120) and
+           #menu-open (starts 600), so nothing else moves. -->
+      <span id="session-pill"><span id="session-pill-dot"></span><span id="session-pill-text"></span></span>
       <button id="menu-open" class="nes-btn" aria-haspopup="true" aria-expanded="false" aria-label="Menu">
         <span class="menu-icon"><span class="bar"></span><span class="bar"></span><span class="bar"></span></span>
       </button>

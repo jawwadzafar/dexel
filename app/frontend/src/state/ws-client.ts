@@ -8,12 +8,18 @@
 // this client is the one place that watches for the hold slipping and
 // re-asserts it, without knowing *why* anything wants the hold.
 import { DEV_MODE } from '../env';
-import type { CatalogMessage, ClientAction, FlashMessage, ServerMessage, StateMessage } from '../wire';
+import type { CatalogMessage, ClientAction, FlashMessage, ServerMessage, SessionCompleteMessage, StateMessage } from '../wire';
 
 export interface WsClientHandlers {
   onCatalog(msg: CatalogMessage): void;
   onState(msg: StateMessage): void;
   onFlash(msg: FlashMessage): void;
+  // Phase P2 (docs/plan/P2-design.md §3.1, §8's GO-3 task; docs/ui-spec.md
+  // §9.6): routed here, straight off the wire's `sessionComplete` message
+  // — main.ts's own onSessionComplete(msg.session) is the one place that
+  // knows what to do with it (open the summary card). This module stays
+  // wire-shape-only, same as every other handler here.
+  onSessionComplete(msg: SessionCompleteMessage): void;
   onConnecting(reconnecting: boolean): void;
 }
 
@@ -83,6 +89,9 @@ function handleServerMessage(msg: ServerMessage | null | undefined): void {
       break;
     case 'flash':
       handlers.onFlash(msg);
+      break;
+    case 'sessionComplete':
+      handlers.onSessionComplete(msg);
       break;
     default:
       break;

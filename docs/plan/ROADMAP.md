@@ -210,6 +210,8 @@ waves with exclusive ownership → overseer clean-cache + real-game gate → com
 Privacy invariant + honest mechanics are non-negotiable throughout. Repo stays
 PRIVATE. In-flight: proportion art pass; release-pipeline modernization.
 
+### Phase status (updated 2026-08-22): P1 Identity DONE · P2 Sessions DONE
+
 ### Added to the mandate (2026-08-22, user):
 - **DB-1 — SQLite persistence.** Move game state from state.json to SQLite,
   carrying the SEC-1 integrity (HMAC) into the DB so tampering is still
