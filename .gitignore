@@ -10,6 +10,10 @@ target-*/
 # writes to ./build/<target>/ — never commit the binaries.
 /build/
 
+# Release archives from scripts/build-release.sh (the Go app packaged with
+# public/ + assets/ + license files) — never commit these either.
+/dist/
+
 # Cargo.lock is committed deliberately — this workspace builds an application
 # (the companion binary), where a locked dependency tree is the convention.
 

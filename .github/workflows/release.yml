@@ -1,111 +1,186 @@
 name: Release
 
-# Tag-triggered release: builds every target and publishes a GitHub Release
-# with the binaries as assets. Run on the self-hosted "jwdlab-runner".
+# Tag-triggered release for dexel (module github.com/jawwadzafar/dexel/app):
+# builds the frontend fresh (failing on drift), runs the Go test suite,
+# cross-compiles the server binary for every supported target via
+# scripts/build-release.sh, and publishes a GitHub Release with one archive
+# per target plus a sha256sums.txt.
 #
-# Targets:
-#   - linux-x86_64  (native on the runner)
-#   - linux-arm64   (cross via `cross`/Docker)
-#   - macos-arm64   (GATED — only builds when a macOS runner with the `mac`
-#                   label is registered. A Linux runner cannot produce a
-#                   macOS binary. Register a macOS runner, or remove this
-#                   entry until one exists.)
+# ---------------------------------------------------------------------------
+# Why this file no longer builds the Rust `companion` crate
+# ---------------------------------------------------------------------------
+# The previous version of this file built and shipped the legacy Rust/Bevy
+# `companion` binary as the release artifact. That binary is frozen (ADR
+# 0011: superseded by the Go+WS backend under app/ — see
+# docs/upgrade-design.md) and nothing outside this repo's own CI depends on
+# a `companion-*` release asset ever having been published; it is a one-time
+# legacy-save source for the Go backend's importer, not a shippable product.
+# build.yml still compiles it on every push (so the legacy-save import path
+# always has a real binary to test against) — that job is untouched. This
+# file now ships the actual product: the Go server under app/, which serves
+# app/public/ (the committed frontend bundle) and the repo's assets/.
 #
-# Trigger: push a tag like `v0.1.0` (or use "Release" workflow dispatch).
+# ---------------------------------------------------------------------------
+# Targets
+# ---------------------------------------------------------------------------
+# See scripts/build-release.sh's header for the full target table and the
+# reasoning behind the flat archive layout. Summary: linux/amd64,
+# linux/arm64, windows/amd64, windows/arm64 are all CGO_ENABLED=0 and
+# cross-compile cleanly from this job's Linux runner. darwin/arm64 needs
+# cgo (Cocoa/CoreGraphics) and a real macOS toolchain, so it is built in a
+# separate, GATED `release-macos` job below — mirroring this file's
+# existing pattern (previously used for macos-arm64 Rust builds): the job
+# runs on the one runner this repo has and immediately no-ops with a
+# warning, because no runner carrying the `mac` label is registered yet.
+# Once one is, flip that job's `runs-on` to `[self-hosted, mac]` and remove
+# the no-op guard step — see the job's own comment.
+#
+# Trigger: push a tag like `v0.1.0`, or run "Release" via workflow_dispatch
+# (useful for a dry run / rebuild of the current commit's artifacts without
+# cutting a new tag — in that case the release version comes from
+# `git describe` instead of a tag name).
 
 on:
   push:
     tags: ["v*"]
   workflow_dispatch:
 
-env:
-  CARGO_TERM_COLOR: always
+permissions:
+  contents: write
 
 jobs:
   release:
     name: Build + publish release
     runs-on: [self-hosted, darkmirror]
-    permissions:
-      contents: write
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - name: linux-x86_64
-            target: x86_64-unknown-linux-gnu
-            cross: false
-            os: linux
-          - name: linux-arm64
-            target: aarch64-unknown-linux-gnu
-            cross: true
-            os: linux
-          - name: macos-arm64
-            target: aarch64-apple-darwin
-            cross: false
-            os: macos
-            # GATE: skip unless a macOS runner with the `mac` label is online.
-            needs-mac: true
     steps:
-      - name: Skip macOS build when no mac runner
-        if: matrix.needs-mac
-        run: |
-          echo "::warning::macos-arm64 build SKIPPED — no macOS runner with the 'mac' label is registered."
-          echo "::warning::Register a macOS runner (with label 'mac') to build the Apple Silicon binary,"
-          echo "or build it locally: rustup target add aarch64-apple-darwin && cargo build --release --target aarch64-apple-darwin -p companion"
-          exit 0
-
       - name: Clean workspace
         run: |
           rm -rf "${GITHUB_WORKSPACE:?}"/* "${GITHUB_WORKSPACE:?}"/.[!.]* 2>/dev/null || true
 
       - uses: actions/checkout@v4
-
-      - name: Install Rust
-        run: |
-          if ! command -v cargo >/dev/null; then
-            curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal
-            . "$HOME/.cargo/env"
-            echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
-          fi
-          rustup target add ${{ matrix.target }}
-
-      - name: Cache cargo
-        uses: Swatinem/rust-cache@v2
         with:
-          key: release-${{ matrix.target }}
+          fetch-depth: 0 # need full history/tags for `git describe`
 
-      - name: Install cross
-        if: matrix.cross
+      # ---- frontend: build fresh, fail on drift ----------------------------
+      # Same drift check as build.yml's `frontend` job, run again here on
+      # purpose: a release must fail if the committed app/public/js/game.js
+      # bundle doesn't match a fresh build from app/frontend/src, even if
+      # build.yml's check on the tagged commit was (for whatever reason)
+      # stale or skipped.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+
+      - name: npm ci
+        working-directory: app/frontend
+        run: npm ci
+
+      - name: tsc --noEmit (strict)
+        working-directory: app/frontend
+        run: npm run typecheck
+
+      - name: Build frontend
+        working-directory: app/frontend
+        run: npm run build
+
+      - name: Assert the committed bundle matches a fresh build
         run: |
-          if ! command -v cross >/dev/null; then
-            cargo install cross --git https://github.com/cross-rs/cross
+          if ! git diff --exit-code -- app/public/js/game.js app/public/js/game.js.map; then
+            echo "::error::app/public/js/game.js (and/or its .map) is out of date with app/frontend/src/*.ts — a release cannot ship a stale bundle. Run 'npm run build' in app/frontend/ and commit the result." >&2
+            exit 1
           fi
 
-      - name: Install build deps (native)
-        if: matrix.cross == false
+      # ---- go: vet + race test ----------------------------------------------
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.27"
+
+      # -race needs a real C compiler/linker; mirrors build.yml's `go` job.
+      - name: Install build deps (cgo/-race needs a C toolchain)
         run: |
           if ! command -v cc >/dev/null; then
-            (sudo apt-get update && sudo apt-get install -y build-essential) 2>/dev/null || true
+            (sudo apt-get update && sudo apt-get install -y build-essential) 2>/dev/null \
+              || echo "no sudo — relying on an existing cc/zig toolchain"
           fi
+          go version
 
-      - name: Build (native)
-        if: matrix.cross == false
-        run: cargo build --release --target ${{ matrix.target }} -p companion
+      - name: go vet
+        working-directory: app
+        env:
+          CGO_ENABLED: "1"
+        run: go vet ./...
 
-      - name: Build (cross aarch64 linux)
-        if: matrix.cross == true
-        run: cross build --release --target ${{ matrix.target }} -p companion
+      - name: go test -race
+        working-directory: app
+        env:
+          CGO_ENABLED: "1"
+        run: go test -race ./...
 
-      - name: Name the artifact
+      # ---- version -----------------------------------------------------------
+      - name: Determine release version
+        id: version
         run: |
-          mkdir -p dist
-          cp target/${{ matrix.target }}/release/companion "dist/companion-${{ matrix.name }}-${{ github.ref_name }}"
-          echo "dist/companion-${{ matrix.name }}-${{ github.ref_name }}"
+          if [ "${{ github.ref_type }}" = "tag" ]; then
+            version="${{ github.ref_name }}"
+          else
+            version="$(git describe --tags --always --dirty)"
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "Release version: $version"
 
-      - name: Upload release asset
+      # ---- build + package ----------------------------------------------------
+      - name: Build release archives
+        env:
+          DEXEL_RELEASE_VERSION: ${{ steps.version.outputs.version }}
+        run: bash scripts/build-release.sh
+
+      - name: List artifacts
+        run: |
+          ls -la dist/
+          echo "--- sha256sums.txt ---"
+          cat dist/sha256sums.txt
+
+      # ---- publish -------------------------------------------------------------
+      # Same action the previous version of this file used.
+      - name: Publish GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          files: dist/companion-${{ matrix.name }}-${{ github.ref_name }}
+          tag_name: ${{ steps.version.outputs.version }}
+          name: dexel ${{ steps.version.outputs.version }}
           generate_release_notes: true
+          files: |
+            dist/*.tar.gz
+            dist/*.zip
+            dist/sha256sums.txt
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # GATED: darwin/arm64. No runner carrying the `mac` label is registered
+  # for this repo yet, so this job runs on the same runner as everything
+  # else and immediately no-ops with a warning rather than attempting a
+  # build it cannot produce (darwin requires cgo + a real macOS clang
+  # toolchain — see scripts/build-release.sh's header). This mirrors the
+  # gating pattern this file used previously for the Rust macos-arm64
+  # build, and the pattern docs/plan/F3-design.md §8 T5 calls for future
+  # desktop CI jobs to follow too.
+  #
+  # To activate once a macOS runner is registered:
+  #   1. Change `runs-on` below to `[self-hosted, mac]`.
+  #   2. Delete the "Skip: no macOS runner registered" step.
+  #   3. Uncomment (or write) the real build+upload steps — natively run
+  #      `bash scripts/build-release.sh darwin/arm64` on that host, then
+  #      upload `dist/dexel-*-darwin-arm64.tar.gz` as an additional release
+  #      asset (e.g. via `gh release upload` against the tag the `release`
+  #      job above just published, since this job has no matrix/artifact
+  #      dependency on it today).
+  release-macos:
+    name: "[gated] Build darwin/arm64"
+    runs-on: [self-hosted, darkmirror]
+    steps:
+      - name: "Skip: no macOS runner registered"
+        run: |
+          echo "::warning::darwin/arm64 build SKIPPED — no runner with the 'mac' label is registered for this repo."
+          echo "::warning::darwin/arm64 needs cgo (Cocoa/CoreGraphics) and a real macOS clang toolchain; it cannot be cross-built from this Linux runner."
+          echo "::warning::Register a macOS self-hosted runner with label 'mac', then update this job per the comment above this step to build and attach it."
+          echo "::warning::To build it locally right now on a Mac: bash scripts/build-release.sh darwin/arm64"
+          exit 0
