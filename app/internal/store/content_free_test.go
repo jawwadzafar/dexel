@@ -29,6 +29,16 @@ func TestSaveDataIsContentFree(t *testing.T) {
 		"ImportedFromRust": "bool",
 		"ImportedAt":       "string",
 		"Stats":            "store.StatsSave",
+		// Session/SessionLogHead (P2, docs/plan/P2-design.md §5.1, ADR
+		// 0017 Decision 5, schema 6): the in-progress session and the
+		// session log's opaque chain head. Session's own nested field-level
+		// coverage is TestSessionSaveAndActiveSessionSaveAreContentFree
+		// below — deliberately no Name field on either, mirroring the
+		// dexel's own name being kept off this allow-list (see the Mac
+		// field's comment just below): a project name is user-authored
+		// CONFIG (§2.7), never a column here.
+		"Session":        "*store.ActiveSessionSave",
+		"SessionLogHead": "string",
 		// Mac (SEC-1, docs/plan/SEC-1-design.md §6, ADR
 		// 0014-save-integrity-hmac-and-config-split.md): the hex
 		// HMAC-SHA256 tag over the rest of this struct — a fixed-width
@@ -241,4 +251,71 @@ func TestDayBucketSaveAndStreakSaveAreContentFree(t *testing.T) {
 
 	checkExact(t, reflect.TypeOf(DayBucketSave{}), allowedDayBucketSave)
 	checkExact(t, reflect.TypeOf(StreakSave{}), allowedStreakSave)
+}
+
+// TestSessionSaveAndActiveSessionSaveAreContentFree is P2's (docs/plan/
+// P2-design.md §5.1/§5.2, ADR 0017 Decision 5) extension of the same
+// structural guard to the schema-6 `session`/`sessionLogHead` fields and
+// the `sessions` table's payload shape: ActiveSessionSave must stay
+// exactly an id, two RFC3339 timestamp strings, two reused
+// StatCountersSave buckets and two plain uint64 counts/durations;
+// SessionSave must stay exactly an id, two RFC3339 timestamp strings, a
+// duration, a reused StatCountersSave bucket, two plain uint64 counts/
+// durations, and a closed-set endReason string. Deliberately NO field
+// named anything like "name" on either — a project name is user-authored
+// CONFIG (§2.7, ConfigData.SessionNames in config.go), never a column
+// here; this test is the direct structural analogue of P1's own proof
+// that the dexel's name never reaches SaveData.
+func TestSessionSaveAndActiveSessionSaveAreContentFree(t *testing.T) {
+	allowedActiveSessionSave := map[string]string{
+		"ID":                       "int",
+		"StartedAt":                "string",
+		"LastActivityAt":           "string",
+		"Baseline":                 "store.StatCountersSave",
+		"Watermark":                "store.StatCountersSave",
+		"CoinsEarned":              "uint64",
+		"LongestFocusBlockSeconds": "uint64",
+	}
+	allowedSessionSave := map[string]string{
+		"ID":                       "int",
+		"StartedAt":                "string",
+		"EndedAt":                  "string",
+		"DurationSeconds":          "uint64",
+		"Counters":                 "store.StatCountersSave",
+		"CoinsEarned":              "uint64",
+		"LongestFocusBlockSeconds": "uint64",
+		"EndReason":                "string",
+	}
+
+	checkExact := func(t *testing.T, typ reflect.Type, allowed map[string]string) {
+		t.Helper()
+		if typ.NumField() != len(allowed) {
+			t.Fatalf("%s has %d fields, expected exactly %d (%v)", typ.Name(), typ.NumField(), len(allowed), allowed)
+		}
+		for i := 0; i < typ.NumField(); i++ {
+			f := typ.Field(i)
+			wantType, ok := allowed[f.Name]
+			if !ok {
+				t.Errorf("%s.%s is not on the content-free allow-list", typ.Name(), f.Name)
+				continue
+			}
+			if f.Type.String() != wantType {
+				t.Errorf("%s.%s has type %s, want %s", typ.Name(), f.Name, f.Type.String(), wantType)
+			}
+			lower := strings.ToLower(f.Name)
+			forbiddenSubstrings := []string{
+				"title", "text", "content", "keycode", "key_code", "clipboard",
+				"url", "path", "document", "message", "body", "keyname", "char",
+				"name",
+			}
+			for _, bad := range forbiddenSubstrings {
+				if strings.Contains(lower, bad) {
+					t.Errorf("%s.%s name contains forbidden substring %q — looks like it could carry content", typ.Name(), f.Name, bad)
+				}
+			}
+		}
+	}
+
+	checkExact(t, reflect.TypeOf(ActiveSessionSave{}), allowedActiveSessionSave)
+	checkExact(t, reflect.TypeOf(SessionSave{}), allowedSessionSave)
 }

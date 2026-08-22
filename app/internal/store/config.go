@@ -30,8 +30,24 @@ import (
 // Room for future cosmetic prefs (theme, always-on-top, sound…) on this
 // same struct later — additive, the same pattern as SaveData's own
 // schema bumps.
+//
+// SessionNames (P2, docs/plan/P2-design.md §2.7, ADR 0017 Decision 2) is
+// the second piece of free text this file legitimately carries: an
+// optional per-session project name, keyed by the session's INTEGER id
+// (a decimal string, since JSON object keys must be strings — the id
+// itself, never any text the user typed, is what the signed `sessions`
+// log references). This is exactly the boundary DB-1-design.md §2.4
+// warns is "most at risk of being crossed by accident": a *timestamped
+// series* of project names is data about the work, the same artifact
+// class ADR 0013 refused for hourly buckets, so it belongs here — in the
+// unsigned, user-editable file — and NOT as a column on the MAC'd
+// `sessions` table. config.json can desync from the log (a deleted file,
+// a hand edit, an id reused after a discarded short session); that is
+// accepted and honest (§2.7): a logged session simply renders unnamed,
+// and the protected counts are never affected.
 type ConfigData struct {
-	Name string `json:"name"`
+	Name         string            `json:"name"`
+	SessionNames map[string]string `json:"sessionNames"`
 }
 
 // ConfigPath returns <StateDir>/config.json — the same directory as

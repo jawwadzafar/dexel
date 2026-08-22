@@ -348,59 +348,63 @@ func TestSchema3SaveRoundTripsWithNewCountersAndCoins(t *testing.T) {
 	}
 }
 
-// TestFutureSchema6RefusalStillFiresAfterTheSchema5Bump re-proves, at the
-// literal number CurrentSchema (5) + 1 = 6, that ErrFutureSchema still
+// TestFutureSchema7RefusalStillFiresAfterTheSchema6Bump re-proves, at the
+// literal number CurrentSchema (6) + 1 = 7, that ErrFutureSchema still
 // refuses to load a newer-than-supported save rather than silently
 // downgrading it — the invariant SEC-1's Task GO-1
 // (docs/plan/SEC-1-design.md §5/§8, ADR
 // 0014-save-integrity-hmac-and-config-split.md) requires stay intact
-// through the 4->5 bump: "ErrFutureSchema is preserved unchanged." (This
-// test previously pinned schema 5 as the future/refused schema, back when
-// CurrentSchema was 4; it now pins schema 6 the same way, one bump
-// later.) TestLoadFutureSchemaIsBackedUpNeverDowngradedInPlace already
-// proves this generically (using CurrentSchema+1); this test pins the
-// concrete number 6 so a future reader can see, without doing the
-// arithmetic, that schema 6 specifically is refused post-bump. The raw
-// fixture deliberately carries no "mac" key — schema 6 must be refused as
-// a FUTURE save before MAC verification is ever considered, exactly like
-// every other future-schema save regardless of SEC-1.
+// through every subsequent bump, restated by P2 (docs/plan/P2-design.md
+// §5.6): "ErrFutureSchema preserved unchanged — a schema-7 save is still
+// refused." (This test has pinned the future/refused schema one bump
+// past CurrentSchema at every prior bump too — schema 5 back when
+// CurrentSchema was 4, then schema 6 when CurrentSchema became 5; it now
+// pins schema 7 the same way, one bump later still, following P2's own
+// schema 5->6 bump.) TestLoadFutureSchemaIsBackedUpNeverDowngradedInPlace
+// already proves this generically (using CurrentSchema+1); this test
+// pins the concrete number 7 so a future reader can see, without doing
+// the arithmetic, that schema 7 specifically is refused post-bump. The
+// raw fixture deliberately carries no "mac" key, no "session" key and no
+// "sessionLogHead" key — schema 7 must be refused as a FUTURE save before
+// MAC verification (or, now, session-log verification) is ever
+// considered, exactly like every other future-schema save.
 // DB-1 retargets this to the one-time import branch (docs/plan/
 // DB-1-design.md §6/§4.3): the raw fixture is written as a state.json
 // sibling of a not-yet-existing state.db, so Load(dbPath) reaches
 // importJSON, which calls loadJSON(jsonPath) — this function's pre-DB-1
 // body, unchanged — and propagates its ErrFutureSchema verbatim without
 // ever creating a DB (§4.2's "failure branches create no DB").
-func TestFutureSchema6RefusalStillFiresAfterTheSchema5Bump(t *testing.T) {
-	if CurrentSchema != 5 {
-		t.Fatalf("CurrentSchema = %d, want 5 — this test's literal schema-6 refusal check assumes the SEC-1 bump landed at exactly 5", CurrentSchema)
+func TestFutureSchema7RefusalStillFiresAfterTheSchema6Bump(t *testing.T) {
+	if CurrentSchema != 6 {
+		t.Fatalf("CurrentSchema = %d, want 6 — this test's literal schema-7 refusal check assumes the P2 bump landed at exactly 6", CurrentSchema)
 	}
 	dir := t.TempDir()
 	dbPath := filepath.Join(dir, "state.db")
 	jsonPath := filepath.Join(dir, "state.json")
 
-	raw := `{"schema": 6, "devCash": 999999}`
+	raw := `{"schema": 7, "devCash": 999999}`
 	if err := os.WriteFile(jsonPath, []byte(raw), 0o644); err != nil {
 		t.Fatalf("WriteFile: %v", err)
 	}
 
 	d, ok, err := Load(dbPath)
 	if err == nil {
-		t.Fatal("expected an error loading a schema-6 save against CurrentSchema 5, got nil")
+		t.Fatal("expected an error loading a schema-7 save against CurrentSchema 6, got nil")
 	}
 	if !errors.Is(err, ErrFutureSchema) {
 		t.Errorf("Load err = %v, want it to wrap ErrFutureSchema", err)
 	}
 	if ok {
-		t.Error("ok=true for a schema-6 save, want false — it must be refused, not silently downgraded")
+		t.Error("ok=true for a schema-7 save, want false — it must be refused, not silently downgraded")
 	}
 	if !reflect.DeepEqual(d, SaveData{}) {
 		t.Errorf("d = %+v, want the zero value", d)
 	}
 	if _, statErr := os.Stat(jsonPath); !os.IsNotExist(statErr) {
-		t.Error("schema-6 file should have been moved away from jsonPath (renamed to .future), not left in place")
+		t.Error("schema-7 file should have been moved away from jsonPath (renamed to .future), not left in place")
 	}
 	if _, statErr := os.Stat(jsonPath + ".future"); statErr != nil {
-		t.Errorf("expected %s.future to exist (schema-6 original must be preserved, never deleted): %v", jsonPath, statErr)
+		t.Errorf("expected %s.future to exist (schema-7 original must be preserved, never deleted): %v", jsonPath, statErr)
 	}
 	if _, statErr := os.Stat(dbPath); !os.IsNotExist(statErr) {
 		t.Error("a future-schema import failure must create NO state.db")

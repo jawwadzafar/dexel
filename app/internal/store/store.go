@@ -18,6 +18,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"time"
 
 	"github.com/jawwadzafar/dexel/app/internal/game"
@@ -149,6 +150,62 @@ type StreakSave struct {
 	LastActiveDate string `json:"lastActiveDate"`
 }
 
+// ActiveSessionSave is the persisted in-progress session (P2, docs/plan/
+// P2-design.md §5.1, ADR 0017 Decision 5) — one of the two additive
+// fields SaveData gains in schema 6 (SaveData.Session below). Single,
+// mutable, rewritten on every autosave — exactly the snapshot row's own
+// shape — so it is MAC-protected for free by the same whole-struct-minus-
+// the-tag preimage every other SaveData field already gets, needing no
+// integrity code of its own.
+//
+// Baseline AND Watermark are both persisted, separately, rather than
+// their delta: a reloaded session must be able to resume exactly,
+// including the frozen-at-last-activity watermark an idle auto-end may
+// need on the very next tick (game.Game.ActiveSessionSnapshot's doc
+// comment). Reusing StatCountersSave for both is deliberate (§5.1): the
+// existing structural content-free coverage on that type applies for
+// free, and a counter added to it later (e.g. PR-5's pausedSeconds, which
+// takes schema 6->7) joins the session with no edit here.
+//
+// Deliberately no Name field, mirroring game.SessionRecord's own doc
+// comment: a project name is USER-AUTHORED CONFIG (§2.7), kept out of
+// anything that reaches the protected save.
+type ActiveSessionSave struct {
+	ID                       int              `json:"id"`
+	StartedAt                string           `json:"startedAt"`      // RFC3339
+	LastActivityAt           string           `json:"lastActivityAt"` // RFC3339
+	Baseline                 StatCountersSave `json:"baseline"`
+	Watermark                StatCountersSave `json:"watermark"`
+	CoinsEarned              uint64           `json:"coinsEarned"`
+	LongestFocusBlockSeconds uint64           `json:"longestFocusBlockSeconds"`
+}
+
+// SessionSave is one FINISHED session's persisted shape (P2, docs/plan/
+// P2-design.md §5.2, ADR 0017 Decision 5) — the canonical compact JSON
+// that becomes one `sessions` row's `payload` BLOB (db.go's sessionsDDL),
+// chain-MAC'd rather than embedded in the snapshot (§5.1: finished
+// sessions are append-mostly and unbounded — "exactly a table's shape").
+// A BLOB of the whole record, not a column per counter, for the same
+// reason DB-1 rejected normalizing the economy snapshot: the chain MAC
+// covers the whole struct, so every future session field is protected
+// automatically, with no hand-built row serializer whose omission would
+// be a silent anti-cheat hole rather than a test failure (§5.2).
+//
+// EndReason is one of "user"/"idle"/"maxDuration" (game.go's closed
+// endReason* constants, mirrored here as a plain string — same class as
+// engine.Mood's own closed-set string encoding). Deliberately no Name
+// field, for the identical reason ActiveSessionSave has none (§2.7).
+type SessionSave struct {
+	ID                       int              `json:"id"`
+	StartedAt                string           `json:"startedAt"` // RFC3339
+	EndedAt                  string           `json:"endedAt"`   // RFC3339 — also the sessions row's ended_at mirror
+	DurationSeconds          uint64           `json:"durationSeconds"`
+	Counters                 StatCountersSave `json:"counters"`
+	CoinsEarned              uint64           `json:"coinsEarned"`
+	LongestFocusBlockSeconds uint64           `json:"longestFocusBlockSeconds"`
+	EndReason                string           `json:"endReason"` // user|idle|maxDuration
+}
+
 // SaveData is the on-disk shape at ~/.config/dexel/state.json,
 // transcribed field-for-field from docs/upgrade-design.md's "Persistence"
 // section. This IS the save format — changing a field name silently
@@ -175,7 +232,19 @@ type SaveData struct {
 	ImportedFromRust bool                    `json:"importedFromRust,omitempty"`
 	ImportedAt       string                  `json:"importedAt,omitempty"` // RFC3339, "" if never imported
 	Stats            StatsSave               `json:"stats"`
-	Mac              string                  `json:"mac,omitempty"`
+	// Session/SessionLogHead (P2, docs/plan/P2-design.md §5.1, ADR 0017
+	// Decision 5, schema 6) are the two additive fields for the in-progress
+	// session and the chained session-log's HEAD. Session is nil/omitted
+	// when no session is active — a schema-5 payload has neither key, so
+	// json.Unmarshal leaves Session nil and SessionLogHead "", which §5.4's
+	// gate accepts as "no active session, the honest empty log" (see
+	// CurrentSchema's doc comment below). SessionLogHead is an OPAQUE
+	// chained-MAC token (integrity.go's computeLogMAC) that this package
+	// alone computes and verifies; game.Game only ever carries it forward,
+	// exactly like ImportedFromRust/ImportedAt.
+	Session        *ActiveSessionSave `json:"session,omitzero"`
+	SessionLogHead string             `json:"sessionLogHead,omitempty"`
+	Mac            string             `json:"mac,omitempty"`
 }
 
 // CurrentSchema is the schema version this build writes.
@@ -236,8 +305,25 @@ type SaveData struct {
 // signed schema-5 file — never mistaken for tampering. ErrFutureSchema is
 // unchanged by this bump: a schema-6 save is still renamed to ".future"
 // and refused, never silently downgraded (see
-// TestFutureSchema6RefusalStillFiresAfterTheSchema5Bump).
-const CurrentSchema = 5
+// TestFutureSchema7RefusalStillFiresAfterTheSchema6Bump, which now pins
+// the concrete future number one bump later — see that test's own doc
+// comment for the renaming history).
+//
+// Bumped 5 -> 6 for P2 (docs/plan/P2-design.md §5.6, ADR 0017 Decision 6):
+// SaveData gains Session (*ActiveSessionSave, the in-progress session) and
+// SessionLogHead (the chained-MAC head of the append-only `sessions`
+// table, db.go). Additive in exactly the way every prior bump was: a
+// schema-5 payload has neither key, json.Unmarshal leaves Session nil and
+// SessionLogHead "", and no `sessions` table exists yet — which
+// verifySessionLog's gate (db.go, §5.4) accepts as "no active session,
+// the honest empty log", the correct starting state for a save that
+// predates P2. No dedicated migration code beyond this bump; nothing is
+// backfilled, because inventing past sessions would be fabrication, not
+// migration (§5.6: "we never had sessions before, so inventing past ones
+// would be fabrication"). PR-5 (pause) must take schema 6 -> 7 next — only
+// one schema-bumping task may be in flight at a time
+// (dev_docs/production-runtime/MIGRATION_PLAN.md sequencing constraint 3).
+const CurrentSchema = 6
 
 // DefaultPath returns <StateDir>/state.db — on Linux with
 // $XDG_CONFIG_HOME unset this is byte-identical to the
@@ -314,6 +400,23 @@ func Snapshot(g *game.Game) SaveData {
 	}
 	streakCurrent, streakLongest, streakLastActiveDate := g.StreakSnapshot()
 
+	// Session (P2, docs/plan/P2-design.md §5.1, ADR 0017 Decision 5): the
+	// in-progress session, if any — nil/omitted when none is active
+	// (ok == false), which is what makes a schema-5-shaped "no session"
+	// state indistinguishable from a schema-6 save between sessions.
+	var activeSession *ActiveSessionSave
+	if ok, id, startedAt, lastActivityAt, baseline, watermark, coinsEarned, longestFocusBlockSeconds := g.ActiveSessionSnapshot(); ok {
+		activeSession = &ActiveSessionSave{
+			ID:                       id,
+			StartedAt:                startedAt.UTC().Format(time.RFC3339),
+			LastActivityAt:           lastActivityAt.UTC().Format(time.RFC3339),
+			Baseline:                 statCountersToSave(baseline),
+			Watermark:                statCountersToSave(watermark),
+			CoinsEarned:              coinsEarned,
+			LongestFocusBlockSeconds: longestFocusBlockSeconds,
+		}
+	}
+
 	return SaveData{
 		Schema:           CurrentSchema,
 		DevCash:          g.DevCash,
@@ -336,6 +439,8 @@ func Snapshot(g *game.Game) SaveData {
 				LastActiveDate: streakLastActiveDate,
 			},
 		},
+		Session:        activeSession,
+		SessionLogHead: g.SessionLogHead(),
 	}
 }
 
@@ -417,6 +522,33 @@ func Apply(g *game.Game, d SaveData) {
 	g.RestoreSprint(d.Sprint.Index, d.Sprint.UnitsDone)
 	g.ImportedFromRust = d.ImportedFromRust
 	g.ImportedAt = d.ImportedAt
+
+	// RestoreActiveSession/SetSessionLogHead (P2, docs/plan/P2-design.md
+	// §5.1/§5.5, ADR 0017 Decision 5): the in-progress session and the
+	// session log's opaque chain head, both carried on SaveData itself.
+	// Neither interacts with rolloverStatsIfNewDay, so — unlike History/
+	// Streak/CoinsToday just below — there is no ordering constraint
+	// forcing this before or after RestoreStats; it sits here beside the
+	// other "carried forward, this package's own concern" fields
+	// (ImportedFromRust/ImportedAt immediately above).
+	//
+	// Note this does NOT restore the FINISHED session log or session
+	// names: those are not part of SaveData at all (the former lives in
+	// the `sessions` table, returned by LoadAll; the latter lives in
+	// config.json, ConfigData.SessionNames) — main.go (GO-3) must call
+	// Game.RestoreSessionLog(SessionRecordsFromSave(...)) and
+	// Game.RestoreSessionNames(SessionNamesFromConfig(...)) itself, and
+	// per §8's ordering rule, BEFORE calling this function (Apply
+	// triggers RestoreStats, and RestoreSessionLog/RestoreSessionNames
+	// must run before RestoreStats — the same A3 ordering rule
+	// RestoreHistory/RestoreStreak already follow below).
+	id, startedAt, lastActivityAt, baseline, watermark, coinsEarned, longestFocusBlockSeconds, ok := activeSessionSaveToRestoreArgs(d.Session)
+	if !ok {
+		id = 0
+	}
+	g.RestoreActiveSession(id, startedAt, lastActivityAt, baseline, watermark, coinsEarned, longestFocusBlockSeconds)
+	g.SetSessionLogHead(d.SessionLogHead)
+
 	// RestoreHistory/RestoreStreak MUST run before RestoreStats (A3,
 	// docs/plan/A3-design.md §4/§7 Task GO-2, extending A2's
 	// RestoreCoinsToday-before-RestoreStats rule below): RestoreStats
@@ -501,6 +633,129 @@ func Apply(g *game.Game, d SaveData) {
 		}
 		g.SetEquipped(slot.ID, itemID, tintPtr)
 	}
+}
+
+// activeSessionSaveToRestoreArgs converts an ActiveSessionSave into
+// RestoreActiveSession's argument shape. ok is false (and every other
+// return zeroed) for a nil s, or for a save whose RFC3339 timestamps fail
+// to parse. The latter should never actually happen for a snapshot that
+// already verified its MAC — a byte edit to either timestamp string would
+// have broken that check first — so this is treated as this package's
+// own bug degrading gracefully to "no active session," matching Apply's
+// own doc comment: "a corrupted save degrades field-by-field, never
+// all-or-nothing."
+func activeSessionSaveToRestoreArgs(s *ActiveSessionSave) (id int, startedAt, lastActivityAt time.Time, baseline, watermark game.StatCounters, coinsEarned, longestFocusBlockSeconds uint64, ok bool) {
+	if s == nil {
+		return 0, time.Time{}, time.Time{}, game.StatCounters{}, game.StatCounters{}, 0, 0, false
+	}
+	parsedStartedAt, err1 := time.Parse(time.RFC3339, s.StartedAt)
+	parsedLastActivityAt, err2 := time.Parse(time.RFC3339, s.LastActivityAt)
+	if err1 != nil || err2 != nil {
+		return 0, time.Time{}, time.Time{}, game.StatCounters{}, game.StatCounters{}, 0, 0, false
+	}
+	return s.ID, parsedStartedAt.UTC(), parsedLastActivityAt.UTC(), statCountersFromSave(s.Baseline), statCountersFromSave(s.Watermark), s.CoinsEarned, s.LongestFocusBlockSeconds, true
+}
+
+// sessionRecordToSave converts a finished game.SessionRecord into its
+// persisted SessionSave shape (§5.2) — SessionSaveFromRecord's body.
+func sessionRecordToSave(rec game.SessionRecord) SessionSave {
+	return SessionSave{
+		ID:                       rec.ID,
+		StartedAt:                rec.StartedAt.UTC().Format(time.RFC3339),
+		EndedAt:                  rec.EndedAt.UTC().Format(time.RFC3339),
+		DurationSeconds:          rec.DurationSeconds,
+		Counters:                 statCountersToSave(rec.Counters),
+		CoinsEarned:              rec.CoinsEarned,
+		LongestFocusBlockSeconds: rec.LongestFocusBlockSeconds,
+		EndReason:                rec.EndReason,
+	}
+}
+
+// sessionRecordFromSave converts one verified SessionSave (LoadAll's
+// output) back into a game.SessionRecord — SessionRecordsFromSave's body.
+// An error here means a chain-MAC-verified payload contained an RFC3339
+// timestamp that failed to parse: this package's own bug, never
+// tampering (a byte edit to either string would already have broken the
+// chain MAC that verified this payload before this function ever runs).
+func sessionRecordFromSave(s SessionSave) (game.SessionRecord, error) {
+	startedAt, err := time.Parse(time.RFC3339, s.StartedAt)
+	if err != nil {
+		return game.SessionRecord{}, fmt.Errorf("parse startedAt %q: %w", s.StartedAt, err)
+	}
+	endedAt, err := time.Parse(time.RFC3339, s.EndedAt)
+	if err != nil {
+		return game.SessionRecord{}, fmt.Errorf("parse endedAt %q: %w", s.EndedAt, err)
+	}
+	return game.SessionRecord{
+		ID:                       s.ID,
+		StartedAt:                startedAt.UTC(),
+		EndedAt:                  endedAt.UTC(),
+		DurationSeconds:          s.DurationSeconds,
+		Counters:                 statCountersFromSave(s.Counters),
+		CoinsEarned:              s.CoinsEarned,
+		LongestFocusBlockSeconds: s.LongestFocusBlockSeconds,
+		EndReason:                s.EndReason,
+	}, nil
+}
+
+// SessionSaveFromRecord converts one finished game.SessionRecord into the
+// SessionSave shape AppendSession persists (db.go, §5.5) — the exported
+// counterpart of Snapshot for the single finished session GO-3 appends on
+// SESSION_STOP or an automatic end (Game.TakeEndedSession).
+func SessionSaveFromRecord(rec game.SessionRecord) SessionSave {
+	return sessionRecordToSave(rec)
+}
+
+// SessionRecordsFromSave converts LoadAll's verified []SessionSave
+// (already oldest-first, ascending id) into []game.SessionRecord for
+// main.go to hand to Game.RestoreSessionLog — see Apply's doc comment
+// for why this must run BEFORE store.Apply (which triggers RestoreStats).
+// An error here means one of the verified records carried an unparseable
+// RFC3339 timestamp (see sessionRecordFromSave's doc comment) — this
+// package's own bug; it should never actually fire against a chain that
+// verified.
+func SessionRecordsFromSave(saves []SessionSave) ([]game.SessionRecord, error) {
+	out := make([]game.SessionRecord, len(saves))
+	for i, s := range saves {
+		rec, err := sessionRecordFromSave(s)
+		if err != nil {
+			return nil, fmt.Errorf("session record %d: %w", s.ID, err)
+		}
+		out[i] = rec
+	}
+	return out, nil
+}
+
+// SessionNamesFromConfig converts ConfigData.SessionNames (config.go) —
+// string-keyed because JSON object keys must be strings (§2.7) — into the
+// int-keyed map Game.RestoreSessionNames expects. A key that fails to
+// parse as a decimal int (a hand-edited config.json) is skipped rather
+// than blocking startup — the same "malformed config.json degrades, never
+// blocks" contract LoadConfig itself already keeps (config.go).
+// RestoreSessionNames re-normalizes every value it is given, so this
+// function passes raw strings through untouched.
+func SessionNamesFromConfig(cfg ConfigData) map[int]string {
+	out := make(map[int]string, len(cfg.SessionNames))
+	for key, name := range cfg.SessionNames {
+		id, err := strconv.Atoi(key)
+		if err != nil {
+			continue
+		}
+		out[id] = name
+	}
+	return out
+}
+
+// SessionNamesToConfig converts Game.SessionNames()'s int-keyed map into
+// the string-keyed shape ConfigData.SessionNames requires (§2.7) for
+// main.go to hand to SaveConfig after SESSION_START — the exact inverse
+// of SessionNamesFromConfig.
+func SessionNamesToConfig(names map[int]string) map[string]string {
+	out := make(map[string]string, len(names))
+	for id, name := range names {
+		out[strconv.Itoa(id)] = name
+	}
+	return out
 }
 
 func splitTintKey(key string) (itemID, tintID string, ok bool) {
@@ -615,23 +870,32 @@ func syncDir(dir string) error {
 	return d.Sync()
 }
 
-// Load implements DB-1's full decision tree (docs/plan/DB-1-design.md
-// §4.2): state.db is the source of truth once it exists (loadDB, db.go,
-// §3.2's exact open-gate order); a state.db-less machine that still has
-// a state.json runs the one-time import (importJSON, db.go, §4.3),
-// reusing loadJSON below verbatim for verification; neither existing is
-// the ONLY "no save" case — (SaveData{}, false, nil) — that may reach
-// the caller's legacy Rust import (main.go's loadOrImport). A stat
-// failure other than "does not exist" (e.g. a permission error) is
-// surfaced as an error, exactly as it always was.
+// LoadAll implements DB-1's full decision tree (docs/plan/DB-1-design.md
+// §4.2), extended by P2 with the session log (docs/plan/P2-design.md
+// §5.4): state.db is the source of truth once it exists (loadDB, db.go,
+// §3.2's gate order extended by §5.4's steps 7-9); a state.db-less
+// machine that still has a state.json runs the one-time import
+// (importJSON, db.go, §4.3), reusing loadJSON below verbatim for
+// verification; neither existing is the ONLY "no save" case —
+// (SaveData{}, nil, false, nil) — that may reach the caller's legacy
+// Rust import (main.go's loadOrImport). A stat failure other than "does
+// not exist" (e.g. a permission error) is surfaced as an error, exactly
+// as it always was.
+//
+// A one-time JSON import always returns a nil session log: the source
+// state.json predates P2 by construction (state.db did not exist yet,
+// and once it does the DB branch is taken forever after — §4.3's "import
+// is one-time structurally"), so it can only ever be schema <= 5 and
+// carry no session data at all — the honest empty log, exactly what a
+// nil slice represents.
 //
 // Every quarantine/tamper/future-schema property loadJSON's own doc
-// comment describes below still holds — Load just decides FIRST which
+// comment describes below still holds — LoadAll just decides FIRST which
 // of the two files (or neither) it's evaluating.
-func Load(path string) (SaveData, bool, error) {
+func LoadAll(path string) (SaveData, []SessionSave, bool, error) {
 	exists, err := fileExists(path)
 	if err != nil {
-		return SaveData{}, false, fmt.Errorf("stat %s: %w", path, err)
+		return SaveData{}, nil, false, fmt.Errorf("stat %s: %w", path, err)
 	}
 	if exists {
 		return loadDB(path)
@@ -640,12 +904,26 @@ func Load(path string) (SaveData, bool, error) {
 	jsonPath := jsonImportPath(path)
 	jsonExists, err := fileExists(jsonPath)
 	if err != nil {
-		return SaveData{}, false, fmt.Errorf("stat %s: %w", jsonPath, err)
+		return SaveData{}, nil, false, fmt.Errorf("stat %s: %w", jsonPath, err)
 	}
 	if !jsonExists {
-		return SaveData{}, false, nil
+		return SaveData{}, nil, false, nil
 	}
-	return importJSON(path, jsonPath)
+	d, ok, err := importJSON(path, jsonPath)
+	return d, nil, ok, err
+}
+
+// Load is a THIN WRAPPER over LoadAll that verifies the session log chain
+// identically and then discards it (docs/plan/P2-design.md §5.4:
+// "verification cannot be skipped by construction... a two-function API
+// where the convenient one skips integrity is exactly the silent hole ADR
+// 0016 warns about"). Every existing call site (main.go's loadOrImport)
+// and every pre-P2 test keeps working unchanged, and still exercises the
+// chain check on every call — there is no way to reach a SaveData without
+// LoadAll's full gate having run, including the session log.
+func Load(path string) (SaveData, bool, error) {
+	d, _, ok, err := LoadAll(path)
+	return d, ok, err
 }
 
 // loadJSON reads and parses a JSON save file directly — this is

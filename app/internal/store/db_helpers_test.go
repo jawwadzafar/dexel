@@ -52,3 +52,35 @@ func rawExec(t *testing.T, dbPath string, sql string, args ...any) {
 		t.Fatalf("rawExec(%q): %v", sql, err)
 	}
 }
+
+// rawReadSessionRow reads one `sessions` row's columns directly — the
+// test-side counterpart of `sqlite3 state.db 'select ended_at, payload,
+// mac from sessions where id = N'` (P2's tamper matrix, docs/plan/
+// P2-design.md §7.3).
+func rawReadSessionRow(t *testing.T, dbPath string, id int) (endedAt string, payload []byte, mac string) {
+	t.Helper()
+	db, err := openDB(dbPath)
+	if err != nil {
+		t.Fatalf("rawReadSessionRow: openDB: %v", err)
+	}
+	defer func() { _ = db.Close() }()
+	if err := db.QueryRow(`SELECT ended_at, payload, mac FROM sessions WHERE id = ?`, id).Scan(&endedAt, &payload, &mac); err != nil {
+		t.Fatalf("rawReadSessionRow: SELECT: %v", err)
+	}
+	return endedAt, payload, mac
+}
+
+// rawUpdateSessionRow overwrites one `sessions` row's columns directly —
+// the sqlite3-level analogue of hand-editing a session row, mirroring
+// rawUpdateStateRow's role for the state row.
+func rawUpdateSessionRow(t *testing.T, dbPath string, id int, endedAt string, payload []byte, mac string) {
+	t.Helper()
+	db, err := openDB(dbPath)
+	if err != nil {
+		t.Fatalf("rawUpdateSessionRow: openDB: %v", err)
+	}
+	defer func() { _ = db.Close() }()
+	if _, err := db.Exec(`UPDATE sessions SET ended_at = ?, payload = ?, mac = ? WHERE id = ?`, endedAt, payload, mac, id); err != nil {
+		t.Fatalf("rawUpdateSessionRow: UPDATE: %v", err)
+	}
+}

@@ -27,8 +27,8 @@ func TestSaveLoadRoundTripVerifiesCleanly(t *testing.T) {
 	g := game.New()
 	g.DevCash = 12345
 	want := Snapshot(g)
-	if want.Schema != 5 {
-		t.Fatalf("Snapshot().Schema = %d, want 5", want.Schema)
+	if want.Schema != CurrentSchema {
+		t.Fatalf("Snapshot().Schema = %d, want CurrentSchema (%d)", want.Schema, CurrentSchema)
 	}
 
 	if err := Save(path, want); err != nil {
@@ -327,16 +327,16 @@ func TestRichStateSaveLoadRoundTripHasNoFalsePositive(t *testing.T) {
 	}
 }
 
-// TestSchema4FileIsGrandfatheredThenResavedSignedSchema5 is SEC-1/DB-1's
-// migration exit criterion (docs/plan/SEC-1-design.md §5/§8,
+// TestSchema4FileIsGrandfatheredThenResavedSignedAtCurrentSchema is
+// SEC-1/DB-1's migration exit criterion (docs/plan/SEC-1-design.md §5/§8,
 // docs/plan/DB-1-design.md §3.2/§4.3): an unsigned schema-4 state.json
 // (no "mac" key, predating SEC-1) has no state.db yet, so Load takes the
 // one-time import branch (db.go's importJSON), which reuses loadJSON's
 // existing grandfather behaviour verbatim — no MAC check, no error — and
 // then, because "DB-1 has no grandfather branch of its own" (§3.2), signs
-// the imported row at CurrentSchema=5 immediately, during the import
+// the imported row at CurrentSchema immediately, during the import
 // itself, rather than waiting for a later Save to upgrade it.
-func TestSchema4FileIsGrandfatheredThenResavedSignedSchema5(t *testing.T) {
+func TestSchema4FileIsGrandfatheredThenResavedSignedAtCurrentSchema(t *testing.T) {
 	dir := t.TempDir()
 	dbPath := filepath.Join(dir, "state.db")
 	jsonPath := filepath.Join(dir, "state.json")
@@ -398,8 +398,8 @@ func TestSchema4FileIsGrandfatheredThenResavedSignedSchema5(t *testing.T) {
 	if !ok {
 		t.Fatal("Load reported no save after migration")
 	}
-	if reloaded.Schema != 5 {
-		t.Errorf("reloaded.Schema = %d, want 5", reloaded.Schema)
+	if reloaded.Schema != CurrentSchema {
+		t.Errorf("reloaded.Schema = %d, want CurrentSchema (%d)", reloaded.Schema, CurrentSchema)
 	}
 	if reloaded.Mac == "" {
 		t.Error("reloaded.Mac is empty, want a signed tag")

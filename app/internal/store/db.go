@@ -37,6 +37,35 @@ const stateDDL = `CREATE TABLE IF NOT EXISTS state (
 	mac     TEXT    NOT NULL
 ) STRICT`
 
+// sessionsDDL is P2's finished-session append log (docs/plan/P2-design.md
+// §5.2, ADR 0017 Decision 5): `payload` is the canonical compact JSON of a
+// SessionSave (store.go), `mac` is that row's chained HMAC (§5.3,
+// integrity.go's computeLogMAC/verifyLogMAC), `ended_at` is a denormalized
+// MIRROR of payload.endedAt kept only so a range read need not parse every
+// payload — a disagreement between the two is itself a tamper signal
+// (§5.4 step 8, verifySessionLog below). `id INTEGER PRIMARY KEY` is the
+// 1-based ordinal and is ALSO inside the signed payload, so renumbering is
+// detected. STRICT for the same reason stateDDL is: the engine itself
+// rejects a type-confused UPDATE instead of leaving the loader to wonder.
+//
+// Unlike stateDDL, this table is created LAZILY — only by the first
+// AppendSession (ensureSessionsTable below), never by a read path and
+// never speculatively by Save — because a MISSING sessions table is the
+// honest empty log precisely when SessionLogHead == "" (§5.4's "missing"
+// rule, ADR 0017 Decision 5); `state`'s absence, by contrast, is always
+// destruction, which is why only IT gets Save's unconditional
+// ensureStateTable treatment.
+const sessionsDDL = `CREATE TABLE IF NOT EXISTS sessions (
+	id       INTEGER PRIMARY KEY,
+	ended_at TEXT    NOT NULL,
+	payload  BLOB    NOT NULL,
+	mac      TEXT    NOT NULL
+) STRICT`
+
+// sessionsIndexDDL backs range reads ("sessions this week", P6's future
+// scrapbook) without a full table scan (§5.2).
+const sessionsIndexDDL = `CREATE INDEX IF NOT EXISTS sessions_ended_at ON sessions(ended_at)`
+
 // jsonImportPath returns dbPath's JSON sibling for the one-time
 // migration (§4.3): ".../state.db" -> ".../state.json". Falls back to
 // appending ".json" for a path that doesn't end in ".db" (defensive; in
@@ -134,24 +163,35 @@ func ensureStateTable(db *sql.DB) error {
 	return err
 }
 
-// writeStateRow upserts the single signed row and mirrors schema into
-// PRAGMA user_version, in one transaction (design §2.3's write path): a
-// crash between the two statements cannot leave them disagreeing,
-// because SQLite's own journal makes the pair atomic — a transaction
-// replaces the old tmp+fsync+rename+dir-fsync dance entirely for this
-// file (config.json keeps that recipe; see writeFileAtomically).
-func writeStateRow(db *sql.DB, schema int, payload []byte, mac string) error {
-	tx, err := db.Begin()
-	if err != nil {
-		return fmt.Errorf("begin transaction: %w", err)
+// ensureSessionsTable creates the sessions table and its ended_at index
+// if they do not already exist. Called only from AppendSession — see
+// sessionsDDL's doc comment for why a read path must never call this.
+func ensureSessionsTable(db *sql.DB) error {
+	if _, err := db.Exec(sessionsDDL); err != nil {
+		return err
 	}
+	_, err := db.Exec(sessionsIndexDDL)
+	return err
+}
+
+// writeStateRowTx upserts the single signed state row and mirrors schema
+// into PRAGMA user_version, against an ALREADY-OPEN transaction — the
+// shared body writeStateRow (below) and AppendSession (§5.5) both drive,
+// so a single-statement bug fix applies to both writers at once. Neither
+// statement here begins or commits/rolls back the transaction: that is
+// the caller's responsibility, precisely so AppendSession can include the
+// sessions INSERT in the SAME transaction as this upsert (design §5.5:
+// "this must be one transaction or the design is broken" — a crash
+// between an appended log row and this snapshot update would otherwise
+// leave a row past the signed head, i.e. a FALSE tamper report that
+// resets an innocent user's economy on the next boot).
+func writeStateRowTx(tx *sql.Tx, schema int, payload []byte, mac string) error {
 	if _, err := tx.Exec(
 		`INSERT INTO state (id, schema, payload, mac) VALUES (1, ?, ?, ?)
 		   ON CONFLICT(id) DO UPDATE
 		     SET schema = excluded.schema, payload = excluded.payload, mac = excluded.mac`,
 		schema, payload, mac,
 	); err != nil {
-		_ = tx.Rollback()
 		return fmt.Errorf("upsert state row: %w", err)
 	}
 	// PRAGMA statements don't take bound parameters; schema is our own
@@ -159,8 +199,29 @@ func writeStateRow(db *sql.DB, schema int, payload []byte, mac string) error {
 	// field), never attacker-controlled string data, so Sprintf here is
 	// not an injection risk.
 	if _, err := tx.Exec(fmt.Sprintf("PRAGMA user_version = %d", schema)); err != nil {
-		_ = tx.Rollback()
 		return fmt.Errorf("set user_version: %w", err)
+	}
+	return nil
+}
+
+// writeStateRow upserts the single signed row and mirrors schema into
+// PRAGMA user_version, in its OWN one-statement transaction (design
+// §2.3's write path): a crash between the two statements cannot leave
+// them disagreeing, because SQLite's own journal makes the pair atomic —
+// a transaction replaces the old tmp+fsync+rename+dir-fsync dance
+// entirely for this file (config.json keeps that recipe; see
+// writeFileAtomically). Used by Save and importJSON, neither of which
+// writes a session row alongside it; AppendSession (§5.5) instead drives
+// writeStateRowTx directly inside its own transaction that also contains
+// the sessions INSERT.
+func writeStateRow(db *sql.DB, schema int, payload []byte, mac string) error {
+	tx, err := db.Begin()
+	if err != nil {
+		return fmt.Errorf("begin transaction: %w", err)
+	}
+	if err := writeStateRowTx(tx, schema, payload, mac); err != nil {
+		_ = tx.Rollback()
+		return err
 	}
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("commit: %w", err)
@@ -169,25 +230,35 @@ func writeStateRow(db *sql.DB, schema int, payload []byte, mac string) error {
 }
 
 // failClosed closes db, quarantines path to path+suffix, and returns
-// Load's (SaveData{}, false, err) shape — the exact phrasing the
+// LoadAll's (SaveData{}, nil, false, err) shape — the exact phrasing the
 // pre-DB-1 JSON Load used for its own quarantine branches (see loadJSON),
 // carried forward so every "original preserved untouched at %s" style
-// assertion still reads true against a state.db path.
-func failClosed(db *sql.DB, path, suffix string, reason error) (SaveData, bool, error) {
+// assertion still reads true against a state.db path. The []SessionSave
+// return exists only so this shares LoadAll's exact 4-tuple shape; every
+// caller is a failure branch, so it is always nil here.
+func failClosed(db *sql.DB, path, suffix string, reason error) (SaveData, []SessionSave, bool, error) {
 	_ = db.Close()
 	dest := path + suffix
 	if qErr := quarantine(path, suffix); qErr != nil {
-		return SaveData{}, false, fmt.Errorf("%w, and backing up %s to %s failed: %v", reason, path, dest, qErr)
+		return SaveData{}, nil, false, fmt.Errorf("%w, and backing up %s to %s failed: %v", reason, path, dest, qErr)
 	}
-	return SaveData{}, false, fmt.Errorf("%w; original preserved untouched at %s (NOT loaded, NOT deleted, NOT overwritten)", reason, dest)
+	return SaveData{}, nil, false, fmt.Errorf("%w; original preserved untouched at %s (NOT loaded, NOT deleted, NOT overwritten)", reason, dest)
 }
 
-// loadDB implements §3.2's exact open-gate order against an existing
-// state.db: corrupt (open/quick_check) -> future (user_version) ->
-// tampered (row count, MAC, unmarshal, schema cross-check) -> ok. It is
-// read-only until the moment it decides to quarantine: no write, no
+// loadDB implements DB-1 §3.2's exact open-gate order against an existing
+// state.db, extended by P2 §5.4's steps 7-9: corrupt (open/quick_check) ->
+// future (user_version) -> tampered (row count, MAC, unmarshal, schema
+// cross-check) -> [P2] session log presence/replay/head cross-check -> ok.
+// It is read-only until the moment it decides to quarantine: no write, no
 // CREATE TABLE, ever happens on this path (see openDB's doc comment).
-func loadDB(path string) (SaveData, bool, error) {
+//
+// Chain verification (verifySessionLog below) runs STRICTLY AFTER the
+// snapshot's own MAC has verified (§5.4: "strictly after the snapshot MAC
+// verifies, because the head must be trusted before it can be used as an
+// anchor") — which is also why tamper-matrix row 10 ("edit sessionLogHead
+// in the snapshot") is caught several steps earlier, by the ordinary
+// state-row MAC check, and never even reaches verifySessionLog.
+func loadDB(path string) (SaveData, []SessionSave, bool, error) {
 	db, err := openDB(path)
 	if err != nil {
 		// A non-SQLite / garbled file fails at the very first pragma
@@ -198,9 +269,9 @@ func loadDB(path string) (SaveData, bool, error) {
 		// lazy and openDB already closed the handle on its own error
 		// path).
 		if qErr := quarantine(path, ".corrupt"); qErr != nil {
-			return SaveData{}, false, fmt.Errorf("state.db is corrupt, and backing up %s to %s.corrupt failed: %v (original error: %v)", path, path, qErr, err)
+			return SaveData{}, nil, false, fmt.Errorf("state.db is corrupt, and backing up %s to %s.corrupt failed: %v (original error: %v)", path, path, qErr, err)
 		}
-		return SaveData{}, false, fmt.Errorf("state.db is corrupt (moved to %s.corrupt): %w", path, err)
+		return SaveData{}, nil, false, fmt.Errorf("state.db is corrupt (moved to %s.corrupt): %w", path, err)
 	}
 
 	var quickCheck string
@@ -266,10 +337,181 @@ func loadDB(path string) (SaveData, bool, error) {
 		return failClosed(db, path, ".future", fmt.Errorf("%w: payload schema %d > this build's %d", ErrFutureSchema, d.Schema, CurrentSchema))
 	}
 
-	if err := db.Close(); err != nil {
-		return SaveData{}, false, fmt.Errorf("close state.db: %w", err)
+	// P2 §5.4 steps 7-9: the session log chain. d.SessionLogHead is now a
+	// TRUSTED anchor (the snapshot MAC just verified above), which is
+	// exactly why this step must not run any earlier.
+	sessions, err := verifySessionLog(db, d.SessionLogHead)
+	if err != nil {
+		return failClosed(db, path, ".invalid", err)
 	}
-	return d, true, nil
+
+	if err := db.Close(); err != nil {
+		return SaveData{}, nil, false, fmt.Errorf("close state.db: %w", err)
+	}
+	return d, sessions, true, nil
+}
+
+// verifySessionLog implements P2 §5.4's steps 7-9 against an
+// ALREADY-OPEN db handle, using head (the snapshot's own, already-MAC-
+// verified SessionLogHead) as the trusted anchor the replayed chain must
+// land on exactly. Returns the verified log oldest-first (ascending id),
+// or a nil slice for the honest empty log.
+//
+// A MISSING `sessions` table is the honest empty log IFF head == "" —
+// checked via sqlite_master rather than by pattern-matching a driver's
+// error string, which would be fragile across modernc.org/sqlite
+// versions (ADR 0017 Decision 5, §5.4 step 7). A table that exists but is
+// empty, or a non-empty table paired with an empty head, is
+// ErrTampered — a dropped/emptied `sessions` table is structurally
+// identical to a dropped/emptied `state` table for this purpose (loadDB's
+// own "count != 1" check just above draws the identical line for state).
+//
+// Every mismatch anywhere in the replay — a row MAC that doesn't chain,
+// an out-of-sequence id, a payload.id disagreeing with the row's own id,
+// or an ended_at mirror disagreeing with payload.endedAt — is
+// ErrTampered, and the replay stops at the first one found (docs/plan/
+// P2-design.md §7.3's 11-row tamper matrix).
+func verifySessionLog(db *sql.DB, head string) ([]SessionSave, error) {
+	var tableExists int
+	if err := db.QueryRow(`SELECT count(*) FROM sqlite_master WHERE type = 'table' AND name = 'sessions'`).Scan(&tableExists); err != nil {
+		return nil, fmt.Errorf("%w: checking for the sessions table: %v", ErrTampered, err)
+	}
+	if tableExists == 0 {
+		if head == "" {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("%w: sessions table is missing but a non-empty session log head is signed", ErrTampered)
+	}
+
+	rows, err := db.Query(`SELECT id, ended_at, payload, mac FROM sessions ORDER BY id ASC`)
+	if err != nil {
+		return nil, fmt.Errorf("%w: reading the sessions table: %v", ErrTampered, err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	var out []SessionSave
+	prev := ""
+	want := 1
+	for rows.Next() {
+		var id int
+		var endedAt string
+		var payload []byte
+		var mac string
+		if err := rows.Scan(&id, &endedAt, &payload, &mac); err != nil {
+			return nil, fmt.Errorf("%w: reading a sessions row: %v", ErrTampered, err)
+		}
+		if id != want {
+			return nil, fmt.Errorf("%w: sessions row id %d out of sequence (want %d)", ErrTampered, id, want)
+		}
+		if !verifyLogMAC(prev, payload, mac) {
+			return nil, fmt.Errorf("%w: session log chain broken at row id %d", ErrTampered, id)
+		}
+		var s SessionSave
+		if err := json.Unmarshal(payload, &s); err != nil {
+			// A valid chain MAC over unparseable bytes means our own bug,
+			// not a cheat — same discipline as loadDB's own state-row
+			// unmarshal-failure branch above.
+			return nil, fmt.Errorf("%w: session row %d payload did not parse despite a valid chain MAC: %v", ErrTampered, id, err)
+		}
+		if s.ID != id {
+			return nil, fmt.Errorf("%w: session row %d payload.id %d disagrees with the row's own id", ErrTampered, id, s.ID)
+		}
+		if s.EndedAt != endedAt {
+			return nil, fmt.Errorf("%w: session row %d ended_at mirror %q disagrees with payload.endedAt %q", ErrTampered, id, endedAt, s.EndedAt)
+		}
+		out = append(out, s)
+		prev = mac
+		want++
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("%w: iterating the sessions table: %v", ErrTampered, err)
+	}
+
+	n := len(out)
+	if n == 0 && head != "" {
+		return nil, fmt.Errorf("%w: sessions table is empty but a non-empty session log head is signed", ErrTampered)
+	}
+	if n > 0 && head == "" {
+		return nil, fmt.Errorf("%w: %d session row(s) exist but the signed session log head is empty", ErrTampered, n)
+	}
+	if prev != head {
+		return nil, fmt.Errorf("%w: session log head mismatch (replayed %q, signed %q)", ErrTampered, prev, head)
+	}
+	return out, nil
+}
+
+// AppendSession implements P2 §5.5's write path: it appends one finished
+// session row AND rewrites the signed snapshot row IN ONE TRANSACTION.
+// This must be one transaction or the design is broken (§5.5): a crash
+// between the two writes would leave a log row past the signed head —
+// i.e. a FALSE tamper report that resets an innocent user's economy on
+// the next boot.
+//
+// Order, matching §5.5 exactly: compute payload_s = json.Marshal(s);
+// rowMac = chain(d.SessionLogHead, payload_s); set d.SessionLogHead =
+// rowMac and d.Session = nil (the just-finished session is no longer the
+// active one); sign d; write both rows in the one transaction; return
+// rowMac. The caller (main.go, GO-3) hands rowMac back to the live game
+// via Game.SetSessionLogHead — an OPAQUE integrity token game never
+// interprets, the same relationship ImportedFromRust/ImportedAt already
+// have with this package.
+//
+// d is the CALLER's current SaveData (typically Snapshot(g) taken
+// immediately before this call, per GO-3's wiring) — its own
+// d.SessionLogHead is read as the chain's current head (the anchor the
+// new row extends), and its d.Session is expected to already describe
+// the session being finished (or be nil/anything, since it is
+// unconditionally cleared here rather than trusted).
+func AppendSession(path string, d SaveData, s SessionSave) (newHead string, err error) {
+	payload, err := json.Marshal(s)
+	if err != nil {
+		// SessionSave is our own struct of plain JSON-safe types — this
+		// cannot fail short of a programming error, mirroring
+		// canonicalBody's identical panic-worthy-but-returned-as-error
+		// stance for SaveData.
+		return "", fmt.Errorf("marshal session payload: %w", err)
+	}
+	rowMac := computeLogMAC(d.SessionLogHead, payload)
+
+	d.SessionLogHead = rowMac
+	d.Session = nil
+	d.Sprint.UnitsDone = quantizeUnits(d.Sprint.UnitsDone)
+	d.Mac = ""
+	statePayload := canonicalBody(d)
+	stateMac := computeMACBytes(statePayload)
+
+	db, err := openDB(path)
+	if err != nil {
+		return "", fmt.Errorf("open state.db: %w", err)
+	}
+	defer func() { _ = db.Close() }()
+
+	if err := ensureStateTable(db); err != nil {
+		return "", fmt.Errorf("create state table: %w", err)
+	}
+	if err := ensureSessionsTable(db); err != nil {
+		return "", fmt.Errorf("create sessions table: %w", err)
+	}
+
+	tx, err := db.Begin()
+	if err != nil {
+		return "", fmt.Errorf("begin transaction: %w", err)
+	}
+	if _, err := tx.Exec(
+		`INSERT INTO sessions (id, ended_at, payload, mac) VALUES (?, ?, ?, ?)`,
+		s.ID, s.EndedAt, payload, rowMac,
+	); err != nil {
+		_ = tx.Rollback()
+		return "", fmt.Errorf("insert session row: %w", err)
+	}
+	if err := writeStateRowTx(tx, d.Schema, statePayload, stateMac); err != nil {
+		_ = tx.Rollback()
+		return "", fmt.Errorf("write state row: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return "", fmt.Errorf("commit: %w", err)
+	}
+	return rowMac, nil
 }
 
 // importJSON is DB-1's one-time migration (§4.3). The caller (Load) has

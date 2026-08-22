@@ -139,3 +139,59 @@ func verifyMAC(d SaveData) bool {
 // path, which grants items and refunds Dev Cash, letting a tampered file
 // trigger a legacy re-grant.
 var ErrTampered = errors.New("save integrity check failed")
+
+// logDomain is the session log's chain-MAC domain-separation tag (P2,
+// docs/plan/P2-design.md §5.3, ADR 0017 Decision 5) — DISTINCT from
+// macDomain so a signed state-snapshot payload can never be replayed as a
+// session log row, or vice versa (SEC-1 §2.2's stated purpose for domain
+// separation; this is exactly tamper-matrix row 11 in
+// docs/plan/P2-design.md §7.3: "copy a valid state payload into a sessions
+// row" is caught because logDomain != macDomain, not because of anything
+// row-shape-specific).
+const logDomain = "dexel-session-log-v1"
+
+// logChainPreimage builds the exact byte sequence a session log row's MAC
+// is computed over (§5.3): logDomain ‖ 0x00 ‖ prevMac ‖ 0x00 ‖ payload.
+// prevMac is the PREVIOUS row's hex-encoded mac column verbatim — the
+// ASCII bytes of that hex string, not decoded binary — and "" for the
+// genesis row (row_mac_0 = ""). payload is the exact bytes stored in that
+// row's own `payload` BLOB column (json.Marshal of a SessionSave, never a
+// re-serialization) — the same "verify against stored bytes" discipline
+// macPreimage already applies to the state row (DB-1 design §3.1).
+func logChainPreimage(prevMac string, payload []byte) []byte {
+	preimage := make([]byte, 0, len(logDomain)+1+len(prevMac)+1+len(payload))
+	preimage = append(preimage, logDomain...)
+	preimage = append(preimage, 0x00)
+	preimage = append(preimage, prevMac...)
+	preimage = append(preimage, 0x00)
+	preimage = append(preimage, payload...)
+	return preimage
+}
+
+// computeLogMAC returns the hex-encoded HMAC-SHA256 tag for one session
+// log row, chained to prevMac (§5.3). Appending a row costs exactly ONE
+// call to this function — never a re-sign of any earlier row, which is
+// the whole point of a chain over independent per-row MACs (§5.3, DB-1
+// design §2.4).
+func computeLogMAC(prevMac string, payload []byte) string {
+	mac := hmac.New(sha256.New, integrityKey())
+	mac.Write(logChainPreimage(prevMac, payload))
+	return hex.EncodeToString(mac.Sum(nil))
+}
+
+// verifyLogMAC reports whether macHex matches computeLogMAC(prevMac,
+// payload), compared in constant time via hmac.Equal on the decoded
+// digest bytes — verifyMACBytes's exact same discipline — never on the
+// hex strings themselves, and never with ==. An empty or non-hex macHex
+// (e.g. a hand-edited tag) fails cleanly rather than panicking.
+func verifyLogMAC(prevMac string, payload []byte, macHex string) bool {
+	got, err := hex.DecodeString(macHex)
+	if err != nil {
+		return false
+	}
+	want, err := hex.DecodeString(computeLogMAC(prevMac, payload))
+	if err != nil {
+		return false // unreachable: computeLogMAC always returns valid hex
+	}
+	return hmac.Equal(got, want)
+}
