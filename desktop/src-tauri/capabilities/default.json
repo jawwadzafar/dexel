@@ -1,0 +1,21 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "Capability for dexel's single main window. Deliberately minimal: the page the webview loads is dexel's own loopback server, which talks to the Go backend over plain HTTP/WebSocket and never uses Tauri IPC. There is no `remote` field, so that http://127.0.0.1:<port> origin is granted NOTHING through Tauri's ACL.",
+  "windows": [
+    "main"
+  ],
+  "permissions": [
+    "core:default",
+    {
+      "identifier": "shell:allow-execute",
+      "allow": [
+        {
+          "name": "binaries/dexel-server",
+          "sidecar": true,
+          "args": true
+        }
+      ]
+    }
+  ]
+}

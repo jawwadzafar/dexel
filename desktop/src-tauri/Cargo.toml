@@ -1,0 +1,56 @@
+# dexel desktop shell — the Tauri v2 native window around the existing Go
+# server (ADR 0015 / docs/plan/F3-design.md task T1).
+#
+# STATUS: AUTHORED, NOT YET BUILT. No Rust toolchain existed on the machine
+# that wrote this file, so the dependency versions below are the current
+# published v2 lines and every API used in src/ was checked against the
+# official v2 docs — but `cargo build` has never run. See ../README.md.
+
+[package]
+# The package name is deliberately "dexel", matching tauri.conf.json's
+# productName: Tauri's bundlers expect the compiled main binary's name to
+# match `mainBinaryName` (which defaults to productName), so keeping
+# package name == productName avoids that whole class of rename mismatch.
+name = "dexel"
+version = "0.1.0"
+description = "dexel — a developer companion that earns Dev Cash from your real activity"
+authors = ["Jawwad Zafar"]
+edition = "2021"
+# tauri-plugin-shell 2.x documents a 1.77.2 MSRV; Tauri v2 itself is >= that.
+rust-version = "1.77.2"
+license = "MIT OR Apache-2.0"
+
+# An explicit, EMPTY workspace table. The repository root Cargo.toml is a
+# workspace (members: activity/, companion/, tools/shotcap — the legacy
+# Bevy/Rust track). Without this table cargo would refuse to build here
+# with "current package believes it's in a workspace when it's not".
+# Declaring our own workspace root also keeps this Tauri build's lockfile,
+# feature resolution and target/ directory fully independent of that track.
+[workspace]
+
+[lib]
+# The v2 template convention: a thin binary (src/main.rs) over a library
+# that holds the real code, so the same run() is reachable from a mobile
+# entry point later without restructuring.
+name = "dexel_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+# The sidecar API (app.shell().sidecar(..)) lives in the shell plugin:
+# https://v2.tauri.app/develop/sidecar/
+tauri-plugin-shell = "2"
+# So a packaged crash is diagnosable: the plugin's DEFAULT targets are
+# exactly [Stdout, LogDir { file_name: None }], which is what we want —
+# sidecar stdout/stderr is forwarded into it (F3-design.md §1).
+tauri-plugin-log = "2"
+log = "0.4"
+
+# Only used to send a graceful SIGTERM to the sidecar on shutdown, so
+# main.go's signal handler runs its final save. CommandChild::kill() maps to
+# std::process::Child::kill(), i.e. SIGKILL, which would skip that.
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"

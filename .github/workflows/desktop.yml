@@ -1,0 +1,344 @@
+name: Desktop
+
+# The Tauri desktop pipeline (ADR 0015 / docs/plan/F3-design.md task T5):
+# package dexel as a native app by bundling the Go server as a Tauri sidecar.
+#
+# ------------------------------------------------------------------------
+# READ THIS BEFORE WONDERING WHY NOTHING BUILT
+# ------------------------------------------------------------------------
+# Tauri BUNDLING is host-OS-bound: Linux bundles are built on Linux, macOS on
+# macOS, Windows on Windows. There is no honest "one job builds all three".
+# The Go sidecar cross-compiles from anywhere; the installer does not.
+#
+# So this workflow has three jobs with very different status:
+#
+#   sidecar        ACTIVE. Runs on the existing `darkmirror` runner on every
+#                  push/PR. Cross-compiles the Go server for every non-darwin
+#                  target triple and proves scripts/build-sidecar.sh still
+#                  produces correctly-named externalBin artifacts. This is
+#                  the part that works today.
+#
+#   desktop-linux  DORMANT. Needs a runner labelled `desktop-linux` — i.e. a
+#                  Linux machine with webkit2gtk-4.1-dev and the rest of
+#                  Tauri's Linux deps installed. The existing `darkmirror`
+#                  runner does NOT have them (and installing them needs root
+#                  on that box), which is exactly why this is a separate
+#                  label rather than reusing `darkmirror`.
+#
+#   desktop-macos  DORMANT. Needs a runner labelled `mac` (F3-design.md
+#                  FORK 1 recommends registering the owner's own Mac —
+#                  macOS is the primary platform per ADR 0010 and the
+#                  hardware already exists). Mirrors release.yml's `mac`
+#                  gate concept.
+#
+# ------------------------------------------------------------------------
+# HOW TO ACTIVATE A DORMANT JOB (both steps are required)
+# ------------------------------------------------------------------------
+# 1. Register the runner with the matching label (`desktop-linux` or `mac`).
+# 2. Set the repository variable that ungates the job:
+#       gh variable set DESKTOP_LINUX_RUNNER --body true
+#       gh variable set MAC_RUNNER --body true
+#    (Settings -> Secrets and variables -> Actions -> Variables.)
+#
+# Why a variable AND a label: GitHub Actions cannot ask "does a runner with
+# this label exist?". A job whose `runs-on` names a label no runner has does
+# not fail — it sits Queued forever and eventually times out, which looks
+# like a broken pipeline. The `if:` gate on a repository variable makes the
+# job cleanly SKIPPED instead, so "dormant" means dormant. Today neither
+# variable is set, so both bundle jobs are skipped by design.
+#
+# Windows is deliberately absent: no Windows machine is available as a
+# runner, and the repo is private so GitHub-hosted runners are not free
+# (F3-design.md §4, Phase 2/3).
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  # ----------------------------------------------------------------------
+  # ACTIVE: the half of the desktop build that is host-independent.
+  # ----------------------------------------------------------------------
+  sidecar:
+    name: Sidecar (cross-compile the Go server)
+    runs-on: [self-hosted, darkmirror]
+    steps:
+      - name: Clean workspace
+        run: |
+          rm -rf "${GITHUB_WORKSPACE:?}"/* "${GITHUB_WORKSPACE:?}"/.[!.]* 2>/dev/null || true
+
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.27"
+
+      # Every non-darwin target builds with CGO_ENABLED=0 (their providers are
+      # pure Go), so no C toolchain is needed here. The darwin targets need
+      # cgo for the real macOS provider and are skipped by the script on a
+      # non-mac host — see desktop-macos below, which builds them on the Mac.
+      - name: Cross-compile every non-darwin sidecar
+        run: scripts/build-sidecar.sh --all
+
+      - name: Assert the externalBin names are exactly what Tauri looks for
+        run: |
+          set -euo pipefail
+          cd desktop/src-tauri/binaries
+          expected="
+          dexel-server-aarch64-pc-windows-msvc.exe
+          dexel-server-aarch64-unknown-linux-gnu
+          dexel-server-x86_64-pc-windows-msvc.exe
+          dexel-server-x86_64-unknown-linux-gnu
+          "
+          for f in $expected; do
+            if [ ! -f "$f" ]; then
+              echo "::error::missing sidecar $f — bundle.externalBin resolves binaries/dexel-server-<target triple>, so a wrong name silently becomes 'no sidecar for this target' at bundle time." >&2
+              exit 1
+            fi
+            echo "ok  $f  ($(file -b "$f" | cut -c1-60))"
+          done
+
+      # The one behaviour the whole desktop shell depends on: the Go server
+      # must print `DEXEL_LISTENING http://127.0.0.1:<port>` on stdout once
+      # bound. src-tauri/src/lib.rs parses exactly that prefix, so a change
+      # to it would break the app while every Go unit test stayed green.
+      - name: Verify the DEXEL_LISTENING handshake on the linux sidecar
+        run: |
+          set -euo pipefail
+          bin=desktop/src-tauri/binaries/dexel-server-x86_64-unknown-linux-gnu
+          log=$(mktemp)
+          DEXEL_ASSETS_DIR="$PWD/assets" "$bin" \
+            -addr 127.0.0.1:0 -public "$PWD/app/public" -provider fake >"$log" 2>/dev/null &
+          pid=$!
+          for _ in $(seq 1 50); do [ -s "$log" ] && break; sleep 0.1; done
+          line=$(head -n1 "$log")
+          echo "handshake line: $line"
+          url=${line#DEXEL_LISTENING }
+          if [ "$url" = "$line" ]; then
+            echo "::error::stdout did not start with 'DEXEL_LISTENING ' (got: $line)" >&2
+            kill "$pid" 2>/dev/null || true
+            exit 1
+          fi
+          case "$url" in
+            http://127.0.0.1:*) ;;
+            *) echo "::error::handshake URL is not loopback: $url" >&2
+               kill "$pid" 2>/dev/null || true; exit 1 ;;
+          esac
+          code=$(curl -s -o /dev/null -w '%{http_code}' "$url/")
+          echo "GET $url/ -> $code"
+          [ "$code" = "200" ] || { kill "$pid" 2>/dev/null || true; exit 1; }
+          # SIGTERM is the signal the shell sends on unix so main.go persists
+          # state on the way out; assert the process honours it.
+          kill -TERM "$pid"
+          wait "$pid" || { echo "::error::sidecar did not exit 0 on SIGTERM" >&2; exit 1; }
+          echo "SIGTERM honoured, clean exit"
+
+      - name: Upload sidecar binaries
+        uses: actions/upload-artifact@v4
+        with:
+          name: dexel-sidecars-${{ github.sha }}
+          path: desktop/src-tauri/binaries/
+          if-no-files-found: error
+
+  # ----------------------------------------------------------------------
+  # DORMANT: needs a Linux runner with Tauri's webview deps.
+  # ----------------------------------------------------------------------
+  desktop-linux:
+    name: Linux bundle (AppImage + .deb)
+    # See the header: the label alone would queue forever, so the variable is
+    # what actually ungates the job.
+    if: vars.DESKTOP_LINUX_RUNNER == 'true'
+    runs-on: [self-hosted, desktop-linux]
+    steps:
+      - name: Clean workspace
+        run: |
+          rm -rf "${GITHUB_WORKSPACE:?}"/* "${GITHUB_WORKSPACE:?}"/.[!.]* 2>/dev/null || true
+
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.27"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+
+      - name: Install Rust
+        run: |
+          if ! command -v cargo >/dev/null; then
+            curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal
+            . "$HOME/.cargo/env"
+            echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+          fi
+          rustc --version && cargo --version
+
+      # Exactly the list from https://v2.tauri.app/start/prerequisites/.
+      # A runner carrying the `desktop-linux` label is expected to have these
+      # already; this step is the self-heal path when it does not.
+      - name: Install Tauri Linux deps
+        run: |
+          if ! pkg-config --exists webkit2gtk-4.1; then
+            sudo apt-get update
+            sudo apt-get install -y \
+              libwebkit2gtk-4.1-dev build-essential curl wget file \
+              libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev
+          fi
+          pkg-config --modversion webkit2gtk-4.1
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: desktop-linux
+          workspaces: desktop/src-tauri
+
+      - name: Install tauri-cli
+        run: |
+          if ! command -v cargo-tauri >/dev/null; then
+            cargo install tauri-cli --version "^2.0.0" --locked
+          fi
+          cargo tauri --version
+
+      # bundle.resources ships app/public verbatim, so the committed bundle
+      # must be current — the same invariant build.yml's drift check enforces.
+      - name: Build the frontend bundle
+        working-directory: app/frontend
+        run: |
+          npm ci
+          npm run build
+
+      - name: Assert the committed bundle did not drift
+        run: |
+          git diff --exit-code -- app/public/js/game.js app/public/js/game.js.map \
+            || { echo "::error::app/public/js/game.js is stale; run 'npm run build' in app/frontend/ and commit." >&2; exit 1; }
+
+      - name: Build the sidecar for this host
+        run: scripts/build-sidecar.sh x86_64-unknown-linux-gnu
+
+      # Explicit --bundles rather than tauri.conf.json's "all": "all" would
+      # also try rpm, which needs rpmbuild on the runner.
+      - name: cargo tauri build
+        working-directory: desktop
+        run: cargo tauri build --bundles appimage,deb
+
+      - name: Show what was produced
+        run: find desktop/src-tauri/target/release/bundle -maxdepth 2 -type f | sort
+
+      - name: Upload Linux bundles
+        uses: actions/upload-artifact@v4
+        with:
+          name: dexel-linux-x86_64-${{ github.sha }}
+          path: |
+            desktop/src-tauri/target/release/bundle/appimage/*.AppImage
+            desktop/src-tauri/target/release/bundle/deb/*.deb
+          if-no-files-found: error
+
+  # ----------------------------------------------------------------------
+  # DORMANT: needs a macOS runner (label `mac`).
+  # ----------------------------------------------------------------------
+  desktop-macos:
+    name: macOS bundle (.app + .dmg)
+    if: vars.MAC_RUNNER == 'true'
+    runs-on: [self-hosted, mac]
+    steps:
+      - name: Clean workspace
+        run: |
+          rm -rf "${GITHUB_WORKSPACE:?}"/* "${GITHUB_WORKSPACE:?}"/.[!.]* 2>/dev/null || true
+
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.27"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+
+      - name: Install Rust
+        run: |
+          if ! command -v cargo >/dev/null; then
+            curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal
+            . "$HOME/.cargo/env"
+            echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+          fi
+          rustc --version && cargo --version
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: desktop-macos
+          workspaces: desktop/src-tauri
+
+      - name: Install tauri-cli
+        run: |
+          if ! command -v cargo-tauri >/dev/null; then
+            cargo install tauri-cli --version "^2.0.0" --locked
+          fi
+          cargo tauri --version
+
+      - name: Build the frontend bundle
+        working-directory: app/frontend
+        run: |
+          npm ci
+          npm run build
+
+      - name: Assert the committed bundle did not drift
+        run: |
+          git diff --exit-code -- app/public/js/game.js app/public/js/game.js.map \
+            || { echo "::error::app/public/js/game.js is stale; run 'npm run build' in app/frontend/ and commit." >&2; exit 1; }
+
+      # On a Mac the script builds the darwin sidecars WITH cgo, so the
+      # bundled server has the real ADR 0011 CGEventSource capture path
+      # rather than the blind fallback a CGO_ENABLED=0 cross-build would give.
+      - name: Build the darwin sidecar for this host
+        run: scripts/build-sidecar.sh
+
+      - name: cargo tauri build
+        working-directory: desktop
+        run: cargo tauri build --bundles app,dmg
+
+      - name: Show what was produced
+        run: find desktop/src-tauri/target/release/bundle -maxdepth 2 | sort
+
+      # UNSIGNED and UNNOTARIZED (F3-design.md §6): Gatekeeper will warn on
+      # another machine. Signing needs a paid Apple Developer cert the owner
+      # must supply and is tracked as a follow-up, not a blocker for Phase 2.
+      - name: Upload macOS bundles
+        uses: actions/upload-artifact@v4
+        with:
+          name: dexel-macos-${{ github.sha }}
+          path: |
+            desktop/src-tauri/target/release/bundle/dmg/*.dmg
+            desktop/src-tauri/target/release/bundle/macos/*.app
+          if-no-files-found: error
+
+  # ----------------------------------------------------------------------
+  # Always runs, so a workflow run reports the real packaging status instead
+  # of looking mysteriously empty when both bundle jobs are skipped.
+  # ----------------------------------------------------------------------
+  status:
+    name: Packaging status
+    runs-on: [self-hosted, darkmirror]
+    needs: [sidecar]
+    if: always()
+    steps:
+      - name: Report which bundles this repo can currently produce
+        run: |
+          echo "sidecar cross-compile : ${{ needs.sidecar.result }}"
+          if [ "${{ vars.DESKTOP_LINUX_RUNNER }}" = "true" ]; then
+            echo "linux bundle          : enabled"
+          else
+            echo "::warning::Linux bundle SKIPPED — no runner labelled 'desktop-linux' is registered (needs webkit2gtk-4.1-dev). Set the repo variable DESKTOP_LINUX_RUNNER=true once one exists."
+          fi
+          if [ "${{ vars.MAC_RUNNER }}" = "true" ]; then
+            echo "macOS bundle          : enabled"
+          else
+            echo "::warning::macOS bundle SKIPPED — no runner labelled 'mac' is registered. Register the owner's Mac (F3-design.md FORK 1) and set MAC_RUNNER=true."
+          fi
+          echo "::warning::Windows bundle is not implemented — no Windows runner exists and the repo is private (F3-design.md §4, Phase 2/3)."

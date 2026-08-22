@@ -1,0 +1,34 @@
+<!doctype html>
+<!--
+  Placeholder frontendDist for the dexel Tauri shell.
+
+  dexel's real frontend is served by the Go sidecar over loopback, and the
+  shell opens its window directly on that URL (WebviewUrl::External), so
+  this file is never displayed in normal operation. It exists because
+  Tauri's build embeds `build.frontendDist` into the binary and wants a
+  real directory to read; keeping a tiny honest page here (rather than
+  pointing frontendDist at a URL) means the bundle carries ~1KB of dead
+  assets instead of changing how the window is created.
+
+  If you ever DO see this page, the handshake path broke: the shell built a
+  window on its bundled assets instead of on the sidecar's URL. Check the
+  log (Target::LogDir) for the [dexel-server] lines.
+-->
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>dexel</title>
+    <style>
+      html, body { margin: 0; height: 100%; background: #2f2a3d; color: #f2e0c9;
+                   font: 14px/1.5 ui-monospace, monospace; }
+      main { height: 100%; display: grid; place-content: center; text-align: center; }
+      code { color: #7fd4c1; }
+    </style>
+  </head>
+  <body>
+    <main>
+      <p>starting dexel&hellip;</p>
+      <p><code>waiting for DEXEL_LISTENING</code></p>
+    </main>
+  </body>
+</html>
