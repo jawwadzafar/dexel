@@ -209,3 +209,17 @@ phase: design-checked against PRODUCT-EVOLUTION.md → parallel implementation
 waves with exclusive ownership → overseer clean-cache + real-game gate → commit.
 Privacy invariant + honest mechanics are non-negotiable throughout. Repo stays
 PRIVATE. In-flight: proportion art pass; release-pipeline modernization.
+
+### Added to the mandate (2026-08-22, user):
+- **DB-1 — SQLite persistence.** Move game state from state.json to SQLite,
+  carrying the SEC-1 integrity (HMAC) into the DB so tampering is still
+  detected/quarantined. config.json STAYS plain JSON (user-editable by design).
+  CRITICAL: pure-Go driver (modernc.org/sqlite) so CGO_ENABLED=0 cross-compiles
+  keep working in the release matrix. Schema versioning + future-version
+  refusal preserved; one-time import from the JSON save.
+- **F3-T1 — Tauri scaffold + run modes.** desktop/ Tauri project (sidecar per
+  ADR 0015). RUN MODES: dev = browser (go run, as today); app mode = Tauri
+  window (same server as sidecar); production = packaged installer; OSS users
+  can build from source or just run browser mode. CI job gated on a mac/rust
+  runner (cannot be built/gated on this box — authored + doc'd + CI-wired now,
+  first real build happens on a runner with Rust+webkit).
