@@ -45,24 +45,26 @@ const DefaultName = "dexel"
 // blank that would re-trigger onboarding on the next boot.
 var ErrEmptyName = errors.New("name must not be empty")
 
-// NormalizeName is SET_NAME's server-side validation, and the ONLY door
-// a name enters the process through (docs/ui-spec.md §6.2: "the server
-// validates everything"). In order:
+// normalizeUserText is the shared core both NormalizeName and (P2's)
+// NormalizeSessionName run every user-authored string through, extracted
+// here per docs/plan/P2-design.md §2.7 so the two callers cannot drift on
+// what "clean" means. In order:
 //
-//  1. every control character is DROPPED (not replaced) — this is the
-//     one free-text field in the whole product, and a newline, a NUL, an
-//     ANSI escape or a bidi override in it would reach a log line, the
-//     titlebar and config.json;
+//  1. every control character is DROPPED (not replaced) — a newline, a
+//     NUL, an ANSI escape or a bidi override in a free-text field would
+//     reach a log line, the titlebar or config.json;
 //  2. surrounding whitespace is trimmed;
-//  3. the result is truncated to MaxNameLen runes, counted with
-//     utf8.RuneCountInString so a multi-byte name is measured the way it
-//     is displayed, never cut mid-rune;
-//  4. an empty result is ErrEmptyName.
+//  3. the result is truncated to maxRunes runes, counted with
+//     utf8.RuneCountInString so a multi-byte string is measured the way
+//     it is displayed, never cut mid-rune, and re-trimmed (a truncation
+//     that lands on trailing whitespace should not leave it dangling).
 //
-// Deliberately NOT done: any allow-list of "acceptable" characters. A
-// name the user writes about their own pet in their own language is
-// theirs; the only things filtered are the ones that are not text.
-func NormalizeName(raw string) (string, error) {
+// Deliberately NOT done: any allow-list of "acceptable" characters. Text
+// the user writes in their own language is theirs; the only things
+// filtered are the ones that are not text. Callers decide for themselves
+// whether an empty result is legal (NormalizeName says no; P2's
+// NormalizeSessionName says yes — see its own doc comment).
+func normalizeUserText(raw string, maxRunes int) string {
 	cleaned := strings.Map(func(r rune) rune {
 		if unicode.IsControl(r) {
 			return -1
@@ -70,10 +72,20 @@ func NormalizeName(raw string) (string, error) {
 		return r
 	}, raw)
 	cleaned = strings.TrimSpace(cleaned)
-	if utf8.RuneCountInString(cleaned) > MaxNameLen {
+	if utf8.RuneCountInString(cleaned) > maxRunes {
 		runes := []rune(cleaned)
-		cleaned = strings.TrimSpace(string(runes[:MaxNameLen]))
+		cleaned = strings.TrimSpace(string(runes[:maxRunes]))
 	}
+	return cleaned
+}
+
+// NormalizeName is SET_NAME's server-side validation, and the ONLY door
+// a name enters the process through (docs/ui-spec.md §6.2: "the server
+// validates everything"). It runs raw through normalizeUserText at
+// MaxNameLen and rejects an empty result with ErrEmptyName — unlike a
+// session name (§2.7), a dexel's name is never legally blank.
+func NormalizeName(raw string) (string, error) {
+	cleaned := normalizeUserText(raw, MaxNameLen)
 	if cleaned == "" {
 		return "", ErrEmptyName
 	}

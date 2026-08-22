@@ -34,6 +34,13 @@ func TestStateMessageIsContentFree(t *testing.T) {
 		"OwnedItems":   "[]string",
 		"OwnedTints":   "[]string",
 		"Stats":        "game.StatsView",
+		// Phase P2 (Sessions, docs/plan/P2-design.md §6.1, ADR 0017): the
+		// `sessions` block. Always sent (never omitted), like `config` —
+		// see StateMessage.Sessions's own doc comment. Its nested types
+		// (SessionsView/ActiveSessionView/SessionView/SessionsSummary) get
+		// their own checkExact blocks below, exactly the pattern Stats'
+		// nested StatCounters/DayStat/StreakView already use.
+		"Sessions": "game.SessionsView",
 		// Phase P1 (Identity & first minutes, docs/plan/PRODUCT-EVOLUTION.md
 		// §5). Config carries the dexel's name — the ONE string on this
 		// wire that is neither a count, a duration, an id, nor a
@@ -198,7 +205,7 @@ func TestStateMessageRejectsObservedContentFields(t *testing.T) {
 	// The allow-list is exact-count, so ANY unlisted field fails: assert
 	// the production type's field count still equals its allow-list, which
 	// is what makes "add a field, forget the list" a build failure.
-	if got, want := reflect.TypeOf(StateMessage{}).NumField(), 17; got != want {
+	if got, want := reflect.TypeOf(StateMessage{}).NumField(), 18; got != want {
 		t.Errorf("StateMessage has %d fields, this test pins %d — update BOTH allow-lists deliberately, never just the count", got, want)
 	}
 }
@@ -302,4 +309,99 @@ func TestStatsViewAndStatCountersAreContentFree(t *testing.T) {
 		"Longest": "int",
 	}
 	checkExact(t, reflect.TypeOf(StreakView{}), allowedStreakView)
+}
+
+// TestSessionWireTypesAreContentFree is Phase P2's (Sessions,
+// docs/plan/P2-design.md §6.1/§7.2, ADR 0017) extension of the same
+// structural guard to StateMessage.Sessions and its three nested types.
+// Every field is a count, a duration, an id, a closed-set enum, an ISO
+// timestamp string, or — exactly once per type, mirroring ConfigView.Name
+// — the one user-authored project name, allow-listed on the SAME ADR 0014
+// category citation P1's ConfigView.Name already established (§2.7: a
+// project name is CONFIG, not observed content, even though ADR 0017 also
+// argues it is closer to work content than a pet name is and therefore
+// belongs in config.json rather than the protected save — a privacy
+// argument about WHERE it is stored, not about whether it may appear on
+// the wire the connected client itself is reading).
+func TestSessionWireTypesAreContentFree(t *testing.T) {
+	checkExact := func(t *testing.T, typ reflect.Type, allowed map[string]string) {
+		t.Helper()
+		if typ.NumField() != len(allowed) {
+			t.Fatalf("%s has %d fields, expected exactly %d (%v)", typ.Name(), typ.NumField(), len(allowed), allowed)
+		}
+		forbiddenSubstrings := []string{
+			"title", "text", "content", "keycode", "key_code", "clipboard",
+			"url", "path", "document", "message", "body", "keyname", "char",
+		}
+		for i := 0; i < typ.NumField(); i++ {
+			f := typ.Field(i)
+			wantType, ok := allowed[f.Name]
+			if !ok {
+				t.Errorf("%s.%s is not on the content-free allow-list", typ.Name(), f.Name)
+				continue
+			}
+			if f.Type.String() != wantType {
+				t.Errorf("%s.%s has type %s, want %s", typ.Name(), f.Name, f.Type.String(), wantType)
+			}
+			if f.Name == "Name" {
+				continue // the one user-authored string — see this test's doc comment
+			}
+			lower := strings.ToLower(f.Name)
+			for _, bad := range forbiddenSubstrings {
+				if strings.Contains(lower, bad) {
+					t.Errorf("%s.%s name contains forbidden substring %q — looks like it could carry content", typ.Name(), f.Name, bad)
+				}
+			}
+		}
+	}
+
+	allowedSessionsView := map[string]string{
+		"Active":  "*game.ActiveSessionView",
+		"Summary": "game.SessionsSummary",
+		"Recent":  "[]game.SessionView",
+	}
+	checkExact(t, reflect.TypeOf(SessionsView{}), allowedSessionsView)
+
+	allowedActiveSessionView := map[string]string{
+		"ID":                       "int",
+		"Name":                     "string",
+		"StartedAt":                "string",
+		"ElapsedSeconds":           "uint64",
+		"Keystrokes":               "uint64",
+		"MouseActiveSeconds":       "uint64",
+		"ActiveSeconds":            "uint64",
+		"IdleSeconds":              "uint64",
+		"SprintsCompleted":         "uint64",
+		"FocusSessions":            "uint64",
+		"AppSwitches":              "uint64",
+		"CoinsEarned":              "uint64",
+		"LongestFocusBlockSeconds": "uint64",
+	}
+	checkExact(t, reflect.TypeOf(ActiveSessionView{}), allowedActiveSessionView)
+
+	allowedSessionView := map[string]string{
+		"ID":                       "int",
+		"Name":                     "string",
+		"StartedAt":                "string",
+		"EndedAt":                  "string",
+		"DurationSeconds":          "uint64",
+		"Keystrokes":               "uint64",
+		"MouseActiveSeconds":       "uint64",
+		"ActiveSeconds":            "uint64",
+		"IdleSeconds":              "uint64",
+		"SprintsCompleted":         "uint64",
+		"FocusSessions":            "uint64",
+		"AppSwitches":              "uint64",
+		"CoinsEarned":              "uint64",
+		"LongestFocusBlockSeconds": "uint64",
+		"EndReason":                "string", // closed set: user|idle|maxDuration
+	}
+	checkExact(t, reflect.TypeOf(SessionView{}), allowedSessionView)
+
+	allowedSessionsSummary := map[string]string{
+		"Completed":             "uint64",
+		"ThisWeek":              "int",
+		"LongestSessionSeconds": "uint64",
+	}
+	checkExact(t, reflect.TypeOf(SessionsSummary{}), allowedSessionsSummary)
 }

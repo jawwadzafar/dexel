@@ -70,6 +70,14 @@ type StateMessage struct {
 	OwnedItems   []string               `json:"ownedItems"`
 	OwnedTints   []string               `json:"ownedTints"`
 	Stats        StatsView              `json:"stats"`
+	// Sessions (Phase P2, docs/plan/P2-design.md §6.1) is the `sessions`
+	// block: the active session (nil when none), the derived summary
+	// (completed/thisWeek/longestSessionSeconds), and the last
+	// SessionsWireWindow finished sessions, newest first. Always sent —
+	// the P1 `config` precedent (§6.1: "the server always sends the
+	// block, it may be empty") — so a stale frontend degrades to "no
+	// sessions" rather than breaking.
+	Sessions SessionsView `json:"sessions"`
 	// Config/Onboarding are Phase P1 (Identity & first minutes) additions.
 	// Both are ADDITIVE and optional client-side (app/frontend/src/wire.ts
 	// types them `config?`/`onboarding?`) so a stale frontend degrades to
@@ -277,6 +285,18 @@ type Game struct {
 	// by SetConfigName. Never set by a client.
 	configName string
 	onboarding bool
+
+	// session/pendingSession/sessionLog/sessionLogHead/sessionNames are
+	// Phase P2's (docs/plan/P2-design.md, ADR 0017) session state — see
+	// session.go, which owns every type and method that touches them.
+	// Declared here (rather than session.go) only because Go requires a
+	// type's fields in one place; session.go is the file to read for what
+	// they mean.
+	session        *activeSession
+	pendingSession *SessionRecord
+	sessionLog     []SessionRecord
+	sessionLogHead string
+	sessionNames   map[int]string
 
 	// now is a test seam (mirrors internal/engine.Engine's own `now` field)
 	// so TestMidnightRollover-style tests can drive statsDate deterministically
@@ -543,14 +563,43 @@ func (g *Game) StoreOpen() bool {
 // instant the store closes. That is why this method takes an
 // already-computed TickResult rather than owning the decision to sample.
 func (g *Game) Tick(r engine.TickResult) (completed bool) {
+	// now is read ONCE per tick and threaded through every session call
+	// below, rather than re-reading g.now() several times, so a single
+	// Tick call can never straddle two different clock readings under a
+	// test's SetClockForTest (docs/plan/P2-design.md §2.5).
+	now := g.now()
+
+	// checkSessionAutoEnd runs FIRST, "before anything else" (§2.5 point
+	// 2), using the session's PRE-existing lastActivityAt/watermark —
+	// i.e. as of whatever the last real-input tick left them — so a
+	// session that went stale while the process was closed auto-ends on
+	// the very first tick after reopening, backdated to that last
+	// activity rather than to this tick's "now" (the reopen-after-a-
+	// long-close self-heal). It never reads or writes statsToday/
+	// statsLifetime/DevCash/XP/Progress/Mood, so it cannot violate the
+	// lens rule (§1, §7.1's TestSessionDoesNotAffectTheEconomyAtAll) no
+	// matter what it decides.
+	g.checkSessionAutoEnd(r, now)
+
 	// recordStats runs unconditionally, BEFORE the StoreOpen gate below —
 	// see statsDate's doc comment on the Game struct for why analytics
 	// isn't frozen the way Mood/Progress/DevCash are. Its return value
 	// (whether THIS tick's app-switch, if any, was counted under
 	// engine.AppSwitchDailyCap) still needs to reach accrueWork below, so
 	// the same tick's economy-side work split agrees with what the
-	// analytics layer just counted.
+	// analytics layer just counted. recordStats also folds this tick's
+	// r.FocusRunSeconds into the active session's longestFocusBlockSeconds
+	// accumulator (§2.3), unconditionally, the same "analytics, not
+	// economy" rule statsFocusBlockMax already follows.
 	switchCounted := g.recordStats(r)
+
+	// advanceSessionActivity (§2.5 point 2) folds THIS tick's real input,
+	// if any, into the session's lastActivityAt/watermark — after
+	// recordStats, so watermark's snapshot of statsLifetime already
+	// includes this tick's own contribution. Runs unconditionally
+	// (session counters "follow the analytics rule, not the economy
+	// rule" under STORE_OPEN, §2.4), i.e. BEFORE the StoreOpen gate below.
+	g.advanceSessionActivity(r, now)
 
 	if g.StoreOpen() {
 		return false
@@ -608,6 +657,17 @@ func (g *Game) awardCoins(devCash uint64) {
 	g.coinsToday.FocusSessions += breakdown.FocusSessions
 	g.coinsToday.AppSwitches += breakdown.AppSwitches
 	g.workKeys, g.workMouse, g.workFocus, g.workSwitch = 0, 0, 0, 0
+
+	// P2 (docs/plan/P2-design.md §2.3): coinsEarned has no monotonic
+	// lifetime counter to subtract from (DevCash is spendable), so it is
+	// a per-session accumulator updated HERE, at the single sprint
+	// payout — the only coin source (ADR 0008). awardCoins is only ever
+	// reached from Tick AFTER the StoreOpen early-return, so this can
+	// never fire while the store is open (§2.4's "session coins provably
+	// do not accrue" — see TestSessionAccruesWhileStoreOpen).
+	if g.session != nil {
+		g.session.coinsEarned += devCash
+	}
 }
 
 // recordStats folds one engine.TickResult into the running Analytics Phase
@@ -664,6 +724,18 @@ func (g *Game) recordStats(r engine.TickResult) (switchCounted bool) {
 		g.statsToday.AppSwitches++
 		g.statsLifetime.AppSwitches++
 		switchCounted = true
+	}
+
+	// P2 (docs/plan/P2-design.md §2.3): longestFocusBlockSeconds is the
+	// session-scoped analogue of statsFocusBlockMax above — a MAX, not a
+	// sum, with no monotonic lifetime counter to derive it from, so it is
+	// a per-session accumulator updated HERE, unconditionally, every
+	// tick, the same "analytics, not economy" rule statsFocusBlockMax
+	// itself already follows (this runs before the StoreOpen gate in
+	// Tick). It spans the whole session, so it can exceed any single
+	// day's statsFocusBlockMax once a session crosses midnight.
+	if g.session != nil && r.FocusRunSeconds > g.session.longestFocusBlockSeconds {
+		g.session.longestFocusBlockSeconds = r.FocusRunSeconds
 	}
 
 	return switchCounted
@@ -853,6 +925,7 @@ func (g *Game) State() StateMessage {
 			History:    g.buildHistoryView(),
 			Streak:     g.buildStreakView(),
 		},
+		Sessions:   g.sessionsView(),
 		Config:     ConfigView{Name: g.configName},
 		Onboarding: g.onboarding,
 	}
