@@ -10,7 +10,9 @@ import * as store from '../state/store';
 import { sendAction, setStoreOpenHoldDesired } from '../state/ws-client';
 import { assetUrl } from '../assets';
 import { clamp, fmtInt, truncate } from '../format';
-import { CHAIR_RECT, DEV_RECT, SLOT_RECT } from '../geometry';
+import {
+  CHAIR_RECT, CHAIR_Z_DETAIL, CHAIR_Z_FORM, DEV_RECT, DEV_Z_BASE, DEV_Z_FORM, DEV_Z_STYLE, SLOT_RECT
+} from '../geometry';
 import { buildTintLayer, plainImg, positionEl, swatchColor } from '../render/tint';
 import { currentDevFrame } from '../render/scene';
 import { flashInsufficientFunds } from '../render/flash';
@@ -421,11 +423,11 @@ function renderComposedPreview(previewSlotId: string, previewItem: CatalogItem, 
   positionEl(chairHolder, { left: chairRect.left - bboxLeft, top: chairRect.top - bboxTop, w: chairRect.w, h: chairRect.h });
   const chairTintLayer = buildTintLayer(chairItem.sprite, store.tintHexFor(chairTint));
   positionEl(chairTintLayer, { left: 0, top: 0, w: chairRect.w, h: chairRect.h });
-  chairTintLayer.style.zIndex = '1';
+  chairTintLayer.style.zIndex = String(CHAIR_Z_FORM);
   chairHolder.appendChild(chairTintLayer);
   if (chairItem.detail) {
     const chairDetail = plainImg(chairItem.detail, { left: 0, top: 0, w: chairRect.w, h: chairRect.h });
-    chairDetail.style.zIndex = '2';
+    chairDetail.style.zIndex = String(CHAIR_Z_DETAIL);
     chairHolder.appendChild(chairDetail);
   }
   root.appendChild(chairHolder);
@@ -436,15 +438,15 @@ function renderComposedPreview(previewSlotId: string, previewItem: CatalogItem, 
   const frame = currentDevFrame();
   const formLayer = buildTintLayer('dev_form_' + frame + '.png', store.tintHexFor(hoodieTint));
   positionEl(formLayer, { left: 0, top: 0, w: devRect.w, h: devRect.h });
-  formLayer.style.zIndex = '3';
+  formLayer.style.zIndex = String(DEV_Z_FORM);
   devHolder.appendChild(formLayer);
   if (hoodieItem) {
     const styleImg = plainImg(hoodieItem.sprite, { left: 0, top: 0, w: devRect.w, h: devRect.h });
-    styleImg.style.zIndex = '4';
+    styleImg.style.zIndex = String(DEV_Z_STYLE);
     devHolder.appendChild(styleImg);
   }
   const baseImg = plainImg('dev_base_' + frame + '.png', { left: 0, top: 0, w: devRect.w, h: devRect.h });
-  baseImg.style.zIndex = '5';
+  baseImg.style.zIndex = String(DEV_Z_BASE);
   devHolder.appendChild(baseImg);
   root.appendChild(devHolder);
 }

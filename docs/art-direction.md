@@ -1,9 +1,12 @@
 # Art direction — dexel v2 (behind-the-shoulder)
 
 **This is a v2 rewrite. The v0.2 side-view composition is superseded.** The
-camera has moved: we now sit *behind and slightly above* the hooded developer,
-looking past them at their monitor. Everything downstream of that — every
-sprite silhouette, every anchor, the layer order — changes. See
+camera has moved: we now sit in a mixed behind + slightly-elevated, 3/4
+over-the-shoulder view of the hooded developer, looking past them at their
+monitor — close enough behind, and high enough above, that both hands stay
+visible on the keyboard, with the right hand reaching over to the mouse
+during real mouse activity. Everything downstream of that — every sprite
+silhouette, every anchor, the layer order — changes. See
 "What survives from v0.2": for the PNGs the answer is *nothing*.
 
 **Engine note (ADR 0011).** The shipping game is Go + HTML/JS/NES.css. This
@@ -180,16 +183,16 @@ These `(px, py)` pairs are literally `left`/`top` inside `#scene-sprites`.
 | keyboard slot | 96x24 | 112, 90 | 112..208 | 90..114 |
 | mouse slot | 44x24 | 224, 90 | 224..268 | 90..114 |
 | chair slot | per style | x-centred on 160, **bottom edge = row 200** | | |
-| developer | 88x104 | 116, 92 | 116..204 | 92..196 |
+| developer | 192x76 | 64, 92 | 64..256 | 92..168 |
 
 Chair `left`/`top` derive from the anchor rule below:
 
 | Chair style | Size | left | top |
 |---|---|---|---|
-| `chair_basic` | 136x84 | 92 | 116 |
-| `chair_racer` | 140x88 | 90 | 112 |
-| `chair_exec` | 144x100 | 88 | 100 |
-| `chair_antigrav` | 128x72 | 96 | 128 |
+| `chair_basic` | 112x58 | 104 | 142 |
+| `chair_racer` | 116x58 | 102 | 142 |
+| `chair_exec` | 120x58 | 100 | 142 |
+| `chair_antigrav` | 96x58 | 112 | 142 |
 
 ### Derivation rules (so nothing is a magic number)
 
@@ -209,11 +212,15 @@ Chair `left`/`top` derive from the anchor rule below:
   column always x=160. So `left = 160 - w/2` and `top = 200 - h`, a taller
   style grows *upward*, and no per-style offset table has to be maintained by
   hand (the table above is derived, not authored).
-* **HARD chair constraint:** above room row 120, a chair sprite may only paint
-  pixels at `x < 116` or `x > 204` (the wing columns). This is what guarantees
-  that no chair style, however tall, ever occludes the keyboard or the hands.
-  The generator must assert it per chair sprite.
-* **Developer anchor** is fixed at (116, 92) for all four frames and all
+* **HARD chair constraints (behind-view compositing):** the chair now
+  composites ON TOP of the developer (see "Layer order" below), so two
+  regions are asserted per chair sprite: (1) no chair pixel in the keyboard's
+  column band `x[112,208]` above room row 116, so the chair can never paint
+  over a purchasable keyboard; (2) no chair pixel above room row 144 at all —
+  the developer's shoulder line. Everything of the figure nearer the camera
+  than the chair (hood, arms, hands) stays above that line; everything the
+  chair should occlude (mid/lower back) is below it.
+* **Developer anchor** is fixed at (64, 92) for all five frames and all
   hoodie layers; the frames are same-canvas overlays, never re-anchored.
 
 ### Layer order (back to front)
@@ -232,11 +239,11 @@ the contract.
  7  bev_<item>                    on the desk surface
  8  kb_<item>                     on the desk surface
  9  mouse_<item>                  on the desk surface
-10  chair_<style>_form            grayscale, runtime-tinted
-11  chair_<style>_detail          palette-pure: frame, wheels, stitching
-12  dev_form_<frame>              grayscale hoodie fabric, runtime-tinted
-13  hoodie_<style>                palette-pure style overlay, frame-independent
-14  dev_base_<frame>              palette-pure: hands, hood interior, outline
+10  dev_form_<frame>              grayscale hoodie fabric, runtime-tinted
+11  hoodie_<style>                palette-pure style overlay, frame-independent
+12  dev_base_<frame>              palette-pure: hands, hood interior, outline
+13  chair_<style>_form            grayscale, runtime-tinted
+14  chair_<style>_detail          palette-pure: frame, wheels, stitching
 --- #scene-text overlay, above every sprite ---
 15  terminal lines inside the screen region
 --- window chrome, above the scene ---
@@ -246,14 +253,19 @@ the contract.
 Two prose statements the list is only an encoding of. **If the prose and the
 list ever disagree, the prose wins.**
 
-1. **Desk items sit behind the developer, the chair sits behind the developer,
-   and the developer's hands sit on top of the keyboard.** That is why the dev
-   layers come last: the hands are part of the dev sprite, so putting the dev
+1. **Desk items sit behind the developer, and the developer's hands sit on top
+   of the keyboard.** That is why the dev layers still draw above the desk/
+   keyboard layers: the hands are part of the dev sprite, so putting the dev
    above the keyboard puts the hands on the keys for free, with no sprite
    splitting and no separate hand element to keep in sync.
-2. **The chair back rises in front of the desk's near edge.** It is nearer the
-   camera than the desk, so it occludes the slab's lip and the floor behind
-   it — but never the keyboard, per the hard constraint above.
+2. **The chair sits in front of the developer, not behind.** From behind a
+   seated person, the chair's backrest is nearer the camera than their torso,
+   so `chair_form`/`chair_detail` composite above the three dev layers — the
+   exact reverse of the old top-down order. Every chair sprite starts at or
+   below room row 144 (the developer's shoulder line, per the hard
+   constraints above), so the chair occludes the mid/lower back it should
+   occlude and nothing above that seam — never the keyboard, never the hood,
+   arms or hands.
 
 ## The screen region — a spec, not a picture
 
@@ -337,8 +349,8 @@ The result is `tint * ramp_value / 255`, per pixel, GPU-composited, with no
 interpolation.
 
 ```html
-<div class="tintable" style="--tint:#6a5aa0; left:116px; top:92px;
-                             width:88px; height:104px;">
+<div class="tintable" style="--tint:#6a5aa0; left:64px; top:92px;
+                             width:192px; height:76px;">
   <div class="tint-fill" style="--form:url(dev_form_type_a.png)"></div>
   <img class="tint-shade" src="dev_form_type_a.png" alt="">
 </div>
@@ -394,7 +406,7 @@ in the table, present and future.
 
 ## Sprite manifest v2
 
-45 authored files. Native (authored) pixel sizes, before integer upscale.
+47 authored files. Native (authored) pixel sizes, before integer upscale.
 Every palette-authored file paints only the 18 palette colours; every
 `*_form.png` paints only the 5-step ramp; everything resting on a surface ends
 in a 1px `shadow` contact row wider than itself.
@@ -407,35 +419,37 @@ in a 1px `shadow` contact row wider than itself.
 | `desk_back.png` | 320x58 | The slab from above-behind: `desk` surface with 4 `desk_dark` grain rows, a `wall_light` sheen band under the monitor's glow, near lip rows 56..58 in `desk_dark`, 1px `shadow` under the lip |
 | `monitor.png` | 132x64 | `metal` bezel (4px left/right/top), inner rect (4,4)-(128,48) filled flat `shadow` — **no text**, an 8px chin rows 48..56 with one `screen` power LED, neck+foot rows 56..64 with a `shadow` contact row |
 
-### Developer (12) — all 88x104, identical canvas and anchor
+### Developer (14) — all 192x76, identical canvas and anchor
 
 | File | Size | Content |
 |---|---|---|
-| `dev_form_idle.png` | 88x104 | Grayscale hoodie fabric. Arms up and around the dome, hands resting flat on the keys, no motion |
-| `dev_form_type_a.png` | 88x104 | Typing pose A |
-| `dev_form_type_b.png` | 88x104 | Typing pose B — **differs from A only in forearm/sleeve/cuff pixels**, so the 2-frame loop reads as typing, not as the whole body jittering |
-| `dev_form_sleep.png` | 88x104 | Slumped: shoulders 4 rows lower, dome tipped 3px forward, arms fallen off the keys |
-| `dev_base_idle.png` | 88x104 | Palette-pure: two `skin` hand clusters (~10x8 each), `hair` hood-interior crescent, 1px `shadow` silhouette outline |
-| `dev_base_type_a.png` | 88x104 | as above, pose A hands |
-| `dev_base_type_b.png` | 88x104 | as above, pose B hands (only the hands differ) |
-| `dev_base_sleep.png` | 88x104 | as above, slumped, plus a 5x5 `cream` `z` glyph above the dome's right shoulder |
-| `hoodie_classic.png` | 88x104 | Style overlay, frame-independent (it paints only the **back panel and hood**, which do not move between frames): `shadow` drawstrings, kangaroo-pocket seam |
-| `hoodie_zip.png` | 88x104 | `metal` zip teeth up the hood seam, `cream` pull tab |
-| `hoodie_tech.png` | 88x104 | `desk_dark` cross-strap, a `metal` buckle, one `screen` reflective stripe across the shoulders |
-| `hoodie_cloak.png` | 88x104 | `gold` hem trim, a long draped `shadow` fold pattern down the back panel |
+| `dev_form_idle.png` | 192x76 | Grayscale hoodie fabric. Arms up and around the dome, hands resting flat on the keys, no motion |
+| `dev_form_type_a.png` | 192x76 | Typing pose A |
+| `dev_form_type_b.png` | 192x76 | Typing pose B — **differs from A only in forearm/sleeve/cuff pixels**, so the 2-frame loop reads as typing, not as the whole body jittering |
+| `dev_form_mouse.png` | 192x76 | Mouse pose — the right arm leaves the keyboard for a longer reach to the mouse (room x224..267); its own explicit path, not an offset of a typing frame |
+| `dev_form_sleep.png` | 192x76 | Slumped: shoulders 4 rows lower, dome tipped 3px forward, arms fallen off the keys |
+| `dev_base_idle.png` | 192x76 | Palette-pure: two `skin` hand clusters (~10x8 each), `hair` hood-interior crescent, 1px `shadow` silhouette outline |
+| `dev_base_type_a.png` | 192x76 | as above, pose A hands |
+| `dev_base_type_b.png` | 192x76 | as above, pose B hands (only the hands differ) |
+| `dev_base_mouse.png` | 192x76 | as above, mouse-pose hands (right hand on the mouse) |
+| `dev_base_sleep.png` | 192x76 | as above, slumped, plus a 5x5 `cream` `z` glyph above the dome's right shoulder |
+| `hoodie_classic.png` | 192x76 | Style overlay, frame-independent (it paints only the **back panel and hood**, which do not move between frames): `shadow` drawstrings, kangaroo-pocket seam |
+| `hoodie_zip.png` | 192x76 | `metal` zip teeth up the hood seam, `cream` pull tab |
+| `hoodie_tech.png` | 192x76 | `desk_dark` cross-strap, a `metal` buckle, one `screen` reflective stripe across the shoulders |
+| `hoodie_cloak.png` | 192x76 | `gold` hem trim, a long draped `shadow` fold pattern down the back panel |
 
 ### Chair (8) — bottom-centre anchored at room row 200 / x=160
 
 | File | Size | Content |
 |---|---|---|
-| `chair_basic_form.png` | 136x84 | Grayscale: low mesh backrest, modest wings, seat sides |
-| `chair_basic_detail.png` | 136x84 | `metal` gas cylinder + 5-star base, `shadow` outline |
-| `chair_racer_form.png` | 140x88 | Grayscale: high bolstered wings, waisted back |
-| `chair_racer_detail.png` | 140x88 | `cream` double stitching, `metal` frame, `shadow` outline |
-| `chair_exec_form.png` | 144x100 | Grayscale: tall padded headrest wings, wide leather panels |
-| `chair_exec_detail.png` | 144x100 | `gold` button-tufting dots, `desk_dark` armrest tops, `shadow` outline |
-| `chair_antigrav_form.png` | 128x72 | Grayscale: wingless floating pod shell |
-| `chair_antigrav_detail.png` | 128x72 | `screen` glow ring, 3 drifting `lamp` float pixels, `shadow` outline — **no wheels, no cylinder** |
+| `chair_basic_form.png` | 112x58 | Grayscale: low mesh backrest, modest wings, seat sides |
+| `chair_basic_detail.png` | 112x58 | `metal` gas cylinder + 5-star base, `shadow` outline |
+| `chair_racer_form.png` | 116x58 | Grayscale: high bolstered wings, waisted back |
+| `chair_racer_detail.png` | 116x58 | `cream` double stitching, `metal` frame, `shadow` outline |
+| `chair_exec_form.png` | 120x58 | Grayscale: tall padded headrest wings, wide leather panels |
+| `chair_exec_detail.png` | 120x58 | `gold` button-tufting dots, `desk_dark` armrest tops, `shadow` outline |
+| `chair_antigrav_form.png` | 96x58 | Grayscale: wingless floating pod shell |
+| `chair_antigrav_detail.png` | 96x58 | `screen` glow ring, 3 drifting `lamp` float pixels, `shadow` outline — **no wheels, no cylinder** |
 
 ### Keyboard (4) — 96x24 at (112, 90)
 
@@ -537,15 +551,18 @@ eye"; `keyboard_t2`'s RGB idea becomes `kb_neon`'s underglow row.
 
 ## Character rules (v2)
 
-* Readable at 88x104. The hood is a **dome**, not a head: no face, no ears, no
+* Readable at 192x76. The hood is a **dome**, not a head: no face, no ears, no
   hair fringe. The only interior detail is a `hair` crescent implying depth.
-* **Never rotate, flip or re-anchor a frame.** The four frames are overlays on
-  one canvas at one anchor, so the frontend swaps a `src` and nothing moves.
+* **Never rotate, flip or re-anchor a frame.** The five frames (`idle`,
+  `type_a`, `type_b`, `mouse`, `sleep`) are overlays on one canvas at one
+  anchor, so the frontend swaps a `src` and nothing moves.
 * The two typing frames differ **only** in forearm/sleeve/cuff/hand pixels.
+  The `mouse` frame's right arm is a genuinely different, longer reach (to
+  room x224..267) with its own explicit path, not an offset of a typing frame.
 * Two `skin` hand clusters are the entire skin budget. Any more and the
   behind-view silhouette stops reading as a hooded figure.
 * The hoodie style overlay may only paint the **back panel and hood**, which
-  are static across all four frames. Anything that moves belongs in
+  are static across all five frames. Anything that moves belongs in
   `dev_form_*`/`dev_base_*`.
 
 ## Visual states
@@ -574,10 +591,12 @@ the one-line reason.
   load-bearing UI geometry (11 lines of terminal), and every variant would
   move it; a dual/ultrawide monitor would silently break the one element the
   whole composition points at.
-* **[DESIGN CALL] The camera is "behind, slightly elevated", not top-down.**
-  The mockups show both; the elevated behind-view is the only one that shows
-  the *whole* monitor face and the hood at once, which is the stated reason
-  for the view change.
+* **[DESIGN CALL] The camera is a mixed behind + slightly-elevated, 3/4
+  over-the-shoulder view, not top-down.** The mockups show both; this view is
+  the only one that shows the *whole* monitor face and the hood at once while
+  keeping both hands visible on the keyboard (and the right hand reaching to
+  the mouse during real mouse activity), which is the stated reason for the
+  view change.
 * **[DESIGN CALL] The desk spans the full 320px width.** The mockups show room
   visible past the desk's ends; a full-width slab removes two edge seams that
   would need per-side shading and buys nothing visually at 2x.
