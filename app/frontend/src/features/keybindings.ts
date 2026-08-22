@@ -1,21 +1,25 @@
 // FEATURE/LOGIC layer — global keyboard routing (ui-spec.md §5.2): [S] /
 // Tab open the store, [A] opens the activity log, [H] opens the history
 // modal (Analytics track Phase A3, docs/plan/A3-design.md §6/§7 Task
-// TS-1), and while any one modal is open its own keydown handler owns the
-// keyboard (Esc always falls through to native <dialog> behaviour, never
-// intercepted here). This module knows the modal features' public
+// TS-1), [W] opens the Sessions modal (Phase P2, docs/plan/P2-design.md
+// §6.3 — "work session"; S/Tab/A/H/M are taken, W is free), and while any
+// one modal is open its own keydown handler owns the keyboard (Esc always
+// falls through to native <dialog> behaviour, never intercepted here).
+// This module knows the modal features' public
 // open()/isOpen()/handleKeydown() surface — it never reaches into their
 // DOM.
 //
 // The hamburger menu (./menu.ts) is deliberately NOT given the same
 // keyboard-ownership tier as a modal: it never captures keys the way a
 // <dialog> with real content does, it just closes on Esc, and it steps
-// aside for [S]/[A]/[H]/Tab so those shortcuts keep working identically
-// whether or not the menu happens to be open. [M] toggles the menu itself.
+// aside for [S]/[A]/[H]/[W]/Tab so those shortcuts keep working
+// identically whether or not the menu happens to be open. [M] toggles the
+// menu itself.
 import * as storeModal from './store-modal';
 import * as activityModal from './activity-modal';
 import * as historyModal from './history-modal';
 import * as onboardingModal from './onboarding-modal';
+import * as sessionsModal from './sessions-modal';
 import * as menu from './menu';
 
 // Phase P1 hazard guard. Every shortcut this module owns is a BARE letter
@@ -61,6 +65,14 @@ export function init(): void {
       historyModal.handleKeydown(e);
       return;
     }
+    // Sessions (Phase P2) owns an input (the project name field) just
+    // like onboarding does, so it claims this tier even though its own
+    // handleKeydown only handles [W] — "presence is the point", the same
+    // reasoning onboarding-modal.ts's handleKeydown comment records.
+    if (sessionsModal.isOpen()) {
+      sessionsModal.handleKeydown(e);
+      return;
+    }
     if (menu.isOpen() && e.key === 'Escape') {
       e.preventDefault();
       menu.close();
@@ -70,6 +82,7 @@ export function init(): void {
     else if (e.key === 'Tab') { e.preventDefault(); menu.close(); storeModal.open(); }
     else if (e.key === 'a' || e.key === 'A') { e.preventDefault(); menu.close(); activityModal.open(); }
     else if (e.key === 'h' || e.key === 'H') { e.preventDefault(); menu.close(); historyModal.open(); }
+    else if (e.key === 'w' || e.key === 'W') { e.preventDefault(); menu.close(); sessionsModal.open(); }
     else if (e.key === 'm' || e.key === 'M') { e.preventDefault(); menu.toggle(); }
   });
 }

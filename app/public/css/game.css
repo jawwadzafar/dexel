@@ -506,7 +506,10 @@ img, .sprite {
 #flash.visible { display: block; }
 /* kind-welcome is Phase P1's one-off "Hello, <name>!" toast — gold, with
    purchase/sprint, because it is a celebration, not an acknowledgement. */
-#flash.kind-purchase, #flash.kind-sprint, #flash.kind-welcome { color: var(--gold); }
+/* kind-session (docs/plan/P2-design.md §3.1) is the session-complete
+   celebration toast — joins the gold group for the same reason
+   kind-welcome does: a celebration, not an acknowledgement. */
+#flash.kind-purchase, #flash.kind-sprint, #flash.kind-welcome, #flash.kind-session { color: var(--gold); }
 #flash.kind-equip { color: var(--cream); }
 #flash.kind-error { color: var(--pot); }
 
@@ -1179,6 +1182,264 @@ img, .sprite {
   left: 12px;
   top: 292px;
   width: 536px;
+  height: 10px;
+  line-height: 10px;
+  font-size: 8px;
+  color: var(--screen-dim);
+  text-align: right;
+}
+
+/* ================= sessions modal ================= */
+/* Phase P2 — Sessions (docs/plan/P2-design.md §6.3). Same mechanics as
+   #store/#activity/#history above (native <dialog>, showModal(), the
+   shared #scrim). Geometry pinned by the design: 480 x 300 at left 80,
+   top 50 — comfortably under BUG-8's ~346px browser dialog:modal
+   height cap (#history at 312px already proved that budget). Every
+   number lives in one of three `.sessions-view` panes — idle / live /
+   summary card — toggled by sessions-modal.ts's showView(); each pane
+   flows normally inside its own fixed-position box rather than
+   absolute-positioning every child (the same idiom #activity-section
+   uses for its own rows). */
+#sessions {
+  position: fixed;
+  left: 80px;
+  top: 50px;
+  width: 480px;
+  height: 300px;
+  margin: 0;
+  padding: 12px;
+  border: 4px solid var(--wall-light);
+  background: var(--metal);
+  color: var(--cream);
+  z-index: 1000;
+}
+#sessions::backdrop { background: transparent; }
+
+#sessions-title {
+  position: absolute;
+  left: 12px;
+  top: 12px;
+  width: 400px;
+  height: 16px;
+  font-size: 8px;
+  color: var(--cream);
+  line-height: 16px;
+}
+#sessions-close {
+  position: absolute;
+  left: 444px;
+  top: 12px;
+  width: 16px;
+  height: 16px;
+  padding: 0;
+  font-size: 8px;
+  line-height: 6px;
+}
+
+/* Padding-box is 480-8=472 wide, 300-8=292 tall. Each view sits at the
+   same box (left:12 top:32 width:448) below the title and above the
+   footer (top:280), matching #history/#activity's 12px left/right
+   margin convention; only one carries `.active` (display:block) at a
+   time. */
+.sessions-view { position: absolute; left: 12px; top: 32px; width: 448px; display: none; }
+.sessions-view.active { display: block; }
+
+.sessions-section-title {
+  height: 12px;
+  line-height: 12px;
+  font-size: 8px;
+  color: var(--screen-dim);
+  border-bottom: 2px solid var(--wall-light);
+  margin-bottom: 4px;
+}
+
+/* Shared row idiom (the same .label/.value split as .activity-row /
+   .coins-row) for the four effort-so-far numbers the live view and the
+   summary card both show. */
+.sessions-row {
+  position: relative;
+  height: 12px;
+  line-height: 12px;
+  font-size: 8px;
+  white-space: nowrap;
+}
+.sessions-row .label { color: var(--screen-dim); }
+.sessions-row .value {
+  position: absolute;
+  right: 0;
+  top: 0;
+  color: var(--cream);
+  text-align: right;
+}
+.sessions-row .value.gold { color: var(--gold); }
+
+/* ---- idle view: name input, START, recent list, summary line ---- */
+#sessions-name-label {
+  display: block;
+  height: 10px;
+  line-height: 10px;
+  font-size: 8px;
+  color: var(--cream);
+  margin-bottom: 2px;
+  white-space: nowrap;
+}
+/* Styled from scratch, same reasoning as #onboarding-name (ui-spec.md
+   §1: replace NES.css's .nes-input border-image/rem padding at this
+   fixed pixel size). */
+#sessions-name {
+  display: block;
+  box-sizing: border-box;
+  width: 300px;
+  height: 20px;
+  margin: 0 0 6px;
+  padding: 0 4px;
+  font-family: 'Press Start 2P', monospace;
+  font-size: 8px;
+  line-height: 18px;
+  color: var(--cream);
+  background: var(--shadow);
+  border: 2px solid var(--wall-light);
+  border-radius: 0;
+  caret-color: var(--gold);
+  -webkit-font-smoothing: none;
+}
+#sessions-name::placeholder { color: var(--screen-dim); }
+#sessions-name:focus { outline: 2px solid var(--gold); outline-offset: 0; }
+
+#sessions-start {
+  display: block;
+  width: 160px;
+  height: 20px;
+  padding: 0;
+  margin-bottom: 10px;
+  font-size: 8px;
+}
+
+#sessions-summary-line {
+  height: 12px;
+  line-height: 12px;
+  font-size: 8px;
+  color: var(--screen-dim);
+  white-space: nowrap;
+  margin-bottom: 8px;
+}
+#sessions-summary-line .value { color: var(--cream); }
+#sessions-summary-line .value.gold { color: var(--gold); }
+
+/* Rows built by sessions-modal.ts's createElement + replaceChildren (the
+   history-modal precedent) — up to SessionsWireWindow (10) at 11px each
+   comfortably fits the remaining budget without approaching the
+   footer; overflow-y:auto is a defensive cap, never expected to engage
+   at 10 rows. */
+#sessions-recent-list {
+  max-height: 128px;
+  overflow-y: auto;
+}
+.sessions-recent-row {
+  height: 11px;
+  line-height: 11px;
+  font-size: 8px;
+  color: var(--cream);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: pointer;
+}
+.sessions-recent-row:hover { background: var(--wall-dark); }
+#sessions-recent-empty {
+  height: 12px;
+  line-height: 12px;
+  font-size: 8px;
+  color: var(--screen-dim);
+}
+
+/* ---- live view: name, elapsed, effort-so-far, one action button ---- */
+#sessions-live-name {
+  height: 12px;
+  line-height: 12px;
+  font-size: 8px;
+  color: var(--cream);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  margin-bottom: 4px;
+}
+/* The "duration, large" cell from the design's card mock — this pixel
+   font is only ever set at 8px (the A2 anti-alias lesson), so visual
+   weight comes from colour + a taller line-height, never a bigger
+   font-size. */
+#sessions-live-elapsed {
+  height: 20px;
+  line-height: 20px;
+  font-size: 8px;
+  color: var(--gold);
+  margin-bottom: 10px;
+}
+#sessions-end {
+  display: block;
+  width: 160px;
+  height: 20px;
+  padding: 0;
+  margin-top: 10px;
+  font-size: 8px;
+}
+
+/* ---- summary card (§3.2) ---- */
+#sessions-card-title {
+  height: 12px;
+  line-height: 12px;
+  font-size: 8px;
+  color: var(--gold);
+  margin-bottom: 6px;
+}
+#sessions-card-name {
+  height: 12px;
+  line-height: 12px;
+  font-size: 8px;
+  color: var(--cream);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  margin-bottom: 2px;
+}
+/* Omitted entirely when the session was unnamed (JS sets display:none) —
+   never renders a placeholder in its place. */
+#sessions-card-name.hidden { display: none; }
+#sessions-card-duration {
+  height: 20px;
+  line-height: 20px;
+  font-size: 8px;
+  color: var(--gold);
+  border-bottom: 2px solid var(--wall-light);
+  margin-bottom: 8px;
+  padding-bottom: 4px;
+}
+#sessions-card-meta {
+  height: 12px;
+  line-height: 12px;
+  font-size: 8px;
+  color: var(--screen-dim);
+  border-top: 2px solid var(--wall-light);
+  margin-top: 6px;
+  padding-top: 6px;
+}
+#sessions-card-actions {
+  margin-top: 10px;
+  text-align: right;
+}
+#sessions-nice {
+  display: inline-block;
+  width: 100px;
+  height: 20px;
+  padding: 0;
+  font-size: 8px;
+}
+
+#sessions-help {
+  position: absolute;
+  left: 12px;
+  top: 280px;
+  width: 448px;
   height: 10px;
   line-height: 10px;
   font-size: 8px;

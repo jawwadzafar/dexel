@@ -157,6 +157,70 @@ export interface ConfigView {
   name: string;
 }
 
+// Phase P2 — Sessions (docs/plan/P2-design.md §6.1). The counters are
+// FLATTENED, deliberately mirroring DayStat's shape so one rule covers
+// both: a session view carries the same seven counters a day does. Every
+// field is a count, a duration, an ISO timestamp, an integer id, or a
+// closed-set enum — except `name`, the one user-authored string,
+// allow-listed on ADR 0014's category citation exactly as P1's
+// `ConfigView.name` was. Field names are PINNED verbatim by §8's contract
+// seam — do not rename or re-shape without re-reading that section.
+export interface ActiveSessionView {
+  id: number;
+  name: string; // "" when unnamed
+  startedAt: string; // RFC3339
+  elapsedSeconds: number; // SERVER-computed — the client never derives live time
+  keystrokes: number;
+  mouseActiveSeconds: number;
+  activeSeconds: number;
+  idleSeconds: number;
+  sprintsCompleted: number;
+  focusSessions: number;
+  appSwitches: number;
+  coinsEarned: number;
+  longestFocusBlockSeconds: number;
+}
+
+// A session has an end, and the end is one of a closed three-value set
+// (P2-design.md §2.5.5) — the same shape as ActiveState above.
+export type SessionEndReason = 'user' | 'idle' | 'maxDuration';
+
+export interface SessionView { // one finished session
+  id: number;
+  name: string;
+  startedAt: string;
+  endedAt: string;
+  durationSeconds: number;
+  keystrokes: number;
+  mouseActiveSeconds: number;
+  activeSeconds: number;
+  idleSeconds: number;
+  sprintsCompleted: number;
+  focusSessions: number;
+  appSwitches: number;
+  coinsEarned: number;
+  longestFocusBlockSeconds: number;
+  endReason: SessionEndReason;
+}
+
+export interface SessionsSummary {
+  completed: number; // lifetime sessions, derived from the verified log
+  thisWeek: number; // last SessionsWeekDays local dates, server-computed
+  longestSessionSeconds: number; // a cozy personal best, never a target
+}
+
+// One nested block, always sent by a P2 server (the P1 `config`
+// precedent) — the server always sends the block, it may just be empty
+// (active: null, recent: []). Typed optional here (`sessions?` on
+// StateMessage below) so a stale, pre-P2 server degrades to "no
+// sessions" — a clean empty state — rather than breaking type-checking
+// or crashing at runtime.
+export interface SessionsView {
+  active: ActiveSessionView | null; // null when none
+  summary: SessionsSummary;
+  recent: SessionView[]; // newest first, <= SessionsWireWindow (10)
+}
+
 export interface StateMessage {
   type: 'state';
   v: number;
@@ -187,6 +251,12 @@ export interface StateMessage {
   // post-SET_NAME broadcast says false — it never decides this itself and
   // never keeps the modal open against a false here.
   onboarding?: boolean;
+  // Phase P2 (docs/plan/P2-design.md §6.1) — optional for the same
+  // stale-server reason as `stats`/`config` above: a pre-P2 server sends
+  // no `sessions` block at all, which the Sessions modal must render as a
+  // clean empty state (no active session, no recent list) rather than
+  // crashing or fabricating one client-side.
+  sessions?: SessionsView;
 }
 
 export interface FlashMessage {
@@ -195,7 +265,20 @@ export interface FlashMessage {
   text?: string;
 }
 
-export type ServerMessage = CatalogMessage | StateMessage | FlashMessage;
+// Phase P2 (docs/plan/P2-design.md §3.1) — a dedicated message, sent to
+// every connection immediately after the `state` broadcast that cleared
+// the session. Not folded into `flash`: the client must not be made to
+// INFER which entry of `sessions.recent` just ended, so the server sends
+// the exact record instead ("the client never asserts state the server
+// didn't send"). The ordinary gold `flash{kind:"session"}` toast still
+// arrives too, as its own separate message, composed server-side.
+export interface SessionCompleteMessage {
+  type: 'sessionComplete';
+  v: number;
+  session: SessionView;
+}
+
+export type ServerMessage = CatalogMessage | StateMessage | FlashMessage | SessionCompleteMessage;
 
 // ---------------------------------------------------------------------
 // client -> server (ui-spec.md §6.2)
@@ -210,4 +293,13 @@ export type ClientAction =
   // SERVER trims it, drops control characters, caps it at 24 runes and
   // rejects an empty result (game.NormalizeName) — the client's own
   // trim/maxlength are a courtesy, never the validation.
-  | { action: 'SET_NAME'; name: string };
+  | { action: 'SET_NAME'; name: string }
+  // Phase P2 (docs/plan/P2-design.md §6.2). Names PINNED: SESSION_START /
+  // SESSION_STOP (the imperative pair matches the UI's Start/Stop buttons
+  // and the STORE_OPEN/STORE_CLOSE verb-pair precedent). `name` is raw
+  // user text and optional; the SERVER normalizes it
+  // (game.NormalizeSessionName: trim, drop control chars, cap at 32
+  // runes, empty is legal) — the client's own maxlength is a courtesy,
+  // never the validation.
+  | { action: 'SESSION_START'; name?: string }
+  | { action: 'SESSION_STOP' };

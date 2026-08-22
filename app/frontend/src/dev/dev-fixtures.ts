@@ -1,7 +1,7 @@
 // Dev-mode hardcoded catalog + state (docs/upgrade-design.md values).
 // Only used behind ?dev=1 (see ./dev-tools.ts) — never loaded in normal
 // operation. Pure data, no runtime logic.
-import type { CatalogMessage, DayStat, StateMessage, StreakView } from '../wire';
+import type { CatalogMessage, DayStat, SessionsView, SessionView, StateMessage, StreakView } from '../wire';
 
 export const DEV_CATALOG: CatalogMessage = {
   type: 'catalog', v: 1,
@@ -139,6 +139,91 @@ const DEV_HISTORY: DayStat[] = [
 // case where the two numbers are equal.
 const DEV_STREAK: StreakView = { current: 8, longest: 12 };
 
+// Phase P2 (docs/plan/P2-design.md §6.5) — 10 finished sessions spanning
+// two weeks (08-09..08-21, "today" being 08-22 per DEV_HISTORY above),
+// newest last for readability here but SENT/consumed newest-first (this
+// array is reversed below). Mixes all three `endReason` values, one
+// unnamed session, and one whose coinsEarned is 0 — per §6.5's checklist.
+// ids 17..26 make 26 the lifetime `completed` count, so the in-progress
+// DEV_STATE.sessions.active below (id 27 — "the ordinal it WILL have",
+// §2.2) lines up honestly with it.
+const DEV_SESSIONS_RECENT_OLDEST_FIRST: SessionView[] = [
+  { id: 17, name: 'onboarding polish', startedAt: '2026-08-09T13:00:00Z', endedAt: '2026-08-09T14:30:00Z', durationSeconds: 5400, keystrokes: 2200, mouseActiveSeconds: 300, activeSeconds: 4800, idleSeconds: 600, sprintsCompleted: 2, focusSessions: 3, appSwitches: 2, coinsEarned: 45, longestFocusBlockSeconds: 1800, endReason: 'user' },
+  // The one unnamed session (§6.5) — legal, per §2.2's "unnamed is a
+  // first-class state" — and the one whose coinsEarned is 0.
+  { id: 18, name: '', startedAt: '2026-08-10T09:00:00Z', endedAt: '2026-08-10T09:30:00Z', durationSeconds: 1800, keystrokes: 600, mouseActiveSeconds: 80, activeSeconds: 1500, idleSeconds: 300, sprintsCompleted: 0, focusSessions: 1, appSwitches: 0, coinsEarned: 0, longestFocusBlockSeconds: 900, endReason: 'user' },
+  { id: 19, name: 'bug bash', startedAt: '2026-08-11T10:00:00Z', endedAt: '2026-08-11T12:33:20Z', durationSeconds: 9200, keystrokes: 3400, mouseActiveSeconds: 500, activeSeconds: 8000, idleSeconds: 900, sprintsCompleted: 3, focusSessions: 4, appSwitches: 5, coinsEarned: 70, longestFocusBlockSeconds: 2400, endReason: 'idle' },
+  { id: 20, name: 'docs pass', startedAt: '2026-08-13T15:00:00Z', endedAt: '2026-08-13T16:00:00Z', durationSeconds: 3600, keystrokes: 1500, mouseActiveSeconds: 200, activeSeconds: 3000, idleSeconds: 400, sprintsCompleted: 1, focusSessions: 2, appSwitches: 1, coinsEarned: 30, longestFocusBlockSeconds: 1200, endReason: 'user' },
+  { id: 21, name: 'perf tuning', startedAt: '2026-08-14T11:00:00Z', endedAt: '2026-08-14T13:00:00Z', durationSeconds: 7200, keystrokes: 2800, mouseActiveSeconds: 420, activeSeconds: 6500, idleSeconds: 500, sprintsCompleted: 2, focusSessions: 3, appSwitches: 2, coinsEarned: 58, longestFocusBlockSeconds: 2100, endReason: 'user' },
+  // The 16h hard cap (game.SessionMaxDurationSeconds, §2.6) — an honest
+  // overnight-watch session with little activity, which is why it is
+  // also this fixture's `longestSessionSeconds` below (duration is real
+  // wall-clock time, never a proxy for effort).
+  { id: 22, name: 'overnight build watch', startedAt: '2026-08-16T02:00:00Z', endedAt: '2026-08-16T18:00:00Z', durationSeconds: 57600, keystrokes: 400, mouseActiveSeconds: 60, activeSeconds: 900, idleSeconds: 200, sprintsCompleted: 0, focusSessions: 0, appSwitches: 0, coinsEarned: 6, longestFocusBlockSeconds: 0, endReason: 'maxDuration' },
+  { id: 23, name: 'release cut', startedAt: '2026-08-17T09:00:00Z', endedAt: '2026-08-17T10:15:00Z', durationSeconds: 4500, keystrokes: 1800, mouseActiveSeconds: 260, activeSeconds: 3900, idleSeconds: 300, sprintsCompleted: 1, focusSessions: 2, appSwitches: 1, coinsEarned: 34, longestFocusBlockSeconds: 1500, endReason: 'user' },
+  { id: 24, name: 'auth refactor pt2', startedAt: '2026-08-19T10:00:00Z', endedAt: '2026-08-19T11:42:00Z', durationSeconds: 6120, keystrokes: 3100, mouseActiveSeconds: 340, activeSeconds: 5400, idleSeconds: 500, sprintsCompleted: 2, focusSessions: 3, appSwitches: 3, coinsEarned: 52, longestFocusBlockSeconds: 1320, endReason: 'user' },
+  { id: 25, name: 'flaky test hunt', startedAt: '2026-08-20T14:00:00Z', endedAt: '2026-08-20T14:45:00Z', durationSeconds: 2700, keystrokes: 1100, mouseActiveSeconds: 160, activeSeconds: 2300, idleSeconds: 300, sprintsCompleted: 1, focusSessions: 1, appSwitches: 1, coinsEarned: 20, longestFocusBlockSeconds: 1100, endReason: 'user' },
+  { id: 26, name: 'changelog + release notes', startedAt: '2026-08-21T16:00:00Z', endedAt: '2026-08-21T16:25:00Z', durationSeconds: 1500, keystrokes: 500, mouseActiveSeconds: 70, activeSeconds: 1200, idleSeconds: 200, sprintsCompleted: 0, focusSessions: 1, appSwitches: 0, coinsEarned: 9, longestFocusBlockSeconds: 600, endReason: 'idle' }
+];
+// The wire sends `recent` newest-first (§6.1) — reverse the readable
+// oldest-first list above once, here, rather than writing it backwards.
+const DEV_SESSIONS_RECENT: SessionView[] = DEV_SESSIONS_RECENT_OLDEST_FIRST.slice().reverse();
+
+// Active session mid-flight (§6.5 item 1): a non-round elapsed
+// (4931s = 1h 22m 11s), a name long enough to exercise truncation, and
+// counters that stay <= DEV_STATE.stats.today below (activeSeconds 480 <=
+// 610, idleSeconds 200 <= 340, keystrokes 620 <= 842).
+const DEV_ACTIVE_SESSION = {
+  id: 27,
+  name: 'Refactor Auth Engine And Session Persistence Layer',
+  startedAt: '2026-08-22T13:20:00Z',
+  elapsedSeconds: 4931,
+  keystrokes: 620,
+  mouseActiveSeconds: 70,
+  activeSeconds: 480,
+  idleSeconds: 200,
+  sprintsCompleted: 0,
+  focusSessions: 2,
+  appSwitches: 1,
+  coinsEarned: 14,
+  longestFocusBlockSeconds: 380
+};
+
+const DEV_SESSIONS: SessionsView = {
+  active: DEV_ACTIVE_SESSION,
+  // completed=26 (this fixture's 10-entry window is a truncated tail of
+  // a longer real log, per §5.6's "unbounded rows, a windowed UI").
+  // thisWeek=5: of the 10 entries above, those ending 08-16..08-21 fall
+  // inside the last SessionsWeekDays(7) local dates including "today"
+  // 08-22 (08-16,08-17,08-19,08-20,08-21).
+  summary: { completed: 26, thisWeek: 5, longestSessionSeconds: 57600 },
+  recent: DEV_SESSIONS_RECENT
+};
+
+// Phase P2 (docs/plan/P2-design.md §3.2) — the summary card's own mockup
+// numbers verbatim ("auth refactor", "1h 24m", "4,182 keys", "3 blocks
+// BEST 14m", "2 finished", "+18 earned"), so a screenshot of
+// window.devSessionComplete() matches the design doc's own worked
+// example exactly. id 27 lines up with DEV_SESSIONS.active above (the
+// ordinal this in-progress session would get if it ended now).
+export const DEV_SESSION_COMPLETE_SAMPLE: SessionView = {
+  id: 27,
+  name: 'auth refactor',
+  startedAt: '2026-08-22T12:00:00Z',
+  endedAt: '2026-08-22T13:24:00Z',
+  durationSeconds: 5040,
+  keystrokes: 4182,
+  mouseActiveSeconds: 380,
+  activeSeconds: 4700,
+  idleSeconds: 340,
+  sprintsCompleted: 2,
+  focusSessions: 3,
+  appSwitches: 2,
+  coinsEarned: 18,
+  longestFocusBlockSeconds: 840,
+  endReason: 'user'
+};
+
 export const DEV_STATE: StateMessage = {
   type: 'state', v: 1,
   activeState: 'coding',
@@ -200,7 +285,8 @@ export const DEV_STATE: StateMessage = {
   // SAY HELLO/SKIP will not close the modal in dev mode (the close is
   // driven by the server's next state, by design). Use devApply for that.
   config: { name: 'Pixel' },
-  onboarding: false
+  onboarding: false,
+  sessions: DEV_SESSIONS
 };
 
 // DEV_STATE_ONBOARDING is the fresh-install fixture: unnamed, onboarding
@@ -231,4 +317,13 @@ export const DEV_STATE_ONBOARDING: Partial<StateMessage> = {
   ownedTints: [],
   config: { name: '' },
   onboarding: true
+};
+
+// DEV_STATE_NO_SESSION (§6.5 item 2) is the idle-view fixture: no active
+// session and an empty log — the same "honest empty log" §5.4 accepts
+// from a real pre-P2-save migration. Hand it to window.devApply to see
+// the Sessions modal's clean empty state without a backend:
+//   window.devApply(window.devStateNoSession)
+export const DEV_STATE_NO_SESSION: Partial<StateMessage> = {
+  sessions: { active: null, summary: { completed: 0, thisWeek: 0, longestSessionSeconds: 0 }, recent: [] }
 };

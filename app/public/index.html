@@ -30,6 +30,7 @@
         <button id="store-open" class="nes-btn menu-item">[S] STORE</button>
         <button id="activity-open" class="nes-btn menu-item">[A] ACTIVITY</button>
         <button id="history-open" class="nes-btn menu-item">[H] HISTORY</button>
+        <button id="sessions-open" class="nes-btn menu-item">[W] SESSIONS</button>
       </div>
     </div>
 
@@ -143,6 +144,56 @@
       </div>
 
       <div id="history-help">H / ESC CLOSE</div>
+    </dialog>
+
+    <!-- Phase P2 — Sessions (docs/plan/P2-design.md §6.3). Three views in
+         one dialog, switched by which one the server's state makes true
+         (never by client-held mode): idle (no active session — the name
+         input + START, then the recent list, then the summary line),
+         live (a session is active — elapsed + effort-so-far, one action
+         button that reads END or CANCEL), and the SESSION COMPLETE card
+         (§3.2), shown by sessionsModal.showSummary() and dismissed by
+         NICE/Esc. Gates nothing — no open/close action is ever sent. -->
+    <dialog id="sessions" class="nes-dialog is-dark">
+      <div id="sessions-title">SESSIONS</div>
+      <button id="sessions-close" class="nes-btn">X</button>
+
+      <div id="sessions-idle" class="sessions-view">
+        <label id="sessions-name-label" for="sessions-name">PROJECT NAME (OPTIONAL)</label>
+        <input id="sessions-name" type="text" maxlength="32" autocomplete="off"
+               spellcheck="false" placeholder="unnamed">
+        <button id="sessions-start" class="nes-btn">START SESSION</button>
+
+        <div id="sessions-summary-line"></div>
+
+        <div id="sessions-recent-title" class="sessions-section-title">RECENT SESSIONS</div>
+        <div id="sessions-recent-list"></div>
+        <div id="sessions-recent-empty">NO SESSIONS YET — START YOUR FIRST ONE ABOVE.</div>
+      </div>
+
+      <div id="sessions-live" class="sessions-view">
+        <div id="sessions-live-name"></div>
+        <div id="sessions-live-elapsed"></div>
+        <div class="sessions-row"><span class="label">TYPED</span><span class="value" id="sessions-live-keys">0</span></div>
+        <div class="sessions-row"><span class="label">FOCUS</span><span class="value" id="sessions-live-focus">0</span></div>
+        <div class="sessions-row"><span class="label">SPRINTS</span><span class="value" id="sessions-live-sprints">0</span></div>
+        <div class="sessions-row"><span class="label">COINS</span><span class="value gold" id="sessions-live-coins">+0</span></div>
+        <button id="sessions-end" class="nes-btn">END SESSION</button>
+      </div>
+
+      <div id="sessions-summary" class="sessions-view">
+        <div id="sessions-card-title">SESSION COMPLETE</div>
+        <div id="sessions-card-name"></div>
+        <div id="sessions-card-duration"></div>
+        <div class="sessions-row"><span class="label">TYPED</span><span class="value" id="sessions-card-keys">0</span></div>
+        <div class="sessions-row"><span class="label">FOCUS</span><span class="value" id="sessions-card-focus">0</span></div>
+        <div class="sessions-row"><span class="label">SPRINTS</span><span class="value" id="sessions-card-sprints">0</span></div>
+        <div class="sessions-row"><span class="label">COINS</span><span class="value gold" id="sessions-card-coins">0</span></div>
+        <div id="sessions-card-meta"></div>
+        <div id="sessions-card-actions"><button id="sessions-nice" class="nes-btn">NICE</button></div>
+      </div>
+
+      <div id="sessions-help">W / ESC CLOSE</div>
     </dialog>
 
     <!-- Phase P1 — Identity & first minutes (docs/ui-spec.md §7). Opened
