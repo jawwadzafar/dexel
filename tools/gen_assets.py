@@ -15,11 +15,12 @@ sampling), and a re-run with no source change rewrites the same bytes.
 Output is deterministic: every pixel position is either literal or derived
 from integer arithmetic, so a re-run with no source change rewrites the same
 bytes. The run ends with a self-check (size, palette/ramp purity, opaque-pixel
-count, the chair hard-region constraint, the two frame-difference rules, the
-monitor's exact screen rect) and exits non-zero if any sprite fails it, so a
-botched edit here cannot quietly ship a blank, off-palette, or mis-anchored
-asset. It also deletes any stale file in app/assets/ that is not part of the v2
-manifest, so a rewrite like this one cannot leave v0.2 corpses behind.
+count, the chair hard-region constraint, the frame-difference rules, the P3
+ambient body-lift ladder, the monitor's exact screen rect) and exits non-zero
+if any sprite fails it, so a botched edit here cannot quietly ship a blank,
+off-palette, or mis-anchored asset. It also deletes any stale file in
+app/assets/ that is not part of the v2 manifest, so a rewrite like this one
+cannot leave v0.2 corpses behind.
 """
 
 from __future__ import annotations
@@ -290,7 +291,7 @@ def chair_back_top_rim(s: "Sprite", x0: int, x1: int, y: int) -> None:
             s.dot(x, y + 1, ramp_dither(x, y + 1, 3.4))
 
 
-# The 47-file v2 manifest (docs/art-direction.md, "Sprite manifest v2"), used
+# The 55-file v2 manifest (docs/art-direction.md, "Sprite manifest v2"), used
 # both to author and to verify. Keep in sync with the doc; the self-check
 # compares against this and the final app/assets/ directory listing must equal
 # exactly these files plus their derived thumbnails - nothing else survives.
@@ -316,6 +317,18 @@ SPEC: list[tuple[str, int, int]] = [
     ("dev_base_type_b.png", 192, 76),
     ("dev_base_mouse.png", 192, 76),
     ("dev_base_sleep.png", 192, 76),
+    # P3 "Character life" (docs/plan/PRODUCT-EVOLUTION.md Phase P3): four
+    # ADDITIVE frames on the SAME approved pose - two ambient (breath,
+    # stretch) and a two-frame celebration pair (cheer_a/cheer_b). No
+    # proportion, silhouette or shading rule changes; see DEV_AMBIENT_FRAMES.
+    ("dev_form_breath.png", 192, 76),
+    ("dev_form_stretch.png", 192, 76),
+    ("dev_form_cheer_a.png", 192, 76),
+    ("dev_form_cheer_b.png", 192, 76),
+    ("dev_base_breath.png", 192, 76),
+    ("dev_base_stretch.png", 192, 76),
+    ("dev_base_cheer_a.png", 192, 76),
+    ("dev_base_cheer_b.png", 192, 76),
     ("hoodie_classic.png", 192, 76),
     ("hoodie_zip.png", 192, 76),
     ("hoodie_tech.png", 192, 76),
@@ -366,7 +379,7 @@ SPEC: list[tuple[str, int, int]] = [
     ("buddy_cat.png", 28, 30),
 ]
 SPEC_NAMES = {name for name, _, _ in SPEC}
-assert len(SPEC) == 47, f"manifest drifted: {len(SPEC)} entries, expected 47"
+assert len(SPEC) == 55, f"manifest drifted: {len(SPEC)} entries, expected 55"
 
 # `*_form.png` files are palette-purity EXEMPT and ramp-purity CHECKED instead
 # (art-direction "Palette-purity exception (the only one)"). Covers both the
@@ -384,6 +397,19 @@ TYPING_PAIR = ("dev_base_type_a.png", "dev_base_type_b.png")
 TYPING_FABRIC_PAIR = ("dev_form_type_a.png", "dev_form_type_b.png")
 MOUSE_PAIR = ("dev_base_type_a.png", "dev_base_mouse.png")
 BLINK_PAIR = ("buddy_bot_a.png", "buddy_bot_b.png")
+
+# The four hoodie style overlays, in manifest order - the files that are shared
+# by every dev frame and therefore have their own alignment rules.
+HOODIE_FILES = tuple(name for name, _w, _h in SPEC
+                     if name.startswith("hoodie_"))
+# P3: the ambient ladder (idle -> breath -> stretch is a 0/-1/-2px body lift,
+# so consecutive rungs MUST differ) and the celebration bounce. Checked on
+# dev_form for the ambient pair (the whole garment is what moves) and on
+# dev_base for the cheer pair (the hands are what fling out).
+AMBIENT_PAIRS = (("dev_form_idle.png", "dev_form_breath.png"),
+                 ("dev_form_breath.png", "dev_form_stretch.png"),
+                 ("dev_base_idle.png", "dev_base_breath.png"))
+CHEER_PAIR = ("dev_base_cheer_a.png", "dev_base_cheer_b.png")
 
 
 # --------------------------------------------------------------------------
@@ -883,7 +909,31 @@ DEV_W, DEV_H = 192, 76
 DEV_MIRROR = DEV_W - 1        # 191; mirrored x = DEV_MIRROR - x (centre 95.5)
 DEV_CX = DEV_W // 2           # 96; the figure's centreline is local 95/96
 DEV_OX, DEV_OY = 64, 92       # room x = DEV_OX + lx, room y = DEV_OY + ly
-DEV_FRAMES = ("idle", "type_a", "type_b", "mouse", "sleep")
+# P3 "Character life" - AMBIENT + CELEBRATION frames.
+#
+# The rule these four frames are authored under: the owner-approved pose,
+# proportions and silhouette do not change. Each new frame is the SAME figure
+# displaced by 1..3px, so the scheduler in render/scene.ts can cross-fade
+# between them by plain sprite swap and the figure never morphs:
+#
+#   breath   the whole upper body (hood + back + the shoulder end of both
+#            arms) rises 1px; the HANDS stay planted on the keys. A shoulder
+#            rise, which is what a breath looks like from behind.
+#   stretch  the same lift, 2px, held longer - sitting up / stretching out of
+#            the chair with the hands still on the keyboard.
+#   cheer_a/ the celebration beat: body up 1px / 3px (a bounce) with both
+#   cheer_b  hands flung OFF the keys and OUT past the keyboard's two ends.
+#            Overhead is physically unavailable on this canvas - the hands
+#            already sit on the top legal row (DEV_KB_GUARD_ROW), so "arms
+#            up" is expressed as arms opened wide plus a vertical bounce.
+#
+# ARM LIFT, not arm redraw: breath/stretch reuse _ARM_BASE_LEFT and shift only
+# its shoulder-side control points (see _ARM_LIFT_WEIGHT), so the wrist stays
+# exactly where the keys are and the limb cannot detach at either end.
+DEV_AMBIENT_FRAMES = ("breath", "stretch")
+DEV_CHEER_FRAMES = ("cheer_a", "cheer_b")
+DEV_FRAMES = ("idle", "type_a", "type_b", "mouse", "sleep") + \
+    DEV_AMBIENT_FRAMES + DEV_CHEER_FRAMES
 
 # Keyboard guard: the keyboard (room y90..113) is drawn UNDER the developer,
 # so the hands legitimately cover its NEAR rows - but its far rows must stay
@@ -953,8 +1003,34 @@ def _back_hw(y: int) -> int:
     return max(18, 46 - ((y - 64) * 3) // 2)   # rounded taper into the seat
 
 
-DOME_DY = {"idle": 0, "type_a": 0, "type_b": 0, "mouse": 0, "sleep": 3}
-BACK_DY = {"idle": 0, "type_a": 0, "type_b": 0, "mouse": 0, "sleep": 2}
+DOME_DY = {"idle": 0, "type_a": 0, "type_b": 0, "mouse": 0, "sleep": 3,
+           "breath": -1, "stretch": -2, "cheer_a": -1, "cheer_b": -3}
+BACK_DY = {"idle": 0, "type_a": 0, "type_b": 0, "mouse": 0, "sleep": 2,
+           "breath": -1, "stretch": -2, "cheer_a": -1, "cheer_b": -3}
+
+# HOODIE-OVERLAY ALIGNMENT (this is why every P3 frame lifts hood and back by
+# the SAME amount, unlike `sleep`, whose 3px/2px split is the documented
+# pre-P3 simplification). The four hoodie_<style>.png overlays are authored
+# once against the `idle` geometry and are the same single file for every
+# frame - the wire carries one sprite filename per catalog item and this
+# generator does not fork it per frame. So a frame that MOVES the
+# overlay-bearing hood/back has exactly two honest options: ship per-frame
+# overlay variants (a new asset per style per frame, and a catalog/wire change
+# to select them), or move the ONE overlay by the same rigid offset the fabric
+# moved. The P3 frames take the second, which is exact precisely because
+# DOME_DY == BACK_DY here: render/scene.ts offsets the hoodie layer's `top` by
+# FRAME_OVERLAY_DY[frame] and every drawstring, zip tooth and hem stripe stays
+# pixel-locked to the fabric it is printed on. main() prints this table so the
+# frontend copy of it can be diffed against the art.
+FRAME_OVERLAY_DY = {f: (DOME_DY[f] if DOME_DY[f] == BACK_DY[f] else None)
+                    for f in DEV_FRAMES}
+assert FRAME_OVERLAY_DY["sleep"] is None, "sleep is the ONE non-rigid frame"
+assert all(dy is not None for f, dy in FRAME_OVERLAY_DY.items() if f != "sleep"), \
+    "every non-sleep frame must lift hood and back rigidly (DOME_DY == BACK_DY)"
+# The largest upward displacement any frame applies, i.e. how far the hoodie
+# overlay can be shifted up by the frontend - which is why the overlays have
+# to keep this many EXTRA rows clear above DEV_KB_GUARD_ROW (assert_dev_lift_headroom).
+DEV_MAX_BODY_LIFT = -min(min(DOME_DY.values()), min(BACK_DY.values()))
 
 
 def _hood_span(y: int, ddy: int):
@@ -1011,6 +1087,21 @@ _ARM_MOUSE_RIGHT = [
 ]
 _HAND_MOUSE_RIGHT = (168, 188, 8, 17)   # room x232..252, y100..109
 
+# P3 `cheer_a`/`cheer_b`: the celebration. Both arms open wide - a straight-ish
+# diagonal from the deltoid (which does NOT move sideways; a shoulder cannot)
+# out to a hand well past the end of the keyboard, so the pair reads as a V
+# rather than the two near-vertical tubes the typing pose is. The deltoid row
+# carries the frame's body bounce (-1 / -3), which is what makes the two frames
+# a bounce instead of a lateral twitch. Hands stay on local rows 8..17: the
+# keyboard far-row guard (DEV_KB_GUARD_ROW) forbids going any higher, so the
+# celebration's energy is spent on width plus the bounce.
+_ARM_CHEER_LEFT = {
+    "cheer_a": [(48, 20, 5.5), (53, 31, 6.0), (58, 42, 7.0), (64, 53, 9.5)],
+    "cheer_b": [(42, 20, 5.5), (49, 31, 6.0), (56, 42, 7.0), (64, 51, 9.5)],
+}
+_HAND_CHEER_LEFT = {"cheer_a": (38, 58, 8, 17),    # room x102..122
+                    "cheer_b": (32, 52, 8, 17)}    # room x96..116
+
 # `sleep`: the hands have slid forward-and-down OFF the keys onto the desk
 # lip, the forearms folded short into a slumped shoulder.
 _ARM_SLEEP_LEFT = [
@@ -1033,7 +1124,22 @@ FRAME_HAND_OFFSET = {
     "type_b": {"L": (0, 2), "R": (0, 0)},
     "mouse":  {"L": (0, 1), "R": (0, 0)},
     "sleep":  {"L": (0, 0), "R": (0, 0)},
+    # P3 ambient: the hands do NOT move - a breath is a shoulder rise, and a
+    # hand that drifted off its key would break the one thing the typing
+    # animation established (motion belongs ON the keyboard). The cheer frames
+    # carry their own hand rects (_HAND_CHEER_LEFT) instead of an offset.
+    "breath": {"L": (0, 0), "R": (0, 0)},
+    "stretch": {"L": (0, 0), "R": (0, 0)},
+    "cheer_a": {"L": (0, 0), "R": (0, 0)},
+    "cheer_b": {"L": (0, 0), "R": (0, 0)},
 }
+
+# How much of a frame's body lift each arm control point takes, from the WRIST
+# (index 0, pinned to the keys) down to the DELTOID (index 3, which rises with
+# the shoulders). The graded middle is what keeps the forearm a smooth tube
+# instead of kinking at the elbow: at -1px the arm bends only at the elbow and
+# below, at -2px the forearm eases in by 1px on the way.
+_ARM_LIFT_WEIGHT = (0.0, 0.4, 1.0, 1.0)
 
 
 def _arm_points(frame: str, side: str):
@@ -1047,11 +1153,20 @@ def _arm_points(frame: str, side: str):
         return pts
     if frame == "mouse" and side == "R":
         return [list(p) for p in _ARM_MOUSE_RIGHT]
+    if frame in DEV_CHEER_FRAMES:
+        pts = [list(p) for p in _ARM_CHEER_LEFT[frame]]
+        if side == "R":
+            pts = [[DEV_MIRROR - p[0], p[1], p[2]] for p in pts]
+        return pts
     pts = [list(p) for p in _ARM_BASE_LEFT]
     ox, oy = FRAME_HAND_OFFSET[frame][side]
     for i in (0, 1):
         pts[i][0] += ox
         pts[i][1] += oy
+    if frame in DEV_AMBIENT_FRAMES:
+        lift = BACK_DY[frame]
+        for i, w in enumerate(_ARM_LIFT_WEIGHT):
+            pts[i][1] += int(round(lift * w))
     if side == "R":
         pts = [[DEV_MIRROR - p[0], p[1], p[2]] for p in pts]
     return pts
@@ -1086,6 +1201,9 @@ def _dev_hand_rects(frame: str):
     """Left/right skin hand rects (dev_base only) for `frame`."""
     if frame == "sleep":
         x0, x1, y0, y1 = _HAND_SLEEP_LEFT
+        return (x0, x1, y0, y1), (DEV_MIRROR - x1, DEV_MIRROR - x0, y0, y1)
+    if frame in DEV_CHEER_FRAMES:
+        x0, x1, y0, y1 = _HAND_CHEER_LEFT[frame]
         return (x0, x1, y0, y1), (DEV_MIRROR - x1, DEV_MIRROR - x0, y0, y1)
     x0, x1, y0, y1 = _HAND_BASE_LEFT
     lox, loy = FRAME_HAND_OFFSET[frame]["L"]
@@ -2233,6 +2351,14 @@ BUILDERS = {
     "dev_base_type_b.png": lambda: build_dev_base("type_b"),
     "dev_base_mouse.png": lambda: build_dev_base("mouse"),
     "dev_base_sleep.png": lambda: build_dev_base("sleep"),
+    "dev_form_breath.png": lambda: build_dev_form("breath"),
+    "dev_form_stretch.png": lambda: build_dev_form("stretch"),
+    "dev_form_cheer_a.png": lambda: build_dev_form("cheer_a"),
+    "dev_form_cheer_b.png": lambda: build_dev_form("cheer_b"),
+    "dev_base_breath.png": lambda: build_dev_base("breath"),
+    "dev_base_stretch.png": lambda: build_dev_base("stretch"),
+    "dev_base_cheer_a.png": lambda: build_dev_base("cheer_a"),
+    "dev_base_cheer_b.png": lambda: build_dev_base("cheer_b"),
     "hoodie_classic.png": build_hoodie_classic,
     "hoodie_zip.png": build_hoodie_zip,
     "hoodie_tech.png": build_hoodie_tech,
@@ -2554,6 +2680,27 @@ def assert_dev_region(name: str, s: Sprite) -> str:
             f"(local rows 0..{DEV_KB_GUARD_ROW - 1} = room y92..{92 + DEV_KB_GUARD_ROW - 1})")
 
 
+def assert_dev_lift_headroom(name: str, s: Sprite) -> str:
+    """P3 overlay-lift guard. render/scene.ts shifts the hoodie style overlay
+    UP by FRAME_OVERLAY_DY[frame] (0..DEV_MAX_BODY_LIFT px) so its marks stay
+    printed on the fabric that moved. A shifted overlay would therefore push
+    any mark within DEV_MAX_BODY_LIFT rows of the keyboard far-row guard INTO
+    that guard - so the overlays must keep those rows clear too, not just the
+    guard's own rows. (dev_form/dev_base need no such margin: they are never
+    offset by the frontend, the lift is baked into the frame.)"""
+    limit = DEV_KB_GUARD_ROW + DEV_MAX_BODY_LIFT
+    px = s.img.load()
+    bad = [(x, y) for y in range(0, limit) for x in range(s.w)
+           if px[x, y][3] != 0]
+    if bad:
+        raise AssertionError(
+            f"{name}: {len(bad)} px in local rows 0..{limit - 1}; a hoodie overlay "
+            f"shifted up {DEV_MAX_BODY_LIFT}px by the P3 scheduler would intrude "
+            f"into the keyboard far-row guard; first={bad[0]}")
+    return (f"{name}: {DEV_MAX_BODY_LIFT}px lift headroom clear "
+            f"(local rows 0..{limit - 1})")
+
+
 # The two desk rects the hands have to actually reach, in ROOM coordinates
 # (from geometry.ts SLOT_RECT): the keyboard and the mouse.
 KB_ROOM_RECT = (112, 90, 207, 113)
@@ -2580,6 +2727,10 @@ def assert_dev_hands(frame: str, s: Sprite) -> str:
                           is on the MOUSE rect
       sleep               both hands have slid off the keys (below the
                           keyboard's key rows) and are still on the desk
+      breath/stretch      unchanged from idle - both hands still on the keys
+                          (P3: a breath moves the SHOULDERS, not the hands)
+      cheer_a/cheer_b     both hands flung OUT past the keyboard's two ends,
+                          and the right one stops short of the mouse
     """
     pts = _skin_pixels(s)
     if not pts:
@@ -2599,6 +2750,26 @@ def assert_dev_hands(frame: str, s: Sprite) -> str:
     def inside(rect, ps):
         x0, y0, x1, y1 = rect
         return sum(1 for (x, y) in ps if x0 <= x <= x1 and y0 <= y <= y1)
+
+    if frame in DEV_CHEER_FRAMES:
+        # P3 celebration: prove from the pixels that the hands really did open
+        # wide - the left one reaches past the keyboard's LEFT edge and the
+        # right one past its RIGHT edge - and that the right hand still stops
+        # short of the mouse slot, which it would otherwise sit on top of.
+        kb_x0, _, kb_x1, _ = KB_ROOM_RECT
+        lmin = min(x for x, _y in lo)
+        rmax = max(x for x, _y in hi)
+        if lmin >= kb_x0 or rmax <= kb_x1:
+            raise AssertionError(
+                f"dev_base_{frame}.png: hands did not open past the keyboard "
+                f"(left reaches room x{lmin}, needs < {kb_x0}; right reaches "
+                f"room x{rmax}, needs > {kb_x1})")
+        if rmax >= MOUSE_ROOM_RECT[0]:
+            raise AssertionError(
+                f"dev_base_{frame}.png: the right hand reaches room x{rmax}, "
+                f"onto the mouse slot (starts x{MOUSE_ROOM_RECT[0]})")
+        return (f"dev_base_{frame}.png: hands flung out to room x{lmin} / x{rmax}, "
+                f"past both keyboard ends (x{kb_x0}..{kb_x1}), clear of the mouse")
 
     if frame == "sleep":
         if inside(KB_ROOM_RECT, pts) == len(pts):
@@ -2662,9 +2833,56 @@ def check_frame_diff(name_a: str, name_b: str, expect_max_px: int | None = None)
     return f"{name_a} vs {name_b}: {n} differing px, bbox {bbox}"
 
 
+def _form_mass(name: str) -> tuple[int, float]:
+    """Opaque-pixel count and vertical centroid of a written dev layer."""
+    img = Image.open(ASSETS / name).convert("RGBA")
+    px = img.load()
+    n, ysum = 0, 0
+    for y in range(img.size[1]):
+        for x in range(img.size[0]):
+            if px[x, y][3] != 0:
+                n += 1
+                ysum += y
+    return n, ysum / n
+
+
+def check_body_lift_ladder() -> str:
+    """P3 proof-of-motion, the half a frame-diff cannot prove. A frame diff
+    says "these two PNGs are not identical"; this says the ambient frames are
+    the SAME FIGURE, RAISED - which is the whole authoring promise ("keep the
+    silhouette/proportions identical, 1-2px movements only"):
+
+      * the vertical centroid must climb monotonically idle -> breath ->
+        stretch (the body is rising, one rung at a time), and
+      * the opaque mass must stay within 4% of the idle frame's at every rung
+        (nothing was added, removed, or redrawn - it moved).
+
+    A regression that redrew the pose, or that moved a hand instead of the
+    shoulders, fails one of the two."""
+    rungs = ["idle"] + list(DEV_AMBIENT_FRAMES)
+    out = []
+    base_n, prev_cy = None, None
+    for frame in rungs:
+        n, cy = _form_mass(f"dev_form_{frame}.png")
+        if base_n is None:
+            base_n = n
+        drift = abs(n - base_n) / base_n
+        if drift > 0.04:
+            raise AssertionError(
+                f"dev_form_{frame}.png: opaque mass {n}px is {drift:.1%} off "
+                f"dev_form_idle.png's {base_n}px - the figure was REDRAWN, not lifted")
+        if prev_cy is not None and cy >= prev_cy - 0.3:
+            raise AssertionError(
+                f"dev_form_{frame}.png: centroid y {cy:.2f} did not rise clearly "
+                f"above the previous rung's {prev_cy:.2f} - no visible lift")
+        out.append(f"{frame} {n}px cy={cy:.2f}")
+        prev_cy = cy
+    return "ambient lift ladder: " + " -> ".join(out) + " (mass within 4%, centroid rising)"
+
+
 def cleanup_stale(expected: set[str]) -> list[str]:
     """Delete any file in app/assets/ that is not part of this run's expected
-    output (the 45-file manifest plus its derived thumbnails). This is what
+    output (the SPEC manifest plus its derived thumbnails). This is what
     guarantees app/assets/ contains EXACTLY the v2 files after a run - the v0.2
     corpses (room_bg.png, dev_idle.png, chair.png, ...) do not survive a
     rewrite by omission, they are actively removed."""
@@ -2713,13 +2931,24 @@ def main() -> int:
             except AssertionError as exc:
                 ok = False
                 print("  FAIL:", exc)
-    for name in ("hoodie_classic.png", "hoodie_zip.png",
-                 "hoodie_tech.png", "hoodie_cloak.png"):
+    for name in HOODIE_FILES:
         try:
             print(" ", assert_dev_region(name, built[name]))
         except AssertionError as exc:
             ok = False
             print("  FAIL:", exc)
+
+    print("\n-- hoodie overlay lift headroom (P3 scheduler offsets it up to "
+          f"{DEV_MAX_BODY_LIFT}px) --")
+    for name in HOODIE_FILES:
+        try:
+            print(" ", assert_dev_lift_headroom(name, built[name]))
+        except AssertionError as exc:
+            ok = False
+            print("  FAIL:", exc)
+    print("  FRAME_OVERLAY_DY (render/scene.ts must carry this same table):")
+    print("   ", ", ".join(f"{f}:{dy if dy is not None else 'n/a'}"
+                           for f, dy in FRAME_OVERLAY_DY.items()))
 
     print("\n-- developer hand placement (behind-view silhouette check) --")
     for frame in DEV_FRAMES:
@@ -2750,6 +2979,17 @@ def main() -> int:
         print("  FAIL:", exc)
     try:
         print(" ", check_frame_diff(*BLINK_PAIR, expect_max_px=2))
+    except AssertionError as exc:
+        ok = False
+        print("  FAIL:", exc)
+    for pair in AMBIENT_PAIRS + (CHEER_PAIR,):
+        try:
+            print(" ", check_frame_diff(*pair))
+        except AssertionError as exc:
+            ok = False
+            print("  FAIL:", exc)
+    try:
+        print(" ", check_body_lift_ladder())
     except AssertionError as exc:
         ok = False
         print("  FAIL:", exc)

@@ -1340,3 +1340,154 @@ sentence (§3).
   into one scrapbook.
 - **`SESSION_RENAME`, session goals/targets/quotas, tags/categories, and
   exporting a card** are all deferred, named, not built.
+
+---
+
+## 10. Scene animation — the character's frames (Phase P3, "Character life")
+
+Everything below is **presentation only**. `render/scene.ts` owns it, it sends
+no `ClientAction`, it reads nothing but `activeState` and
+`stats.today.mouseActiveSeconds` off the state the server already sent, and it
+adds **no wire field**. Per PRODUCT-EVOLUTION.md §2.6 dexel is alive *without
+simulation mechanics*: there is no meter, no need, no decay, nothing that
+accumulates while you are away and nothing that asks anything of you. The
+timers here are a display loop and mean nothing.
+
+### 10.1 The frame set
+
+Nine frames, three layers each (`dev_form_<frame>` tinted by the hoodie's
+tint + the hoodie style overlay + `dev_base_<frame>`), all
+192x76 on `DEV_RECT`, all from `tools/gen_assets.py`:
+
+| frame | what it is | driven by |
+| --- | --- | --- |
+| `idle` | hands resting on the keys | `activeState: "idle"` |
+| `type_a` / `type_b` | alternate which hand presses | `activeState: "coding"`, 5 fps |
+| `mouse` | right hand off the keys, on the mouse | a rise in `stats.today.mouseActiveSeconds`, held ~1.4 s |
+| `sleep` | hands slid off the keys, hood tipped, `z` floating | `activeState: "onBreak"` |
+| `breath` | **P3** whole upper body 1 px higher; hands unmoved | the ambient scheduler |
+| `stretch` | **P3** the same lift at 2 px, held | the ambient scheduler |
+| `cheer_a` / `cheer_b` | **P3** arms flung up and out in a V, body bouncing 1 px / 3 px | `onCelebrate()` only |
+
+The four P3 frames are the **same approved pose displaced by 1..3 px** — no
+new proportions, no new silhouette. `gen_assets.py` proves it rather than
+claiming it: `check_body_lift_ladder()` fails the asset build unless
+`idle → breath → stretch` raises the figure's vertical centroid monotonically
+*while its opaque mass stays within 4 %* (i.e. the figure moved, it was not
+redrawn), and `assert_dev_hands()` proves from the pixels that breath/stretch
+leave both hands on the keyboard and that the cheer frames put one hand past
+each end of it, clear of the mouse slot.
+
+### 10.2 Precedence — highest wins
+
+1. **celebration** (`cheer_*`) — a real event, so it outranks the poses; it is
+   not a claim about what you are doing.
+2. **sleep** — `onBreak` owns its pose outright, and it also **suppresses the
+   celebration**: the sleep pose means 30 s+ of genuine idleness, so an
+   auto-ended session would otherwise have a sleeping dexel cheer at an empty
+   chair.
+3. **mouse** — the signal-driven pose.
+4. **typing** — the 5 fps `type_a`/`type_b` cycle.
+5. **ambient** (`breath`/`stretch`) — `activeState: "idle"` only. Never while
+   coding: that would be motion competing with the typing animation, and the
+   typing animation is the one that means something.
+
+### 10.3 Timing
+
+Every beat is a **sprite swap on the one existing 200 ms frame timer** — no
+CSS transition, no easing curve, no `requestAnimationFrame`. §0's "no
+animation longer than 400 ms" governs *transitions*, and these are frame
+sequences on a fixed-interval timer, exactly like the `type_a`/`type_b` cycle
+that already ships. No second interval was added, and the tick rebuilds the
+dev composite **only when the frame it would paint changed**, so an idle dexel
+is quiet between beats: measured in the running game, `idle` costs
+**0.47 rebuilds/s** against `coding`'s 5.00/s, and `onBreak` stays at exactly
+0 (ADR 0011's all-day cost promise).
+
+| beat | sequence | length | cadence |
+| --- | --- | --- | --- |
+| breath | `breath` x3 | 600 ms | every 4–6 s, jittered per beat |
+| stretch | `breath`, `stretch` x4, `breath` | 1.2 s | every 18–34 s, jittered per beat |
+| celebrate | `cheer_a`,`cheer_b` x3, then `breath` | 1.4 s | on the event only |
+
+The stretch band stops below 34 s deliberately: `idle` is bounded above by
+`engine.OnBreakIdleThreshold` (30 s of real idleness flips the mood to
+`onBreak`), so a band centred beyond that would mean the stretch essentially
+never played. Both countdowns keep running in every mood and only **fire**
+while eligible, so a stretch that came due mid-keystroke plays as soon as the
+hands come off the keys — which is when a person stretches anyway.
+
+### 10.4 The two celebration triggers, and why they are honest
+
+`onCelebrate(reason)` is exported by `render/scene.ts` and called from exactly
+two places in `main.ts`, both server-originated (ADR 0010 — the client never
+invents an event):
+
+* `'session'` — the `sessionComplete` message (§9.6). The server sends it only
+  for a session it actually **kept**; a sub-60 s session is discarded and
+  produces no such message, so the body language cannot celebrate a session
+  that did not count.
+* `'sprint'` — `flash{kind:"sprint"}`, which the server broadcasts from one
+  place only: the tick loop, when `Game.Tick` reports a sprint completed.
+  Deliberately **not** `kind:"session"` — that kind also carries "Session
+  started." and the too-short-to-keep notice, so it is not an event.
+
+Nothing else calls it. There is no timed "celebrate occasionally", and no
+client-side inference of a milestone.
+
+### 10.5 The hoodie overlay rides the lift
+
+The hoodie style overlay (`hoodie_<style>.png`) is **one file per garment**,
+authored once against the `idle` geometry, and it is what carries the
+drawstrings / zip teeth / hem trim. The P3 frames move the overlay-bearing
+hood **and** back by the same rigid offset, so the renderer offsets that one
+layer's `top` by the same amount and every mark stays pixel-locked to the
+fabric it is printed on — no per-frame garment assets, no catalog or wire
+change:
+
+| frame | overlay `top` |
+| --- | --- |
+| `idle`, `type_a`, `type_b`, `mouse` | `0px` |
+| `breath`, `cheer_a` | `-1px` |
+| `stretch` | `-2px` |
+| `cheer_b` | `-3px` |
+| `sleep` | `0px` — its 3 px/2 px non-rigid drop predates P3; the small garment offset is the pre-existing documented simplification |
+
+`gen_assets.py` is the source of that table: it asserts `DOME_DY == BACK_DY`
+for every frame but `sleep`, prints the table as *"FRAME_OVERLAY_DY
+(render/scene.ts must carry this same table)"*, and asserts the overlays keep
+`DEV_MAX_BODY_LIFT` extra rows clear above the keyboard far-row guard so a
+lifted overlay can never intrude on the keyboard.
+
+`currentDevFrame()` — the export the store modal's composed preview doll uses
+(§4.2) — deliberately returns only the **state-driven** pose. The preview
+does not breathe: it draws its overlay without this offset, so handing it a
+lifted frame would misalign the very garment marks it exists to show off.
+
+### 10.6 Verified in the real running game
+
+Built and run with the fake provider under a throwaway `$HOME`, watched in a
+real browser, and judged from the pixels rather than from the code:
+
+* **Ambient.** Over 80 s and 45 s idle runs (`-fake-script type:2s,idle:26s`),
+  `breath` and `stretch` fired repeatedly in `idle` — 13 breaths / 2 stretches
+  in the long run — and **never once** during `coding`; the hoodie overlay's
+  `top` tracked `0 / -1 / -2` in step with the frame. Diffing the captured
+  frames as R/G/B channels shows the whole upper-body silhouette, the hood
+  seams, the shoulder line and the drawstrings displaced upward while the two
+  hands stay pixel-identical on the keys.
+* **Session celebration.** A real 1 m 10 s session started and ended through
+  the modal produced `cheer_a → cheer_b → cheer_a → cheer_b → cheer_a →
+  cheer_b → breath` in 1.24 s, then the typing cycle resumed unchanged.
+* **Sprint celebration.** Left running until "Fix Bug #404" actually completed
+  (`flash{kind:"sprint"}`, "+25 Dev Cash", sprint rolling to `0 / 75 units`):
+  the same beat played on the same tick as the gold toast.
+* **Precedence.** `onBreak` held `sleep` through a `sessionComplete` without
+  cheering; a rising `mouseActiveSeconds` beat the ambient scheduler to the
+  `mouse` pose; 8 continuous seconds of `coding` produced only
+  `type_a`/`type_b`. The store modal's preview doll kept drawing
+  `dev_form_idle` + `dev_base_idle` at `top: 0`.
+* **Clean.** Zero console errors or warnings in every run; `tsc --noEmit`
+  clean; `tools/gen_assets.py` deterministic (a re-run rewrites identical
+  bytes and touches none of the pre-P3 sprites) and its self-check green,
+  including the new lift ladder and the cheer hand-placement assertions.

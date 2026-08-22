@@ -25,7 +25,7 @@ import * as store from './state/store';
 import { connectWsClient } from './state/ws-client';
 import { renderChrome } from './render/chrome';
 import { renderTerminal } from './render/terminal';
-import { renderScene } from './render/scene';
+import { onCelebrate, renderScene } from './render/scene';
 import { hideConnOverlay, showConnOverlay } from './render/overlays';
 import { showFlash } from './render/flash';
 import * as storeModal from './features/store-modal';
@@ -65,12 +65,16 @@ function renderAll(): void {
 // handler below — no code here composes that text, per ui-spec.md §6.1's
 // "zero client-side assembly" rule).
 //
-// The P3 hook named (not built) by §3.3 — a no-op `scene.onCelebrate
-// ('session')` call — is deliberately NOT wired here: render/scene.ts is
-// outside this task's file ownership. Wiring it is a one-line addition
-// for whichever task next touches render/scene.ts.
+// PHASE P3 — the hook §3.3 named is now real: render/scene.ts's
+// onCelebrate() plays a ~1.4s two-frame bounce on the character. This is
+// the ONLY place a session celebration is triggered, and it is reached
+// only from a `sessionComplete` message, which the server sends only for a
+// session it actually kept (a sub-60s session is discarded and never
+// produces one — app/main.go's "Fork P2-E") — so the body language can
+// never celebrate something that did not happen (ADR 0010).
 function onSessionComplete(session: SessionView): void {
   sessionsModal.showSummary(session);
+  onCelebrate('session');
 }
 
 keybindings.init();
@@ -102,6 +106,16 @@ if (DEV_MODE) {
     },
     onFlash(msg) {
       showFlash(msg);
+      // PHASE P3 — the second honest celebration trigger. `kind:"sprint"`
+      // is broadcast by app/main.go from exactly one place: the tick loop,
+      // when Game.Tick reports a sprint actually completed. It is a
+      // read-only signal already on the wire, so wiring the character's
+      // bounce to it adds no field and asserts nothing the server did not
+      // say. Deliberately NOT `kind:"session"` — that kind is also used
+      // for "Session started." and the too-short-to-keep notice, so it is
+      // not an event; the kept-session celebration rides the
+      // `sessionComplete` message above instead.
+      if (msg.kind === 'sprint') onCelebrate('sprint');
     },
     onSessionComplete(msg) {
       // GO-3 (docs/plan/P2-design.md §8): ws-client.ts now routes a real
