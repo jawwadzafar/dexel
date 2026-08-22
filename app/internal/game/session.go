@@ -213,7 +213,7 @@ func durationSecondsBetween(start, end time.Time) uint64 {
 // it through store.SaveConfig immediately, the same write-through
 // urgency persistConfig already gives SET_NAME (§2.2 step 5).
 //
-// The id is len(sessionLog)+1 — the ordinal the record WILL have if it
+// The id is nextSessionID() — the ordinal the record WILL have if it
 // survives past SessionMinDurationSeconds (§2.2 step 2) — so a discarded
 // short session simply leaves its id to be reused by the next start, and
 // StartSession's sessionNames write for that reused id naturally
@@ -227,7 +227,7 @@ func (g *Game) StartSession(name string) error {
 	now := g.now()
 	baseline := g.statsLifetime
 	g.session = &activeSession{
-		id:             len(g.sessionLog) + 1,
+		id:             g.nextSessionID(),
 		startedAt:      now,
 		lastActivityAt: now,
 		baseline:       baseline,
@@ -459,11 +459,69 @@ func (g *Game) SetSessionLogHead(head string) { g.sessionLogHead = head }
 
 // RestoreSessionLog seeds the in-memory finished-session cache from
 // internal/store's GO-2 at boot (the FULL verified log, oldest-first/
-// ascending id — StartSession's `len(sessionLog)+1` id assignment depends
-// on this ordering to stay monotonic across restarts). Per §8's ordering
-// rule, call this — and RestoreSessionNames — BEFORE RestoreStats.
+// ascending id — nextSessionID's derivation depends on this ordering to
+// stay monotonic across restarts). Per §8's ordering rule, call this —
+// and RestoreSessionNames — BEFORE RestoreStats.
+//
+// It also raises the persisted-id floor to the last restored record's id
+// (B-3): these records came out of the verified on-disk log, so their
+// last id IS the last durable row.
 func (g *Game) RestoreSessionLog(records []SessionRecord) {
 	g.sessionLog = append([]SessionRecord(nil), records...)
+	if n := len(records); n > 0 {
+		g.SetSessionLogPersistedID(records[n-1].ID)
+	}
+}
+
+// SetSessionLogPersistedID raises the durable-append floor to id, and is
+// B-3's fix for the id-derivation half of the bug (docs/plan/
+// REVIEW-2026-08-22.md).
+//
+// Before it, StartSession derived its id from len(sessionLog)+1 alone.
+// That slice holds finished records whether or not they ever reached the
+// disk, so ONE failed store.AppendSession — a full disk, a locked DB —
+// permanently offset every future id by one from the DB's next row
+// number. The append log's loader treats a gap as tampering, so the next
+// launch quarantined the whole save and wiped an honest user's economy.
+// It also broke in the other direction: a boot that could not convert the
+// verified log into records restored an EMPTY cache while the DB still
+// held rows, and the next append collided with an existing id.
+//
+// Anchoring on the last id the store confirmed it wrote closes both. The
+// setter only ever RAISES the floor, so callers may invoke it in any
+// order relative to RestoreSessionLog without a late, lower value
+// re-opening the hole.
+func (g *Game) SetSessionLogPersistedID(id int) {
+	if id > g.sessionLogPersistedID {
+		g.sessionLogPersistedID = id
+	}
+}
+
+// SessionLogPersistedID reports the highest session id known to be
+// durably appended (B-3). Exposed for the server's own logging and for
+// the regression tests that pin the id sequence.
+func (g *Game) SessionLogPersistedID() int { return g.sessionLogPersistedID }
+
+// nextSessionID is the ordinal the next started session will claim if it
+// lives long enough to be kept (B-3). It is the higher of the two floors
+// that must both be respected:
+//
+//   - len(sessionLog): every finished record this process knows about,
+//     including any whose durable append has not landed yet. Reusing one
+//     of those ids would duplicate a row.
+//   - sessionLogPersistedID: the last id the store actually wrote. Going
+//     below it would collide with a row on disk (see
+//     SetSessionLogPersistedID for how the two can disagree).
+//
+// The server must never let a finished record be dropped instead of
+// retried — otherwise a gap appears on disk no id derivation can repair.
+// popEndedSession (main.go) owns that half.
+func (g *Game) nextSessionID() int {
+	next := len(g.sessionLog)
+	if g.sessionLogPersistedID > next {
+		next = g.sessionLogPersistedID
+	}
+	return next + 1
 }
 
 // SessionLogSnapshot returns a defensive copy of the full in-memory

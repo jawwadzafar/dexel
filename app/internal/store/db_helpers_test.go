@@ -1,6 +1,12 @@
 package store
 
-import "testing"
+import (
+	"encoding/json"
+	"fmt"
+	"os"
+	"strings"
+	"testing"
+)
 
 // rawReadStateRow opens dbPath directly (bypassing Load's own integrity
 // gate entirely) and reads the state row's columns exactly as they sit
@@ -82,5 +88,44 @@ func rawUpdateSessionRow(t *testing.T, dbPath string, id int, endedAt string, pa
 	defer func() { _ = db.Close() }()
 	if _, err := db.Exec(`UPDATE sessions SET ended_at = ?, payload = ?, mac = ? WHERE id = ?`, endedAt, payload, mac, id); err != nil {
 		t.Fatalf("rawUpdateSessionRow: UPDATE: %v", err)
+	}
+}
+
+// writeSignedRawJSON writes a HAND-WRITTEN state.json body to path with
+// the correct "mac" key spliced in, and returns nothing but a t.Fatal on
+// failure.
+//
+// Why it exists (B-1, docs/plan/REVIEW-2026-08-22.md): the schema
+// migration tests are about FIELD absence — a save written before some
+// key existed must load with that field at its zero value — and they say
+// that by hand-writing JSON with the key genuinely missing, which no
+// round-trip through SaveData can reproduce. They used to rely on the
+// unsigned-schema<=4 grandfather path to get such a fixture accepted.
+// That path was a no-key mint and is gone: every save now needs a valid
+// MAC at every schema. So the fixture is signed here instead.
+//
+// The MAC is computed over canonicalBody(parsed struct), never over the
+// file's bytes (integrity.go), which is exactly why splicing a key into
+// the raw text works: the absent keys stay absent in the file, the tag
+// still verifies, and the migration behaviour under test is unchanged.
+// A signed schema-1 file is synthetic — nothing ever wrote one — but the
+// code path it exercises (json.Unmarshal of a body missing newer keys,
+// then Apply) is the real one, and it is the same path a signed schema-5
+// or -6 save takes today.
+func writeSignedRawJSON(t *testing.T, path, raw string) {
+	t.Helper()
+	var d SaveData
+	if err := json.Unmarshal([]byte(raw), &d); err != nil {
+		t.Fatalf("writeSignedRawJSON: the fixture is not valid JSON: %v", err)
+	}
+	d.Mac = ""
+	mac := computeMAC(d)
+	open := strings.Index(raw, "{")
+	if open < 0 {
+		t.Fatalf("writeSignedRawJSON: the fixture is not a JSON object: %s", raw)
+	}
+	signed := raw[:open+1] + fmt.Sprintf("\n\t\t\"mac\": %q,", mac) + raw[open+1:]
+	if err := os.WriteFile(path, []byte(signed), 0o644); err != nil {
+		t.Fatalf("writeSignedRawJSON: WriteFile: %v", err)
 	}
 }

@@ -240,6 +240,9 @@ func TestRelocateLegacyMovesFilesOnceThenNoOps(t *testing.T) {
 		"state.db.future":       "future quarantine",
 		"state.db.corrupt":      "corrupt quarantine",
 		"state.json.imported":   "imported legacy json",
+		"state.json.invalid":    "invalid json quarantine",
+		"state.json.future":     "future json quarantine",
+		"state.json.corrupt":    "corrupt json quarantine",
 		"unrelated-sibling.tmp": "must NOT be moved — not in relocationFiles",
 	}
 	for name, contents := range files {
@@ -353,5 +356,91 @@ func TestRelocateLegacyNoOpWhenNothingToRelocate(t *testing.T) {
 	}
 	if _, err := os.Stat(newDir); !os.IsNotExist(err) {
 		t.Fatalf("newDir was created despite nothing to relocate")
+	}
+}
+
+// TestRelocateLegacyMovesAStateJSONOnlyInstall is SF-6's regression test
+// (docs/plan/REVIEW-2026-08-22.md). relocateLegacy used to trigger ONLY
+// on legacyDir/state.db, and relocationFiles listed state.json.imported
+// but not state.json — so a macOS/Windows install created by a
+// post-rename, pre-DB-1 build (state.json, no state.db) relocated
+// nothing: the new platform directory came up empty, the user started
+// fresh, and their real save sat orphaned in a directory the binary would
+// never consult again. That is the exact compat rule the relocation
+// exists to honour.
+func TestRelocateLegacyMovesAStateJSONOnlyInstall(t *testing.T) {
+	root := t.TempDir()
+	legacyDir := filepath.Join(root, "legacy")
+	newDir := filepath.Join(root, "new")
+	if err := os.MkdirAll(legacyDir, 0o700); err != nil {
+		t.Fatalf("mkdir legacy: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(legacyDir, "state.json"), []byte(`{"schema":6}`), 0o600); err != nil {
+		t.Fatalf("seed state.json: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(legacyDir, "config.json"), []byte(`{"name":"dev"}`), 0o600); err != nil {
+		t.Fatalf("seed config.json: %v", err)
+	}
+
+	relocated, err := relocateLegacy(legacyDir, newDir)
+	if err != nil {
+		t.Fatalf("relocateLegacy: %v", err)
+	}
+	if !relocated {
+		t.Fatal("a state.json-only install must relocate — it is a real save with no state.db yet")
+	}
+	for _, name := range []string{"state.json", "config.json"} {
+		if _, err := os.Stat(filepath.Join(newDir, name)); err != nil {
+			t.Errorf("%s did not arrive in the new state dir: %v", name, err)
+		}
+		if _, err := os.Stat(filepath.Join(legacyDir, name)); !os.IsNotExist(err) {
+			t.Errorf("%s was left behind in the legacy dir (relocation must move, not copy)", name)
+		}
+	}
+
+	// Idempotent: a second call finds the trigger in newDir and does
+	// nothing, and in particular cannot overwrite the relocated save.
+	again, err := relocateLegacy(legacyDir, newDir)
+	if err != nil {
+		t.Fatalf("relocateLegacy (second call): %v", err)
+	}
+	if again {
+		t.Error("relocateLegacy relocated twice")
+	}
+}
+
+// TestRelocateLegacyNeverOverwritesAnEstablishedStateJSON pins the guard
+// that makes the SF-6 fix safe: os.Rename replaces its destination, so a
+// newDir that already holds a state.json must stop the relocation dead
+// rather than move an older file on top of the live one.
+func TestRelocateLegacyNeverOverwritesAnEstablishedStateJSON(t *testing.T) {
+	root := t.TempDir()
+	legacyDir := filepath.Join(root, "legacy")
+	newDir := filepath.Join(root, "new")
+	for _, dir := range []string{legacyDir, newDir} {
+		if err := os.MkdirAll(dir, 0o700); err != nil {
+			t.Fatalf("mkdir %s: %v", dir, err)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(legacyDir, "state.json"), []byte("old"), 0o600); err != nil {
+		t.Fatalf("seed legacy: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(newDir, "state.json"), []byte("live"), 0o600); err != nil {
+		t.Fatalf("seed new: %v", err)
+	}
+
+	relocated, err := relocateLegacy(legacyDir, newDir)
+	if err != nil {
+		t.Fatalf("relocateLegacy: %v", err)
+	}
+	if relocated {
+		t.Error("relocateLegacy reported a relocation into an established state dir")
+	}
+	live, err := os.ReadFile(filepath.Join(newDir, "state.json"))
+	if err != nil {
+		t.Fatalf("ReadFile: %v", err)
+	}
+	if string(live) != "live" {
+		t.Fatalf("the established state.json was overwritten with %q", live)
 	}
 }

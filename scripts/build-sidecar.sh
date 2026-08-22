@@ -35,10 +35,14 @@
 # Honest constraints (do not "fix" these by pretending):
 #   * The darwin targets use cgo — app/provider_select_darwin.go pulls in
 #     activity.NewDarwinProvider(), whose real capture path is the ADR 0011
-#     CGEventSource shim. A CGO_ENABLED=0 darwin build would compile but
-#     ship a *blind* provider, which would be a dishonest binary. So the
-#     darwin targets are only built when the HOST is macOS (where the
-#     macOS Tauri bundle is built anyway) and are skipped, loudly, elsewhere.
+#     CGEventSource shim. A CGO_ENABLED=0 darwin build does not "compile
+#     but ship a blind provider": it FAILS TO LINK, because the cgo file
+#     is excluded from the build and NewDarwinProvider has no non-cgo
+#     definition (dev_docs/rust-port-evaluation.md §2.1's bonus finding
+#     corrects the earlier wording here). Either way the conclusion is the
+#     same: the darwin targets are only built when the HOST is macOS
+#     (where the macOS Tauri bundle is built anyway) and are skipped,
+#     loudly, elsewhere.
 #   * linux/windows use CGO_ENABLED=0 by design: their providers are
 #     already pure Go (linux reads /dev/input/event*, windows is blind),
 #     so a static build cross-compiles from anywhere.
@@ -129,9 +133,12 @@ build_one() {
   # -trimpath keeps the binary reproducible-ish and strips local paths out of
   # a binary that ships inside an installer. Build from APP_DIR so the
   # module in app/go.mod is the one that resolves. -ldflags stamps
-  # main.version (PR-2, version.go) the same way build-release.sh does.
+  # main.version (PR-2, version.go) and passes -s -w — the same flags
+  # build-release.sh uses, for the same reason: ~31.7% off a binary that
+  # ships inside a desktop bundle, with nothing the product reads lost
+  # (see build-release.sh's build_one for the full note).
   ( cd "$APP_DIR" && CGO_ENABLED="$cgo" GOOS="$goos" GOARCH="$goarch" \
-      "$GO" build -trimpath -ldflags "-X main.version=$VERSION" -o "$out" . )
+      "$GO" build -trimpath -ldflags "-s -w -X main.version=$VERSION" -o "$out" . )
   note "  -> $out"
 }
 

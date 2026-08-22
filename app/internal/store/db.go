@@ -18,6 +18,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	_ "modernc.org/sqlite"
 )
@@ -93,23 +94,68 @@ func fileExists(path string) (bool, error) {
 	return false, err
 }
 
-// quarantine renames path to path+suffix — never a copy, never a delete
-// (§3.2's "Quarantine mechanics"): the poisoned file is moved aside so
-// the next Save creates a fresh one. Also moves a "-journal" sibling
+// databaseHasNoTables reports whether db contains zero tables — the
+// signature of a zero-byte or otherwise never-written state.db, which
+// SQLite opens without complaint (N-2, see loadDB's use of it). Any query
+// error is returned rather than swallowed, so the caller falls back to
+// its stricter branch instead of guessing.
+func databaseHasNoTables(db *sql.DB) (bool, error) {
+	var n int
+	if err := db.QueryRow(`SELECT count(*) FROM sqlite_master WHERE type = 'table'`).Scan(&n); err != nil {
+		return false, err
+	}
+	return n == 0, nil
+}
+
+// quarantine renames path aside — never a copy, never a delete
+// (§3.2's "Quarantine mechanics"): the poisoned file is moved out of the
+// way so the next Save creates a fresh one, and the destination it
+// actually used is returned so the caller's message names the real file
+// (see quarantinePath: the first quarantine is path+suffix, a second one
+// is timestamped rather than clobbering the first). Also moves a "-journal" sibling
 // alongside it if one happens to be at rest (a mid-commit crash can
 // leave one even under journal_mode=DELETE), so the quarantined pair
 // stays openable for support and no stray journal sits beside the file
 // that replaces it.
-func quarantine(path, suffix string) error {
-	dest := path + suffix
+func quarantine(path, suffix string) (dest string, err error) {
+	dest = quarantinePath(path, suffix)
 	if err := os.Rename(path, dest); err != nil {
-		return err
+		return dest, err
 	}
 	journalSrc := path + "-journal"
 	if _, err := os.Stat(journalSrc); err == nil {
 		_ = os.Rename(journalSrc, dest+"-journal")
 	}
-	return nil
+	return dest, nil
+}
+
+// quarantinePath picks a destination for a quarantined file that does not
+// already exist (N-1, docs/plan/REVIEW-2026-08-22.md). The old code
+// renamed unconditionally to path+suffix, so a SECOND tamper silently
+// destroyed the first one's evidence while the message still promised
+// "original preserved untouched … NOT deleted". The first quarantine
+// keeps the plain, documented name (state.db.invalid); only a collision
+// gets a UTC timestamp appended (state.db.invalid.20260822T164500Z), and
+// a same-second collision gets a -N counter after that. If even that
+// somehow cannot find a free name we fall back to the plain name rather
+// than refusing to quarantine at all — losing older evidence is bad,
+// leaving a poisoned file in place is worse.
+func quarantinePath(path, suffix string) string {
+	dest := path + suffix
+	if _, err := os.Stat(dest); err != nil {
+		return dest
+	}
+	stamp := dest + "." + time.Now().UTC().Format("20060102T150405Z")
+	for i := 0; i < 100; i++ {
+		cand := stamp
+		if i > 0 {
+			cand = fmt.Sprintf("%s-%d", stamp, i)
+		}
+		if _, err := os.Stat(cand); err != nil {
+			return cand
+		}
+	}
+	return dest
 }
 
 // openDB opens path with DB-1's fixed pragmas (§4.5): DELETE journal
@@ -238,8 +284,8 @@ func writeStateRow(db *sql.DB, schema int, payload []byte, mac string) error {
 // caller is a failure branch, so it is always nil here.
 func failClosed(db *sql.DB, path, suffix string, reason error) (SaveData, []SessionSave, bool, error) {
 	_ = db.Close()
-	dest := path + suffix
-	if qErr := quarantine(path, suffix); qErr != nil {
+	dest, qErr := quarantine(path, suffix)
+	if qErr != nil {
 		return SaveData{}, nil, false, fmt.Errorf("%w, and backing up %s to %s failed: %v", reason, path, dest, qErr)
 	}
 	return SaveData{}, nil, false, fmt.Errorf("%w; original preserved untouched at %s (NOT loaded, NOT deleted, NOT overwritten)", reason, dest)
@@ -268,10 +314,11 @@ func loadDB(path string) (SaveData, []SessionSave, bool, error) {
 		// this branch; os.Rename alone is safe here since sql.Open is
 		// lazy and openDB already closed the handle on its own error
 		// path).
-		if qErr := quarantine(path, ".corrupt"); qErr != nil {
-			return SaveData{}, nil, false, fmt.Errorf("state.db is corrupt, and backing up %s to %s.corrupt failed: %v (original error: %v)", path, path, qErr, err)
+		dest, qErr := quarantine(path, ".corrupt")
+		if qErr != nil {
+			return SaveData{}, nil, false, fmt.Errorf("state.db is corrupt, and backing up %s to %s failed: %v (original error: %v)", path, dest, qErr, err)
 		}
-		return SaveData{}, nil, false, fmt.Errorf("state.db is corrupt (moved to %s.corrupt): %w", path, err)
+		return SaveData{}, nil, false, fmt.Errorf("state.db is corrupt (moved to %s): %w", dest, err)
 	}
 
 	var quickCheck string
@@ -296,6 +343,20 @@ func loadDB(path string) (SaveData, []SessionSave, bool, error) {
 		// row 6) is structurally identical to an emptied one for our
 		// purposes here, and must not be mistaken for "no save" any more
 		// than DELETE FROM state is.
+		//
+		// N-2 (docs/plan/REVIEW-2026-08-22.md): but a state.db with NO
+		// tables at all is not a dropped table, it is a torn FIRST write
+		// — a zero-byte file, or a process killed between openDB and the
+		// first commit. SQLite happily opens both, so they used to be
+		// reported as "save integrity check failed", i.e. this build
+		// accusing an honest user of cheating over a crash artifact.
+		// Same fail-closed handling (quarantine, never "no save"), but
+		// the .corrupt suffix and a message that says what actually
+		// happened. A DB that has other tables but no `state` is still
+		// tampering: something removed it.
+		if empty, emptyErr := databaseHasNoTables(db); emptyErr == nil && empty {
+			return failClosed(db, path, ".corrupt", fmt.Errorf("state.db holds no tables at all — an interrupted first write or a truncated file, not a tampered save"))
+		}
 		return failClosed(db, path, ".invalid", fmt.Errorf("%w: state table missing or unreadable: %v", ErrTampered, err))
 	}
 	if count != 1 {
@@ -516,11 +577,11 @@ func AppendSession(path string, d SaveData, s SessionSave) (newHead string, err 
 
 // importJSON is DB-1's one-time migration (§4.3). The caller (Load) has
 // already confirmed dbPath does not exist and jsonPath does. It reuses
-// loadJSON verbatim for verification — MAC check at schema>=5,
-// grandfathering at schema<=4, and every existing .corrupt/.future/
-// .invalid quarantine behaviour on the JSON side — and only a passing
-// file is ever written into the DB; failure branches create no DB and
-// propagate loadJSON's sentinel unchanged.
+// loadJSON verbatim for verification — a valid MAC required at EVERY
+// schema (B-1), and every existing .corrupt/.future/.invalid quarantine
+// behaviour on the JSON side — and only a passing file is ever written
+// into the DB; failure branches create no DB and propagate loadJSON's
+// sentinel unchanged.
 func importJSON(dbPath, jsonPath string) (SaveData, bool, error) {
 	d, ok, err := loadJSON(jsonPath)
 	if err != nil {
@@ -533,25 +594,26 @@ func importJSON(dbPath, jsonPath string) (SaveData, bool, error) {
 		return SaveData{}, false, nil
 	}
 
+	// B-1 (docs/plan/REVIEW-2026-08-22.md): there is no mint here any
+	// more. loadJSON now refuses ANY save whose MAC does not verify —
+	// including an unsigned schema<=4 one — so every file that reaches
+	// this line arrived with its own valid tag. mac is that tag, carried
+	// across VERBATIM (§3.1): d.Mac already verified equal to
+	// computeMAC(d) inside loadJSON's verifyMAC call, and canonicalBody(d)
+	// — a deterministic re-encoding of the exact struct loadJSON parsed —
+	// reproduces byte-identical preimage bytes, so this is a
+	// carry-across, not a re-sign. The old code re-signed a MAC-less
+	// payload at CurrentSchema, which laundered a hand-written
+	// {"schema":4,"devCash":999999999} into a validly-signed save with no
+	// key required; that branch is deleted, not guarded.
 	mac := d.Mac
 	if mac == "" {
-		// Grandfathered schema<=4 source: no tag existed. DB-1 has no
-		// grandfather branch of its own (§3.2's "No grandfathering in
-		// the DB path") — sign it now, at CurrentSchema, exactly what the
-		// next JSON-world Save would have done (SEC-1 §5,
-		// TestImportOfSchema4JSONIsGrandfatheredThenStoredSignedInTheDB).
-		d.Schema = CurrentSchema
+		// Unreachable: loadJSON cannot return (_, true, nil) with an
+		// empty Mac. Stated as a hard refusal rather than a comment so a
+		// future edit to loadJSON cannot silently re-open the mint.
+		return SaveData{}, false, fmt.Errorf("%w: refusing to import an unsigned save from %s", ErrTampered, jsonPath)
 	}
 	payload := canonicalBody(d)
-	if mac == "" {
-		mac = computeMACBytes(payload)
-	}
-	// For a schema>=5 source, mac is the file's own tag, carried across
-	// VERBATIM (§3.1): d.Mac already verified equal to computeMAC(d)
-	// inside loadJSON's verifyMAC call, and canonicalBody(d) — a
-	// deterministic re-encoding of the exact struct loadJSON parsed —
-	// reproduces byte-identical preimage bytes, so this is a carry-across,
-	// not a re-sign.
 
 	db, err := openDB(dbPath)
 	if err != nil {

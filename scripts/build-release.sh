@@ -52,6 +52,9 @@
 #   DIST_DIR                where archives land (default: <repo>/dist,
 #                           gitignored).
 #
+# Every binary is linked with -trimpath and -ldflags "-s -w": stripped,
+# version-stamped, and ~31.7% smaller than the same build without them.
+#
 # Output: for each target, DIST_DIR/dexel-<version>-<os>-<arch>/ (the archive
 # staging directory, left in place for inspection) and
 # DIST_DIR/dexel-<version>-<os>-<arch>.tar.gz (or .zip for windows), plus one
@@ -121,6 +124,51 @@ rm -f "$DIST_DIR/sha256sums.txt"
 
 # ---- helpers ----------------------------------------------------------------
 
+# sha256_of prints "<hex>  <name>" for one file in the CURRENT directory,
+# in the same two-space format `sha256sum -c` reads back (SF-4,
+# docs/plan/REVIEW-2026-08-22.md).
+#
+# Why a function: macOS has no sha256sum — it ships `shasum -a 256` — and
+# this script explicitly builds darwin/arm64 when run on a darwin host, so
+# the hard dependency broke the one path it advertises, AFTER every target
+# had already been built and archived. Both tools print the same format,
+# so the only difference is which one exists.
+sha256_of() {
+  if command -v sha256sum >/dev/null 2>&1; then
+    sha256sum "$1"
+  elif command -v shasum >/dev/null 2>&1; then
+    shasum -a 256 "$1"
+  else
+    echo "ERROR: neither sha256sum nor shasum is available — cannot checksum $1" >&2
+    exit 1
+  fi
+}
+
+# Fail on a missing checksum tool NOW, not after the whole matrix has been
+# built (the same reason the license and embed-input checks below are up
+# here). `sha256_of /dev/null` is a real invocation of the real code path.
+if ! sha256_of /dev/null >/dev/null 2>&1; then
+  echo "ERROR: no usable sha256 tool found (need 'sha256sum' or 'shasum'). Install one before packaging a release." >&2
+  exit 1
+fi
+
+# Same reasoning for `zip` (SF-4): the windows targets ship .zip archives
+# (a .tar.gz is not a usable Windows download), so if any windows target is
+# in this run, require the tool NOW rather than after every target has been
+# built. build_one re-checks at the point of use, so a single-target
+# invocation is covered too.
+for t in "${targets[@]}"; do
+  case "$t" in
+    windows/*)
+      if ! command -v zip >/dev/null 2>&1; then
+        echo "ERROR: 'zip' is not installed, and $t ships a .zip archive. Install zip, or drop the windows/* targets from this run." >&2
+        exit 1
+      fi
+      break
+      ;;
+  esac
+done
+
 # License/doc files bundled into every archive alongside the binary. Fails
 # loudly if one is missing rather than silently shipping an incomplete
 # archive.
@@ -183,8 +231,17 @@ build_one() {
     # on a machine with no .git directory nearby — buildVersion() (the
     # existing git-describe-shaped value, still reported as "commit")
     # cannot answer that on its own.
+    # -s -w strips the DWARF debug info and the symbol table: ~5.9 MB
+    # (31.7%) off every shipped binary, measured on linux/amd64
+    # (dev_docs/rust-port-evaluation.md §2.1). Nothing in the product
+    # reads either one — Go panics still print full stack traces with
+    # function names and line numbers, because that comes from
+    # .gopclntab, which -s -w does NOT touch. What is lost is `dlv`
+    # attaching to a RELEASE binary and `nm`/`objdump` symbol listings,
+    # neither of which is how this project is debugged (a plain
+    # `go build` in a checkout keeps everything).
     CGO_ENABLED="$cgo" GOOS="$os" GOARCH="$arch" go build -trimpath \
-      -ldflags "-X main.version=$VERSION" -o "$stage/$bin_name" .
+      -ldflags "-s -w -X main.version=$VERSION" -o "$stage/$bin_name" .
   )
 
   # No public/ or assets/ copy: both are inside the binary (app/embed.go).
@@ -196,6 +253,13 @@ build_one() {
   if [ "$os" = "windows" ]; then
     archive="$DIST_DIR/$name.zip"
     rm -f "$archive"
+    # SF-4: checked HERE rather than discovered after every target has
+    # already been built and archived. A missing `zip` is a five-second
+    # fix; finding out about it at the end of a full matrix build is not.
+    if ! command -v zip >/dev/null 2>&1; then
+      echo "ERROR: 'zip' is not installed, and the windows targets ship .zip archives (a .tar.gz is not a usable Windows download). Install zip, or drop the windows/* targets from this run." >&2
+      exit 1
+    fi
     (cd "$DIST_DIR" && zip -rq "$name.zip" "$name")
   else
     archive="$DIST_DIR/$name.tar.gz"
@@ -217,7 +281,7 @@ echo "==> checksums"
   cd "$DIST_DIR"
   : > sha256sums.txt
   for a in "${archive_paths[@]}"; do
-    sha256sum "$(basename "$a")" >> sha256sums.txt
+    sha256_of "$(basename "$a")" >> sha256sums.txt
   done
   cat sha256sums.txt
 )

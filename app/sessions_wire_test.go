@@ -300,7 +300,7 @@ func TestSessionStopPersistsImmediately(t *testing.T) {
 	time.Sleep(10 * time.Millisecond)
 
 	hub := newHub(nil, false)
-	if !popEndedSession(g, hub, savePath) {
+	if !popEndedSession(g, hub, savePath, &sessionAppendQueue{}) {
 		t.Fatal("popEndedSession popped nothing after a >=60s SESSION_STOP")
 	}
 
@@ -351,7 +351,7 @@ func TestPopEndedSessionDiscardsShortSessions(t *testing.T) {
 	}
 
 	hub := newHub(nil, false)
-	if popEndedSession(g, hub, savePath) {
+	if popEndedSession(g, hub, savePath, &sessionAppendQueue{}) {
 		t.Fatal("popEndedSession popped a record for a <60s session — Fork P2-E requires a silent discard")
 	}
 	if g.SessionLogHead() != "" {
@@ -364,5 +364,165 @@ func TestPopEndedSessionDiscardsShortSessions(t *testing.T) {
 	}
 	if !after.ModTime().Equal(before.ModTime()) {
 		t.Fatalf("state.db was touched by a discarded (<60s) session: before=%v after=%v", before.ModTime(), after.ModTime())
+	}
+}
+
+// TestAFailedAppendKeepsTheRecordQueuedAndTheLogContiguous is B-3's
+// regression test (docs/plan/REVIEW-2026-08-22.md), built from the
+// review's own reproduction.
+//
+// The old failure: popEndedSession took the finished record out of the
+// game, failed to append it, logged "could not save session" and dropped
+// it. The record stayed in the in-memory log, so the NEXT session's id
+// (len(sessionLog)+1) was one past what the DB would accept, and the row
+// that eventually landed left a gap. The session-log loader treats a gap
+// as tampering — the review proved that consequence directly: rows 1 and
+// 3 produce "sessions row id 3 out of sequence (want 2)", the whole
+// state.db is quarantined and the economy is wiped. One transient ENOSPC,
+// and the next launch accuses the user of cheating.
+//
+// What this pins now: the append failure is transient, the record stays
+// owed, a second session finishes while the first is still owed, and when
+// the disk comes back BOTH land, in order, as rows 1 and 2 — so a fresh
+// store.LoadAll verifies clean instead of quarantining.
+//
+// The forced failure is a directory sitting where state.db belongs:
+// modernc.org/sqlite cannot open it, which is exactly the shape of the
+// real-world failures (ENOSPC, a locked DB, a permissions oddity) without
+// needing any of them.
+func TestAFailedAppendKeepsTheRecordQueuedAndTheLogContiguous(t *testing.T) {
+	dir := t.TempDir()
+	savePath := filepath.Join(dir, "state.db")
+	if err := os.Mkdir(savePath, 0o755); err != nil {
+		t.Fatalf("Mkdir (the forced append failure): %v", err)
+	}
+
+	g := game.New()
+	clock := time.Date(2026, 1, 1, 9, 0, 0, 0, time.UTC)
+	g.SetClockForTest(func() time.Time { return clock })
+	hub := newHub(nil, false)
+	q := &sessionAppendQueue{}
+
+	runSession := func() {
+		t.Helper()
+		if mutated, flash := applyAction(g, actionMessage{Action: actionSessionStart}, 1); !mutated {
+			t.Fatalf("SESSION_START did not mutate (flash=%+v)", flash)
+		}
+		clock = clock.Add(90 * time.Second)
+		if mutated, flash := applyAction(g, actionMessage{Action: actionSessionStop}, 1); !mutated {
+			t.Fatalf("SESSION_STOP did not mutate (flash=%+v)", flash)
+		}
+	}
+
+	// --- Session 1: finishes, cannot be persisted ------------------------
+	runSession()
+	if !popEndedSession(g, hub, savePath, q) {
+		t.Fatal("popEndedSession reported no fresh record after a >=60s stop")
+	}
+	if len(q.pending) != 1 {
+		t.Fatalf("queued records = %d, want 1 — a failed append must KEEP the record, not drop it", len(q.pending))
+	}
+	if g.SessionLogHead() != "" {
+		t.Error("SessionLogHead advanced for an append that failed")
+	}
+	if g.SessionLogPersistedID() != 0 {
+		t.Errorf("SessionLogPersistedID = %d, want 0 — nothing has been persisted yet", g.SessionLogPersistedID())
+	}
+
+	// --- Session 2: finishes while the first is still owed ---------------
+	runSession()
+	popEndedSession(g, hub, savePath, q)
+	if len(q.pending) != 2 {
+		t.Fatalf("queued records = %d, want 2", len(q.pending))
+	}
+	ids := []int{}
+	for _, rec := range g.SessionLogSnapshot() {
+		ids = append(ids, rec.ID)
+	}
+	if len(ids) != 2 || ids[0] != 1 || ids[1] != 2 {
+		t.Fatalf("session ids = %v, want [1 2] — an unpersisted record must not consume the next id twice or skip one", ids)
+	}
+
+	// --- The disk comes back ---------------------------------------------
+	if err := os.Remove(savePath); err != nil {
+		t.Fatalf("Remove (repairing the save path): %v", err)
+	}
+	if popEndedSession(g, hub, savePath, q) {
+		t.Error("popEndedSession reported a fresh record when only the retry ran")
+	}
+	if len(q.pending) != 0 {
+		t.Fatalf("queued records = %d after the disk came back, want 0 — the whole backlog must drain in order", len(q.pending))
+	}
+	if g.SessionLogPersistedID() != 2 {
+		t.Errorf("SessionLogPersistedID = %d, want 2", g.SessionLogPersistedID())
+	}
+
+	// --- The next boot must load clean, NOT quarantine -------------------
+	data, sessions, ok, err := store.LoadAll(savePath)
+	if err != nil {
+		t.Fatalf("LoadAll after the retried appends: %v — this is the false-tamper wipe B-3 describes", err)
+	}
+	if !ok {
+		t.Fatal("LoadAll reported no save after two appended sessions")
+	}
+	if len(sessions) != 2 || sessions[0].ID != 1 || sessions[1].ID != 2 {
+		t.Fatalf("persisted session ids = %+v, want rows 1 and 2 with no gap", sessions)
+	}
+	if data.SessionLogHead != g.SessionLogHead() {
+		t.Errorf("signed head %q != live head %q", data.SessionLogHead, g.SessionLogHead())
+	}
+	if _, statErr := os.Stat(savePath + ".invalid"); !os.IsNotExist(statErr) {
+		t.Error("state.db was quarantined — the save was destroyed by a transient append failure, which is exactly B-3")
+	}
+
+	// And the next session after a restart continues the sequence at 3.
+	g2 := game.New()
+	recs, err := store.SessionRecordsFromSave(sessions)
+	if err != nil {
+		t.Fatalf("SessionRecordsFromSave: %v", err)
+	}
+	g2.RestoreSessionLog(recs)
+	if err := g2.StartSession(""); err != nil {
+		t.Fatalf("StartSession after restore: %v", err)
+	}
+	active, _ := g2.ActiveSession()
+	if active.ID != 3 {
+		t.Errorf("the first session id after a restore of rows 1-2 = %d, want 3", active.ID)
+	}
+}
+
+// TestNoSaveMeansAFreshStartEvenWithALegacyRustSavePresent is B-2's
+// regression test: the legacy-Rust import is gone, so a fabricated
+// ~/.local/share/dev-companion/save.json — the file that used to mint an
+// unbounded wallet on every boot with no save.db present — now grants
+// nothing at all, and loadOrImport reports the honest fresh install.
+func TestNoSaveMeansAFreshStartEvenWithALegacyRustSavePresent(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	legacyDir := filepath.Join(home, ".local", "share", "dev-companion")
+	if err := os.MkdirAll(legacyDir, 0o755); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+	legacy := `{"wallet":18446744073709551615,"xp":9999,"level":99,` +
+		`"upgrades":{"chair":9,"keyboard":9,"mouse":9,"pet":9,"wall":9,"desk_decor":9,"monitor":9}}`
+	if err := os.WriteFile(filepath.Join(legacyDir, "save.json"), []byte(legacy), 0o644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+
+	g := game.New()
+	fresh := game.New()
+	savePath := filepath.Join(t.TempDir(), "state.db")
+
+	if found := loadOrImport(g, savePath); found {
+		t.Error("loadOrImport reported an existing save — a legacy Rust save must no longer count as one")
+	}
+	if g.DevCash != fresh.DevCash {
+		t.Errorf("DevCash = %d, want the fresh-install default %d — nothing may be minted from an unsigned file", g.DevCash, fresh.DevCash)
+	}
+	if len(g.OwnedItems) != len(fresh.OwnedItems) {
+		t.Errorf("owned items = %d, want the fresh-install %d", len(g.OwnedItems), len(fresh.OwnedItems))
+	}
+	if _, err := os.Stat(savePath); !os.IsNotExist(err) {
+		t.Error("a state.db was written on a fresh-install boot with no save")
 	}
 }

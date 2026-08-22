@@ -182,15 +182,18 @@ func TestImportIsOneTimeAndTheDBWinsAfterwards(t *testing.T) {
 	}
 }
 
-// TestImportOfSchema4JSONIsGrandfatheredThenStoredSignedInTheDB is
-// design §4.3's grandfather-at-import proof, isolated from any
-// subsequent Apply/Save round trip: an unsigned schema-4 fixture (no mac
-// key at all, predating SEC-1) must be accepted by the import with no
-// MAC check (loadJSON's existing grandfather behaviour, reused
-// verbatim), and the row written into state.db must ALREADY be signed
-// at CurrentSchema — DB-1 has no unsigned/grandfathered state of its own
-// (design §3.2).
-func TestImportOfSchema4JSONIsGrandfatheredThenStoredSignedInTheDB(t *testing.T) {
+// TestImportOfAnUnsignedJSONCreatesNoDB is B-1's import-side half
+// (docs/plan/REVIEW-2026-08-22.md), replacing
+// TestImportOfSchema4JSONIsGrandfatheredThenStoredSignedInTheDB. That
+// test pinned design §4.3's grandfather-at-import: an unsigned schema-4
+// fixture was accepted with no MAC check and the row written into
+// state.db was signed at CurrentSchema. Which is precisely the laundering
+// step — the import was the notary for a file nobody had verified.
+//
+// The rule now matches every other failure branch (§4.2/§4.3's "failure
+// branches create no DB"): an unsigned save is refused, no state.db is
+// created, and the JSON is quarantined rather than consumed.
+func TestImportOfAnUnsignedJSONCreatesNoDB(t *testing.T) {
 	dir := t.TempDir()
 	dbPath := filepath.Join(dir, "state.db")
 	jsonPath := filepath.Join(dir, "state.json")
@@ -209,25 +212,59 @@ func TestImportOfSchema4JSONIsGrandfatheredThenStoredSignedInTheDB(t *testing.T)
 	}
 
 	d, ok, err := Load(dbPath)
-	if err != nil || !ok {
-		t.Fatalf("Load (import): ok=%v err=%v", ok, err)
+	if !errors.Is(err, ErrTampered) {
+		t.Fatalf("Load (import) err = %v, want it to wrap ErrTampered", err)
 	}
-	if d.DevCash != 555 || d.XP != 111 {
-		t.Errorf("devCash/xp = (%d,%d), want (555,111)", d.DevCash, d.XP)
+	if ok || d.DevCash != 0 {
+		t.Errorf("Load (import) = (%+v, ok=%v), want the zero value and ok=false", d, ok)
 	}
-	if d.Schema != CurrentSchema {
-		t.Errorf("d.Schema = %d, want CurrentSchema (%d)", d.Schema, CurrentSchema)
+	if _, statErr := os.Stat(dbPath); !os.IsNotExist(statErr) {
+		t.Error("a state.db was created for an unsigned import — the import must never be the thing that signs an unverified file")
 	}
-	if d.Mac == "" {
-		t.Error("d.Mac is empty, want a signed tag written at import time")
+	if _, statErr := os.Stat(jsonPath + ".imported"); statErr == nil {
+		t.Error("the unsigned file was marked .imported — it was refused, not imported")
 	}
+	if _, statErr := os.Stat(jsonPath + ".invalid"); statErr != nil {
+		t.Errorf("expected %s.invalid: %v", jsonPath, statErr)
+	}
+}
 
+// TestImportOfASignedOlderSchemaJSONCarriesTheTagAcross is the other half
+// of the same rule: a validly-signed save from an OLDER schema still
+// imports, and the tag is carried across verbatim rather than re-minted,
+// so the DB row verifies against its own payload and keeps the source's
+// schema. This is the path a real pre-P2 (schema 5/6) install takes.
+func TestImportOfASignedOlderSchemaJSONCarriesTheTagAcross(t *testing.T) {
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "state.db")
+	jsonPath := filepath.Join(dir, "state.json")
+
+	d := richFixture()
+	d.Schema = 5
+	d.Session = nil
+	d.SessionLogHead = ""
+	d.Paused = false
+	want := writeSignedJSONFixture(t, jsonPath, d)
+
+	got, ok, err := Load(dbPath)
+	if err != nil || !ok {
+		t.Fatalf("Load (import) of a SIGNED schema-5 file: ok=%v err=%v", ok, err)
+	}
+	if got.DevCash != want.DevCash || got.XP != want.XP {
+		t.Errorf("devCash/xp = (%d,%d), want (%d,%d)", got.DevCash, got.XP, want.DevCash, want.XP)
+	}
+	if got.Schema != 5 {
+		t.Errorf("got.Schema = %d, want 5 — the import carries the source's own signed schema across, it does not re-stamp it", got.Schema)
+	}
+	if got.Mac != want.Mac {
+		t.Errorf("got.Mac = %q, want the source file's own tag %q (carry-across, not re-sign)", got.Mac, want.Mac)
+	}
 	schemaCol, payload, macHex := rawReadStateRow(t, dbPath)
-	if schemaCol != CurrentSchema {
-		t.Errorf("stored schema column = %d, want CurrentSchema (%d)", schemaCol, CurrentSchema)
+	if schemaCol != 5 {
+		t.Errorf("stored schema column = %d, want 5", schemaCol)
 	}
 	if !verifyMACBytes(payload, macHex) {
-		t.Error("the row written by the grandfathered import does not verify against its own payload")
+		t.Error("the imported row does not verify against its own payload")
 	}
 }
 
@@ -318,62 +355,6 @@ func TestImportOfCorruptJSONLeavesCorruptQuarantineAndNoDB(t *testing.T) {
 	}
 	if _, statErr := os.Stat(jsonPath + ".corrupt"); statErr != nil {
 		t.Errorf("expected %s.corrupt to exist: %v", jsonPath, statErr)
-	}
-}
-
-// TestLegacyRustChainOnAJSONLessFreshMachineWritesTheDB is design §4.4:
-// on a machine with neither state.db nor state.json, Load correctly
-// reports "no save" — the only branch that may reach a caller's legacy
-// Rust import — and the legacy chain's own Save now creates state.db
-// rather than state.json, with legacy.go itself completely unmodified.
-func TestLegacyRustChainOnAJSONLessFreshMachineWritesTheDB(t *testing.T) {
-	dir := t.TempDir()
-	dbPath := filepath.Join(dir, "state.db")
-	legacyPath := filepath.Join(dir, "save.json")
-
-	legacyRaw := `{"wallet": 340, "xp": 1240, "level": 5, "current_project": {"index": 2, "work_done": 41.0}, "upgrades": {"chair": 2}}`
-	if err := os.WriteFile(legacyPath, []byte(legacyRaw), 0o644); err != nil {
-		t.Fatalf("WriteFile: %v", err)
-	}
-
-	// This is the exact precondition a caller's loadOrImport checks
-	// before running the legacy chain: Load must report "no save" (and
-	// nothing else) with no state.db/state.json present at all.
-	d, ok, err := Load(dbPath)
-	if err != nil {
-		t.Fatalf("Load: %v", err)
-	}
-	if ok {
-		t.Fatal("ok=true with no state.db/state.json present, want false — legacy import must be reachable")
-	}
-	if !reflect.DeepEqual(d, SaveData{}) {
-		t.Errorf("d = %+v, want the zero value", d)
-	}
-
-	legacy, err := LoadLegacy(legacyPath)
-	if err != nil {
-		t.Fatalf("LoadLegacy: %v", err)
-	}
-	if legacy == nil {
-		t.Fatal("LoadLegacy returned nil for a valid legacy save")
-	}
-	imported := ImportLegacy(legacy, game.DefaultCatalog())
-	if err := Save(dbPath, imported); err != nil {
-		t.Fatalf("Save: %v", err)
-	}
-
-	reloaded, ok, err := Load(dbPath)
-	if err != nil || !ok {
-		t.Fatalf("Load after legacy import: ok=%v err=%v", ok, err)
-	}
-	if reloaded.DevCash != imported.DevCash {
-		t.Errorf("reloaded.DevCash = %d, want %d", reloaded.DevCash, imported.DevCash)
-	}
-	if !reloaded.ImportedFromRust {
-		t.Error("reloaded.ImportedFromRust should be true")
-	}
-	if _, statErr := os.Stat(dbPath); statErr != nil {
-		t.Errorf("expected %s to exist: %v", dbPath, statErr)
 	}
 }
 

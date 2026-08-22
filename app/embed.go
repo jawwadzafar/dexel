@@ -5,7 +5,8 @@
 // public/ and no assets/ next to it — serves the complete game:
 //
 //   - public/  the committed frontend bundle (index.html, css, fonts,
-//     js/dexel.js) served at "/"
+//     js/dexel.js — but never js/dexel.js.map, see publicEmbed) served
+//     at "/"
 //   - assets/  the art agent's sprite/thumbnail PNGs (tools/gen_assets.py's
 //     output) served at "/assets/"
 //
@@ -33,11 +34,35 @@ import (
 	"log"
 )
 
-// publicEmbed holds app/public/. The `all:` prefix is required, not
-// cosmetic: without it go:embed silently skips files whose names begin with
-// "." or "_", which would quietly drop a dotfile the frontend adds later.
+// publicEmbed holds app/public/ — MINUS the sourcemap.
 //
-//go:embed all:public
+// The `all:` prefix on each pattern is required, not cosmetic: without it
+// go:embed silently skips files whose names begin with "." or "_", which
+// would quietly drop a dotfile the frontend adds later.
+//
+// Why this is a list of patterns instead of one `all:public` (N-9,
+// docs/plan/REVIEW-2026-08-22.md; dev_docs/rust-port-evaluation.md §2.1):
+// app/public/js/dexel.js.map is a 230 KB pure debug artifact — about a
+// third of the whole embedded payload — and it was being compiled into
+// every shipped binary and served to every end user. go:embed has no
+// exclusion syntax, so the sourcemap is excluded by naming what IS
+// embedded: the bundle itself, and the three asset directories whole.
+// The map stays committed in the repo (CI's bundle-drift check diffs it,
+// and `-public app/public` still serves it in dev) — it just is not
+// inside the binary. dexel.js keeps its //# sourceMappingURL comment, so
+// devtools ask for /js/dexel.js.map and get a 404 from a released binary;
+// that is the honest answer, and the dev override is where a map is
+// wanted anyway.
+//
+// The cost of an explicit list is that a NEW file under public/js/ would
+// be silently left out. embed_test.go closes that: it walks the real
+// app/public tree and fails if anything but a .map is missing from the
+// embedded copy.
+//
+//go:embed all:public/index.html
+//go:embed all:public/css
+//go:embed all:public/fonts
+//go:embed all:public/js/dexel.js
 var publicEmbed embed.FS
 
 // assetsEmbed holds app/assets/ — every PNG tools/gen_assets.py writes.

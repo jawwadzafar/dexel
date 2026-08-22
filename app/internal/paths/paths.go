@@ -54,14 +54,31 @@ const dexelHomeEnv = "DEXEL_HOME"
 // sibling app/internal/store/db.go's Load path can produce —
 // state.db.invalid / .future / .corrupt from db.go's quarantine(), and
 // state.json.imported from db.go's importJSON().
+// state.json itself is in the list (SF-6, docs/plan/
+// REVIEW-2026-08-22.md): a macOS/Windows install created by a
+// post-rename, pre-DB-1 build has a state.json and NO state.db, and
+// leaving it behind orphans a real save where nothing will ever look
+// again — precisely the compat rule this relocation exists to honour.
+// Its other quarantine siblings (.corrupt/.future/.invalid) come along
+// for the same reason the state.db ones do: the promise is "preserved,
+// and findable".
 var relocationFiles = []string{
 	"state.db",
 	"config.json",
 	"state.db.invalid",
 	"state.db.future",
 	"state.db.corrupt",
+	"state.json",
 	"state.json.imported",
+	"state.json.invalid",
+	"state.json.future",
+	"state.json.corrupt",
 }
+
+// relocationTriggers are the files whose presence in the legacy directory
+// means "there is an install here to move". state.db alone was not enough
+// (SF-6): a state.json-only install never triggered at all.
+var relocationTriggers = []string{"state.db", "state.json"}
 
 // stateDirFor is StateDir's pure core: every per-OS branch
 // PLATFORM_NOTES.md §1's table documents, decided entirely from the
@@ -187,18 +204,30 @@ func BinDir() (string, error) {
 // moving), then one line is logged naming both paths. A no-op when
 // legacyDir == newDir (which is exactly what "Linux never takes this
 // branch" reduces to, since Linux's StateDir already IS the legacy
-// directory), when newDir already has a state.db (already relocated, or
-// this install never used the legacy location), or when legacyDir has no
-// state.db (nothing to relocate).
+// directory), when newDir already holds one of relocationTriggers
+// (already relocated, or this install never used the legacy location), or
+// when legacyDir holds none of them (nothing to relocate).
+func anyExists(dir string, names []string) bool {
+	for _, name := range names {
+		if _, err := os.Stat(filepath.Join(dir, name)); err == nil {
+			return true
+		}
+	}
+	return false
+}
+
 func relocateLegacy(legacyDir, newDir string) (relocated bool, err error) {
 	if legacyDir == newDir {
 		return false, nil
 	}
-	if _, err := os.Stat(filepath.Join(newDir, "state.db")); err == nil {
+	// Both guards range over the same trigger set (SF-6): a state.json
+	// already sitting in newDir means this install is established there,
+	// and moving another one on top of it would silently overwrite the
+	// live save (os.Rename replaces its destination).
+	if anyExists(newDir, relocationTriggers) {
 		return false, nil
 	}
-	legacyDB := filepath.Join(legacyDir, "state.db")
-	if _, err := os.Stat(legacyDB); err != nil {
+	if !anyExists(legacyDir, relocationTriggers) {
 		return false, nil
 	}
 	if err := os.MkdirAll(newDir, 0o700); err != nil {

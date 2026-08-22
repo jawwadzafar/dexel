@@ -458,6 +458,11 @@ func runServe(mode serveMode, args []string) {
 		}
 	}
 
+	// appendQueue carries finished sessions between the moment the game
+	// hands one over and the moment the disk accepts it (B-3). Owned by
+	// this loop like every other piece of I/O state.
+	appendQueue := &sessionAppendQueue{}
+
 	// shutdown is the ONE graceful-exit sequence (PR-4, MIGRATION_PLAN.md
 	// §PR-4: "stop reuses the existing case <-sigCh: body verbatim — one
 	// shutdown path"). Both `case <-sigCh:` (a real SIGINT/SIGTERM) and
@@ -549,7 +554,7 @@ func runServe(mode serveMode, args []string) {
 			// practice (the idle/cap constants are hours; the min is a
 			// minute), so this branch is defensive only, not
 			// user-facing — nothing here can be a mashed start/stop.
-			popEndedSession(g, hub, savePath)
+			popEndedSession(g, hub, savePath, appendQueue)
 
 		case <-terminalTicker.C:
 			g.AdvanceTerminal()
@@ -632,7 +637,7 @@ func runServe(mode serveMode, args []string) {
 			// GO-1's session.go doc comment says; every OTHER action is a
 			// guaranteed no-op pop (only StartSession/StopSession/
 			// checkSessionAutoEnd ever populate the pending slot).
-			popped := popEndedSession(g, hub, savePath)
+			popped := popEndedSession(g, hub, savePath, appendQueue)
 			if mutated && req.msg.Action == actionSessionStop && !popped {
 				// Fork P2-E: a session under SessionMinDurationSeconds is
 				// discarded outright — no log row, no counter, and
@@ -819,67 +824,129 @@ func applyAction(g *game.Game, msg actionMessage, connID uint64) (mutated bool, 
 	}
 }
 
+// sessionAppendQueue is B-3's exactly-once, in-order durable-append
+// queue (docs/plan/REVIEW-2026-08-22.md).
+//
+// The bug it fixes: popEndedSession used to take the finished record out
+// of game.Game and, when store.AppendSession failed, log it, flash "could
+// not save session" and DROP it. The record stayed in the game's
+// in-memory log, so every id after it was one higher than the DB's next
+// row, and the session log's loader treats a gap as tampering — meaning a
+// single transient write failure (ENOSPC, a locked DB) silently armed a
+// bomb that quarantined the entire save and wiped the economy on the next
+// launch.
+//
+// So a record taken out of the game is now OWED to the disk: it sits here
+// until an append succeeds, and the next tick retries it. Order matters as
+// much as persistence — each row's MAC chains onto the previous row's, and
+// its id must be the next one on disk — so this is strictly FIFO and a
+// failure stops the drain rather than skipping ahead. Records are never
+// merged, reordered or discarded; the only way one leaves the queue is a
+// committed append.
+//
+// A process that exits with records still queued loses them, which is the
+// one honest outcome available: the durable log is the authority, so the
+// next boot simply continues from the last row that really landed (see
+// game.SetSessionLogPersistedID) with no gap and no false tamper report.
+type sessionAppendQueue struct {
+	pending []game.SessionRecord
+	// notified is true once the user has been told about the CURRENT
+	// head's failure. Without it a permanent failure would fire a toast
+	// (and a log line) every single tick; the honest report is one
+	// message when it first fails, and one when it finally lands.
+	notified bool
+}
+
 // popEndedSession implements P2's pending-record seam end to end
 // (docs/plan/P2-design.md §2.2, §3.1; ADR 0017 Decision 5): called
 // immediately after every g.Tick and every applyAction (main's select
 // loop, both call sites), it pops at most one completed-session record
-// via g.TakeEndedSession and, if there is one, persists it — via
-// store.AppendSession, GO-2's one-transaction API, so the log row and the
-// rewritten signed snapshot land together or not at all — and celebrates
-// it: a `state` broadcast (the just-appended record is already reflected
-// there — g.State()'s Sessions.Recent is built straight from the same
-// in-memory sessionLog finishSession appended to, see game/session.go),
-// then the dedicated `sessionComplete` message, then the ordinary gold
+// via g.TakeEndedSession, hands it to the append queue, and then drains
+// as much of that queue as the disk will accept — via store.AppendSession,
+// GO-2's one-transaction API, so each log row and the rewritten signed
+// snapshot land together or not at all. Every record that lands is
+// celebrated: a `state` broadcast (the record is already reflected there —
+// g.State()'s Sessions.Recent is built straight from the same in-memory
+// sessionLog finishSession appended to, see game/session.go), then the
+// dedicated `sessionComplete` message, then the ordinary gold
 // `flash{kind:"session"}` toast with server-composed text. This is the
 // SAME path whether the record came from a user's SESSION_STOP or an
 // automatic idle/maxDuration end (docs/plan/P2-design.md §2.2's "both...
 // must be persisted and celebrated identically").
 //
-// Returns whether a record was actually popped, so the SESSION_STOP call
-// site can tell a genuine completion apart from a discarded (< 60s)
-// session, for which it owes its own "too short to keep" flash instead.
-func popEndedSession(g *game.Game, hub *Hub, savePath string) bool {
-	rec, ok := g.TakeEndedSession()
-	if !ok {
-		return false
+// Returns whether the GAME had a freshly finished record this call — not
+// whether anything was persisted. That is exactly what the SESSION_STOP
+// call site needs to tell a genuine completion apart from a discarded
+// (< 60s) session, for which it owes its own "too short to keep" flash;
+// keying it off the append instead (as it used to) would mean a full disk
+// or a leftover retry decided which toast an unrelated stop produced.
+func popEndedSession(g *game.Game, hub *Hub, savePath string, q *sessionAppendQueue) bool {
+	rec, fresh := g.TakeEndedSession()
+	if fresh {
+		q.pending = append(q.pending, rec)
 	}
 
-	d := store.Snapshot(g)
-	newHead, err := store.AppendSession(savePath, d, store.SessionSaveFromRecord(rec))
-	if err != nil {
-		// The record is already safely sitting in g's in-memory
-		// sessionLog (finishSession appended it there before ever
-		// setting the pending pointer this function just cleared) — only
-		// the DURABLE, chained-MAC copy failed to land. Surfacing this as
-		// an honest error flash, rather than fabricating a "complete"
-		// celebration for a write that did not actually happen, matches
-		// every other write-failure in this file (see persistConfig's
-		// callers above): the in-memory state stands, the toast tells the
-		// truth about persistence instead.
-		log.Printf("append session failed: %v", err)
-		hub.broadcastFlash(flashMessage{Type: "flash", Kind: "error", Text: "could not save session"})
-		return true
-	}
-	g.SetSessionLogHead(newHead)
+	for len(q.pending) > 0 {
+		head := q.pending[0]
+		// store.Snapshot(g) is re-taken per record: AppendSession chains
+		// the new row onto d.SessionLogHead, and the previous iteration's
+		// success advanced that head on g.
+		newHead, err := store.AppendSession(savePath, store.Snapshot(g), store.SessionSaveFromRecord(head))
+		if err != nil {
+			// The record is NOT dropped — it stays at the head of the
+			// queue and the next tick tries again. Surfacing this as an
+			// honest error flash, rather than fabricating a "complete"
+			// celebration for a write that did not happen, matches every
+			// other write-failure in this file (see persistConfig's
+			// callers above): the in-memory state stands, the toast tells
+			// the truth about persistence instead.
+			if !q.notified {
+				log.Printf("append session %d failed (keeping it queued, retrying every tick): %v", head.ID, err)
+				hub.broadcastFlash(flashMessage{Type: "flash", Kind: "error", Text: "could not save session"})
+				q.notified = true
+			}
+			return fresh
+		}
+		q.pending = q.pending[1:]
+		if q.notified {
+			log.Printf("append session %d succeeded on retry", head.ID)
+			q.notified = false
+		}
+		g.SetSessionLogHead(newHead)
+		// The store just confirmed this id is on disk — the floor
+		// StartSession's next id is derived from (B-3).
+		g.SetSessionLogPersistedID(head.ID)
 
-	state := g.State()
-	hub.broadcastState(state)
+		state := g.State()
+		hub.broadcastState(state)
 
-	// state.Sessions.Recent[0] IS this record's own wire view: finishSession
-	// (game/session.go) appended rec to g.sessionLog synchronously, before
-	// this function ever ran, and nothing else can finish a session
-	// between that append and this g.State() call (main's select loop is
-	// the single owner of g, and this function runs entirely within one
-	// iteration of it) — so this is the exact SessionView the design's
-	// `sessionComplete` message and gold flash need, with none of
-	// game/session.go's private sessionViewFromRecord duplicated here.
-	var view game.SessionView
-	if len(state.Sessions.Recent) > 0 {
-		view = state.Sessions.Recent[0]
+		// The record's own wire view, found by id rather than assumed to
+		// be Recent[0]: with a retry queue the record being celebrated is
+		// the OLDEST outstanding one, which is not necessarily the newest
+		// in the log. game/session.go's private sessionViewFromRecord
+		// stays private and unduplicated either way.
+		var view game.SessionView
+		found := false
+		for _, v := range state.Sessions.Recent {
+			if v.ID == head.ID {
+				view, found = v, true
+				break
+			}
+		}
+		if !found {
+			// Recent is a fixed window (game.SessionsWireWindow), so a
+			// record that spent long enough in the retry queue to be
+			// pushed out of it has no wire view to celebrate. It IS
+			// persisted — the state broadcast above already reflects
+			// that — and inventing a `sessionComplete` with zeroed
+			// counters would be a worse answer than a log line.
+			log.Printf("session %d appended, but it has aged out of the %d-session wire window — no completion toast", head.ID, game.SessionsWireWindow)
+			continue
+		}
+		hub.broadcastSessionComplete(sessionCompleteMessage{Type: "sessionComplete", V: 1, Session: view})
+		hub.broadcastFlash(flashMessage{Type: "flash", Kind: "session", Text: sessionCompleteFlashText(view)})
 	}
-	hub.broadcastSessionComplete(sessionCompleteMessage{Type: "sessionComplete", V: 1, Session: view})
-	hub.broadcastFlash(flashMessage{Type: "flash", Kind: "session", Text: sessionCompleteFlashText(view)})
-	return true
+	return fresh
 }
 
 // sessionCompleteFlashText composes the gold toast's text for a completed
@@ -1224,13 +1291,13 @@ func buildVersion() string {
 	return rev
 }
 
-// loadOrImport restores g's persisted state. It is the ONLY place the
-// legacy-import race is resolved: if state.json already exists, the
-// legacy Rust save is never even opened (docs/upgrade-design.md: "if and
-// only if state.json does not exist, look for the Rust save... no
-// merging, ever"). Otherwise an existing legacy save is imported and
-// immediately persisted as the new state.json, so the NEXT run finds
-// state.json and this branch never fires again.
+// loadOrImport restores g's persisted state from state.db (or the
+// one-time state.json import, store.LoadAll's own decision tree).
+//
+// The name is now half a historical artifact: the "import" half was the
+// legacy-Rust save import, deleted by B-2 (see the tail of this function
+// for why). What remains is load-or-start-fresh, with store.LoadAll
+// owning every integrity decision.
 //
 // Returns whether a save of ANY kind was found — Phase P1's fresh-install
 // half of the onboarding decision (docs/ui-spec.md §7). "Any kind"
@@ -1238,8 +1305,7 @@ func buildVersion() string {
 // future-schema save and an unreadable save all report true, because each
 // one proves somebody has played here before, and showing a returning
 // user the intro is a worse outcome than a genuinely-fresh install
-// missing it. Only "no state.db, no state.json, no legacy Rust save"
-// reports false.
+// missing it. Only "no state.db and no state.json" reports false.
 func loadOrImport(g *game.Game, savePath string) bool {
 	// P2 (docs/plan/P2-design.md §5.4/§8, store.Apply's own doc comment):
 	// store.LoadAll instead of the pre-P2 store.Load, so the finished
@@ -1252,16 +1318,15 @@ func loadOrImport(g *game.Game, savePath string) bool {
 	if err != nil {
 		// SEC-1 (docs/plan/SEC-1-design.md §4, ADR 0014): ErrTampered and
 		// ErrFutureSchema are NOT "no save" — store.Load never returns
-		// them alongside ok==true, and they must never be treated like
-		// the genuine "no save yet" case (ok==false, err==nil) below,
-		// because that case is the ONLY one allowed to fall through to
-		// the legacy-import path a few lines down. Legacy import grants
-		// items and refunds Dev Cash; if a tampered or future-schema
-		// state.json were mistaken for "no save," a hand-edited save
-		// could trigger a legacy re-grant — the exact anti-cheat hole
-		// SEC-1 closes. Both cases return immediately, before the
-		// legacy-import path is even reached, leaving g at game.New()'s
-		// fresh defaults; the next autosave writes a valid save.
+		// them alongside ok==true, and they must never be collapsed into
+		// the genuine "no save yet" case (ok==false, err==nil) below.
+		// Pre-B-2 that mattered because "no save" unlocked the
+		// legacy-Rust re-grant; with that path deleted the distinction
+		// still decides onboarding (a returning user whose save was
+		// tampered with is not a fresh install) and still keeps a
+		// failed load from ever being papered over. Both cases return
+		// immediately, leaving g at game.New()'s fresh defaults; the
+		// next autosave writes a valid save.
 		if errors.Is(err, store.ErrTampered) {
 			// err's own text already names the real quarantined path —
 			// state.json.invalid for the legacy-import branch, or
@@ -1278,9 +1343,9 @@ func loadOrImport(g *game.Game, savePath string) bool {
 			return true // a save existed — written by a newer build
 		}
 		log.Printf("load save failed (starting fresh): %v", err)
-		// Fall through: a non-tamper, non-future error is most often an
+		// A non-tamper, non-future error is most often an
 		// unreadable-but-present file (a permission problem), so treat it
-		// as "existed" below rather than offering a returning user the
+		// as "existed" rather than offering a returning user the
 		// first-launch intro. ok is false here, so nothing is applied.
 		return true
 	}
@@ -1302,39 +1367,45 @@ func loadOrImport(g *game.Game, savePath string) bool {
 			recs = nil
 		}
 		g.RestoreSessionLog(recs)
+		// B-3 (docs/plan/REVIEW-2026-08-22.md): anchor the id sequence on
+		// the VERIFIED log's own last row id, taken from `sessions`
+		// straight out of store.LoadAll rather than from `recs`. The two
+		// normally agree; they disagree exactly in the degraded branch
+		// above, where a conversion failure leaves an empty in-memory log
+		// while the DB still holds rows — and an id derived from that
+		// empty log would collide with a row already on disk. RestoreSessionLog
+		// raises the same floor from recs; this raises it again from the
+		// authority, and the setter only ever raises.
+		if n := len(sessions); n > 0 {
+			g.SetSessionLogPersistedID(sessions[n-1].ID)
+		}
 		store.Apply(g, data)
-		log.Printf("loaded save from %s (dev_cash=%d, sessions=%d)", savePath, g.DevCash, len(recs))
+		log.Printf("loaded save from %s (dev_cash=%d, sessions=%d, last persisted session id=%d)", savePath, g.DevCash, len(recs), g.SessionLogPersistedID())
 		return true
 	}
 
-	legacyPath, err := store.LegacyPath()
-	if err != nil {
-		log.Printf("resolve legacy save path: %v", err)
-		return false // no save, and no legacy path to even look at
-	}
-	legacy, err := store.LoadLegacy(legacyPath)
-	if err != nil {
-		log.Printf("read legacy save failed (starting fresh): %v", err)
-		return true // a legacy save is there, we just could not read it
-	}
-	if legacy == nil {
-		log.Println("no save and no legacy save found: starting fresh")
-		return false // the one genuine fresh-install case
-	}
+	// B-2 (docs/plan/REVIEW-2026-08-22.md): this is where the legacy-Rust
+	// import used to live, and it is deliberately gone. store.LoadLegacy
+	// read ~/.local/share/dev-companion/save.json (never DEXEL_HOME —
+	// SF-7) and store.ImportLegacy took its `wallet` field VERBATIM as
+	// devCash, plus every item the upgrade table could grant. Unsigned,
+	// unbounded, and repeatable: delete state.db, write a save.json
+	// claiming 18446744073709551615, restart, and the economy was minted
+	// from nothing, again, as often as you liked. It was also the reason
+	// SEC-1 had to argue at length that a tampered save must never be
+	// mistaken for "no save".
+	//
+	// It is deleted rather than clamped because there is nobody to
+	// migrate: the Rust/Bevy build's only public artifact (v0.1.0) has a
+	// single download, the Go build has never been released at all, and a
+	// bounded grant would still be a grant path — more code, more tests,
+	// and the same "your economy came from a file you wrote yourself"
+	// shape, just with a ceiling. A user who really does have a v0.1.0
+	// Rust save now starts fresh, which is what a fresh install of an
+	// unreleased product does.
+	log.Println("no save found: starting fresh")
+	return false // the one genuine fresh-install case
 
-	imported := store.ImportLegacy(legacy, g.Catalog())
-	// A legacy Rust save predates P2 by construction (state.db did not
-	// exist yet — LoadAll's own doc comment: "the import branch always
-	// returns a nil session log"), so g's session log is already the
-	// honest empty default from game.New() and needs no restore call
-	// here. RestoreSessionNames already ran above, before this function
-	// was even called.
-	store.Apply(g, imported)
-	log.Printf("imported legacy save from %s (dev_cash=%d, owned=%v)", legacyPath, imported.DevCash, imported.OwnedItems)
-	if err := store.Save(savePath, imported); err != nil {
-		log.Printf("failed to persist imported legacy save: %v", err)
-	}
-	return true
 }
 
 // loadOrInitConfig loads ~/.config/dexel/config.json (SEC-1 design §1.2,

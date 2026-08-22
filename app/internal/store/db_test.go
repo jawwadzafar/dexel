@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/jawwadzafar/dexel/app/internal/game"
@@ -449,8 +450,12 @@ func TestQuarantineMovesTheJournalSiblingAndClosesTheHandleFirst(t *testing.T) {
 		t.Fatalf("WriteFile (journal): %v", err)
 	}
 
-	if err := quarantine(path, ".corrupt"); err != nil {
+	dest, err := quarantine(path, ".corrupt")
+	if err != nil {
 		t.Fatalf("quarantine: %v", err)
+	}
+	if dest != path+".corrupt" {
+		t.Fatalf("quarantine dest = %q, want %q (the FIRST quarantine keeps the plain name)", dest, path+".corrupt")
 	}
 
 	if _, err := os.Stat(path); !os.IsNotExist(err) {
@@ -611,5 +616,95 @@ func TestSaveIsDeterministicForLogicallyEqualState(t *testing.T) {
 	}
 	if mac1 != mac2 {
 		t.Errorf("mac differs between two Saves of the same logical state: %q vs %q", mac1, mac2)
+	}
+}
+
+// TestAZeroByteStateDBIsReportedAsCorruptNotTampered is N-2's regression
+// test (docs/plan/REVIEW-2026-08-22.md). SQLite opens a zero-byte file
+// happily — it is a valid empty database — and a process killed between
+// openDB and the first commit leaves exactly that. The loader used to
+// report it as "save integrity check failed: state table missing or
+// unreadable" and quarantine it as .invalid: this build accusing an
+// honest user of tampering over a torn first write.
+//
+// The handling is deliberately unchanged where it matters (fail closed,
+// quarantine, never "no save" — a dropped table must not become a fresh
+// start by another name); what changes is that a database with NO tables
+// at all is named for what it is, and lands under .corrupt with the other
+// unusable artifacts.
+func TestAZeroByteStateDBIsReportedAsCorruptNotTampered(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		setup func(t *testing.T, path string)
+	}{
+		{"zero-byte file", func(t *testing.T, path string) {
+			if err := os.WriteFile(path, nil, 0o644); err != nil {
+				t.Fatalf("WriteFile: %v", err)
+			}
+		}},
+		{"valid database, no tables", func(t *testing.T, path string) {
+			db, err := openDB(path)
+			if err != nil {
+				t.Fatalf("openDB: %v", err)
+			}
+			if _, err := db.Exec("PRAGMA user_version = 0"); err != nil {
+				t.Fatalf("Exec: %v", err)
+			}
+			if err := db.Close(); err != nil {
+				t.Fatalf("Close: %v", err)
+			}
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			path := filepath.Join(dir, "state.db")
+			tc.setup(t, path)
+
+			_, ok, err := Load(path)
+			if err == nil {
+				t.Fatal("Load returned no error for an unusable state.db")
+			}
+			if ok {
+				t.Error("ok = true for an unusable state.db")
+			}
+			if errors.Is(err, ErrTampered) {
+				t.Errorf("err wraps ErrTampered: %v — a torn first write is not a cheat", err)
+			}
+			if !strings.Contains(err.Error(), "interrupted first write") {
+				t.Errorf("err = %v, want it to name the real cause", err)
+			}
+			if _, statErr := os.Stat(path + ".corrupt"); statErr != nil {
+				t.Errorf("expected %s.corrupt to exist: %v", path, statErr)
+			}
+			if _, statErr := os.Stat(path + ".invalid"); statErr == nil {
+				t.Error("the file was quarantined as .invalid — that suffix means tampering")
+			}
+			if _, statErr := os.Stat(path); !os.IsNotExist(statErr) {
+				t.Error("the unusable state.db was left in place; the next Save must start from a clean file")
+			}
+		})
+	}
+}
+
+// TestADroppedStateTableIsStillTampering is the line N-2 must not blur: a
+// database that HAS tables but is missing `state` was not interrupted
+// mid-write — something removed it — and that stays ErrTampered with a
+// .invalid quarantine.
+func TestADroppedStateTableIsStillTampering(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "state.db")
+	saveRichDB(t, path)
+	rawExec(t, path, `CREATE TABLE IF NOT EXISTS decoy (id INTEGER PRIMARY KEY)`)
+	rawExec(t, path, `DROP TABLE state`)
+
+	_, ok, err := Load(path)
+	if !errors.Is(err, ErrTampered) {
+		t.Errorf("err = %v, want it to wrap ErrTampered", err)
+	}
+	if ok {
+		t.Error("ok = true after the state table was dropped")
+	}
+	if _, statErr := os.Stat(path + ".invalid"); statErr != nil {
+		t.Errorf("expected %s.invalid: %v", path, statErr)
 	}
 }

@@ -13,6 +13,16 @@
 // `iife` format mirrors the original hand-written script, which was a plain
 // immediately-invoked function loaded via a bare <script src="js/dexel.js">
 // tag (no type="module") in index.html.
+//
+// The sourcemap is still emitted and still committed (N-9, docs/plan/
+// REVIEW-2026-08-22.md): CI's bundle-drift check diffs
+// app/public/js/dexel.js.map alongside the bundle, and `-public
+// app/public` serves it in dev so devtools can map a stack trace back to
+// TypeScript. What changed is that app/embed.go no longer compiles it
+// INTO the binary — it was ~230 KB, about a third of the whole embedded
+// payload, shipped to every end user as pure debug weight. So: keep
+// emitting it, keep committing it, do not embed it. embed_test.go fails
+// if either half of that drifts.
 import { build } from 'esbuild';
 
 await build({

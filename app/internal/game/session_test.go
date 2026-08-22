@@ -771,3 +771,62 @@ func TestSessionNamesRoundTripThroughStartAndRestore(t *testing.T) {
 		t.Fatalf("names[3] = %q, want %q", names[3], "authrefactor")
 	}
 }
+
+// TestNextSessionIdIsAnchoredOnTheLastPersistedRow is B-3's game-side half
+// (docs/plan/REVIEW-2026-08-22.md). StartSession used to derive its id
+// from len(sessionLog)+1 alone, so the id sequence believed whatever the
+// in-memory cache happened to hold. Two ways that diverges from the disk:
+//
+//   - the server could not convert the verified log into records and
+//     restored an EMPTY cache while the DB still held rows (main.go's
+//     degrade-field-by-field branch). The next id would then be 1 — a
+//     collision with a row already on disk.
+//   - a record was finished but its append has not landed yet, so the
+//     cache is AHEAD of the disk. The next id must still not reuse it.
+//
+// The floor is therefore the higher of "records I know about" and "the
+// last id the store confirmed it wrote", and the setter only raises.
+func TestNextSessionIdIsAnchoredOnTheLastPersistedRow(t *testing.T) {
+	t.Run("an empty cache with persisted rows does not restart at 1", func(t *testing.T) {
+		g := New()
+		g.RestoreSessionLog(nil) // the degraded conversion branch
+		g.SetSessionLogPersistedID(5)
+		if err := g.StartSession(""); err != nil {
+			t.Fatalf("StartSession: %v", err)
+		}
+		active, _ := g.ActiveSession()
+		if active.ID != 6 {
+			t.Errorf("id = %d, want 6 (one past the last row on disk)", active.ID)
+		}
+	})
+
+	t.Run("a cache ahead of the disk wins", func(t *testing.T) {
+		g := New()
+		g.RestoreSessionLog([]SessionRecord{{ID: 1}, {ID: 2}, {ID: 3}})
+		g.SetSessionLogPersistedID(2) // row 3's append has not landed
+		if err := g.StartSession(""); err != nil {
+			t.Fatalf("StartSession: %v", err)
+		}
+		active, _ := g.ActiveSession()
+		if active.ID != 4 {
+			t.Errorf("id = %d, want 4 — an unpersisted record still owns its id", active.ID)
+		}
+	})
+
+	t.Run("the floor only ever rises", func(t *testing.T) {
+		g := New()
+		g.SetSessionLogPersistedID(9)
+		g.SetSessionLogPersistedID(2)
+		if got := g.SessionLogPersistedID(); got != 9 {
+			t.Errorf("SessionLogPersistedID = %d, want 9 — a lower value must not re-open the gap", got)
+		}
+	})
+
+	t.Run("RestoreSessionLog seeds the floor from the restored rows", func(t *testing.T) {
+		g := New()
+		g.RestoreSessionLog([]SessionRecord{{ID: 1}, {ID: 2}})
+		if got := g.SessionLogPersistedID(); got != 2 {
+			t.Errorf("SessionLogPersistedID = %d, want 2", got)
+		}
+	})
+}

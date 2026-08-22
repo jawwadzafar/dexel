@@ -127,9 +127,11 @@ func TestSchema1FileHasNoStatsKeyAndMigratesToZero(t *testing.T) {
 		"ownedTints": [],
 		"equipped": {}
 	}`
-	if err := os.WriteFile(jsonPath, []byte(raw), 0o644); err != nil {
-		t.Fatalf("WriteFile: %v", err)
-	}
+	// Signed, not grandfathered: B-1 removed the unsigned-schema<=4
+	// import path this fixture used to ride in on. The missing keys —
+	// the actual subject of the test — stay missing; see
+	// writeSignedRawJSON.
+	writeSignedRawJSON(t, jsonPath, raw)
 
 	d, ok, err := Load(dbPath)
 	if err != nil {
@@ -212,9 +214,11 @@ func TestSchema2FileMigratesToSchema3WithNewCountersAndCoinsZero(t *testing.T) {
 			}
 		}
 	}`
-	if err := os.WriteFile(jsonPath, []byte(raw), 0o644); err != nil {
-		t.Fatalf("WriteFile: %v", err)
-	}
+	// Signed, not grandfathered: B-1 removed the unsigned-schema<=4
+	// import path this fixture used to ride in on. The missing keys —
+	// the actual subject of the test — stay missing; see
+	// writeSignedRawJSON.
+	writeSignedRawJSON(t, jsonPath, raw)
 
 	d, ok, err := Load(dbPath)
 	if err != nil {
@@ -463,9 +467,11 @@ func TestSchema3FileMigratesToSchema4WithEmptyHistoryAndZeroStreak(t *testing.T)
 			"coinsToday": {"keystrokes": 6, "mouse": 2, "focusSessions": 4, "appSwitches": 0}
 		}
 	}`
-	if err := os.WriteFile(jsonPath, []byte(raw), 0o644); err != nil {
-		t.Fatalf("WriteFile: %v", err)
-	}
+	// Signed, not grandfathered: B-1 removed the unsigned-schema<=4
+	// import path this fixture used to ride in on. The missing keys —
+	// the actual subject of the test — stay missing; see
+	// writeSignedRawJSON.
+	writeSignedRawJSON(t, jsonPath, raw)
 
 	d, ok, err := Load(dbPath)
 	if err != nil {

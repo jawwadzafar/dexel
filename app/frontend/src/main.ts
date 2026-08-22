@@ -33,7 +33,11 @@ import * as activityModal from './features/activity-modal';
 import * as historyModal from './features/history-modal';
 import * as onboardingModal from './features/onboarding-modal';
 import * as sessionsModal from './features/sessions-modal';
-import './features/menu'; // side-effect only: wires #menu-open/#menu-panel; holds no store-derived state to render
+// Wires #menu-open/#menu-panel as a side effect on import. PR-5
+// (dev_docs/production-runtime/MIGRATION_PLAN.md §PR-5) gave it one piece
+// of store-derived state to render — the pause/resume label — via the
+// named renderPauseLabel() export called from renderAll() below.
+import * as menu from './features/menu';
 import * as keybindings from './features/keybindings';
 import { installDevTools } from './dev/dev-tools';
 import { DEV_SESSION_COMPLETE_SAMPLE, DEV_STATE_NO_SESSION } from './dev/dev-fixtures';
@@ -42,6 +46,7 @@ import type { SessionView, StateMessage } from './wire';
 function renderAll(): void {
   if (!store.getState()) return;
   renderChrome();
+  menu.renderPauseLabel();
   renderTerminal();
   renderScene();
   storeModal.refreshIfOpen();

@@ -5,7 +5,7 @@
 // installed in dev mode.
 import * as store from '../state/store';
 import { hideConnOverlay } from '../render/overlays';
-import { DEV_CATALOG, DEV_STATE, DEV_STATE_ONBOARDING } from './dev-fixtures';
+import { DEV_CATALOG, DEV_STATE, DEV_STATE_ONBOARDING, DEV_STATE_PAUSED } from './dev-fixtures';
 import type { Equipped, StateMessage } from '../wire';
 
 declare global {
@@ -15,6 +15,10 @@ declare global {
     // Phase P1: the fresh-install fixture, exposed so a harness can render
     // the onboarding modal with one call — window.devApply(window.devStateOnboarding).
     devStateOnboarding?: typeof DEV_STATE_ONBOARDING;
+    // PR-5 (dev_docs/production-runtime/MIGRATION_PLAN.md §PR-5): the
+    // paused fixture, exposed so a harness can render the PAUSED chrome
+    // with one call — window.devApply(window.devStatePaused).
+    devStatePaused?: typeof DEV_STATE_PAUSED;
   }
 }
 
@@ -55,4 +59,5 @@ export function installDevTools(renderAll: () => void): void {
   };
   window.devCatalog = DEV_CATALOG;
   window.devStateOnboarding = DEV_STATE_ONBOARDING;
+  window.devStatePaused = DEV_STATE_PAUSED;
 }

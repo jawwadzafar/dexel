@@ -123,15 +123,18 @@ func computeMAC(d SaveData) string {
 	return computeMACBytes(canonicalBody(d))
 }
 
-// verifyMAC reports whether d.Mac matches computeMAC(d). Unchanged
-// behaviour from pre-DB-1; schema<5 grandfathered saves must never reach
-// this function in the first place (see loadJSON in store.go).
+// verifyMAC reports whether d.Mac matches computeMAC(d). Since B-1
+// (docs/plan/REVIEW-2026-08-22.md) EVERY parsed save reaches this
+// function, at every schema: an empty Mac simply fails, which is the
+// point — the old schema<5 bypass was a mint that needed no key (see
+// loadJSON in store.go).
 func verifyMAC(d SaveData) bool {
 	return verifyMACBytes(canonicalBody(d), d.Mac)
 }
 
-// ErrTampered is Load's error (wrapped with detail) when a schema>=5 save
-// parses fine but its MAC does not verify. It is deliberately a sentinel
+// ErrTampered is Load's error (wrapped with detail) when a save parses
+// fine but its MAC does not verify — including a save carrying no MAC at
+// all (B-1). It is deliberately a sentinel
 // DISTINCT from both "no save" (os.IsNotExist, Load's (SaveData{}, false,
 // nil)) and ErrFutureSchema: see Load's doc comment in store.go for why
 // collapsing tamper detection into "no save" would open an anti-cheat

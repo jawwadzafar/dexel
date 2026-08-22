@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
@@ -327,97 +328,143 @@ func TestRichStateSaveLoadRoundTripHasNoFalsePositive(t *testing.T) {
 	}
 }
 
-// TestSchema4FileIsGrandfatheredThenResavedSignedAtCurrentSchema is
-// SEC-1/DB-1's migration exit criterion (docs/plan/SEC-1-design.md §5/§8,
-// docs/plan/DB-1-design.md §3.2/§4.3): an unsigned schema-4 state.json
-// (no "mac" key, predating SEC-1) has no state.db yet, so Load takes the
-// one-time import branch (db.go's importJSON), which reuses loadJSON's
-// existing grandfather behaviour verbatim — no MAC check, no error — and
-// then, because "DB-1 has no grandfather branch of its own" (§3.2), signs
-// the imported row at CurrentSchema immediately, during the import
-// itself, rather than waiting for a later Save to upgrade it.
-func TestSchema4FileIsGrandfatheredThenResavedSignedAtCurrentSchema(t *testing.T) {
+// TestUnsignedSchema4FileIsRefusedAndQuarantinedNeverMinted is B-1's
+// regression guard (docs/plan/REVIEW-2026-08-22.md). It replaces
+// TestSchema4FileIsGrandfatheredThenResavedSignedAtCurrentSchema, which
+// pinned the opposite behaviour: that an unsigned schema-4 state.json was
+// imported unverified and then SIGNED at CurrentSchema.
+//
+// That was a mint requiring NO key at all — `rm state.db`, write
+// {"schema":4,"devCash":999999999}, start dexel, get a validly-signed
+// save with a billion Dev Cash — which is strictly easier than defeating
+// the MAC and made integrity.go's "stops casual save-file editing
+// completely" claim false. The grandfather window existed for genuine
+// pre-SEC-1 saves, and those only ever existed as dev artifacts on the
+// machine dexel was built on (the Go build has never been released), so
+// the window is closed rather than narrowed: an unsigned save is a
+// tampered save.
+//
+// What must be true now: ErrTampered, ok==false, the file quarantined to
+// .invalid untouched, NO state.db created (nothing was laundered), and a
+// sibling config.json — the unsigned, hand-editable half of the split —
+// left exactly as it was, so the refusal costs the user their economy and
+// not their dexel's name.
+func TestUnsignedSchema4FileIsRefusedAndQuarantinedNeverMinted(t *testing.T) {
 	dir := t.TempDir()
 	dbPath := filepath.Join(dir, "state.db")
 	jsonPath := filepath.Join(dir, "state.json")
+	configPath := filepath.Join(dir, "config.json")
 
+	if err := SaveConfig(configPath, ConfigData{Name: "Pixel"}); err != nil {
+		t.Fatalf("SaveConfig: %v", err)
+	}
+	configBefore, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatalf("ReadFile (config before): %v", err)
+	}
+
+	// The review's own reproduction fixture, verbatim in spirit: a
+	// hand-written schema-4 file claiming an absurd balance.
 	raw := `{
 		"schema": 4,
-		"devCash": 777,
-		"xp": 300,
-		"sprint": {"index": 1, "unitsDone": 2.5},
-		"ownedItems": ["chair_basic"],
+		"devCash": 999999999,
+		"xp": 424242,
+		"sprint": {"index": 5, "unitsDone": 0},
+		"ownedItems": ["chair_exec", "kb_split", "mouse_trackball", "wall_shelf", "buddy_cat"],
 		"ownedTints": [],
-		"equipped": {},
-		"stats": {"date": "", "today": {}, "lifetime": {}, "coinsToday": {}, "history": [], "streak": {}}
+		"equipped": {}
 	}`
 	if err := os.WriteFile(jsonPath, []byte(raw), 0o644); err != nil {
 		t.Fatalf("WriteFile: %v", err)
 	}
 
 	d, ok, err := Load(dbPath)
-	if err != nil {
-		t.Fatalf("Load (import) of a grandfathered schema-4 file should not error: %v", err)
+	if !errors.Is(err, ErrTampered) {
+		t.Fatalf("Load err = %v, want it to wrap ErrTampered — an unsigned save must not be trusted", err)
 	}
-	if !ok {
-		t.Fatal("Load reported no save for a valid schema-4 file")
+	if ok {
+		t.Error("ok = true for an unsigned schema-4 file, want false")
 	}
-	if d.DevCash != 777 || d.XP != 300 {
-		t.Errorf("devCash/xp = (%d,%d), want (777,300) — grandfathered balances must survive intact", d.DevCash, d.XP)
+	if d.DevCash != 0 {
+		t.Errorf("d.DevCash = %d, want 0 — nothing from an unsigned file may reach the caller", d.DevCash)
 	}
-	// Unlike the pre-DB-1 world, the import signs it AT IMPORT TIME —
-	// there is no unsigned intermediate state once a state.db exists.
-	if d.Schema != CurrentSchema {
-		t.Errorf("d.Schema = %d, want CurrentSchema (%d) — the import must upgrade the schema immediately", d.Schema, CurrentSchema)
-	}
-	if d.Mac == "" {
-		t.Error("d.Mac is empty, want a signed tag written by the import — DB-1 has no grandfather branch of its own")
+	if _, statErr := os.Stat(dbPath); !os.IsNotExist(statErr) {
+		t.Error("a state.db was created from an unsigned import — that is the mint B-1 describes")
 	}
 	if _, statErr := os.Stat(jsonPath); !os.IsNotExist(statErr) {
-		t.Error("state.json should have been renamed away by the one-time import, not left in place")
+		t.Error("the unsigned state.json should have been moved aside, not left in place to be re-tried")
 	}
-	if _, statErr := os.Stat(jsonPath + ".imported"); statErr != nil {
-		t.Errorf("expected %s.imported to exist after the one-time import: %v", jsonPath, statErr)
+	quarantined, readErr := os.ReadFile(jsonPath + ".invalid")
+	if readErr != nil {
+		t.Fatalf("expected %s.invalid to exist: %v", jsonPath, readErr)
 	}
-
-	g := game.New()
-	Apply(g, d)
-	if g.DevCash != 777 {
-		t.Fatalf("after Apply: DevCash = %d, want 777", g.DevCash)
+	if string(quarantined) != raw {
+		t.Error("the quarantined file's bytes changed — quarantine must rename, never rewrite")
 	}
-
-	// Ordinary subsequent operation (an autosave) writes straight to the
-	// now-established DB — no more importing, no more grandfathering.
-	if err := Save(dbPath, Snapshot(g)); err != nil {
-		t.Fatalf("Save after migration: %v", err)
-	}
-	reloaded, ok, err := Load(dbPath)
+	configAfter, err := os.ReadFile(configPath)
 	if err != nil {
-		t.Fatalf("Load after migration should verify with no error: %v", err)
+		t.Fatalf("ReadFile (config after): %v", err)
 	}
-	if !ok {
-		t.Fatal("Load reported no save after migration")
-	}
-	if reloaded.Schema != CurrentSchema {
-		t.Errorf("reloaded.Schema = %d, want CurrentSchema (%d)", reloaded.Schema, CurrentSchema)
-	}
-	if reloaded.Mac == "" {
-		t.Error("reloaded.Mac is empty, want a signed tag")
-	}
-	if reloaded.DevCash != 777 {
-		t.Errorf("reloaded.DevCash = %d, want 777 — migration must not lose balances", reloaded.DevCash)
+	if string(configAfter) != string(configBefore) {
+		t.Error("config.json changed during a refused unsigned import — the name must survive a wiped economy")
 	}
 }
 
-// TestLegacyImportIsNotReachableViaATamperedFile is the regression-guard
-// SEC-1 design §4 calls out by name: a caller implementing main.go's
-// loadOrImport contract — "if Load returns an error, do not run the
-// legacy-import path" — can never be tricked into legacy-importing by a
-// tampered state.json, because Load's tampered-file return is
-// (SaveData{}, false, non-nil error wrapping ErrTampered), never the
-// (SaveData{}, false, nil) shape that signals "no save, may legacy-
-// import." This test simulates exactly the branch loadOrImport takes.
-func TestLegacyImportIsNotReachableViaATamperedFile(t *testing.T) {
+// TestASecondQuarantineDoesNotDestroyTheFirstOne is N-1's regression
+// guard: `quarantine` used to rename unconditionally to path+suffix, so a
+// second tampered save silently overwrote the first one's evidence while
+// the message still promised "original preserved untouched ... NOT
+// deleted". The first quarantine keeps the plain documented name; the
+// second gets a timestamped one and BOTH files survive.
+func TestASecondQuarantineDoesNotDestroyTheFirstOne(t *testing.T) {
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "state.db")
+	jsonPath := filepath.Join(dir, "state.json")
+
+	for i, body := range []string{
+		`{"schema": 4, "devCash": 111}`,
+		`{"schema": 4, "devCash": 222}`,
+	} {
+		if err := os.WriteFile(jsonPath, []byte(body), 0o644); err != nil {
+			t.Fatalf("WriteFile #%d: %v", i, err)
+		}
+		if _, _, err := Load(dbPath); !errors.Is(err, ErrTampered) {
+			t.Fatalf("Load #%d err = %v, want ErrTampered", i, err)
+		}
+	}
+
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatalf("ReadDir: %v", err)
+	}
+	var invalids []string
+	for _, e := range entries {
+		if strings.Contains(e.Name(), ".invalid") {
+			invalids = append(invalids, e.Name())
+		}
+	}
+	if len(invalids) != 2 {
+		t.Fatalf("quarantined files = %v, want 2 distinct ones (the second tamper must not overwrite the first)", invalids)
+	}
+	first, err := os.ReadFile(filepath.Join(dir, "state.json.invalid"))
+	if err != nil {
+		t.Fatalf("the FIRST quarantine must keep the plain .invalid name: %v", err)
+	}
+	if string(first) != `{"schema": 4, "devCash": 111}` {
+		t.Errorf("state.json.invalid = %s, want the FIRST refused file's bytes", first)
+	}
+}
+
+// TestATamperedFileNeverPresentsAsNoSave is the regression-guard SEC-1
+// design §4 calls out by name, kept after B-2 deleted the legacy-Rust
+// import it was originally written to protect. Load's tampered-file
+// return is (SaveData{}, false, non-nil error wrapping ErrTampered),
+// never the (SaveData{}, false, nil) shape that means "no save at all" —
+// the shape main.go's loadOrImport treats as a genuinely fresh install
+// (and which used to additionally unlock an unbounded legacy re-grant).
+// The distinction still matters with legacy gone: "fresh install" drives
+// onboarding, and a tampered save must never masquerade as one.
+func TestATamperedFileNeverPresentsAsNoSave(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "state.db")
 
@@ -441,9 +488,9 @@ func TestLegacyImportIsNotReachableViaATamperedFile(t *testing.T) {
 	// AND err is nil. Prove that combination never occurs for a tampered
 	// file.
 	_, ok, loadErr := Load(path)
-	wouldRunLegacyImport := !ok && loadErr == nil
-	if wouldRunLegacyImport {
-		t.Fatal("a tampered file must never present as (ok=false, err=nil) — that shape is reserved for \"no save at all\" and would trigger a legacy re-grant")
+	looksLikeAFreshInstall := !ok && loadErr == nil
+	if looksLikeAFreshInstall {
+		t.Fatal("a tampered file must never present as (ok=false, err=nil) — that shape is reserved for \"no save at all\"")
 	}
 	if !errors.Is(loadErr, ErrTampered) {
 		t.Errorf("loadErr = %v, want it to wrap ErrTampered", loadErr)

@@ -1,7 +1,6 @@
 // Package store persists game.Game to a local SQLite database
-// (docs/plan/DB-1-design.md, docs/adr/0016-sqlite-persistence.md) and
-// imports the legacy Rust save on first run, per
-// docs/upgrade-design.md's "Persistence" section. It knows about
+// (docs/plan/DB-1-design.md, docs/adr/0016-sqlite-persistence.md). It
+// knows about
 // game.Game's public API but nothing about the engine or activity
 // packages — persistence is a leaf, not a hub. config.json (config.go)
 // stays plain, unsigned, hand-editable JSON — DB-1 only moves the
@@ -233,20 +232,31 @@ type SessionSave struct {
 // Mac (SEC-1, docs/plan/SEC-1-design.md §2, ADR 0014) is the hex
 // HMAC-SHA256 tag of this struct with Mac itself zeroed (see
 // integrity.go's macPreimage/computeMAC) — a fixed-width digest, not
-// content, so it does not weaken the privacy invariant above. It is ""
-// only for a grandfathered schema-4-or-earlier save that predates this
-// field (see Load's doc comment and CurrentSchema's).
+// content, so it does not weaken the privacy invariant above. Since B-1
+// (docs/plan/REVIEW-2026-08-22.md) an EMPTY Mac is never trusted at any
+// schema: the schema<=4 grandfather window — which let an unsigned,
+// hand-written file be imported and then signed, minting an economy with
+// no key at all — is closed, so a save that arrives without a valid tag
+// is treated exactly like one with a forged tag (see loadJSON).
 type SaveData struct {
-	Schema           int                     `json:"schema"`
-	DevCash          uint64                  `json:"devCash"`
-	XP               uint64                  `json:"xp"`
-	Sprint           SprintSave              `json:"sprint"`
-	OwnedItems       []string                `json:"ownedItems"`
-	OwnedTints       []string                `json:"ownedTints"`
-	Equipped         map[string]EquippedSave `json:"equipped"`
-	ImportedFromRust bool                    `json:"importedFromRust,omitempty"`
-	ImportedAt       string                  `json:"importedAt,omitempty"` // RFC3339, "" if never imported
-	Stats            StatsSave               `json:"stats"`
+	Schema     int                     `json:"schema"`
+	DevCash    uint64                  `json:"devCash"`
+	XP         uint64                  `json:"xp"`
+	Sprint     SprintSave              `json:"sprint"`
+	OwnedItems []string                `json:"ownedItems"`
+	OwnedTints []string                `json:"ownedTints"`
+	Equipped   map[string]EquippedSave `json:"equipped"`
+	// ImportedFromRust/ImportedAt are VESTIGIAL as of B-2
+	// (docs/plan/REVIEW-2026-08-22.md): the legacy-Rust import that was
+	// the only thing that ever set them is deleted. They stay in the
+	// struct — both are `omitempty` and both round-trip through
+	// Snapshot/Apply unchanged — so a save written by an earlier build
+	// keeps verifying against its own MAC and keeps reporting the truth
+	// about where it came from. Nothing sets them any more; nothing new
+	// should.
+	ImportedFromRust bool      `json:"importedFromRust,omitempty"`
+	ImportedAt       string    `json:"importedAt,omitempty"` // RFC3339, "" if never imported
+	Stats            StatsSave `json:"stats"`
 	// Session/SessionLogHead (P2, docs/plan/P2-design.md §5.1, ADR 0017
 	// Decision 5, schema 6) are the two additive fields for the in-progress
 	// session and the chained session-log's HEAD. Session is nil/omitted
@@ -326,12 +336,13 @@ type SaveData struct {
 // Mac, the hex HMAC-SHA256 tag over the rest of the struct (see
 // integrity.go). Unlike every prior bump, this one is not purely
 // additive in the usual "old build ignores an unknown key" sense —
-// schema >= 5 is the signal that MAC verification is IN EFFECT (Load
-// verifies only at schema >= 5), so the bump is load-bearing for the
-// anti-cheat mechanism itself, not just a version label. A pre-SEC-1
-// schema-4-or-earlier file has no "mac" key; Load grandfathers it in as
-// trusted (no verification), and the next Save re-persists it as a
-// signed schema-5 file — never mistaken for tampering. ErrFutureSchema is
+// schema >= 5 is the signal that a save carries a MAC at all, so the bump
+// is load-bearing for the anti-cheat mechanism itself, not just a version
+// label. A pre-SEC-1 schema-4-or-earlier file has no "mac" key. Load used
+// to grandfather such a file in as trusted and re-sign it; since B-1
+// (docs/plan/REVIEW-2026-08-22.md) it is REFUSED as tampered, because
+// that window was an unsigned mint anyone could walk through and nothing
+// legitimate has produced a schema<=4 file since. ErrFutureSchema is
 // unchanged by this bump: a schema-6 save is still renamed to ".future"
 // and refused, never silently downgraded (see
 // TestFutureSchema7RefusalStillFiresAfterTheSchema6Bump, which now pins
@@ -1026,14 +1037,17 @@ func Load(path string) (SaveData, bool, error) {
 // deleted) and this function returns an error wrapping ErrTampered,
 // never (_, true, _) and never (SaveData{}, false, nil). That last
 // distinction is the entire point — collapsing a tamper failure into "no
-// save" would let the caller fall through to the legacy-import path,
-// which grants items and refunds Dev Cash, so a hand-edited state.json
-// could trigger a legacy re-grant. Returning a distinct sentinel closes
-// that vector the exact same way ErrFutureSchema already does: the
-// caller must treat "load failed" and "no save yet" as different things.
-// A schema-4-or-earlier file has no Mac to check at all — it is
-// grandfathered in as trusted; importJSON (db.go) is what re-persists it
-// signed at CurrentSchema when this is reached via the one-time import.
+// save" makes a failed load indistinguishable from a fresh install, which
+// pre-B-2 additionally unlocked the unbounded legacy-Rust re-grant and
+// still decides onboarding today. Returning a distinct sentinel closes
+// that the same way ErrFutureSchema already does: the caller must treat
+// "load failed" and "no save yet" as different things.
+//
+// B-1 (docs/plan/REVIEW-2026-08-22.md): the MAC is required at EVERY
+// schema. A schema-4-or-earlier file has no Mac to check, which is now a
+// refusal rather than a free pass — see the check itself below for why
+// the old grandfather window was strictly easier to abuse than forging a
+// tag.
 func loadJSON(path string) (SaveData, bool, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -1044,12 +1058,12 @@ func loadJSON(path string) (SaveData, bool, error) {
 	}
 	var d SaveData
 	if err := json.Unmarshal(data, &d); err != nil {
-		corruptPath := path + ".corrupt"
+		corruptPath := quarantinePath(path, ".corrupt")
 		_ = os.Rename(path, corruptPath)
 		return SaveData{}, false, fmt.Errorf("parse save file (moved to %s): %w", corruptPath, err)
 	}
 	if d.Schema > CurrentSchema {
-		futurePath := path + ".future"
+		futurePath := quarantinePath(path, ".future")
 		if renameErr := os.Rename(path, futurePath); renameErr != nil {
 			return SaveData{}, false, fmt.Errorf("%w: schema %d > this build's %d, and backing up %s to %s failed: %v",
 				ErrFutureSchema, d.Schema, CurrentSchema, path, futurePath, renameErr)
@@ -1057,17 +1071,32 @@ func loadJSON(path string) (SaveData, bool, error) {
 		return SaveData{}, false, fmt.Errorf("%w: schema %d > this build's %d; original preserved untouched at %s (NOT loaded, NOT deleted, NOT overwritten)",
 			ErrFutureSchema, d.Schema, CurrentSchema, futurePath)
 	}
-	if d.Schema >= 5 && !verifyMAC(d) {
-		invalidPath := path + ".invalid"
-		if renameErr := os.Rename(path, invalidPath); renameErr != nil {
-			return SaveData{}, false, fmt.Errorf("%w: MAC mismatch, and backing up %s to %s failed: %v",
-				ErrTampered, path, invalidPath, renameErr)
+	// B-1 (docs/plan/REVIEW-2026-08-22.md): the MAC is required at EVERY
+	// schema, not only >= 5. The old `d.Schema >= 5 &&` guard was a
+	// no-key mint: a hand-written {"schema":4,"devCash":999999999}
+	// state.json was accepted unverified and then SIGNED by importJSON,
+	// which is strictly easier than defeating the MAC. Nothing legitimate
+	// produces a schema<=4 file any more (the only ones that ever existed
+	// were pre-SEC-1 dev artifacts on the machine this was built on; the
+	// product never shipped one), so an unsigned save is now treated
+	// exactly like a forged one: quarantined to .invalid, ErrTampered,
+	// fresh economy. config.json is a separate, unsigned, deliberately
+	// hand-editable file and is untouched by this path, so the dexel's
+	// name survives.
+	if !verifyMAC(d) {
+		// "unsigned" and "wrong tag" are the same refusal but a support
+		// reader deserves to know which one happened.
+		reason := "MAC mismatch"
+		if d.Mac == "" {
+			reason = fmt.Sprintf("no MAC at all (schema %d save file, unsigned)", d.Schema)
 		}
-		return SaveData{}, false, fmt.Errorf("%w: MAC mismatch; original preserved untouched at %s (NOT loaded, NOT deleted, NOT overwritten)",
-			ErrTampered, invalidPath)
+		invalidPath := quarantinePath(path, ".invalid")
+		if renameErr := os.Rename(path, invalidPath); renameErr != nil {
+			return SaveData{}, false, fmt.Errorf("%w: %s, and backing up %s to %s failed: %v",
+				ErrTampered, reason, path, invalidPath, renameErr)
+		}
+		return SaveData{}, false, fmt.Errorf("%w: %s; original preserved untouched at %s (NOT loaded, NOT deleted, NOT overwritten)",
+			ErrTampered, reason, invalidPath)
 	}
 	return d, true, nil
 }
-
-// nowRFC3339 is a test seam for ImportLegacy's timestamp.
-var nowRFC3339 = func() string { return time.Now().UTC().Format(time.RFC3339) }

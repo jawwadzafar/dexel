@@ -333,7 +333,8 @@ type Game struct {
 	// TickPaused, and Tick's own doc comment.
 	paused bool
 
-	// session/pendingSession/sessionLog/sessionLogHead/sessionNames are
+	// session/pendingSession/sessionLog/sessionLogHead/sessionNames/
+	// sessionLogPersistedID are
 	// Phase P2's (docs/plan/P2-design.md, ADR 0017) session state — see
 	// session.go, which owns every type and method that touches them.
 	// Declared here (rather than session.go) only because Go requires a
@@ -344,6 +345,15 @@ type Game struct {
 	sessionLog     []SessionRecord
 	sessionLogHead string
 	sessionNames   map[int]string
+
+	// sessionLogPersistedID is the highest session id known to be
+	// DURABLY appended to the log (B-3, docs/plan/REVIEW-2026-08-22.md).
+	// It is the floor StartSession's id derivation is anchored on, so a
+	// record that never reached the disk cannot leave the id sequence
+	// pointing past the last real row. Set at boot from the verified log
+	// the store hands back, and after each successful append. See
+	// session.go's nextSessionID / SetSessionLogPersistedID.
+	sessionLogPersistedID int
 
 	// now is a test seam (mirrors internal/engine.Engine's own `now` field)
 	// so TestMidnightRollover-style tests can drive statsDate deterministically
