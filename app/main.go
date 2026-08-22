@@ -25,6 +25,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"runtime/debug"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -33,6 +34,8 @@ import (
 	"github.com/jawwadzafar/dexel/app/internal/assets"
 	"github.com/jawwadzafar/dexel/app/internal/engine"
 	"github.com/jawwadzafar/dexel/app/internal/game"
+	"github.com/jawwadzafar/dexel/app/internal/lifecycle"
+	"github.com/jawwadzafar/dexel/app/internal/paths"
 	"github.com/jawwadzafar/dexel/app/internal/store"
 )
 
@@ -45,27 +48,162 @@ const (
 	tickerInterval   = 2500 * time.Millisecond
 )
 
-func main() {
-	// `dexel version` (MIGRATION_PLAN.md §PR-2): the first subcommand,
-	// intercepted ahead of every flag so PR-3's real dispatcher has one
-	// existing subcommand to design around rather than retrofit. A bare
-	// `flag.Parse()` would tolerate "version" as a harmless positional
-	// argument and fall straight through to starting the server — this
-	// explicit check is what actually makes `dexel version` a command
-	// rather than a no-op.
-	if len(os.Args) > 1 && os.Args[1] == "version" {
-		fmt.Println(versionLine())
-		return
-	}
+// serveMode is WHICH of the three entry points is running today's server
+// body (dev_docs/production-runtime/ARCHITECTURE.md Decision 3 and FORK
+// A). `serve` and `runtime` "are the same code path; the two names exist
+// so a log line, a launchd plist, and a human's terminal each say the
+// thing they mean" — and modeLegacy is the third name for that same path:
+// the pre-PR-3 `dexel -addr ...` shape, which must keep behaving
+// EXACTLY as it did before a dispatcher existed.
+//
+// The mode changes exactly three things and nothing else:
+//
+//	              default -addr      runtime.lock + runtime.json   extra log line
+//	modeLegacy    127.0.0.1:8080     no                            no
+//	modeServe     127.0.0.1:8080     no                            yes ("no lock")
+//	modeRuntime   127.0.0.1:0        YES                           yes
+//
+// modeLegacy differs from modeServe ONLY in that it prints nothing extra.
+// That is deliberate and it is the compatibility rule of this whole PR:
+// `.github/workflows/desktop.yml`'s sidecar assertion, the Tauri sidecar,
+// and every README invocation all take the legacy shape, so the legacy
+// shape emits byte-for-byte what it emitted before — not one added line,
+// on stdout or stderr. ARCHITECTURE.md Decision 7's "it logs one line
+// saying so" is attached to `dexel serve`, the explicitly-named developer
+// verb, which is where it can do no harm.
+type serveMode int
 
-	addr := flag.String("addr", "127.0.0.1:8080", "listen address (loopback by default — binding beyond 127.0.0.1/localhost exposes the activity monitor and save to your LAN/tailnet); a port of 0 (e.g. 127.0.0.1:0) binds an OS-assigned free port, reported via the DEXEL_LISTENING stdout handshake — see ADR 0015")
-	publicDir := flag.String("public", "", "DEV OVERRIDE: serve the frontend from this directory on disk instead of the copy embedded in this binary (EMBED-1) — point it at app/public to iterate on the frontend without rebuilding Go; empty (the default) always serves the embedded copy")
-	providerKind := flag.String("provider", "auto", `activity provider: "auto" (native for this OS) or "fake"`)
-	fakeScript := flag.String("fake-script", "", "explicit fake-provider script (e.g. type:20s,idle:40s,mouse:15s); overrides DEXEL_FAKE_SCRIPT; implies -provider=fake")
-	insecureOrigin := flag.Bool("insecure-origin", false, "accept WebSocket connections from ANY Origin, skipping same-origin verification entirely — for embedded webviews only (e.g. a file:// or app:// frontend whose Origin header, if any, will never match a loopback host pattern); never enable this if -addr binds beyond 127.0.0.1/localhost")
-	var allowOrigins originList
-	flag.Var(&allowOrigins, "allow-origin", "extra literal WebSocket Origin(s) to accept, beyond the loopback host(s) derived from -addr's resolved port (repeatable, and/or comma-separated within one occurrence); each value is a bare host[:port] (e.g. \"tauri.localhost\") or a full origin URL from which the host is extracted (e.g. \"tauri://localhost\", \"http://tauri.localhost\") — never a wildcard; insurance for a future embedded webview whose Origin header won't match a loopback pattern (ADR 0015/docs/plan/F3-design.md §2,§8); not needed, and unused in Phase 1, when the webview loads this server's own loopback URL")
-	flag.Parse()
+const (
+	modeLegacy serveMode = iota
+	modeServe
+	modeRuntime
+)
+
+// defaultAddr: `runtime` defaults to an OS-assigned ephemeral port
+// because a background runtime nobody typed a port for should never fight
+// another process for 8080; `serve` (and legacy) keep today's
+// 127.0.0.1:8080 so `go run . serve` behaves exactly as `go run .` did
+// before (ARCHITECTURE.md Decision 3).
+func (m serveMode) defaultAddr() string {
+	if m == modeRuntime {
+		return "127.0.0.1:0"
+	}
+	return "127.0.0.1:8080"
+}
+
+// flagSetName is what a flag error message calls this invocation. Legacy
+// keeps os.Args[0], which is what the pre-PR-3 global flag.CommandLine
+// used, so a bad flag in the legacy shape reads as it always did.
+func (m serveMode) flagSetName() string {
+	switch m {
+	case modeServe:
+		return "dexel serve"
+	case modeRuntime:
+		return "dexel runtime"
+	default:
+		return os.Args[0]
+	}
+}
+
+// serveFlags is the server's flag set, unchanged in every name, type,
+// default and help string from the pre-PR-3 global flag.CommandLine — the
+// ONE exception being -addr's default, which now comes from
+// serveMode.defaultAddr() (ARCHITECTURE.md Decision 3: `runtime` defaults
+// to an ephemeral port, `serve` and the legacy shape keep 127.0.0.1:8080).
+//
+// Split out of runServe purely so that default IS testable
+// (TestServeFlagSetDefaultsPerMode). It was not, in the first cut of this
+// PR, and the mode-dependent default was silently left as a hardcoded
+// 127.0.0.1:8080 — a bug that made every detached runtime fight for port
+// 8080 and that no unit test could see, because the only way to observe
+// it was to start a real server.
+type serveFlags struct {
+	addr           *string
+	publicDir      *string
+	providerKind   *string
+	fakeScript     *string
+	insecureOrigin *bool
+	allowOrigins   originList
+}
+
+// newServeFlagSet builds the flag set for one runServe invocation.
+func newServeFlagSet(mode serveMode) (*flag.FlagSet, *serveFlags) {
+	fs := flag.NewFlagSet(mode.flagSetName(), flag.ExitOnError)
+	f := &serveFlags{}
+	f.addr = fs.String("addr", mode.defaultAddr(), "listen address (loopback by default — binding beyond 127.0.0.1/localhost exposes the activity monitor and save to your LAN/tailnet); a port of 0 (e.g. 127.0.0.1:0) binds an OS-assigned free port, reported via the DEXEL_LISTENING stdout handshake — see ADR 0015")
+	f.publicDir = fs.String("public", "", "DEV OVERRIDE: serve the frontend from this directory on disk instead of the copy embedded in this binary (EMBED-1) — point it at app/public to iterate on the frontend without rebuilding Go; empty (the default) always serves the embedded copy")
+	f.providerKind = fs.String("provider", "auto", `activity provider: "auto" (native for this OS) or "fake"`)
+	f.fakeScript = fs.String("fake-script", "", "explicit fake-provider script (e.g. type:20s,idle:40s,mouse:15s); overrides DEXEL_FAKE_SCRIPT; implies -provider=fake")
+	f.insecureOrigin = fs.Bool("insecure-origin", false, "accept WebSocket connections from ANY Origin, skipping same-origin verification entirely — for embedded webviews only (e.g. a file:// or app:// frontend whose Origin header, if any, will never match a loopback host pattern); never enable this if -addr binds beyond 127.0.0.1/localhost")
+	fs.Var(&f.allowOrigins, "allow-origin", "extra literal WebSocket Origin(s) to accept, beyond the loopback host(s) derived from -addr's resolved port (repeatable, and/or comma-separated within one occurrence); each value is a bare host[:port] (e.g. \"tauri.localhost\") or a full origin URL from which the host is extracted (e.g. \"tauri://localhost\", \"http://tauri.localhost\") — never a wildcard; insurance for a future embedded webview whose Origin header won't match a loopback pattern (ADR 0015/docs/plan/F3-design.md §2,§8); not needed, and unused in Phase 1, when the webview loads this server's own loopback URL")
+	return fs, f
+}
+
+// runServe is today's main() body, unchanged in its logic
+// (MIGRATION_PLAN.md §PR-3: "today's body becomes runServe(args []string)
+// WITH ITS LOGIC UNCHANGED"). What is new is only the frame around it: a
+// per-invocation flag.FlagSet instead of the process-global
+// flag.CommandLine, and — in modeRuntime only — PLATFORM_NOTES.md §5's
+// lock and ARCHITECTURE.md Decision 6's discovery file bracketing the
+// existing net.Listen.
+//
+// It exits the process on failure via log.Fatalf, exactly as the old
+// main() did; that is this repo's stated fail-loudly posture (ADR 0010),
+// and cli.go's dispatcher treats a plain return as success.
+func runServe(mode serveMode, args []string) {
+	fs, f := newServeFlagSet(mode)
+	// flag.ExitOnError makes Parse's only failure mode a process exit
+	// (with flag's own usage output), matching what the global
+	// flag.Parse() did before this became a FlagSet.
+	_ = fs.Parse(args)
+	// Rebound to the exact local names the pre-PR-3 body used, so
+	// everything below this line is untouched code rather than a
+	// mechanical rename spread over 900 lines.
+	addr, publicDir, providerKind, fakeScript, insecureOrigin := f.addr, f.publicDir, f.providerKind, f.fakeScript, f.insecureOrigin
+	allowOrigins := f.allowOrigins
+
+	// PLATFORM_NOTES.md §5's single-instance layers, in the order that
+	// document pins, because each catches what the previous cannot:
+	//   1. the OS lock on <StateDir>/runtime.lock  (here)
+	//   2. the explicit net.Listen below, with its existing log.Fatalf
+	//   3. runtime.json + a live round-trip, used by the CLI BEFORE it
+	//      ever spawns us (app/internal/lifecycle's Discover)
+	//
+	// Only modeRuntime takes layers 1 and 3. `dexel serve` and the legacy
+	// flag shape skip them by design (ARCHITECTURE.md Decision 7: "so a
+	// developer can run a scratch instance next to a real one exactly as
+	// they can today"), which is also what keeps every existing CI
+	// invocation from suddenly contending with a developer's real
+	// runtime.
+	var stateDir string
+	if mode == modeRuntime {
+		var err error
+		stateDir, err = paths.StateDir()
+		if err != nil {
+			log.Fatalf("resolve state dir: %v", err)
+		}
+		lock, err := lifecycle.AcquireLock(lifecycle.LockPath(stateDir))
+		if err != nil {
+			var busy *lifecycle.ErrLockedError
+			if errors.As(err, &busy) {
+				// Name the pid, per PLATFORM_NOTES.md §5 layer 1
+				// ("Failure message names the pid from runtime.json").
+				// The pid is read from the file purely to make the
+				// message useful — nothing here TRUSTS it.
+				if r, readErr := lifecycle.ReadRuntime(stateDir); readErr == nil {
+					log.Fatalf("dexel is already running (pid %d) at %s — refusing to start a second runtime in %s", r.Pid, r.URL, stateDir)
+				}
+				log.Fatalf("dexel is already running (another process holds %s) — refusing to start a second runtime in %s", busy.Path, stateDir)
+			}
+			log.Fatalf("acquire runtime lock: %v", err)
+		}
+		// The OS drops this lock on process death anyway (including
+		// SIGKILL); releasing it explicitly on a clean return is
+		// tidiness, not the mechanism.
+		defer func() { _ = lock.Release() }()
+	} else if mode == modeServe {
+		log.Print("serve: foreground dev mode — not taking runtime.lock and not writing runtime.json, so this instance is invisible to `dexel status`/`stop` and can run alongside a real runtime (ARCHITECTURE.md Decision 7)")
+	}
 
 	// Bind explicitly (ADR 0015 / docs/plan/F3-design.md §1,§8 T2) rather
 	// than letting http.Server.ListenAndServe do it implicitly, so that
@@ -78,6 +216,30 @@ func main() {
 		log.Fatalf("listen on %s: %v", *addr, err)
 	}
 	actualAddr := ln.Addr().String()
+
+	// ARCHITECTURE.md Decision 6: runtime.json is written atomically
+	// "immediately after net.Listen succeeds" — i.e. right here, before
+	// anything else in startup can fail — because it is the ONLY way the
+	// CLI that spawned us (whose stdout we are not, we are a log file)
+	// can learn which port we landed on. The token is minted per start
+	// and never leaves this file (Decision 8).
+	if mode == modeRuntime {
+		if err := writeRuntimeFile(stateDir, actualAddr); err != nil {
+			log.Fatalf("%v", err)
+		}
+		// Removed on CLEAN exit only (the sigCh branch's return runs this
+		// defer). A crash or a log.Fatalf leaves the file behind on
+		// purpose: staleness is not this process's problem to solve, it
+		// is resolved by the next round-trip that fails to reach us
+		// (Decision 6), which is the only test that cannot be fooled by
+		// a recycled pid.
+		defer func() {
+			if err := lifecycle.RemoveRuntime(stateDir); err != nil {
+				log.Printf("%v", err)
+			}
+		}()
+		log.Printf("discovery: %s (0600)", lifecycle.RuntimePath(stateDir))
+	}
 
 	// Stdout handshake (ADR 0015 / docs/plan/F3-design.md §1,§8 T2): print
 	// exactly one stable, machine-readable line to STDOUT as soon as the
@@ -1016,4 +1178,66 @@ func loadOrInitConfig() (string, store.ConfigData) {
 		}
 	}
 	return cfgPath, cfg
+}
+
+// writeRuntimeFile builds and writes runtime.json for a modeRuntime run
+// (ARCHITECTURE.md Decision 6's exact object). Split out of runServe so
+// the port-parsing and URL-normalising rules are testable on their own
+// (cli_test.go) rather than only reachable by starting a real server.
+func writeRuntimeFile(stateDir, actualAddr string) error {
+	token, err := lifecycle.NewToken()
+	if err != nil {
+		return err
+	}
+	rt, err := runtimeRecord(actualAddr, os.Getpid(), token, time.Now())
+	if err != nil {
+		return err
+	}
+	return lifecycle.WriteRuntime(stateDir, rt)
+}
+
+// runtimeRecord is writeRuntimeFile's pure core: the exact object
+// ARCHITECTURE.md Decision 6 pins, derived from the RESOLVED listen
+// address (so an ephemeral `-addr 127.0.0.1:0` publishes the real port,
+// never the literal 0) and this build's own two version answers
+// (version.go's ldflags semver, and buildVersion()'s VCS commit — PR-2).
+//
+// startedAt is RFC3339 in UTC so `dexel status` can subtract it from
+// time.Now() without a timezone argument, and so the field means the same
+// thing in a log a user pastes from another machine.
+func runtimeRecord(actualAddr string, pid int, token string, now time.Time) (lifecycle.Runtime, error) {
+	host, portStr, err := net.SplitHostPort(actualAddr)
+	if err != nil {
+		return lifecycle.Runtime{}, fmt.Errorf("split resolved listen address %q: %w", actualAddr, err)
+	}
+	port, err := strconv.Atoi(portStr)
+	if err != nil || port <= 0 {
+		return lifecycle.Runtime{}, fmt.Errorf("resolved listen address %q has no usable port", actualAddr)
+	}
+	return lifecycle.Runtime{
+		Schema:    lifecycle.RuntimeSchema,
+		Pid:       pid,
+		Port:      port,
+		URL:       "http://" + net.JoinHostPort(reachableHost(host), portStr),
+		Version:   version,
+		Commit:    buildVersion(),
+		StartedAt: now.UTC().Format(time.RFC3339),
+		Token:     token,
+	}, nil
+}
+
+// reachableHost turns a BIND host into a host something can actually
+// connect to. A wildcard bind ("", "0.0.0.0", "::") is a valid listen
+// address but a meaningless dial address, and runtime.json's url is a
+// dial address — it is what `dexel status` probes and what `dexel open`
+// hands a browser. Loopback is the honest substitute, and it is the only
+// address ARCHITECTURE.md's posture expects the runtime to be reached on
+// anyway.
+func reachableHost(bindHost string) string {
+	switch bindHost {
+	case "", "0.0.0.0", "::", "[::]":
+		return "127.0.0.1"
+	default:
+		return bindHost
+	}
 }

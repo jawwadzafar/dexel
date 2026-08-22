@@ -216,3 +216,55 @@ func relocateLegacy(legacyDir, newDir string) (relocated bool, err error) {
 	log.Printf("dexel: relocated state from %s to %s", legacyDir, newDir)
 	return true, nil
 }
+
+// RuntimeFile is <StateDir>/runtime.json — the discovery file the runtime
+// writes after its listener is bound and removes on a clean exit
+// (PLATFORM_NOTES.md §1's "discovery" row, ARCHITECTURE.md Decision 6).
+// The basename itself lives in app/internal/lifecycle next to the code
+// that reads and writes the file; this function owns only the DIRECTORY
+// half, which is this package's whole job.
+func RuntimeFile() (string, error) {
+	dir, err := StateDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, runtimeFileName), nil
+}
+
+// LockFile is <StateDir>/runtime.lock — the flock/LockFileEx target that
+// makes "one runtime per state dir" true (PLATFORM_NOTES.md §1's "lock"
+// row, ARCHITECTURE.md Decision 7). Two DEXEL_HOMEs therefore give two
+// independent instances by construction, which is exactly how the test
+// suite and CI stay clear of a developer's real runtime
+// (PLATFORM_NOTES.md §5).
+func LockFile() (string, error) {
+	dir, err := StateDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, lockFileName), nil
+}
+
+// LogFile is <StateDir>/logs/runtime.log — the ONE file `dexel start`
+// points the detached child's stdout and stderr at, and the one
+// `dexel logs` reads (PLATFORM_NOTES.md §1's "logs" row and §4).
+func LogFile() (string, error) {
+	dir, err := LogDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, logFileName), nil
+}
+
+// The three basenames above, spelled once. They intentionally duplicate
+// app/internal/lifecycle's exported RuntimeFileName/LockFileName/
+// LogFileName rather than importing them: app/internal/paths must stay
+// dependency-free (store.DefaultPath imports it, and lifecycle will grow
+// an import of store's siblings), and a test in this package pins the two
+// spellings to each other so the duplication cannot drift silently — see
+// TestRuntimeFileNamesMatchLifecycle.
+const (
+	runtimeFileName = "runtime.json"
+	lockFileName    = "runtime.lock"
+	logFileName     = "runtime.log"
+)
