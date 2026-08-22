@@ -211,7 +211,7 @@ func TestStoreOpenGate_SecondClientCannotReleaseFirstClientsHold(t *testing.T) {
 // a client whose connection blips (server restart, network hiccup) and
 // reconnects must re-establish its store-open hold rather than silently
 // losing it — the frontend re-sends STORE_OPEN on the WS 'open' event
-// when its own modal is still open (game.js), and the server must accept
+// when its own modal is still open (dexel.js), and the server must accept
 // it under the NEW connID exactly like a fresh open.
 func TestStoreOpenGate_ReconnectReopensGate(t *testing.T) {
 	ts := newTestServer(t)
@@ -226,7 +226,7 @@ func TestStoreOpenGate_ReconnectReopensGate(t *testing.T) {
 	waitFor(t, 2*time.Second, func() bool { return !ts.storeOpen() })
 
 	// ... and the client reconnects under a brand new connID and
-	// re-asserts STORE_OPEN, exactly as game.js's WS 'open' handler does
+	// re-asserts STORE_OPEN, exactly as dexel.js's WS 'open' handler does
 	// when its local modal is still showing.
 	c2 := dial(t, ts.url)
 	sendAction(t, c2, actionMessage{Action: "STORE_OPEN"})

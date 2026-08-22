@@ -10,8 +10,9 @@ target-*/
 # writes to ./build/<target>/ — never commit the binaries.
 /build/
 
-# Release archives from scripts/build-release.sh (the Go app packaged with
-# public/ + assets/ + license files) — never commit these either.
+# Release archives from scripts/build-release.sh (the self-contained Go
+# binary — app/public/ and app/assets/ are embedded into it, EMBED-1 — plus
+# license files) — never commit these either.
 /dist/
 
 # Cargo.lock is committed deliberately — this workspace builds an application
@@ -32,5 +33,5 @@ __pycache__/
 
 # Frontend build tooling (Frontend architecture track F1, docs/plan/ROADMAP.md)
 # — app/frontend/src/*.ts is the source of truth; the compiled bundle it
-# produces is committed at app/public/js/game.js (see app/frontend/README.md).
+# produces is committed at app/public/js/dexel.js (see app/frontend/README.md).
 app/frontend/node_modules/

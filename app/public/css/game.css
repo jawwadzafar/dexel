@@ -134,7 +134,7 @@ img, .sprite {
      11 lines at an 8px line-height (88px) — 84 is 4px short of 11*8.
      [DESIGN CALL] height is 88px (11 * 8, no clipped line) rather than the
      literal 84, since clipping the newest (bottom) line would hide the
-     single most important row in the panel; see game.js report notes.
+     single most important row in the panel; see dexel.js report notes.
      BUG-3 audit: unlike #sprint-name/#status-line (which had NO explicit
      line-height and were clipped by the browser's larger UA-default
      line-height), #terminal already pins line-height:8px explicitly, and
@@ -142,7 +142,7 @@ img, .sprite {
      descenders in "warning"/"resolved"/"deps" — fully intact, not
      clipped. Bumping this to 10px was tried and rejected: 11 lines * 10px
      = 110px pushes the text 26px past the monitor sprite's actual glass
-     area (assets/monitor.png's dark-fill region is local y[4,48), i.e.
+     area (app/assets/monitor.png's dark-fill region is local y[4,48), i.e.
      scene y[24,68) -> screen-px y[48,136), only 88px tall — a hard
      pixel-art boundary this UI-only fix must not paint over), so the
      bottom lines visibly spilled onto the floor tile behind the monitor.
@@ -195,7 +195,7 @@ img, .sprite {
 
 /* Shown when the room_back.png sentinel sprite fails to load — i.e. the
    server could not locate assets/ (see internal/assets.LocateVerbose and
-   game.js's handleSpriteSentinelError). Styled like #conn-overlay (same
+   dexel.js's handleSpriteSentinelError). Styled like #conn-overlay (same
    rect, same flex-centred text) but a distinct red so it's never mistaken
    for the ordinary "still connecting" state, and a higher z-index so it
    wins if somehow both are visible at once. */

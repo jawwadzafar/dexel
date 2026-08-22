@@ -38,7 +38,7 @@ go run .
 Open **<http://localhost:8080>**.
 
 - **Needs:** [Go 1.27+](https://go.dev/dl/). **No Node, no npm, no Rust.** The
-  compiled frontend bundle (`app/public/js/game.js`) is committed, so this
+  compiled frontend bundle (`app/public/js/dexel.js`) is committed, so this
   always serves a working game.
 - **Binds:** `127.0.0.1:8080`, loopback only. Moving `-addr` beyond
   `127.0.0.1`/`localhost` exposes your activity monitor and save file to your
@@ -202,7 +202,9 @@ stated limitation, not an oversight:
 **Not tested (needs a machine with Rust):**
 
 - That the Rust compiles.
-- That `bundle.resources` lands where the shell looks for it.
+- That the packaged app actually launches the self-contained sidecar
+  (EMBED-1 — no `bundle.resources` to stage any more) and the window loads
+  its embedded frontend/assets end to end.
 - That the window opens on the game, always-on-top, at the right size.
 - That closing the window leaves no orphaned `dexel-server` process.
 

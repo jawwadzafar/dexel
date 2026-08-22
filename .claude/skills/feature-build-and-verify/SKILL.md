@@ -32,7 +32,7 @@ game (internal/game) — Game struct, sprints, catalog, save/load
 WS state broadcast (hub.go) — StateMessage / CatalogMessage, ~1 Hz + on
         │  every mutation, camelCase JSON (docs/ui-spec.md §6)
         ▼
-frontend (public/js/game.js + index.html + NES.css) — pure function of the
+frontend (public/js/dexel.js + index.html + NES.css) — pure function of the
            last `state` message; never asserts anything the server didn't send
 ```
 

@@ -17,7 +17,7 @@ x-fleetsmith-origin: human
 # Add a menu/modal
 
 The store modal (`docs/ui-spec.md` §4, implemented in `app/public/index.html`
-+ `app/public/js/game.js`, backed by `app/internal/game/catalog.go` +
++ `app/public/js/dexel.js`, backed by `app/internal/game/catalog.go` +
 `app/hub.go`) is the one modal that exists today. `docs/plan/ROADMAP.md`'s
 "Menus & content track" says future menus (an Activity log, Settings,
 Achievements, more store categories) reuse this exact pattern — do not invent
@@ -38,7 +38,7 @@ implementable without the source mockups.
   `Esc`-to-close. Close via `dialog.close()` from *any* trigger (X button, a
   key, Esc) and hang your cleanup on the dialog's own `'close'` event, not on
   each trigger individually — this is what makes X/key/Esc all reach the same
-  code path (`game.js`'s `closeStore()` / the `store.addEventListener('close', ...)` 
+  code path (`dexel.js`'s `closeStore()` / the `store.addEventListener('close', ...)` 
   handler).
 - **A `#scrim` div** if the modal should visually dim the scene behind it, but
   decide deliberately whether clicking it closes the modal — the store's

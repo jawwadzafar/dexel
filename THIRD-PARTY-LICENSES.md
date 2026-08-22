@@ -12,7 +12,7 @@ reproduced in full, per the note below.
 | [NES.css](https://nostalgic-css.github.io/NES.css/) | Retro/8-bit CSS framework for the frontend UI (`app/public/css/nes.min.css`) | MIT |
 | [Press Start 2P](https://fonts.google.com/specimen/Press+Start+2P) | Pixel-style display font for the frontend UI (`app/public/fonts/PressStart2P.woff2`) | SIL Open Font License 1.1 |
 | [nhooyr.io/websocket](https://github.com/coder/websocket) | WebSocket server implementation used by the Go backend to broadcast game state | ISC |
-| [esbuild](https://esbuild.github.io/) | Bundles and minifies the TypeScript frontend source into `app/public/js/game.js` | MIT |
+| [esbuild](https://esbuild.github.io/) | Bundles and minifies the TypeScript frontend source into `app/public/js/dexel.js` | MIT |
 | [TypeScript](https://www.typescriptlang.org/) | Source language / compiler for the frontend (type-checking via `tsc`) | Apache License 2.0 |
 
 ## NES.css — MIT License

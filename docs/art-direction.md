@@ -30,7 +30,7 @@ Retro). We are not copying its assets, we are matching the register.
    No anti-aliasing, no gradients, no sub-pixel placement. A blurry or
    half-pixel sprite is the single fastest way to lose the look.
 2. **The generator is the source.** `tools/gen_assets.py` is the source
-   format; the PNGs in `assets/` are build artifacts, like object files.
+   format; the PNGs in `app/assets/` are build artifacts, like object files.
    Regenerate with `python3 tools/gen_assets.py`. Never hand-edit a PNG.
    (Why raster PNGs and not SVG: see the last section — the reasoning holds
    for the browser too, for different reasons than it held for Bevy.)
@@ -632,7 +632,7 @@ the one-line reason.
 ## Why raster PNGs and not SVG (asked more than once, still no)
 
 **The source format is not PNG — it is `tools/gen_assets.py`.** The PNGs in
-`assets/` are build artifacts. Regenerate with `python3 tools/gen_assets.py`.
+`app/assets/` are build artifacts. Regenerate with `python3 tools/gen_assets.py`.
 
 On the browser stack SVG is *loadable*, so the old "Bevy can't parse it"
 argument retires — but the other two reasons are the real ones and they are

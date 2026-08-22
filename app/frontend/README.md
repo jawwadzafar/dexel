@@ -3,8 +3,9 @@
 TypeScript source for the frontend the Go server serves from `app/public/`
 (docs/plan/ROADMAP.md, Frontend architecture track). F1 was a mechanical,
 behaviour-identical port of the former hand-written `app/public/js/game.js`
-into one file. F2 (this layout) splits that file into industry-standard
-layers — same behaviour, same DOM/WS contract, no redesign.
+(since renamed to `dexel.js` — EMBED-1, docs/plan/ROADMAP.md) into one file.
+F2 (this layout) splits that file into industry-standard layers — same
+behaviour, same DOM/WS contract, no redesign.
 
 ## Layout
 
@@ -61,20 +62,20 @@ an extension to `src/wire.ts` — no existing layer needs to change.
 ```
 cd app/frontend
 npm install
-npm run build       # bundles + minifies src/main.ts -> ../public/js/game.js (+ .map)
+npm run build       # bundles + minifies src/main.ts -> ../public/js/dexel.js (+ .map)
 npm run typecheck    # tsc --noEmit, strict
 ```
 
 ## Why the bundle is committed
 
-`app/public/js/game.js` (the build output) is committed to the repo
+`app/public/js/dexel.js` (the build output) is committed to the repo
 alongside the TypeScript source. This means `go run .` (from `app/`) always
 serves a working game with zero npm/Node dependency for a Go-only user or
 CI leg — the frontend toolchain is only needed when *changing* the
 frontend. The tradeoff: the committed bundle can drift from the TS source
 if someone edits one without the other. CI's frontend job guards against
 that by running a fresh `npm run build` and diffing it against the
-committed `app/public/js/game.js` — a mismatch fails the build.
+committed `app/public/js/dexel.js` — a mismatch fails the build.
 
 If you change `src/*.ts`, always run `npm run build` and commit the
-resulting `app/public/js/game.js` (and its `.map`) in the same change.
+resulting `app/public/js/dexel.js` (and its `.map`) in the same change.

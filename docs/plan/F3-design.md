@@ -158,6 +158,16 @@ is reachable only for as long as the app is open, and only over loopback.
 
 ## 3. Asset bundling
 
+> **Superseded by EMBED-1** (`docs/plan/ROADMAP.md`): this section describes
+> the original no-`go:embed` design. The implementation instead embeds the
+> frontend and sprites (moved to `app/assets/`) directly into the Go binary
+> via `app/embed.go`, so there is no `bundle.resources` map, no resource
+> directory to resolve, and the sidecar is launched with no `-public`/
+> `DEXEL_ASSETS_DIR` at all in a packaged build. Those two flags remain as
+> dev overrides only. See `desktop/README.md`'s "Asset bundling" section
+> for the current story; the rest of this section is left as the historical
+> record of the design that was superseded.
+
 The sidecar's working directory inside a packaged `.app`/`.msi`/AppImage is
 not the repo, so locate.go's upward-walk cannot find `assets/`, and `-public`
 would resolve `./public` to the wrong place. Both are solved **without
@@ -270,11 +280,13 @@ dev-companion/
   app/                       # UNCHANGED structure (Go backend + frontend)
     main.go                  #   + ephemeral-port & stdout handshake (§8)
     ...
-  assets/                    # sprites — bundled as a Tauri resource
+  # assets/ moved to app/assets/ and is embedded into the Go binary
+  # (EMBED-1) rather than bundled as a Tauri resource — see §3's note.
   desktop/                   # NEW — the Tauri shell
     src-tauri/
       Cargo.toml
-      tauri.conf.json        # window, bundle.resources, externalBin, icons
+      tauri.conf.json        # window, externalBin, icons (no bundle.resources
+                             #   — the sidecar is self-contained, see EMBED-1)
       capabilities/          # shell-plugin sidecar permission (tight)
       icons/                 # .icns/.ico/PNG set (game-artist task)
       binaries/              # dexel-server-$TARGET_TRIPLE (build artifact,
@@ -297,7 +309,8 @@ Exclusive file ownership per the orchestration playbook. No two tasks write
 the same file.
 
 **T1 — Tauri scaffold (owner: desktop engineer; owns `desktop/`).**
-`Cargo.toml`, `tauri.conf.json` (window §5, `bundle.resources` §3,
+`Cargo.toml`, `tauri.conf.json` (window §5, no `bundle.resources` — §3's
+note; superseded by EMBED-1's self-contained sidecar,
 `externalBin: ["binaries/dexel-server"]`, icons), a tight shell-plugin
 capability allowing only the sidecar, and `src/main.rs`: spawn sidecar with
 the §1 args/env, parse the `DEXEL_LISTENING` line, open the window on that

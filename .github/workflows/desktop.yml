@@ -107,13 +107,24 @@ jobs:
       # must print `DEXEL_LISTENING http://127.0.0.1:<port>` on stdout once
       # bound. src-tauri/src/lib.rs parses exactly that prefix, so a change
       # to it would break the app while every Go unit test stayed green.
-      - name: Verify the DEXEL_LISTENING handshake on the linux sidecar
+      #
+      # Run the binary bare — no -public, no $DEXEL_ASSETS_DIR — from an
+      # empty temp dir, so it can only serve what EMBED-1 actually baked
+      # into it (app/main.go's embed.go). Passing
+      # DEXEL_ASSETS_DIR="$PWD/assets" -public "$PWD/app/public" here (as
+      # this step used to) points at paths that no longer exist post-
+      # EMBED-1 and post-move-to-app/assets/, so it silently served 404s
+      # for every asset without this step ever noticing. Asserting
+      # /assets/room_back.png (a real sprite shipped in app/assets/) is
+      # what actually catches an embed regression.
+      - name: Verify the DEXEL_LISTENING handshake and embedded assets on the linux sidecar
         run: |
           set -euo pipefail
-          bin=desktop/src-tauri/binaries/dexel-server-x86_64-unknown-linux-gnu
+          tmp=$(mktemp -d)
+          cp desktop/src-tauri/binaries/dexel-server-x86_64-unknown-linux-gnu "$tmp/dexel-server"
+          chmod +x "$tmp/dexel-server"
           log=$(mktemp)
-          DEXEL_ASSETS_DIR="$PWD/assets" "$bin" \
-            -addr 127.0.0.1:0 -public "$PWD/app/public" -provider fake >"$log" 2>/dev/null &
+          ( cd "$tmp" && exec ./dexel-server -addr 127.0.0.1:0 -provider fake ) >"$log" 2>/dev/null &
           pid=$!
           for _ in $(seq 1 50); do [ -s "$log" ] && break; sleep 0.1; done
           line=$(head -n1 "$log")
@@ -132,6 +143,9 @@ jobs:
           code=$(curl -s -o /dev/null -w '%{http_code}' "$url/")
           echo "GET $url/ -> $code"
           [ "$code" = "200" ] || { kill "$pid" 2>/dev/null || true; exit 1; }
+          asset_code=$(curl -s -o /dev/null -w '%{http_code}' "$url/assets/room_back.png")
+          echo "GET $url/assets/room_back.png -> $asset_code"
+          [ "$asset_code" = "200" ] || { echo "::error::embedded asset not served — /assets/room_back.png returned $asset_code (embed regression, or the binary fell back to a disk path that doesn't exist in this empty temp dir)" >&2; kill "$pid" 2>/dev/null || true; exit 1; }
           # SIGTERM is the signal the shell sends on unix so main.go persists
           # state on the way out; assert the process honours it.
           kill -TERM "$pid"
@@ -204,8 +218,13 @@ jobs:
           fi
           cargo tauri --version
 
-      # bundle.resources ships app/public verbatim, so the committed bundle
-      # must be current — the same invariant build.yml's drift check enforces.
+      # The Go sidecar embeds app/public and app/assets at build time
+      # (EMBED-1) — there is no bundle.resources shipping app/public
+      # verbatim any more, and no separate resource tree for Tauri to
+      # bundle. What still must be current is app/public/js/dexel.js
+      # itself, since that's what scripts/build-sidecar.sh compiles into
+      # the sidecar binary this job just built above — the same invariant
+      # build.yml's drift check enforces on every push.
       - name: Build the frontend bundle
         working-directory: app/frontend
         run: |
@@ -214,8 +233,8 @@ jobs:
 
       - name: Assert the committed bundle did not drift
         run: |
-          git diff --exit-code -- app/public/js/game.js app/public/js/game.js.map \
-            || { echo "::error::app/public/js/game.js is stale; run 'npm run build' in app/frontend/ and commit." >&2; exit 1; }
+          git diff --exit-code -- app/public/js/dexel.js app/public/js/dexel.js.map \
+            || { echo "::error::app/public/js/dexel.js is stale; run 'npm run build' in app/frontend/ and commit." >&2; exit 1; }
 
       - name: Build the sidecar for this host
         run: scripts/build-sidecar.sh x86_64-unknown-linux-gnu
@@ -290,8 +309,8 @@ jobs:
 
       - name: Assert the committed bundle did not drift
         run: |
-          git diff --exit-code -- app/public/js/game.js app/public/js/game.js.map \
-            || { echo "::error::app/public/js/game.js is stale; run 'npm run build' in app/frontend/ and commit." >&2; exit 1; }
+          git diff --exit-code -- app/public/js/dexel.js app/public/js/dexel.js.map \
+            || { echo "::error::app/public/js/dexel.js is stale; run 'npm run build' in app/frontend/ and commit." >&2; exit 1; }
 
       # On a Mac the script builds the darwin sidecars WITH cgo, so the
       # bundled server has the real ADR 0011 CGEventSource capture path

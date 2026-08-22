@@ -79,6 +79,14 @@ directory and launches the sidecar with `-public <res>/public` and
 exist for exactly this case; no embedding, no reliance on locate.go's
 upward walk (which cannot work inside a packaged `.app`/`.msi`).
 
+  *Superseded by EMBED-1 (`docs/plan/ROADMAP.md`):* the sidecar is now a
+  self-contained binary — `app/embed.go` compiles the frontend and the
+  sprites (moved to `app/assets/`) into it with `go:embed`. There is no
+  `bundle.resources` map any more, and the shell hands the sidecar an
+  address and nothing else. `-public`/`DEXEL_ASSETS_DIR` still exist, but
+  only as dev overrides; a packaged app never sets them. See
+  `desktop/README.md`'s "Asset bundling" section for the current story.
+
 **Lifecycle — no orphaned Go process.** The shell keeps the sidecar's
 `CommandChild` in managed state and kills it on `RunEvent::ExitRequested`/
 `Exit` (and on window close). On Unix, prefer a graceful `SIGTERM` so the

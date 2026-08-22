@@ -597,11 +597,18 @@ func loadOrImport(g *game.Game, savePath string) {
 		// legacy-import path is even reached, leaving g at game.New()'s
 		// fresh defaults; the next autosave writes a valid save.
 		if errors.Is(err, store.ErrTampered) {
-			log.Printf("save integrity check failed; starting a fresh economy — your file was preserved at %s.invalid", savePath)
+			// err's own text already names the real quarantined path —
+			// state.json.invalid for the legacy-import branch, or
+			// state.db.invalid for the SQLite path (db.go's failClosed) —
+			// so log it verbatim instead of reconstructing savePath+".invalid",
+			// which is wrong whenever savePath is the state.db path but the
+			// error actually came from a state.json-shaped quarantine, or
+			// vice versa.
+			log.Printf("save integrity check failed; starting a fresh economy: %v", err)
 			return
 		}
 		if errors.Is(err, store.ErrFutureSchema) {
-			log.Printf("save schema is newer than this build supports; starting fresh — your file was preserved at %s.future: %v", savePath, err)
+			log.Printf("save schema is newer than this build supports; starting fresh: %v", err)
 			return
 		}
 		log.Printf("load save failed (starting fresh): %v", err)
