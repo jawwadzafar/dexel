@@ -61,3 +61,17 @@ geometry), gated by real in-game renders judged by eye until it clearly reads as
   the BUG-1/2/3 fixes (Store/History modals stay under the cap). Fix: shrink the
   Activity modal to fit ≤362px (tighten row heights / overall height) or
   restructure so nothing is cut. UI/CSS follow-up.
+
+## From the 2026-08-22 adversarial review (docs/plan/REVIEW-2026-08-22.md)
+
+- **B-1..B-3 (BLOCKING)** — schema<5 unsigned-save mint; legacy-Rust-import
+  mint; failed AppendSession → id-skip → false-tamper wipe. Fix wave queued
+  behind PR-5 (same files).
+- **SF-2 (CI never ran)** — every GitHub Actions run in this repo's history is
+  `startup_failure` at 0s with path "BuildFailed" (runner online, Actions
+  enabled, workflows schema-valid per actionlint). Remaining documented cause:
+  ACCOUNT-LEVEL billing/Actions state on the private repo — **OWNER ACTION:
+  check github.com/settings/billing (Actions payment/spending limit) and the
+  repo's Settings→Actions page for a banner.** All verification so far has
+  been our local gates (real, but CI must come alive before production tag).
+- SF-1/3/4/5/6/7 + 10 NITs — queued into the post-PR-5 fix wave.
