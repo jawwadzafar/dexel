@@ -773,339 +773,359 @@ def build_monitor() -> Sprite:
 # Developer (12): dev_form_*, dev_base_*, hoodie_*
 # --------------------------------------------------------------------------
 #
-# 88x104, camera behind and slightly above. Anchor is FIXED at room (116, 92)
-# for every frame and every hoodie style - frames are same-canvas overlays,
-# never re-anchored (art-direction "Developer anchor").
+# 88x104 canvas, anchored at room (116, 92) [DEV_RECT], centred on room x160
+# (local cx = 44). Camera is BEHIND and slightly ABOVE a hooded developer
+# seated at the desk, hands resting on the keyboard.
 #
-# REDESIGNED after a real quality-gate failure: the first version put a
-# narrow dome between two similarly-sized, similarly-toned arm/hand columns,
-# which read as a double-hump silhouette / "two people back-to-back" rather
-# than one hooded figure, and had a hard 1-2px ramp seam down the exact
-# centre plus a detached-looking dark arm band at the left edge. The fix
-# below is built to survive a literal silhouette test (fill every opaque
-# pixel black, it must read as one rounded head on wider shoulders):
+# FROM-SCRATCH REDRAW (behind-view hooded typist). The previous silhouette
+# read as a small, featureless dome flanked by two straight vertical parallel
+# columns tipped with pale caps - "a bald lump with its wrists tied up", not
+# a hooded person with their hands on a keyboard. This version rebuilds the
+# figure from three clearly-separate, anatomically-cued masses:
 #
-#   * ONE dome, made unmistakably the largest, roundest shape on the canvas
-#     (38px wide at its widest, 28 rows tall) - big enough that the thin
-#     (12px) arm columns beside it can never be mistaken for a second head.
-#   * Shoulders are a SINGLE step wider than the dome immediately below it -
-#     monotonically non-decreasing width the whole way down, so there is no
-#     local dip anywhere in the silhouette (a dip is what a "notch" is).
-#   * Arms are constant-width rectangles in the SAME base tone as the body
-#     (no contrasting dark band), and their lower segment (near the
-#     shoulder) never moves between frames, so they always connect - no
-#     "detached band" floating apart from the figure.
-#   * No seam: shading is one wide (12px), soft, single-step-darker column
-#     under the dome/shoulder centre, never a 1-2px line, plus a small
-#     rounded highlight/shadow rim on the dome itself.
+#   HOOD  - the dominant rounded crown, with a soft centre-back fold seam and
+#           a hood-opening rim at the crown; its fabric draods onto the
+#           shoulders, and the style overlays hang drawstrings down the back.
+#   BACK  - sloping shoulders CLEARLY wider than the hood (max half-width 30
+#           vs the hood's 17), a broad upper-back panel with a faint centre
+#           seam and shoulder-blade shading, gently tapering toward the seat.
+#   ARMS  - two SEPARATE, bent, tapered limbs. Each sweeps from the shoulder
+#           up-and-out to an implied elbow (the outboard bulge) then up-and-in
+#           as a foreshortened forearm to a HAND resting flat on the
+#           keyboard's near edge (fingers implied by notches). Each arm is
+#           shaded as a rounded cylinder and casts a small AO shadow where it
+#           passes in front of the hood, so it never merges into the body or
+#           reads as a vertical bar. The two hands are held a keyboard's-width
+#           apart - never pressed together / "bound".
 #
-# The keyboard sits ABOVE the dome in room space (keyboard bottom = room row
-# 114 = local row 22 at this anchor), which is why the hands - which must
-# rest on the keyboard - sit near the TOP of this canvas while the dome (the
-# head) sits below them: the hands are not "near the top" out of anatomical
-# confusion, they are reaching up and out to either side of the head toward
-# a keyboard that is drawn in front of this sprite at render time. What
-# changed is not that arrangement (it is load-bearing: art-direction's own
-# "dome's apex sits below the keyboard's bottom row") but how visually
-# dominant the dome is over the arms that flank it.
+# The keyboard is drawn on a LOWER z-layer (slot z8) than the developer
+# (z12..14): the dev is composited ON TOP of it, so the hands overlap the
+# keyboard's near edge and read as "resting on the keys". Room mapping: local
+# row r == room row (92 + r). The keyboard occupies room y90..113 (local rows
+# -2..21); its interior ABOVE the near edge must stay clear so the hands sit
+# AT the near edge, not over the whole board - enforced by the dev
+# hard-region self-check (assert_dev_region): local rows 0..18 (room
+# y92..110) carry no dev pixel in any frame or layer.
 #
-# All geometry below is expressed as (y, x0, x1) row spans for the LEFT half
-# only; the right half is the mirror `87 - x` of each span (canvas width 88,
-# symmetric about x=43.5), so left/right can never drift out of sync with
-# each other - they are the same numbers, reflected.
+# All geometry is defined for the LEFT half / left side only; the right half
+# is the exact mirror `87 - x`, so the two sides can never drift apart.
 
 DEV_W, DEV_H = 88, 104
-DEV_MIRROR = DEV_W - 1   # 87; mirrored x = DEV_MIRROR - x
+DEV_MIRROR = DEV_W - 1        # 87; mirrored x = DEV_MIRROR - x
+DEV_CX = 44                   # local centre column (room x160)
 
-# Hand (dev_base skin, ~10x8) sits inside a WIDE fabric block (dev_form),
-# not a thin column - see below for why. The block is split into an UPPER
-# segment (rows 15..22, alongside the hand) that moves per frame - exactly
-# the "forearm/sleeve/cuff/hand" pixels the frame-difference rule names -
-# and a LOWER segment (rows 23..30) that NEVER moves, so it always overlaps
-# the dome's own edge regardless of which frame's offset is applied above.
-#
-# Three earlier attempts, in order, and why each failed the silhouette
-# test:
-#   1. Thin column at the canvas edge (x 4..15): barely touched the
-#      shoulder below it (a 2px thread, not a join) - read as a detached
-#      bar.
-#   2. Thin column moved inward (x 14..25), hand 8px tall starting at
-#      row 9: connected fine, but the hand rose 14 ROWS above the dome's
-#      apex with open space on both sides - two tall, thin, separated
-#      peaks either side of a shallow dip. Shortening the hand's rise to
-#      "only" 8 rows above the apex (row 15) was still enough of a peak.
-#   3. Making the block WIDE (28px, x 12..39) to remove the peak shape
-#      instead overshot into swallowing the dome entirely: the dome's own
-#      apex (only 8px wide at row 23) is narrower than a 28px block, so
-#      the two merge into one flat-topped mass with no rounding visible at
-#      all - a castle-turret silhouette, not a head.
-#
-# The fix keeps the THIN column (10px, reads as "arm" by contrast with the
-# 38-60px dome/shoulder, unlike attempt 3) but keeps the hand's rise above
-# the dome's apex SMALL - 4 rows (row 19 to row 23), not 8-14 - so there is
-# no tall independent peak (attempts 1-2's failure) and no swallowing
-# (attempt 3's, since the column stays narrow). The column runs a single
-# constant rect from the hand straight down to the shoulder (row 51): it
-# is nested inside the shoulder's own x-range the whole way, so the join
-# at the bottom is the column's full width, and by row 31 (where the dome
-# reaches its constant width) the column's right edge lands exactly on the
-# dome's own left edge, so arm and dome are touching (not just adjacent)
-# for the entire lower two-thirds of the dome's height. The only place
-# arm and dome are NOT touching is rows 23..30, where the dome is still
-# narrower than its final width - an intentional, shrinking, expected gap
-# (space between a raised arm and the head it is beside), not a floating
-# element, because the column is solidly anchored to the shoulder below it
-# regardless.
-# BEHIND-VIEW SEATED REDRAW (attempt #2). The prior pass kept the hood apex
-# at local row 23 (room y115), ABOVE the highest row a chair may paint behind
-# the head (room y120 - the hard-region boundary that protects the keyboard),
-# so no chair could ever rise over the head and the figure read as a lump on
-# a low seat (BUG-5). The three forms (hood + two arms) also shared one purple
-# tone with no visible break, so they merged into one blob (BUG-6). This
-# redraw fixes both at the source:
-#
-#   * The hood dome is LOWERED so its apex is at local row 34 (room y126) -
-#     6 rows BELOW the chair-back top (room y120). Now every chair's back
-#     rises visibly above the head, and the head nestles below it.
-#   * The two arms are pulled OUTWARD to x12..21 and the hood is kept narrower
-#     (max half-width 18, x26..61), leaving a real 4px TRANSPARENT gap on each
-#     side (x22..25 / x62..65) between arm and hood - so hood, left arm and
-#     right arm read as three separate forms with the (darker) chair showing
-#     through the gaps, exactly the separation BUG-6 asks for.
-#   * The arm column runs unbroken from the hand down to the shoulder, so it
-#     never floats; the hood is the widest, roundest, lit-and-rounded shape,
-#     so it still dominates and reads as one head (not two).
-_HAND_BASE = (12, 21, 19, 22)          # x0, x1, y0, y1 - the actual skin cluster
-_ARM_UPPER_X = (12, 21)                 # x0, x1 - moves per frame, rows 19..22
-_ARM_UPPER_Y = (19, 22)
-_ARM_LOWER_X = (12, 21)                 # unshifted, runs all the way to the shoulder
-_ARM_LOWER_Y = (23, 58)
+# Keyboard-interior guard: no dev pixel may sit in local rows 0..18 (room
+# y92..110), i.e. above the keyboard's near edge. Hands rest at rows >= 20.
+DEV_KB_GUARD_ROW = 19         # rows range(0, 19) == 0..18 must be transparent
 
-# The dome (head): apex LOWERED to row 34 (room y126) so its TOP sits below
-# the chair-back top edge (room y120) - the "head below the chair back" read
-# BUG-5 demands. Half-widths widen smoothly (10 rows of rounding) then hold
-# constant at 18 for a round hood body. Max half-width 18 (x26..61) leaves the
-# arm gap open on both sides.
-_DOME_HALFWIDTH = [
-    (34, 4), (35, 6), (36, 8), (37, 10), (38, 12), (39, 14), (40, 15),
-    (41, 16), (42, 17), (43, 18),
-] + [(y, 18) for y in range(44, 59)]        # rows 44..58, constant
+# --- HOOD (row -> half-width) ---------------------------------------------
+# Apex at row 30 (room y122): low enough that every chair's backrest crown
+# still peeks above the hood (the chair frames the head). Rounds up over ~13
+# rows, holds a round body at half-width 17, then eases in at the hem.
+_HOOD_HW = {30: 3, 31: 5, 32: 7, 33: 9, 34: 11, 35: 12, 36: 13, 37: 14,
+            38: 15, 39: 15, 40: 16, 41: 16, 42: 16, 43: 17, 44: 17}
+for _y in range(45, 55):
+    _HOOD_HW[_y] = 17
+_HOOD_HW[55] = 17
+_HOOD_HW[56] = 16
+_HOOD_TOP, _HOOD_BOT = 30, 56
 
-# Shoulders: wider than the dome, starting the row right after the dome ends -
-# a single monotonic widening, never a dip, so there is no notch in the
-# outline. Only rows 59..68 are visible (room y151..160); the rest is under
-# the bottom panel.
-_SHOULDER_Y0 = 59
-_SHOULDER_X = (11, 76)               # width 66, clearly wider than the dome
+# --- BACK / SHOULDERS -----------------------------------------------------
+# Shoulders flare out from the hood starting the row after the hood ends -
+# a single monotonic widening (no dip -> no notch), clearly wider than the
+# hood, then a broad back panel gently tapering toward the seat.
+_BACK_TOP = 57
+_SH_HW = {57: 19, 58: 21, 59: 23, 60: 25, 61: 27, 62: 28, 63: 29, 64: 30}
 
-FRAME_ARM_OFFSET = {
-    "idle": (0, 0),
-    "type_a": (-1, 1),
-    "type_b": (1, -1),
-    "sleep": (10, 10),                # arms fallen off the keys, dropped and inward
+
+def _back_hw(y: int) -> int:
+    if y in _SH_HW:
+        return _SH_HW[y]
+    if y <= 88:
+        return 30
+    return max(25, 30 - (y - 88) // 3)          # gentle waist taper
+
+
+DOME_DY = {"idle": 0, "type_a": 0, "type_b": 0, "sleep": 4}   # hood tips forward
+BACK_DY = {"idle": 0, "type_a": 0, "type_b": 0, "sleep": 3}   # torso slumps
+
+
+def _hood_span(y: int, ddy: int):
+    hw = _HOOD_HW.get(y - ddy)
+    if hw is None:
+        return None
+    return DEV_CX - hw, DEV_CX + hw - 1
+
+
+def _back_span(y: int, sdy: int):
+    ry = y - sdy
+    if ry < _BACK_TOP or ry >= DEV_H:
+        return None
+    hw = _back_hw(ry)
+    return DEV_CX - hw, DEV_CX + hw - 1
+
+
+# --- ARMS -----------------------------------------------------------------
+# LEFT-arm centreline as control points (x, y, half-thickness), listed from
+# the HAND (top, at the keyboard) down to the SHOULDER join. The path bends:
+# it goes from the hand DOWN-AND-OUT to the elbow (the outboard bulge at
+# x=20) then DOWN-AND-IN to the shoulder - a clearly bent, tapered limb, not
+# a vertical bar. Thickness grows from a slim wrist (4) to a solid upper arm
+# (7) that merges into the shoulder mass. The right arm is the exact mirror.
+_ARM_BASE_LEFT = [
+    (34, 26, 4.0),    # wrist (just under the hand)
+    (28, 33, 4.0),    # forearm
+    (20, 42, 5.0),    # elbow  (outboard bulge)
+    (23, 51, 6.0),    # upper arm
+    (30, 60, 7.0),    # shoulder join
+]
+
+# Sleep is a wholly different pose, so its arm has its own control points
+# rather than an offset: the hands have come OFF the keyboard entirely and
+# hang low at the sides / in the lap (well BELOW the hood crown, so the pale
+# skin never sits on top of the head), the forearm folded short down to the
+# slumped shoulder.
+_ARM_SLEEP_LEFT = [
+    (25, 45, 4.5),    # hand (low, at the side / lap)
+    (23, 51, 5.5),    # forearm
+    (26, 56, 6.5),    # upper arm
+    (31, 62, 7.0),    # shoulder join (on the slumped torso)
+]
+
+# Per-frame (dx, dy) nudge of the HAND end, per side (typing only): the two
+# hands alternate which one presses (drops 1px) so the pair animates; idle is
+# still. Left values; the right side mirrors them.
+FRAME_HAND_OFFSET = {
+    "idle":   {"L": (0, 0), "R": (0, 0)},
+    "type_a": {"L": (0, 0), "R": (0, 1)},
+    "type_b": {"L": (0, 1), "R": (0, 0)},
 }
-DOME_DY = {"idle": 0, "type_a": 0, "type_b": 0, "sleep": 3}     # "tipped forward"
-SHOULDER_DY = {"idle": 0, "type_a": 0, "type_b": 0, "sleep": 4}
+
+_HAND_BASE_LEFT = (28, 39, 20, 26)      # x0, x1, y0, y1 - the typing skin cluster
+_HAND_SLEEP_LEFT = (19, 30, 44, 50)     # the low, draped-at-side sleep hand
 
 
-def _dev_rows(frame: str):
-    """Yield every (y, x0, x1) span of the developer's fabric silhouette for
-    `frame`, LEFT-side spans already expanded to their mirrored right-side
-    partner. Shared by the form (ramp-shaded fill), the base (outline +
-    hair) and the hoodie style overlay (dome/shoulder rows only) builders,
-    so the silhouette is defined exactly once.
-    """
-    adx, ady = FRAME_ARM_OFFSET[frame]
-    ddy = DOME_DY[frame]
-    sdy = SHOULDER_DY[frame]
+def _arm_points(frame: str, side: str):
+    """Control points for one arm in `frame`, already mirrored for the right
+    side. For typing/idle only the hand end (top two points) moves, so the
+    shoulder join never detaches; sleep uses its own dedicated path."""
+    if frame == "sleep":
+        pts = [list(p) for p in _ARM_SLEEP_LEFT]
+    else:
+        pts = [list(p) for p in _ARM_BASE_LEFT]
+        ox, oy = FRAME_HAND_OFFSET[frame][side]
+        for i in (0, 1):
+            pts[i][0] += ox
+            pts[i][1] += oy
+    if side == "R":
+        pts = [[DEV_MIRROR - p[0], p[1], p[2]] for p in pts]
+    return pts
 
-    # Upper arm (moves per frame). Sleep moves the WHOLE arm (see below) so
-    # only offset the upper segment here for the other three frames.
-    ux0, ux1 = _ARM_UPPER_X
-    uy0, uy1 = _ARM_UPPER_Y
-    for y in range(uy0, uy1 + 1):
-        yield (y + ady, ux0 + adx, ux1 + adx)
-        yield (y + ady, DEV_MIRROR - (ux1 + adx), DEV_MIRROR - (ux0 + adx))
 
-    # Lower arm: fixed for idle/type_a/type_b (guarantees the shoulder
-    # connection never breaks); sleep drags it down+inward WITH the upper
-    # arm, since a slumped pose reads as arms falling away from the body,
-    # not as arms staying perfectly attached.
-    lx0, lx1 = _ARM_LOWER_X
-    ly0, ly1 = _ARM_LOWER_Y
-    lo_dx, lo_dy = (adx, ady) if frame == "sleep" else (0, 0)
-    for y in range(ly0, ly1 + 1):
-        yield (y + lo_dy, lx0 + lo_dx, lx1 + lo_dx)
-        yield (y + lo_dy, DEV_MIRROR - (lx1 + lo_dx), DEV_MIRROR - (lx0 + lo_dx))
+def _stamp_disc(grid, cx: float, cy: float, r: float) -> None:
+    r2 = r * r + r * 0.6                       # small outward fudge, rounder tube
+    for yy in range(int(cy - r) - 1, int(cy + r) + 2):
+        for xx in range(int(cx - r) - 1, int(cx + r) + 2):
+            if 0 <= xx < DEV_W and 0 <= yy < DEV_H:
+                dx, dy = xx - cx, yy - cy
+                if dx * dx + dy * dy <= r2:
+                    grid[yy][xx] = True
 
-    for y, hw in _DOME_HALFWIDTH:
-        cx = 44
-        yield (y + ddy, cx - hw, cx + hw - 1)
-    for y in range(_SHOULDER_Y0, DEV_H):
-        x0, x1 = _SHOULDER_X
-        yield (y + sdy, x0, x1)
+
+def _arm_grid(frame: str):
+    """Bool [y][x] footprint of BOTH arms for `frame`, rasterised by stamping
+    tapered discs along each side's control-point path."""
+    grid = [[False] * DEV_W for _ in range(DEV_H)]
+    for side in ("L", "R"):
+        pts = _arm_points(frame, side)
+        for (x0, y0, r0), (x1, y1, r1) in zip(pts, pts[1:]):
+            seg = int(max(abs(x1 - x0), abs(y1 - y0))) * 2 + 1
+            for i in range(seg + 1):
+                t = i / seg
+                _stamp_disc(grid, x0 + (x1 - x0) * t, y0 + (y1 - y0) * t,
+                            r0 + (r1 - r0) * t)
+    return grid
 
 
 def _dev_hand_rects(frame: str):
     """Left/right skin hand rects (dev_base only) for `frame`."""
-    adx, ady = FRAME_ARM_OFFSET[frame]
-    x0, x1, y0, y1 = _HAND_BASE
-    left = (x0 + adx, x1 + adx, y0 + ady, y1 + ady)
-    right = (DEV_MIRROR - (x1 + adx), DEV_MIRROR - (x0 + adx), y0 + ady, y1 + ady)
+    if frame == "sleep":
+        x0, x1, y0, y1 = _HAND_SLEEP_LEFT
+        left = (x0, x1, y0, y1)
+        right = (DEV_MIRROR - x1, DEV_MIRROR - x0, y0, y1)
+        return left, right
+    x0, x1, y0, y1 = _HAND_BASE_LEFT
+    lox, loy = FRAME_HAND_OFFSET[frame]["L"]
+    rox, roy = FRAME_HAND_OFFSET[frame]["R"]
+    left = (x0 + lox, x1 + lox, y0 + loy, y1 + loy)
+    right = (DEV_MIRROR - (x1 + rox), DEV_MIRROR - (x0 + rox), y0 + roy, y1 + roy)
     return left, right
 
 
-def _dev_fabric_mask(frame: str) -> list[list[bool]]:
-    grid = [[False] * DEV_W for _ in range(DEV_H)]
-    for y, x0, x1 in _dev_rows(frame):
-        if 0 <= y < DEV_H:
-            for x in range(max(0, x0), min(DEV_W - 1, x1) + 1):
-                grid[y][x] = True
-    for rect in _dev_hand_rects(frame):
-        x0, x1, y0, y1 = rect
+def _dev_fabric_grid(frame: str):
+    """Fabric footprint (hood + back + arms) - exactly what dev_form fills."""
+    ddy, sdy = DOME_DY[frame], BACK_DY[frame]
+    grid = _arm_grid(frame)
+    for y in range(DEV_H):
+        for span in (_hood_span(y, ddy), _back_span(y, sdy)):
+            if span:
+                x0, x1 = span
+                for x in range(max(0, x0), min(DEV_W - 1, x1) + 1):
+                    grid[y][x] = True
+    return grid
+
+
+def _dev_full_mask(frame: str):
+    """Fabric + skin hands - the silhouette the dev_base outline is drawn
+    around (so the halo wraps the whole figure, hands included)."""
+    grid = _dev_fabric_grid(frame)
+    for x0, x1, y0, y1 in _dev_hand_rects(frame):
         for y in range(max(0, y0), min(DEV_H - 1, y1) + 1):
             for x in range(max(0, x0), min(DEV_W - 1, x1) + 1):
                 grid[y][x] = True
     return grid
 
 
-# Ramp shading rule for dev_form - HERO-FIDELITY REWRITE.
+# --------------------------------------------------------------------------
+# dev_form shading (the tintable grayscale ramp)
+# --------------------------------------------------------------------------
 #
-# The v2.0 version used only 2 of the 5 ramp steps (ramp3/ramp4, plus a
-# handful of manual ramp5 dots) in one flat rim-and-centre-band pattern.
-# This rewrite uses all 5 steps and drives them from one continuous value
-# `v` (0.0 = ramp1, deepest fold .. 4.0 = ramp5, specular), ordered-dithered
-# between its two nearest steps by `ramp_dither` - the "stepped contours,
-# anti-banded with dithering" the fidelity pass asks for, instead of a flat
-# pick per region.
+# ONE light direction: a soft key from the upper-left plus a rim where the
+# monitor's glow wraps the lit (left) silhouette edge - so every gradient
+# reads brighter toward small x and darker toward large x, and the outermost
+# lit column is boosted toward ramp5 (undarkened at ANY tint) so the figure
+# still separates from the wall at the darkest purchasable hoodie.
 #
-# ONE stated light direction for the whole sprite (matches the room: the
-# monitor's glow sits beyond the character in screen space, so from the
-# camera - behind the character - the figure is silhouetted against it,
-# rim-lit around the top/left of the dome and shoulder where the glow
-# wraps the edge; a softer ambient key from the upper-left of frame gives
-# the same side a broader highlight, the opposite/right side falls into
-# shadow). This is why every gradient below reads DARKER as x increases
-# past the centreline (cx=44) and brightest right at the outer silhouette
-# edge on the small-x side.
-#
-# The arm rectangles stay close to flat ramp4 (see the module docstring
-# above on the silhouette failures a contrasting arm tone caused) - only a
-# 1px inner seam and a cuff band are added, never a full-arm recolour.
-_CENTRE_BAND = (38, 50)   # x0, x1 - kept as the shoulders' soft centre reference
+# TINT-CRUSH DISCIPLINE (art-direction ramp table): the base cross-section is
+# ANCHORED on ramp4 (v=3.0) and only sways +/-0.9, landing in ramp2..ramp5 -
+# so multiplied against the DEFAULT indigo tint (#6a5aa0) it stays a visibly
+# graduated mid-value garment, never a crushed void. ramp0/ramp1 are reserved
+# for the small, localised accents (neck AO, fold seam, arm-cast shadow) that
+# stack a bounded extra subtraction on top of that anchor - never a whole
+# region's dominant tone.
 
 
-def _dev_ramp_for(x: int, y: int, frame: str, dome_row: dict[int, int]) -> str:
-    """Per-pixel ramp value, v2 (post-hero-pass regression fix).
+def _arm_run(arms, x: int, y: int):
+    x0 = x
+    while x0 - 1 >= 0 and arms[y][x0 - 1]:
+        x0 -= 1
+    x1 = x
+    while x1 + 1 < DEV_W and arms[y][x1 + 1]:
+        x1 += 1
+    return x0, x1
 
-    The first hero pass swung the base cross-section gradient across
-    almost the FULL 0..4 ramp range (light side near ramp4, shadow side
-    near ramp0), so roughly half the sprite sat at ramp1/ramp2 - fine on
-    the neutral mockup, but multiplied against the game's actual DEFAULT
-    hoodie tint (`indigo` #6a5aa0, see app/internal/game/catalog.go) that
-    crushed to near-black across half the figure: a void, not a shaded
-    garment. Root cause + fix, per the art-direction ramp table itself
-    ("author the large flat areas at step 4 (ramp4/83%), so a tint has
-    HEADROOM for a highlight" - ramp1/ramp2 are for small deliberate deep
-    accents, not a whole shadow HALF): the base cross-section gradient
-    below now stays anchored on ramp4 (v=3.0) and only sways +/-0.9,
-    landing in ramp2..ramp5 - always multiplies to a visibly graduated
-    mid-value garment at the default tint. ramp0/ramp1 are reserved for
-    the small, explicitly localized accents (neck AO, fold creases,
-    shoulder blades) that stack a further, bounded subtraction on top of
-    that anchored base - never the dominant tone of a whole region.
 
-    The rim-light bonus (below) is deliberately strong enough to reach
-    ramp5 (undarkened tint) right at the lit silhouette edge: that edge is
-    what still separates the figure from the wall even at the DARKEST
-    purchasable tint (`slate` #2b2b33, a near-black "Classic Black"),
-    where internal folds necessarily crush since the tint itself is
-    almost black at every ramp step - a solid black hoodie reading mostly
-    as silhouette-plus-rim is the correct pixel-art result there, not a
-    bug to chase further.
-    """
-    cx = 44
-    ddy = DOME_DY[frame]
-    sdy = SHOULDER_DY[frame]
+def _arm_shadow(arms, x: int, y: int) -> bool:
+    """True if a body pixel sits just lower-right of an arm - the side the
+    upper-left key light throws the arm's cast shadow onto, which is what
+    peels each arm visually off the hood/back it passes in front of."""
+    for dx, dy in ((-1, 0), (-2, 0), (-1, -1), (0, -1)):
+        nx, ny = x + dx, y + dy
+        if 0 <= nx < DEV_W and 0 <= ny < DEV_H and arms[ny][nx]:
+            return True
+    return False
 
-    # Dome pixels ONLY when the pixel is inside the dome's x-span at this row -
-    # an arm pixel that happens to share a dome row must NOT get dome shading
-    # (with the gap, arms and dome no longer touch, so this guard matters).
-    if y in dome_row:
-        hw = dome_row[y]
-        if cx - hw <= x <= cx + hw - 1:
-            ry = y - ddy                                  # unshifted dome row, 34..58
-            rel = (x - cx) / hw if hw else 0.0             # -1 (lit rim) .. +1 (shadow rim)
-            edge = hw - abs(x - cx)                        # 0 at the silhouette edge
 
-            v = 3.0 - 0.9 * rel                            # anchored on ramp4, sways +/-0.9
-            if abs(x - cx) <= 1 and ry >= 42:
-                v -= 0.5                                   # centre-back hood fold seam
-            if rel < -0.3 and edge <= 3:
-                v += (4 - edge) * 0.5                      # rim light wrapping the lit side
-            if ry >= 54:
-                v -= 1.0 * min(1.0, (ry - 53) / 4)         # neck AO where the hood meets the back
-            return ramp_dither(x, y, v)
+def _arm_v(arms, x: int, y: int) -> float:
+    x0, x1 = _arm_run(arms, x, y)
+    c = (x0 + x1) / 2.0
+    half = max(1.0, (x1 - x0) / 2.0)
+    return 3.0 - 0.9 * ((x - c) / half)         # rounded cylinder, lit-left
 
-    x0s, x1s = _SHOULDER_X
-    if x0s <= x <= x1s and y >= _SHOULDER_Y0 + sdy:
-        sy = y - sdy                                    # unshifted shoulder row
-        rel = (x - cx) / ((x1s - x0s) / 2)
-        v = 3.0 - 0.8 * rel                              # anchored on ramp4, sways +/-0.8
-        if sy <= _SHOULDER_Y0 + 3:
-            v -= 0.8 * max(0.0, (_SHOULDER_Y0 + 3 - sy) / 4)   # neck AO, shoulder side
-        for bx in (cx - 20, cx + 20):                    # shoulder-blade patches
-            if abs(x - bx) <= 7 and _SHOULDER_Y0 + 4 <= sy <= _SHOULDER_Y0 + 16:
-                d = ((x - bx) ** 2 + (sy - (_SHOULDER_Y0 + 9)) ** 2) ** 0.5
-                if d <= 8:
-                    v -= 0.45 * (1 - d / 8)
-        if x <= x0s + 2:
-            v += 0.7                                     # rim light down the lit edge
-        return ramp_dither(x, y, v)
 
-    # Arms (the only remaining fabric pixels once dome/shoulder are ruled
-    # out): near-flat ramp4, with a thin inner seam (on the edge facing the
-    # hood gap) and a cuff fold above the hand.
-    v = 3.0
-    if x in (21, 66):
-        v -= 0.5                                         # inner sleeve seam
-    if _ARM_UPPER_Y[0] <= y <= _ARM_UPPER_Y[0] + 1:
-        v -= 0.35                                        # cuff fold above the hand
-    return ramp_dither(x, y, v)
+def _hood_v(x: int, y: int, ddy: int, span, arms) -> float:
+    x0, x1 = span
+    hw = max(1.0, (x1 - x0 + 1) / 2.0)
+    rel = (x - DEV_CX) / hw
+    ry = y - ddy
+    v = 3.0 - 0.8 * rel
+    if ry <= 34:
+        v += 0.3                                 # crown catches the key light
+    if abs(x - DEV_CX) <= 1 and ry >= 40:
+        v -= 0.5                                 # soft centre-back fold seam
+    if rel < -0.4 and x - x0 <= 2:
+        v += 1.2 * (1 - (x - x0) / 3.0)          # rim light on the lit edge
+    if ry >= 53:
+        v -= 0.9 * min(1.0, (ry - 52) / 4.0)     # neck AO where hood meets back
+    if _arm_shadow(arms, x, y):
+        v -= 0.8
+    return v
+
+
+def _back_v(x: int, y: int, sdy: int, span, arms) -> float:
+    x0, x1 = span
+    half = max(1.0, (x1 - x0) / 2.0)
+    rel = (x - DEV_CX) / half
+    ry = y - sdy
+    v = 3.0 - 0.8 * rel
+    if ry <= _BACK_TOP + 2:
+        v -= 0.7 * (0.3 + max(0.0, (_BACK_TOP + 2 - ry) / 3.0))   # hood-drape/neck AO
+    if abs(x - DEV_CX) <= 1 and ry >= _BACK_TOP + 3:
+        v -= 0.35                                # centre-back seam
+    for bx in (DEV_CX - 15, DEV_CX + 15):        # shoulder-blade patches
+        if abs(x - bx) <= 7 and _BACK_TOP + 5 <= ry <= _BACK_TOP + 16:
+            d = ((x - bx) ** 2 + (ry - (_BACK_TOP + 10)) ** 2) ** 0.5
+            if d <= 8:
+                v -= 0.4 * (1 - d / 8.0)
+    if x - x0 <= 2:
+        v += 0.7 * (1 - (x - x0) / 3.0)          # rim light on the lit edge
+    if _arm_shadow(arms, x, y):
+        v -= 0.7
+    return v
 
 
 def build_dev_form(frame: str) -> Sprite:
     s = Sprite(DEV_W, DEV_H, palette=RAMP)
-    ddy = DOME_DY[frame]
-    dome_row = {y + ddy: hw for y, hw in _DOME_HALFWIDTH}
-    for y, x0, x1 in _dev_rows(frame):
-        for x in range(x0, x1 + 1):
-            s.dot(x, y, _dev_ramp_for(x, y, frame, dome_row))
+    ddy, sdy = DOME_DY[frame], BACK_DY[frame]
+    arms = _arm_grid(frame)
+    hood = {}
+    back = {}
+    for y in range(DEV_H):
+        hs = _hood_span(y, ddy)
+        if hs:
+            hood[y] = hs
+        bs = _back_span(y, sdy)
+        if bs:
+            back[y] = bs
+    for y in range(DEV_H):
+        for x in range(DEV_W):
+            if arms[y][x]:
+                v = _arm_v(arms, x, y)
+            elif y in hood and hood[y][0] <= x <= hood[y][1]:
+                v = _hood_v(x, y, ddy, hood[y], arms)
+            elif y in back and back[y][0] <= x <= back[y][1]:
+                v = _back_v(x, y, sdy, back[y], arms)
+            else:
+                continue
+            s.dot(x, y, ramp_dither(x, y, v))
+    chair_rim_light(s, rim=2, boost=1.3)         # lit-edge rim (shared helper)
     return s
 
 
-def _dev_hair_crescent(s: Sprite, frame: str) -> None:
-    """A thin `hair` crescent on the dome's own upper edge - the only
-    interior detail the character has (art-direction "Character rules": the
-    hood is a dome, not a head, no face, no ears). Kept on the dome itself,
-    not the shoulders, and small enough (a few px) that it cannot compete
-    with the dome for "head" status the way the old arm columns did."""
+# --------------------------------------------------------------------------
+# dev_base (skin hands + dark outline + hood detail + sleep cue)
+# --------------------------------------------------------------------------
+
+def _dev_hood_opening(s: Sprite, frame: str) -> None:
+    """A small `shadow` crescent just below the crown apex - the hood's own
+    opening rim seen from behind-and-above, with a hint of `hair` inside it.
+    The only interior detail the hood carries (art-direction: the hood is a
+    dome, no face, no ears), kept small so it never competes with the dome."""
     ddy = DOME_DY[frame]
-    y = 38 + ddy
-    for x in range(41, 48):
-        s.dot(x, y, "hair")
+    s.hline(35 + ddy, 41, 46, "shadow")
+    s.dot(40, 36 + ddy, "shadow")
+    s.dot(47, 36 + ddy, "shadow")
+    s.hline(37 + ddy, 42, 45, "hair")            # peek of hair in the opening
 
 
 def _dev_paint_hand(s: Sprite, x0: int, x1: int, y0: int, y1: int) -> None:
-    """A `skin` cluster with a finger suggestion: 2 thin `shadow` notches
-    across the top (fingertip) row split the ~10px-wide cluster into 3
-    finger-width lobes, the only interior detail the 2-`skin`-cluster
-    budget (art-direction "Character rules") allows at this size. The
-    bottom row(s) stay a solid skin base - the palm resting on the keys."""
+    """A `skin` cluster resting on the keys: the fingertip row (top, facing
+    the keyboard) is split into fingers by thin `shadow` notches; the lower
+    rows stay solid skin (the back of the hand / palm)."""
     s.rect(x0, y0, x1, y1, "skin")
     w = x1 - x0 + 1
-    for i in (1, 2):
-        fx = x0 + (w * i) // 3
+    for k in (1, 2, 3):
+        fx = x0 + (w * k) // 4
         s.dot(fx, y0, "shadow")
         if y1 > y0:
             s.dot(fx, y0 + 1, "shadow")
@@ -1113,60 +1133,56 @@ def _dev_paint_hand(s: Sprite, x0: int, x1: int, y0: int, y1: int) -> None:
 
 def build_dev_base(frame: str) -> Sprite:
     s = Sprite(DEV_W, DEV_H)
-    mask = _dev_fabric_mask(frame)
-    outline_from_mask(s, mask, "shadow")
-    _dev_hair_crescent(s, frame)
+    outline_from_mask(s, _dev_full_mask(frame), "shadow")
+    _dev_hood_opening(s, frame)
     for x0, x1, y0, y1 in _dev_hand_rects(frame):
         _dev_paint_hand(s, x0, x1, y0, y1)
     if frame == "sleep":
-        # A small `z` above the (now lower) dome's right shoulder - the
-        # smallest readable sleep cue at this size. A true zigzag (top bar,
-        # then a diagonal step down-left, then a bottom bar), not a
-        # symmetric bar-dot-bar glyph, which reads as an "I" rather than a
-        # "z" at this size. Placed in the open gap above the (lowered) head.
-        s.hline(27, 48, 50, "cream")
-        s.dot(50, 28, "cream")
-        s.dot(49, 29, "cream")
-        s.dot(48, 30, "cream")
-        s.hline(31, 48, 50, "cream")
+        # A small `z` in the open space up and to the right of the slumped
+        # head: two bars and a diagonal (a real zigzag, not a symmetric
+        # bar-dot-bar that reads as an "I" at this size).
+        s.hline(21, 49, 53, "cream")
+        s.dot(52, 22, "cream")
+        s.dot(51, 23, "cream")
+        s.dot(50, 24, "cream")
+        s.dot(49, 25, "cream")
+        s.hline(26, 49, 53, "cream")
     return s
 
 
 # --------------------------------------------------------------------------
-# Hoodie style overlays (4): frame-independent, back panel + hood only
+# Hoodie style overlays (4): frame-independent, hood + back only
 # --------------------------------------------------------------------------
 #
-# Per art-direction "Character rules": these may only paint the back panel
-# and hood, which are static across all four frames - so they are authored
-# once, against the `idle` geometry (dome rows 23..50, shoulder rows 51+),
-# and never reference the per-frame arm/hand offset. (The sleep frame's own
-# 3-4px drop of that same geometry is therefore not mirrored by the overlay
-# - a deliberate, documented v2 simplification; see the handoff report.)
-# Coordinates below were re-checked against the LOWERED dome (x26..61 at its
-# widest, rows 34..58) and shoulder (x11..76, rows 59..103, of which only
-# 59..68 are visible above the bottom panel) so every mark lands on fabric,
-# not in the transparent margin outside it or in the occluded band.
+# Per art-direction "Character rules": overlays may paint only the hood and
+# back panel, which are static across all four frames, so they are authored
+# once against the `idle` geometry (hood rows 30..56, x27..60 at its widest;
+# back rows 57..103, x14..73 at the shoulders; centre seam x43..45) and never
+# reference the per-frame arm/hand offsets. The sleep frame's own 3-4px drop
+# of that geometry is therefore not tracked by the overlay - a deliberate,
+# documented simplification.
 
 def build_hoodie_classic() -> Sprite:
-    """Shadow drawstrings hanging down the centre of the hood, kangaroo-pocket
-    side seams on the (visible) upper back."""
+    """Two shadow drawstrings hanging from the hood down the centre-back,
+    each ending in a small knot; kangaroo-pocket seams on the upper back."""
     s = Sprite(DEV_W, DEV_H)
-    s.vline(42, 44, 55, "shadow")
-    s.dot(42, 56, "shadow")
-    s.vline(46, 44, 57, "shadow")
-    s.dot(46, 58, "shadow")
-    s.vline(26, 61, 68, "shadow")
-    s.vline(61, 61, 68, "shadow")
+    s.vline(42, 40, 58, "shadow")
+    s.dot(42, 59, "shadow")
+    s.vline(46, 40, 60, "shadow")
+    s.dot(46, 61, "shadow")
+    s.vline(30, 66, 80, "shadow")
+    s.vline(58, 66, 80, "shadow")
+    s.hline(80, 30, 58, "shadow")
     return s
 
 
 def build_hoodie_zip() -> Sprite:
-    """Metal zip teeth up the centre seam of the hood, a cream pull tab."""
+    """Metal zip teeth up the centre-back seam of the hood, a cream pull tab."""
     s = Sprite(DEV_W, DEV_H)
-    for y in range(37, 67, 2):
+    for y in range(34, 60, 2):
         s.dot(43, y, "metal")
         s.dot(44, y, "metal")
-    s.rect(42, 63, 45, 65, "cream")
+    s.rect(42, 56, 45, 58, "cream")
     return s
 
 
@@ -1174,10 +1190,10 @@ def build_hoodie_tech() -> Sprite:
     """A desk_dark cross-strap over the shoulders with a metal buckle, one
     screen reflective stripe across the upper back."""
     s = Sprite(DEV_W, DEV_H)
-    s.line(16, 60, 60, 68, "desk_dark")
-    s.line(17, 60, 61, 68, "desk_dark")
-    s.rect(40, 61, 47, 65, "metal")
-    s.hline(60, 24, 63, "screen")
+    s.line(20, 64, 60, 72, "desk_dark")
+    s.line(20, 65, 60, 73, "desk_dark")
+    s.rect(40, 66, 47, 70, "metal")
+    s.hline(63, 26, 61, "screen")
     return s
 
 
@@ -1185,10 +1201,12 @@ def build_hoodie_cloak() -> Sprite:
     """Gold hem trim across the upper back, a draped shadow fold pattern down
     the hood/back panel."""
     s = Sprite(DEV_W, DEV_H)
-    s.hline(60, 16, 71, "gold")
-    for x in (30, 40, 44, 48, 58):
-        s.vline(x, 45, 45 + (x % 3) * 4 + 10, "shadow")
+    s.hline(62, 16, 71, "gold")
+    for x in (24, 32, 44, 56, 64):
+        top = 40 if x == 44 else 48
+        s.vline(x, top, top + (x % 3) * 4 + 12, "shadow")
     return s
+
 
 
 # --------------------------------------------------------------------------
@@ -2183,6 +2201,24 @@ def check(filename: str, want_w: int, want_h: int) -> tuple[bool, str]:
     return True, detail + "ok"
 
 
+def assert_dev_region(name: str, s: Sprite) -> str:
+    """Developer keyboard-interior guard (art-direction "Derivation rules"):
+    the keyboard is drawn UNDER the developer, so the dev's hands must rest at
+    the keyboard's NEAR edge, never paint over its interior. Every developer
+    layer (dev_form_*, dev_base_*, and the hoodie overlays, all on the 88x104
+    dev canvas) must leave local rows 0..DEV_KB_GUARD_ROW-1 (room y92..110,
+    the keyboard rows above its near edge) fully transparent."""
+    px = s.img.load()
+    bad = [(x, y) for y in range(0, DEV_KB_GUARD_ROW) for x in range(s.w)
+           if px[x, y][3] != 0]
+    if bad:
+        raise AssertionError(
+            f"{name}: {len(bad)} dev pixel(s) intrude into the keyboard-interior "
+            f"guard (local rows 0..{DEV_KB_GUARD_ROW - 1}); first={bad[0]}")
+    return (f"{name}: keyboard-interior guard clear "
+            f"(rows 0..{DEV_KB_GUARD_ROW - 1})")
+
+
 def check_monitor_screen_rect() -> str:
     img = Image.open(ASSETS / "monitor.png").convert("RGBA")
     x0, y0, x1, y1 = MONITOR_SCREEN_RECT
@@ -2262,6 +2298,23 @@ def main() -> int:
             except AssertionError as exc:
                 ok = False
                 print("  FAIL:", exc)
+
+    print("\n-- developer keyboard-interior guard --")
+    for frame in ("idle", "type_a", "type_b", "sleep"):
+        for layer in ("form", "base"):
+            name = f"dev_{layer}_{frame}.png"
+            try:
+                print(" ", assert_dev_region(name, built[name]))
+            except AssertionError as exc:
+                ok = False
+                print("  FAIL:", exc)
+    for name in ("hoodie_classic.png", "hoodie_zip.png",
+                 "hoodie_tech.png", "hoodie_cloak.png"):
+        try:
+            print(" ", assert_dev_region(name, built[name]))
+        except AssertionError as exc:
+            ok = False
+            print("  FAIL:", exc)
 
     print("\n-- monitor screen rect --")
     try:
