@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/jawwadzafar/dexel/app/internal/game"
+	"github.com/jawwadzafar/dexel/app/internal/paths"
 )
 
 // ErrFutureSchema is Load's error (wrapped with detail) when the save
@@ -238,18 +239,26 @@ type SaveData struct {
 // TestFutureSchema6RefusalStillFiresAfterTheSchema5Bump).
 const CurrentSchema = 5
 
-// DefaultPath returns ~/.config/dexel/state.db (DB-1,
-// docs/plan/DB-1-design.md §5 — the one behavioural change to this
-// package's contract: everything else Load/Save/Snapshot/Apply exposed
-// before DB-1 is unchanged). Prior builds wrote ~/.config/dexel/state.json
-// at this same basename-minus-extension; see jsonImportPath and Load's
-// doc comment for the one-time migration from that file into this one.
+// DefaultPath returns <StateDir>/state.db — on Linux with
+// $XDG_CONFIG_HOME unset this is byte-identical to the
+// ~/.config/dexel/state.db this function hardcoded before
+// app/internal/paths existed (DB-1, docs/plan/DB-1-design.md §5 — the one
+// behavioural change to this package's contract: everything else
+// Load/Save/Snapshot/Apply exposed before DB-1 is unchanged), which is
+// PR-1's whole point: zero migration for the only platform with real
+// saves today (dev_docs/production-runtime/MIGRATION_PLAN.md §PR-1,
+// PLATFORM_NOTES.md §1). paths.StateDir() is the only place that knows
+// the actual per-OS location, including DEXEL_HOME's override and the
+// one-time macOS/Windows relocation. Prior builds wrote
+// ~/.config/dexel/state.json at this same basename-minus-extension; see
+// jsonImportPath and Load's doc comment for the one-time migration from
+// that file into this one.
 func DefaultPath() (string, error) {
-	home, err := os.UserHomeDir()
+	dir, err := paths.StateDir()
 	if err != nil {
-		return "", fmt.Errorf("resolve home dir: %w", err)
+		return "", fmt.Errorf("resolve state dir: %w", err)
 	}
-	return filepath.Join(home, ".config", "dexel", "state.db"), nil
+	return filepath.Join(dir, "state.db"), nil
 }
 
 // quantizeUnits rounds v to 6 decimal places (SEC-1 design §2.3):

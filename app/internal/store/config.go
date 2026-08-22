@@ -9,6 +9,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+
+	"github.com/jawwadzafar/dexel/app/internal/paths"
 )
 
 // ConfigData is the on-disk shape at ~/.config/dexel/config.json — a
@@ -32,14 +34,16 @@ type ConfigData struct {
 	Name string `json:"name"`
 }
 
-// ConfigPath returns ~/.config/dexel/config.json — the same directory as
-// DefaultPath's state.json, but a second, independent file.
+// ConfigPath returns <StateDir>/config.json — the same directory as
+// DefaultPath's state.db (paths.StateDir(), see its DefaultPath's doc
+// comment for why this is byte-identical to the old hardcoded
+// ~/.config/dexel/config.json on Linux), but a second, independent file.
 func ConfigPath() (string, error) {
-	home, err := os.UserHomeDir()
+	dir, err := paths.StateDir()
 	if err != nil {
-		return "", fmt.Errorf("resolve home dir: %w", err)
+		return "", fmt.Errorf("resolve state dir: %w", err)
 	}
-	return filepath.Join(home, ".config", "dexel", "config.json"), nil
+	return filepath.Join(dir, "config.json"), nil
 }
 
 // LoadConfig reads ConfigData at path. Unlike Load (state.json),

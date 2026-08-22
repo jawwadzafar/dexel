@@ -46,6 +46,18 @@ const (
 )
 
 func main() {
+	// `dexel version` (MIGRATION_PLAN.md §PR-2): the first subcommand,
+	// intercepted ahead of every flag so PR-3's real dispatcher has one
+	// existing subcommand to design around rather than retrofit. A bare
+	// `flag.Parse()` would tolerate "version" as a harmless positional
+	// argument and fall straight through to starting the server — this
+	// explicit check is what actually makes `dexel version` a command
+	// rather than a no-op.
+	if len(os.Args) > 1 && os.Args[1] == "version" {
+		fmt.Println(versionLine())
+		return
+	}
+
 	addr := flag.String("addr", "127.0.0.1:8080", "listen address (loopback by default — binding beyond 127.0.0.1/localhost exposes the activity monitor and save to your LAN/tailnet); a port of 0 (e.g. 127.0.0.1:0) binds an OS-assigned free port, reported via the DEXEL_LISTENING stdout handshake — see ADR 0015")
 	publicDir := flag.String("public", "", "DEV OVERRIDE: serve the frontend from this directory on disk instead of the copy embedded in this binary (EMBED-1) — point it at app/public to iterate on the frontend without rebuilding Go; empty (the default) always serves the embedded copy")
 	providerKind := flag.String("provider", "auto", `activity provider: "auto" (native for this OS) or "fake"`)
@@ -83,6 +95,8 @@ func main() {
 	// /api/health can report it for the life of the process.
 	publicFS, publicSource, publicOk := resolvePublicSource(*publicDir)
 	assetsFS, assetsDir, assetsSource := resolveAssetsSource()
+
+	log.Printf("%s starting", versionLine())
 
 	provider, providerDesc := selectProvider(*providerKind, *fakeScript)
 	if err := provider.Start(); err != nil {
@@ -157,7 +171,7 @@ func main() {
 	// against (app/frontend/src/assets.ts); StripPrefix turns it back into
 	// the bare filename the tree — embedded or on disk — is keyed by.
 	mux.Handle("/assets/", http.StripPrefix("/assets/", http.FileServer(http.FS(assetsFS))))
-	mux.HandleFunc("/api/health", healthHandler(assetsDir, publicOk, buildVersion(), publicSource, assetsSource))
+	mux.HandleFunc("/api/health", healthHandler(assetsDir, publicOk, version, buildVersion(), publicSource, assetsSource))
 	mux.HandleFunc("/ws", hub.handleWS(actions, catalog))
 
 	httpSrv := &http.Server{Handler: mux}
@@ -579,17 +593,24 @@ func diskIndexExists(dir string) bool {
 
 // healthResponse is GET /api/health's body: a small, stable, machine-
 // readable summary of the things known to silently misbehave (which static
-// trees are in play, and whether the frontend is really there) plus a build
-// identifier, so a bug report or an automated check can distinguish "the
-// server is fine, the browser lost the socket" from "the server itself never
-// found its own files".
+// trees are in play, and whether the frontend is really there) plus two
+// build identifiers, so a bug report or an automated check can distinguish
+// "the server is fine, the browser lost the socket" from "the server itself
+// never found its own files".
 //
 // Source/PublicSource/AssetsSource are EMBED-1 additions; every field that
-// existed before it kept its name and meaning.
+// existed before it kept its name and meaning. Commit is PR-2
+// (MIGRATION_PLAN.md §PR-2): Version used to BE buildVersion()'s output
+// (the git revision, via debug.ReadBuildInfo) — that value now lives in
+// Commit, unchanged, and Version becomes the ldflags-stamped semver-or-"dev"
+// string (see version.go), because buildVersion() alone cannot report
+// anything once a release binary is extracted from its archive with no
+// .git directory nearby to have been built "at" in the first place.
 type healthResponse struct {
 	AssetsDir *string `json:"assetsDir"` // the disk directory /assets/ is served from; null when it is served from the embedded copy
 	PublicOk  bool    `json:"publicOk"`  // true iff the serving frontend tree holds index.html
-	Version   string  `json:"version"`
+	Version   string  `json:"version"`   // ldflags-stamped semver, or "dev" for a plain `go build`/`go run .` — see version.go
+	Commit    string  `json:"commit"`    // buildVersion()'s output: the VCS revision (plus "-dirty"), or "unknown"
 	// Source is the aggregate: "embedded" when this binary is serving
 	// only itself (the shipped configuration), "disk" when both trees are
 	// overridden, "mixed" when one of each.
@@ -601,11 +622,12 @@ type healthResponse struct {
 // healthHandler serves the fixed healthResponse computed once at startup
 // (every field is decided during startup and never changes for the life of
 // the process) as JSON.
-func healthHandler(assetsDir *string, publicOk bool, version, publicSource, assetsSource string) http.HandlerFunc {
+func healthHandler(assetsDir *string, publicOk bool, version, commit, publicSource, assetsSource string) http.HandlerFunc {
 	body, err := json.Marshal(healthResponse{
 		AssetsDir:    assetsDir,
 		PublicOk:     publicOk,
 		Version:      version,
+		Commit:       commit,
 		Source:       aggregateSource(publicSource, assetsSource),
 		PublicSource: publicSource,
 		AssetsSource: assetsSource,

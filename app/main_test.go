@@ -1,7 +1,10 @@
 package main
 
 import (
+	"encoding/json"
 	"net"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 )
@@ -153,5 +156,60 @@ func TestOriginListSetAccumulatesAndSplitsCommas(t *testing.T) {
 	}
 	if !strings.Contains(o.String(), "tauri.localhost") {
 		t.Fatalf("String() = %q, want it to contain the set values", o.String())
+	}
+}
+
+// TestHealthHandlerReportsVersionAndCommitSeparately covers PR-2
+// (MIGRATION_PLAN.md §PR-2): /api/health must report "version" (the
+// ldflags-stamped semver-or-"dev" string, main.version) and "commit"
+// (buildVersion()'s VCS-revision output, unchanged) as two INDEPENDENT
+// fields — the point being that a release binary, extracted with no .git
+// directory anywhere nearby, can still report a real version even though
+// buildVersion() alone would say "unknown".
+func TestHealthHandlerReportsVersionAndCommitSeparately(t *testing.T) {
+	h := healthHandler(nil, true, "v9.9.9", "abc123-dirty", "embedded", "embedded")
+
+	req := httptest.NewRequest(http.MethodGet, "/api/health", nil)
+	rec := httptest.NewRecorder()
+	h(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rec.Code)
+	}
+	var got healthResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("unmarshal health response %s: %v", rec.Body.String(), err)
+	}
+	if got.Version != "v9.9.9" {
+		t.Fatalf(`healthResponse.Version = %q, want "v9.9.9"`, got.Version)
+	}
+	if got.Commit != "abc123-dirty" {
+		t.Fatalf(`healthResponse.Commit = %q, want "abc123-dirty"`, got.Commit)
+	}
+	if got.Version == got.Commit {
+		t.Fatalf("Version and Commit must be independently reported, got the same value %q for both", got.Version)
+	}
+}
+
+// TestVersionLineReflectsTheVersionVar covers `dexel version`'s (and the
+// startup log line's) exact output: it must contain the current
+// main.version, ldflags-settable via
+// `-ldflags "-X main.version=$VERSION"` (scripts/build-release.sh,
+// scripts/build-sidecar.sh), and defaults to "dev" for a plain
+// `go build`/`go run .` — this test restores that default so no other
+// test observes a mutated value.
+func TestVersionLineReflectsTheVersionVar(t *testing.T) {
+	if version != "dev" {
+		t.Fatalf(`main.version = %q at test start, want the "dev" build-time default (this test assumes nothing upstream stamped it, matching a plain "go build")`, version)
+	}
+	t.Cleanup(func() { version = "dev" })
+
+	version = "v9.9.9"
+	line := versionLine()
+	if !strings.Contains(line, "v9.9.9") {
+		t.Fatalf("versionLine() = %q, want it to contain the stamped version %q", line, "v9.9.9")
+	}
+	if !strings.Contains(line, buildVersion()) {
+		t.Fatalf("versionLine() = %q, want it to also contain buildVersion()'s output %q", line, buildVersion())
 	}
 }

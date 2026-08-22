@@ -51,6 +51,13 @@ OUT_DIR="${OUT_DIR:-$REPO_ROOT/desktop/src-tauri/binaries}"
 BIN_BASE="dexel-server"
 GO="${GO:-go}"
 
+# PR-2 (MIGRATION_PLAN.md §PR-2): stamp main.version the same way
+# build-release.sh does, so a sidecar binary bundled into the desktop
+# shell reports a real `dexel version` / /api/health "version" instead of
+# "dev" — same env override (DEXEL_RELEASE_VERSION), same
+# `git describe` default.
+VERSION="${DEXEL_RELEASE_VERSION:-$(cd "$REPO_ROOT" && git describe --tags --always --dirty 2>/dev/null || echo "dev")}"
+
 # The triple -> GOOS/GOARCH/cgo table from docs/plan/F3-design.md §4.
 # Fields: <rust-target-triple>|<GOOS>|<GOARCH>|<needs-cgo>
 TARGETS=(
@@ -118,12 +125,13 @@ build_one() {
   out="$OUT_DIR/$BIN_BASE-$triple"
   [ "$goos" = "windows" ] && out="$out.exe"
 
-  note "build $triple  (GOOS=$goos GOARCH=$goarch CGO_ENABLED=$cgo)"
+  note "build $triple  (GOOS=$goos GOARCH=$goarch CGO_ENABLED=$cgo, version=$VERSION)"
   # -trimpath keeps the binary reproducible-ish and strips local paths out of
   # a binary that ships inside an installer. Build from APP_DIR so the
-  # module in app/go.mod is the one that resolves.
+  # module in app/go.mod is the one that resolves. -ldflags stamps
+  # main.version (PR-2, version.go) the same way build-release.sh does.
   ( cd "$APP_DIR" && CGO_ENABLED="$cgo" GOOS="$goos" GOARCH="$goarch" \
-      "$GO" build -trimpath -o "$out" . )
+      "$GO" build -trimpath -ldflags "-X main.version=$VERSION" -o "$out" . )
   note "  -> $out"
 }
 

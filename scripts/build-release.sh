@@ -177,7 +177,14 @@ build_one() {
   echo "==> building $os/$arch (CGO_ENABLED=$cgo)"
   (
     cd "$APP_DIR"
-    CGO_ENABLED="$cgo" GOOS="$os" GOARCH="$arch" go build -trimpath -o "$stage/$bin_name" .
+    # PR-2 (MIGRATION_PLAN.md §PR-2): stamp main.version at BUILD time so
+    # the shipped binary reports a real version via `dexel version` and
+    # /api/health's "version" field even once extracted from its archive
+    # on a machine with no .git directory nearby — buildVersion() (the
+    # existing git-describe-shaped value, still reported as "commit")
+    # cannot answer that on its own.
+    CGO_ENABLED="$cgo" GOOS="$os" GOARCH="$arch" go build -trimpath \
+      -ldflags "-X main.version=$VERSION" -o "$stage/$bin_name" .
   )
 
   # No public/ or assets/ copy: both are inside the binary (app/embed.go).
