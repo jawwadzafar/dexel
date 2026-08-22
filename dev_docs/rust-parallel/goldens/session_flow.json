@@ -1,0 +1,51 @@
+[
+  {
+    "tMillis": 624,
+    "clientSent": "sent SESSION_START"
+  },
+  {
+    "tMillis": 625,
+    "message": {
+      "type": "flash",
+      "kind": "session",
+      "text": "Session started."
+    }
+  },
+  {
+    "tMillis": 70019,
+    "clientSent": "sent SESSION_STOP"
+  },
+  {
+    "tMillis": 70021,
+    "message": {
+      "type": "sessionComplete",
+      "v": 1,
+      "session": {
+        "id": 1,
+        "name": "golden-capture",
+        "startedAt": "2026-08-22T17:17:45+04:00",
+        "endedAt": "2026-08-22T17:18:55+04:00",
+        "durationSeconds": 69,
+        "keystrokes": 240,
+        "mouseActiveSeconds": 15,
+        "activeSeconds": 50,
+        "idleSeconds": 20,
+        "sprintsCompleted": 0,
+        "focusSessions": 0,
+        "appSwitches": 0,
+        "pausedSeconds": 0,
+        "coinsEarned": 0,
+        "longestFocusBlockSeconds": 24,
+        "endReason": "user"
+      }
+    }
+  },
+  {
+    "tMillis": 70021,
+    "message": {
+      "type": "flash",
+      "kind": "session",
+      "text": "golden-capture \u2014 1m together."
+    }
+  }
+]
