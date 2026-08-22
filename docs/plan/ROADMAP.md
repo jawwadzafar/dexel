@@ -223,3 +223,20 @@ PRIVATE. In-flight: proportion art pass; release-pipeline modernization.
   can build from source or just run browser mode. CI job gated on a mac/rust
   runner (cannot be built/gated on this box — authored + doc'd + CI-wired now,
   first real build happens on a runner with Rust+webkit).
+
+### EMBED-1 — one binary + naming (2026-08-22, user)
+- `go:embed` public/ + assets/ into the Go binary → the product is ONE file
+  (`dexel`), nothing to locate at runtime. Keep `-public`/`DEXEL_ASSETS_DIR`
+  disk overrides for frontend dev iteration.
+- Rename the bundle `game.js` → `dexel.js` (index.html, build.mjs, CI drift
+  paths, release script together).
+- Ripple effects: release archives simplify to binary+licenses;
+  the Tauri sidecar becomes the same single binary (resource bundling in the
+  desktop/ scaffold gets deleted); RUN-MODES stays: dev = browser (disk
+  override), app = Tauri, prod = the one binary / installer.
+- Frontend stays framework-free TS+esbuild (decision reaffirmed: fixed-DOM
+  pixel game, one WS stream — a framework adds runtime+build weight for
+  problems we don't have; revisit only if a later phase strains it).
+- Exit: `./dexel` alone (empty dir, no public/, no assets/) serves the full
+  game; dev override still works; drift check green on the renamed bundle;
+  release script ships single-binary archives; Tauri scaffold updated.
