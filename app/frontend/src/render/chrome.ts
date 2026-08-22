@@ -13,6 +13,16 @@ const sprintUnits = byId('sprint-units');
 const statusDot = byId('status-dot');
 const statusLine = byId('status-line');
 const ticker = byId<HTMLUListElement>('ticker');
+// Phase P1 name echo (docs/ui-spec.md §7.4). Two places, both here
+// because this module owns the titlebar and the status panel:
+//   - #status-name, the always-visible one, in the empty strip below the
+//     ticker;
+//   - #menu-panel-title, the hamburger panel's heading, which reads
+//     "MENU" until the dexel has a name and the dexel's name after that.
+// Deliberately NOT the titlebar's top-left cluster: that stays
+// coin-then-level and nothing else, by owner directive.
+const statusName = byId('status-name');
+const menuPanelTitle = byId('menu-panel-title');
 
 export function renderChrome(): void {
   const state = store.getState();
@@ -33,6 +43,15 @@ export function renderChrome(): void {
   sprintUnits.textContent = fmtInt(state.sprint.progress) + ' / ' + fmtInt(state.sprint.target) + ' ' + (state.sprint.unitLabel || 'units');
 
   statusLine.textContent = truncate(state.activityLine, 34);
+
+  // The name is USER text, so it is rendered as typed — never upper-cased
+  // to match the surrounding labels, and never assembled into a sentence
+  // (ui-spec.md §3's "zero client-side assembly" rule; the one composed
+  // string, the welcome toast, is composed by the SERVER). Empty until
+  // named, which renders as nothing at all rather than a placeholder.
+  const dexelName = (state.config && state.config.name) || '';
+  statusName.textContent = truncate(dexelName, 24);
+  menuPanelTitle.textContent = dexelName ? truncate(dexelName, 16) : 'MENU';
 
   const lis = ticker.querySelectorAll('li');
   for (let i = 0; i < lis.length; i++) {

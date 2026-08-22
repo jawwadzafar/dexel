@@ -147,6 +147,16 @@ export interface Stats {
   streak?: StreakView;
 }
 
+// Phase P1 — Identity & first minutes (docs/plan/PRODUCT-EVOLUTION.md §5,
+// docs/ui-spec.md §7). The USER-AUTHORED half of dexel's persistence: the
+// dexel's name, which lives in ~/.config/dexel/config.json, never in the
+// protected save (SEC-1 / ADR 0014's config/state split). Empty string
+// means "not named yet" — the server always SENDS the block, it just may
+// be empty.
+export interface ConfigView {
+  name: string;
+}
+
 export interface StateMessage {
   type: 'state';
   v: number;
@@ -166,6 +176,17 @@ export interface StateMessage {
   // failing type-checking or crashing at runtime — main.ts's renderActivity
   // treats a missing stats block as all-zero.
   stats?: Stats;
+  // Phase P1 additions. Both optional for the same stale-server reason as
+  // `stats` above: a pre-P1 server sends neither, which must degrade to
+  // "unnamed, and definitely do not run onboarding" — never to a modal
+  // that cannot be answered because the server has no SET_NAME handler.
+  config?: ConfigView;
+  // TRUE only in the first-launch state (no save existed when the server
+  // booted AND config.json carries no name). SERVER-COMPUTED: the client
+  // opens the onboarding modal when this is true and closes it when the
+  // post-SET_NAME broadcast says false — it never decides this itself and
+  // never keeps the modal open against a false here.
+  onboarding?: boolean;
 }
 
 export interface FlashMessage {
@@ -184,4 +205,9 @@ export type ClientAction =
   | { action: 'BUY_TINT'; itemId: string; tintId: string }
   | { action: 'EQUIP_ITEM'; slot: string; itemId: string; tintId: string | null }
   | { action: 'STORE_OPEN' }
-  | { action: 'STORE_CLOSE' };
+  | { action: 'STORE_CLOSE' }
+  // Phase P1 (docs/ui-spec.md §6.2/§7). `name` is raw user text; the
+  // SERVER trims it, drops control characters, caps it at 24 runes and
+  // rejects an empty result (game.NormalizeName) — the client's own
+  // trim/maxlength are a courtesy, never the validation.
+  | { action: 'SET_NAME'; name: string };

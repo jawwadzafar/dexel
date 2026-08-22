@@ -99,17 +99,41 @@ func main() {
 	if err != nil {
 		log.Fatalf("resolve save path: %v", err)
 	}
-	loadOrImport(g, savePath)
+	saveExisted := loadOrImport(g, savePath)
 
 	// SEC-1 (docs/plan/SEC-1-design.md §7 GO-2, ADR 0014): config.json is
-	// loaded on a path fully independent of state.json above — it is
-	// never blocked by, and never blocks, a tampered or future-schema
-	// state load. The loaded name is only held here for a future
-	// Settings-modal UI (design §7: "no wire change in this stage" — it
-	// is never added to SaveData, StateMessage, or any other wire
-	// contract).
-	if dexelName := loadOrInitConfig(); dexelName != "" {
-		log.Printf("dexel name: %q", dexelName)
+	// loaded on a path fully independent of state.json/state.db above —
+	// it is never blocked by, and never blocks, a tampered or
+	// future-schema state load.
+	//
+	// Phase P1 (docs/plan/PRODUCT-EVOLUTION.md §5) is what finally reads
+	// this name for something: SEC-1 deliberately shipped it with "no
+	// wire change in this stage", and P1 puts it on StateMessage.Config —
+	// still the user-authored, unsigned side of ADR 0014's split, still
+	// never a SaveData field.
+	cfgPath, cfg := loadOrInitConfig()
+	g.RestoreConfigName(cfg.Name)
+	if g.ConfigName() != "" {
+		log.Printf("dexel name: %q", g.ConfigName())
+	}
+
+	// THE first-launch decision, made exactly once, here, by the server
+	// (docs/ui-spec.md §7): show onboarding only when this really is a
+	// fresh install — no save of any kind existed when we booted AND
+	// config.json carries no name. Either half being false makes this a
+	// RETURNING user, who must never see the intro:
+	//   - an existing state.db/state.json/legacy save (saveExisted) means
+	//     someone has played, even if they never named the dexel;
+	//   - a named config.json means someone has already answered the one
+	//     question onboarding asks, even on a machine whose save was
+	//     wiped.
+	// loadOrImport is deliberately conservative about saveExisted (a
+	// tampered, future-schema or unreadable save all count as "existed"),
+	// because the failure we care about is nagging a returning user, not
+	// missing an intro.
+	g.SetOnboarding(!saveExisted && g.ConfigName() == "")
+	if g.Onboarding() {
+		log.Print("first launch: no save and no name — onboarding")
 	}
 
 	eng := engine.New(provider)
@@ -162,6 +186,26 @@ func main() {
 		}
 	}
 
+	// persistConfig writes the dexel's name through to config.json
+	// IMMEDIATELY after SET_NAME — deliberately not on the 30s autosave
+	// timer the protected save uses. Naming your dexel is a one-shot
+	// first-minutes moment; if the process died in the next 30 seconds
+	// the user would be asked again, which is the one thing Phase P1's
+	// "returning users never see it" criterion forbids.
+	//
+	// This is the ONLY place a name is written, and it writes
+	// game.Game.ConfigName() — the value NormalizeName already
+	// sanitised — never the raw client payload. cfgPath == "" means the
+	// home directory could not be resolved at boot (already logged
+	// there); the game still runs, the name just cannot outlive the
+	// process.
+	persistConfig := func() error {
+		if cfgPath == "" {
+			return errors.New("no config path (home directory unresolved at startup)")
+		}
+		return store.SaveConfig(cfgPath, store.ConfigData{Name: g.ConfigName()})
+	}
+
 	// Single-owner loop: every mutation of g happens on this goroutine
 	// only — game.Game does no locking of its own, so this loop IS the
 	// lock. Every WS action funnels in over `actions`; the 1s engine tick,
@@ -193,6 +237,21 @@ func main() {
 
 		case req := <-actions:
 			mutated, flash := applyAction(g, req.msg, req.connID)
+			// Phase P1 write-through. Kept HERE rather than inside
+			// applyAction for the same reason the protected save is: this
+			// loop owns all I/O, applyAction stays a pure state
+			// transition over *game.Game (which is what lets
+			// store_gate_test.go drive it with no filesystem at all). A
+			// failed write is surfaced honestly — the in-memory name
+			// stands so the session still works, but the success toast is
+			// replaced by an error flash, because a warm "hello" for a
+			// name that silently will not survive a restart is a lie.
+			if mutated && req.msg.Action == actionSetName {
+				if err := persistConfig(); err != nil {
+					log.Printf("save config failed: %v", err)
+					flash = &flashMessage{Type: "flash", Kind: "error", Text: "could not save name"}
+				}
+			}
 			if mutated {
 				hub.broadcastState(g.State())
 			}
@@ -212,6 +271,12 @@ func main() {
 		}
 	}
 }
+
+// actionSetName is SET_NAME's wire literal (docs/ui-spec.md §6.2), named
+// once so applyAction and main's write-through loop cannot drift apart on
+// a typo — the loop has to recognise the same action applyAction handled
+// in order to know a config write is owed.
+const actionSetName = "SET_NAME"
 
 // applyAction runs one client action against g and reports whether state
 // changed plus the flash it produced (docs/ui-spec.md §6.2: "no dedicated
@@ -255,6 +320,21 @@ func applyAction(g *game.Game, msg actionMessage, connID uint64) (mutated bool, 
 		}
 		item, _ := g.ItemByID(msg.ItemID)
 		return true, &flashMessage{Type: "flash", Kind: "equip", Text: fmt.Sprintf("Equipped %s!", item.Name)}
+
+	case actionSetName:
+		// Phase P1 (docs/ui-spec.md §6.2 SET_NAME). Server-side
+		// validation is game.NormalizeName's; an empty/whitespace-only/
+		// control-character-only submission is an ordinary error flash
+		// with NO state change (never a stored blank, which would
+		// re-trigger onboarding on the next boot). A successful set also
+		// clears the onboarding flag inside SetConfigName, so the
+		// broadcast this returns is what closes the modal client-side —
+		// there is no dedicated ack (§6.2).
+		name, err := g.SetConfigName(msg.Name)
+		if err != nil {
+			return false, errFlash(err)
+		}
+		return true, &flashMessage{Type: "flash", Kind: "welcome", Text: "Hello, " + name + "!"}
 
 	case "STORE_OPEN":
 		g.OpenStore(connID)
@@ -581,7 +661,16 @@ func buildVersion() string {
 // merging, ever"). Otherwise an existing legacy save is imported and
 // immediately persisted as the new state.json, so the NEXT run finds
 // state.json and this branch never fires again.
-func loadOrImport(g *game.Game, savePath string) {
+//
+// Returns whether a save of ANY kind was found — Phase P1's fresh-install
+// half of the onboarding decision (docs/ui-spec.md §7). "Any kind"
+// deliberately includes the failure modes: a tampered save, a
+// future-schema save and an unreadable save all report true, because each
+// one proves somebody has played here before, and showing a returning
+// user the intro is a worse outcome than a genuinely-fresh install
+// missing it. Only "no state.db, no state.json, no legacy Rust save"
+// reports false.
+func loadOrImport(g *game.Game, savePath string) bool {
 	data, ok, err := store.Load(savePath)
 	if err != nil {
 		// SEC-1 (docs/plan/SEC-1-design.md §4, ADR 0014): ErrTampered and
@@ -605,33 +694,38 @@ func loadOrImport(g *game.Game, savePath string) {
 			// error actually came from a state.json-shaped quarantine, or
 			// vice versa.
 			log.Printf("save integrity check failed; starting a fresh economy: %v", err)
-			return
+			return true // a save existed — it just failed verification
 		}
 		if errors.Is(err, store.ErrFutureSchema) {
 			log.Printf("save schema is newer than this build supports; starting fresh: %v", err)
-			return
+			return true // a save existed — written by a newer build
 		}
 		log.Printf("load save failed (starting fresh): %v", err)
+		// Fall through: a non-tamper, non-future error is most often an
+		// unreadable-but-present file (a permission problem), so treat it
+		// as "existed" below rather than offering a returning user the
+		// first-launch intro. ok is false here, so nothing is applied.
+		return true
 	}
 	if ok {
 		store.Apply(g, data)
 		log.Printf("loaded save from %s (dev_cash=%d)", savePath, g.DevCash)
-		return
+		return true
 	}
 
 	legacyPath, err := store.LegacyPath()
 	if err != nil {
 		log.Printf("resolve legacy save path: %v", err)
-		return
+		return false // no save, and no legacy path to even look at
 	}
 	legacy, err := store.LoadLegacy(legacyPath)
 	if err != nil {
 		log.Printf("read legacy save failed (starting fresh): %v", err)
-		return
+		return true // a legacy save is there, we just could not read it
 	}
 	if legacy == nil {
 		log.Println("no save and no legacy save found: starting fresh")
-		return
+		return false // the one genuine fresh-install case
 	}
 
 	imported := store.ImportLegacy(legacy, g.Catalog())
@@ -640,6 +734,7 @@ func loadOrImport(g *game.Game, savePath string) {
 	if err := store.Save(savePath, imported); err != nil {
 		log.Printf("failed to persist imported legacy save: %v", err)
 	}
+	return true
 }
 
 // loadOrInitConfig loads ~/.config/dexel/config.json (SEC-1 design §1.2,
@@ -652,14 +747,21 @@ func loadOrImport(g *game.Game, savePath string) {
 // is: if no config.json exists yet, write one with SaveConfig so the user
 // has a file to edit at all — that user-editable slot for the dexel's
 // name is the entire point of splitting config out of the protected save.
-// Returns the loaded (or default) name; callers only log it for now — no
-// wire change in this stage (SEC-1 design §7: the name is deliberately
-// NOT added to SaveData, StateMessage, or any other wire contract).
-func loadOrInitConfig() string {
+// Returns the resolved config path and the loaded (or default) config.
+// The path comes back so main's SET_NAME write-through has exactly the
+// file this load read, and never re-derives it; "" means the home
+// directory could not be resolved (logged here, and the returned config
+// is the zero value, so the game runs unnamed rather than not at all).
+//
+// Phase P1 note: an EXISTING config.json holding an empty name is not the
+// same thing as a returning user — a fresh install writes exactly that
+// file on its very first boot (below), so the onboarding decision in
+// main() keys off the NAME being empty, never off the file's absence.
+func loadOrInitConfig() (string, store.ConfigData) {
 	cfgPath, err := store.ConfigPath()
 	if err != nil {
 		log.Printf("resolve config path: %v", err)
-		return ""
+		return "", store.ConfigData{}
 	}
 	cfg, err := store.LoadConfig(cfgPath)
 	if err != nil {
@@ -672,5 +774,5 @@ func loadOrInitConfig() string {
 			log.Printf("wrote default config to %s", cfgPath)
 		}
 	}
-	return cfg.Name
+	return cfgPath, cfg
 }

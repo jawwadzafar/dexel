@@ -33,6 +33,24 @@ type SprintView struct {
 	UnitLabel string  `json:"unitLabel"`
 }
 
+// ConfigView is the `config` object inside a `state` message (Phase P1,
+// docs/plan/PRODUCT-EVOLUTION.md §5 "Phase P1 — Identity & first
+// minutes"). It carries the USER-AUTHORED half of dexel's persistence —
+// the dexel's name, which lives in ~/.config/dexel/config.json, NOT in
+// the protected SaveData at state.db (SEC-1, ADR 0014's config/state
+// split). Empty string means "not named yet".
+//
+// This is the one string on the wire that is neither machine-derived nor
+// observed: ADR 0014's Consequences section states the category
+// distinction outright — "the user-authored name is a *different
+// category* from observed activity — data the user deliberately writes
+// about their own pet, not surveillance of their work". It is therefore
+// allow-listed in content_free_test.go with that citation, and it must
+// never be sourced from anything the activity provider saw.
+type ConfigView struct {
+	Name string `json:"name"`
+}
+
 // StateMessage is the exact `"type":"state"` WebSocket payload
 // (docs/ui-spec.md §6.1). Field names ARE the wire contract — changing one
 // without updating docs/ui-spec.md breaks the frontend silently.
@@ -52,6 +70,17 @@ type StateMessage struct {
 	OwnedItems   []string               `json:"ownedItems"`
 	OwnedTints   []string               `json:"ownedTints"`
 	Stats        StatsView              `json:"stats"`
+	// Config/Onboarding are Phase P1 (Identity & first minutes) additions.
+	// Both are ADDITIVE and optional client-side (app/frontend/src/wire.ts
+	// types them `config?`/`onboarding?`) so a stale frontend degrades to
+	// "unnamed, no onboarding" rather than breaking.
+	Config ConfigView `json:"config"`
+	// Onboarding is TRUE only in the first-launch state: no save existed
+	// when this process booted AND config.json carries no name. It is
+	// computed by the SERVER (main.go, at boot) and flipped off by
+	// SET_NAME — the client never decides it, never sets it, and never
+	// keeps showing the intro against a false here.
+	Onboarding bool `json:"onboarding"`
 }
 
 // StatCounters is one bucket's plain activity counts — content-free by
@@ -233,6 +262,21 @@ type Game struct {
 	// floats ever cross the wire or hit disk") — only the resulting
 	// integer CoinBreakdown does.
 	workKeys, workMouse, workFocus, workSwitch float64
+
+	// configName/onboarding are Phase P1's identity state
+	// (docs/plan/PRODUCT-EVOLUTION.md §5). They are deliberately NOT part
+	// of the persisted economy: internal/store.Snapshot never reads them
+	// and SaveData has no field for them (ADR 0014's config/state split —
+	// the name lives in the unsigned, hand-editable config.json, which
+	// this package, being pure and I/O-free, never touches itself). The
+	// server (main.go) seeds configName from store.LoadConfig at boot and
+	// writes it back through store.SaveConfig after SetConfigName.
+	//
+	// onboarding is the server-computed first-launch flag: set once at
+	// boot to (no save existed AND configName == "") and cleared for good
+	// by SetConfigName. Never set by a client.
+	configName string
+	onboarding bool
 
 	// now is a test seam (mirrors internal/engine.Engine's own `now` field)
 	// so TestMidnightRollover-style tests can drive statsDate deterministically
@@ -809,5 +853,7 @@ func (g *Game) State() StateMessage {
 			History:    g.buildHistoryView(),
 			Streak:     g.buildStreakView(),
 		},
+		Config:     ConfigView{Name: g.configName},
+		Onboarding: g.onboarding,
 	}
 }

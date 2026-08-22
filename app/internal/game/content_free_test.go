@@ -34,6 +34,24 @@ func TestStateMessageIsContentFree(t *testing.T) {
 		"OwnedItems":   "[]string",
 		"OwnedTints":   "[]string",
 		"Stats":        "game.StatsView",
+		// Phase P1 (Identity & first minutes, docs/plan/PRODUCT-EVOLUTION.md
+		// §5). Config carries the dexel's name — the ONE string on this
+		// wire that is neither a count, a duration, an id, nor a
+		// machine-derived app identity. It is allow-listed as
+		// USER-AUTHORED CONFIG, on ADR 0014's explicit category
+		// distinction: "the user-authored name is a *different category*
+		// from observed activity — data the user deliberately writes
+		// about their own pet, not surveillance of their work", living in
+		// the unsigned config.json outside the protected save. That
+		// distinction is what makes this entry legitimate and is ALSO
+		// exactly why it buys nothing else: an OBSERVED-content field
+		// (a window title, typed text, a path) is still a violation here,
+		// still has no allow-list entry, and still fails this test — see
+		// TestStateMessageRejectsObservedContentFields below, which
+		// proves the guard did not go soft when this field landed.
+		// Onboarding is a plain server-computed bool.
+		"Config":     "game.ConfigView",
+		"Onboarding": "bool",
 	}
 
 	// Field/type names whose presence anywhere on StateMessage is itself a
@@ -110,6 +128,79 @@ func TestSprintViewAndEquippedRefAreContentFree(t *testing.T) {
 
 	checkExact(t, reflect.TypeOf(SprintView{}), allowedSprintView)
 	checkExact(t, reflect.TypeOf(EquippedRef{}), allowedEquippedRef)
+
+	// Phase P1: ConfigView is StateMessage's third nested struct type, so
+	// it needs the same INSIDE-the-struct coverage — otherwise the
+	// top-level "Config is a game.ConfigView" check above would happily
+	// let ConfigView itself grow an observed-content field. Exactly one
+	// field, exactly a string: the user-authored name (ADR 0014's
+	// different-category rationale, quoted in full on the allow-list
+	// entry in TestStateMessageIsContentFree). "Name" is not on the
+	// forbidden-substring list and must not be — the forbidden list
+	// targets OBSERVED content ("title", "text", "content", "keycode",
+	// "clipboard", "url", "path", ...), which this is not.
+	allowedConfigView := map[string]string{
+		"Name": "string",
+	}
+	checkExact(t, reflect.TypeOf(ConfigView{}), allowedConfigView)
+}
+
+// TestStateMessageRejectsObservedContentFields proves the content-free
+// guard above still BITES after Phase P1 added the first free-text field
+// (ConfigView.Name) to the wire. The worry a reviewer should have when a
+// privacy allow-list grows a string is "did the test get weaker?" — so
+// this test re-runs the two rules that would have to fail for an
+// observed-content field to slip through, against synthetic types shaped
+// like the mistakes someone would actually make:
+//
+//   - a field that is not on the allow-list at all (the count check and
+//     the per-field lookup both catch it), and
+//   - a field whose NAME smells like observed content, even if someone
+//     also added it to an allow-list (the forbidden-substring scan
+//     catches it).
+//
+// It deliberately exercises the rules rather than the production type, so
+// it cannot be satisfied by loosening the production allow-list.
+func TestStateMessageRejectsObservedContentFields(t *testing.T) {
+	forbiddenSubstrings := []string{
+		"title", "text", "content", "keycode", "key_code", "clipboard",
+		"url", "path", "document", "message", "body", "keyname", "char",
+	}
+	// The exact field names a privacy regression would arrive as.
+	for _, bad := range []string{
+		"WindowTitle", "TypedText", "ClipboardContents", "ActiveKeycode",
+		"ActiveUrl", "DocumentPath", "LastCharTyped", "KeyName",
+	} {
+		hit := false
+		lower := strings.ToLower(bad)
+		for _, sub := range forbiddenSubstrings {
+			if strings.Contains(lower, sub) {
+				hit = true
+				break
+			}
+		}
+		if !hit {
+			t.Errorf("the forbidden-substring scan would NOT flag a field named %q — the observed-content guard has a hole", bad)
+		}
+	}
+	// ...and the name Phase P1 legitimately added must NOT be flagged by
+	// that same scan, or the guard is unusable and someone will delete it.
+	if lower := strings.ToLower("Name"); func() bool {
+		for _, sub := range forbiddenSubstrings {
+			if strings.Contains(lower, sub) {
+				return true
+			}
+		}
+		return false
+	}() {
+		t.Error("the forbidden-substring scan flags ConfigView.Name — user-authored config is not observed content (ADR 0014)")
+	}
+	// The allow-list is exact-count, so ANY unlisted field fails: assert
+	// the production type's field count still equals its allow-list, which
+	// is what makes "add a field, forget the list" a build failure.
+	if got, want := reflect.TypeOf(StateMessage{}).NumField(), 17; got != want {
+		t.Errorf("StateMessage has %d fields, this test pins %d — update BOTH allow-lists deliberately, never just the count", got, want)
+	}
 }
 
 // TestStatsViewAndStatCountersAreContentFree is Phase A1's (Analytics

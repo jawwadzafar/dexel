@@ -19,6 +19,12 @@ type actionMessage struct {
 	ItemID string `json:"itemId,omitempty"`
 	Slot   string `json:"slot,omitempty"`
 	TintID string `json:"tintId,omitempty"`
+	// Name is SET_NAME's only payload (Phase P1, docs/ui-spec.md §6.2).
+	// It arrives as RAW client text and is never used unvalidated: the
+	// single door it passes through is game.NormalizeName (control
+	// characters dropped, trimmed, capped at game.MaxNameLen runes,
+	// empty rejected) inside game.Game.SetConfigName.
+	Name string `json:"name,omitempty"`
 }
 
 // flashMessage is the transient toast (docs/ui-spec.md §6.1 "flash").

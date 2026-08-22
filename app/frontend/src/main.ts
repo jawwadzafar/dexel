@@ -9,8 +9,10 @@
 //                   given the current store state, update the DOM each owns;
 //                   none of them send a ClientAction.
 //   - FEATURE/LOGIC: features/store-modal.ts, features/activity-modal.ts,
-//                   features/history-modal.ts, features/menu.ts (the
-//                   title-bar hamburger menu), features/keybindings.ts —
+//                   features/history-modal.ts, features/onboarding-modal.ts
+//                   (Phase P1's first-launch identity modal),
+//                   features/menu.ts (the title-bar hamburger menu),
+//                   features/keybindings.ts —
 //                   each owns its own DOM/UI state, reads the store, and
 //                   is the only place that sends ClientActions for that
 //                   feature.
@@ -27,6 +29,7 @@ import { showFlash } from './render/flash';
 import * as storeModal from './features/store-modal';
 import * as activityModal from './features/activity-modal';
 import * as historyModal from './features/history-modal';
+import * as onboardingModal from './features/onboarding-modal';
 import './features/menu'; // side-effect only: wires #menu-open/#menu-panel; holds no store-derived state to render
 import * as keybindings from './features/keybindings';
 import { installDevTools } from './dev/dev-tools';
@@ -39,6 +42,11 @@ function renderAll(): void {
   storeModal.refreshIfOpen();
   activityModal.refreshIfOpen();
   historyModal.refreshIfOpen();
+  // Phase P1: the onboarding modal is opened and closed by the server's
+  // `onboarding` flag alone (no button, no key), so its open/close
+  // decision rides the same per-state render pass as everything else.
+  onboardingModal.refreshIfOpen();
+  onboardingModal.syncWithServer();
 }
 
 keybindings.init();

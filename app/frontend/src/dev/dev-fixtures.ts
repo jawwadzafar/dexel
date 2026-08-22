@@ -184,5 +184,51 @@ export const DEV_STATE: StateMessage = {
     lifetime: { keystrokes: 58120, mouseActiveSeconds: 7400, activeSeconds: 42300, idleSeconds: 19800, sprintsCompleted: 37 },
     history: DEV_HISTORY,
     streak: DEV_STREAK
-  }
+  },
+  // Phase P1 (docs/ui-spec.md §7). The DEFAULT ?dev=1 fixture is a
+  // RETURNING, already-named player — the same "seeded, well-populated"
+  // spirit as everything else here — so the onboarding modal does NOT
+  // ambush every dev-mode screenshot of the main screen. It also means
+  // the fixture exercises the name echo (#status-name and the hamburger
+  // panel's title) out of the box.
+  //
+  // To see the modal itself without a backend:
+  //   window.devApply({ onboarding: true, config: { name: '' } })
+  // and to dismiss it again:
+  //   window.devApply({ onboarding: false, config: { name: 'Pixel' } })
+  // Note that ?dev=1 has no server, so ws-client.sendAction only logs —
+  // SAY HELLO/SKIP will not close the modal in dev mode (the close is
+  // driven by the server's next state, by design). Use devApply for that.
+  config: { name: 'Pixel' },
+  onboarding: false
+};
+
+// DEV_STATE_ONBOARDING is the fresh-install fixture: unnamed, onboarding
+// up, and — importantly — the free tier-0 loadout with only the hoodie's
+// own default tint owned, which is what a real first launch actually looks
+// like. Not applied by default; hand it to window.devApply to render the
+// modal exactly as a new player sees it:
+//   window.devApply(window.devStateOnboarding)
+export const DEV_STATE_ONBOARDING: Partial<StateMessage> = {
+  devCash: 0,
+  level: 1,
+  xp: 0,
+  sprint: { index: 0, name: 'Set Up Environment', progress: 0, target: 40, unitLabel: 'units' },
+  equipped: {
+    hoodie: { itemId: 'hoodie_classic', tintId: 'indigo' },
+    chair: { itemId: 'chair_basic', tintId: 'slate' },
+    keyboard: { itemId: 'kb_membrane', tintId: null },
+    mouse: { itemId: 'mouse_stock', tintId: null },
+    beverage: { itemId: 'bev_mug', tintId: null },
+    plant: { itemId: 'plant_none', tintId: null },
+    wall: { itemId: 'wall_bare', tintId: null },
+    buddy: { itemId: 'buddy_none', tintId: null }
+  },
+  ownedItems: [
+    'hoodie_classic', 'chair_basic', 'kb_membrane', 'mouse_stock',
+    'bev_mug', 'plant_none', 'wall_bare', 'buddy_none'
+  ],
+  ownedTints: [],
+  config: { name: '' },
+  onboarding: true
 };

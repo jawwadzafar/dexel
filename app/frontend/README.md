@@ -34,7 +34,8 @@ behaviour, same DOM/WS contract, no redesign.
   - `scene.ts` — the scene compositor (`#scene-sprites`): slot sprites,
     the chair, the developer composite, the dev-frame animation timer.
   - `terminal.ts` — the terminal (`#terminal`) + idle-cursor blink.
-  - `chrome.ts` — titlebar / sprint bar / status line / ticker.
+  - `chrome.ts` — titlebar / sprint bar / status line / ticker, plus the
+    two Phase P1 name echoes (`#status-name`, `#menu-panel-title`).
   - `overlays.ts` — the connection-status overlay and the assets-missing
     banner.
   - `flash.ts` — the flash toast + the insufficient-funds flash.
@@ -45,11 +46,20 @@ behaviour, same DOM/WS contract, no redesign.
     pane, keyboard handling, and BUY_ITEM/BUY_TINT/EQUIP_ITEM/
     STORE_OPEN/STORE_CLOSE.
   - `activity-modal.ts` — the read-only activity/stats modal.
-  - `keybindings.ts` — global keydown routing ([S]/Tab/[A]), delegating
-    to whichever modal (if any) is open.
+  - `history-modal.ts` — the read-only 30-day history/streak modal (A3).
+  - `onboarding-modal.ts` — Phase P1's first-launch identity modal (name +
+    starter colour) and the only sender of SET_NAME. Nothing opens it: it
+    follows the server's `state.onboarding` flag in both directions.
+  - `menu.ts` — the titlebar hamburger panel (`#menu-open`/`#menu-panel`).
+  - `keybindings.ts` — global keydown routing ([S]/Tab/[A]/[H]/[M]),
+    delegating to whichever modal (if any) is open. Returns immediately
+    for a keydown aimed at a text field: every shortcut is a bare letter,
+    so without that guard typing a name would open modals (docs/ui-spec.md
+    §5.2).
 - `src/dev/` — `?dev=1` harness: `dev-fixtures.ts` (hardcoded catalog +
-  state) and `dev-tools.ts` (seeds the store from them and installs
-  `window.devApply`/`window.devCatalog`).
+  state, plus `DEV_STATE_ONBOARDING`, the fresh-install fixture) and
+  `dev-tools.ts` (seeds the store from them and installs
+  `window.devApply`/`window.devCatalog`/`window.devStateOnboarding`).
 - `src/main.ts` — thin entry point: wires the three layers together and
   boots (WS connect, or the dev-mode harness). Owns no DOM, no state.
 - `build.mjs` — the esbuild build script.

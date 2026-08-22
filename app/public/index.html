@@ -24,6 +24,8 @@
         <span class="menu-icon"><span class="bar"></span><span class="bar"></span><span class="bar"></span></span>
       </button>
       <div id="menu-panel">
+        <!-- Phase P1: render/chrome.ts replaces this text with the dexel's
+             name once one is set, falling back to "MENU" when it is not. -->
         <div id="menu-panel-title">MENU</div>
         <button id="store-open" class="nes-btn menu-item">[S] STORE</button>
         <button id="activity-open" class="nes-btn menu-item">[A] ACTIVITY</button>
@@ -44,6 +46,10 @@
       </div>
       <hr id="status-rule">
       <ul id="ticker"><li></li><li></li><li></li></ul>
+      <!-- Phase P1 name echo: the always-visible one. Sits in the 12px of
+           previously-empty space below the ticker; empty (and therefore
+           invisible) until the dexel is named. -->
+      <div id="status-name"></div>
     </div>
 
     <div id="flash"></div>
@@ -137,6 +143,34 @@
       </div>
 
       <div id="history-help">H / ESC CLOSE</div>
+    </dialog>
+
+    <!-- Phase P1 — Identity & first minutes (docs/ui-spec.md §7). Opened
+         automatically, and ONLY, when the server sends onboarding:true
+         (fresh install: no save existed at boot AND no name in
+         config.json). Same mechanics as the three modals above: native
+         <dialog> + showModal(), the shared #scrim, one 'close' event that
+         every dismissal path funnels through. -->
+    <dialog id="onboarding" class="nes-dialog is-dark">
+      <div id="onboarding-title">A DEXEL MOVED IN</div>
+      <div class="onboarding-hello" id="onboarding-hello-1">It watches you work, keeps you company,</div>
+      <div class="onboarding-hello" id="onboarding-hello-2">and slowly gets better dressed.</div>
+
+      <div id="onboarding-preview"></div>
+      <div id="onboarding-tint-name"></div>
+
+      <label id="onboarding-name-label" for="onboarding-name">WHAT IS ITS NAME?</label>
+      <input id="onboarding-name" type="text" maxlength="24" autocomplete="off"
+             spellcheck="false" placeholder="dexel" aria-describedby="onboarding-help">
+
+      <div id="onboarding-colour-label">STARTER COLOUR</div>
+      <div id="onboarding-swatches"></div>
+      <div id="onboarding-colour-hint"></div>
+
+      <button id="onboarding-confirm" class="nes-btn">SAY HELLO</button>
+      <button id="onboarding-skip" class="nes-btn">SKIP</button>
+
+      <div id="onboarding-help">ENTER CONFIRMS &middot; ESC SKIPS</div>
     </dialog>
 
   </div>

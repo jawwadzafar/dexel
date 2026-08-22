@@ -5,13 +5,16 @@
 // installed in dev mode.
 import * as store from '../state/store';
 import { hideConnOverlay } from '../render/overlays';
-import { DEV_CATALOG, DEV_STATE } from './dev-fixtures';
+import { DEV_CATALOG, DEV_STATE, DEV_STATE_ONBOARDING } from './dev-fixtures';
 import type { Equipped, StateMessage } from '../wire';
 
 declare global {
   interface Window {
     devApply?: (partialState: Partial<StateMessage> & { equipped?: Partial<Equipped> }) => void;
     devCatalog?: typeof DEV_CATALOG;
+    // Phase P1: the fresh-install fixture, exposed so a harness can render
+    // the onboarding modal with one call — window.devApply(window.devStateOnboarding).
+    devStateOnboarding?: typeof DEV_STATE_ONBOARDING;
   }
 }
 
@@ -51,4 +54,5 @@ export function installDevTools(renderAll: () => void): void {
     renderAll();
   };
   window.devCatalog = DEV_CATALOG;
+  window.devStateOnboarding = DEV_STATE_ONBOARDING;
 }

@@ -486,12 +486,27 @@ img, .sprite {
 #flash {
   position: absolute;
   font-size: 8px;
+  line-height: 10px;
   white-space: nowrap;
   display: none;
   z-index: 900;
+  /* ui-spec.md §6.1 puts the toast "over #sprint-name" (or over
+     #store-cash while the store is open). It was transparent, so "over"
+     composited the toast INTO whatever text was underneath: on the main
+     screen, "Hello, Pixel!" and "SPRINT: Fix Bug #404" interleaved
+     glyph-by-glyph into unreadable mush. Found by the P1 gate and
+     confirmed pre-existing — a plain kind-equip toast ("Equipped Classic
+     Pullover!") mangles identically, so this is a fix to every flash, not
+     a P1 special case. An opaque panel-coloured fill makes "over" mean
+     what the spec says; the position, size, font and colours are
+     unchanged. padding is vertical-only so no glyph shifts sideways. */
+  background: var(--metal);
+  padding: 1px 0;
 }
 #flash.visible { display: block; }
-#flash.kind-purchase, #flash.kind-sprint { color: var(--gold); }
+/* kind-welcome is Phase P1's one-off "Hello, <name>!" toast — gold, with
+   purchase/sprint, because it is a celebration, not an acknowledgement. */
+#flash.kind-purchase, #flash.kind-sprint, #flash.kind-welcome { color: var(--gold); }
 #flash.kind-equip { color: var(--cream); }
 #flash.kind-error { color: var(--pot); }
 
@@ -1169,6 +1184,271 @@ img, .sprite {
   font-size: 8px;
   color: var(--screen-dim);
   text-align: right;
+}
+
+/* ================= onboarding modal ================= */
+/* Phase P1 — Identity & first minutes (docs/plan/PRODUCT-EVOLUTION.md §5,
+   docs/ui-spec.md §7). Same mechanics as #store/#activity/#history above
+   (native <dialog>, showModal(), the shared #scrim) — this one is opened
+   by the SERVER's onboarding flag rather than by a button or a key, and
+   it is the ONLY modal in the app that owns a text input.
+
+   Sized 472x240, centered: left (640-472)/2 = 84, top (400-240)/2 = 80.
+   Narrower and much shorter than the store, because this is a
+   ~30-second first-minutes moment, not a browsing surface, and the four
+   things it holds — a warm line, a portrait, a name, a colour — should
+   read as one glance. Comfortably under the browser's 362px dialog:modal
+   height cap that #activity/#history had to design around.
+
+   The #scrim IS used here, unlike the store's deliberate "watch the scene
+   change live behind you" call (§4.5): nothing is applied to the scene
+   until SAY HELLO is pressed, so there is nothing live to watch. The
+   colour feedback lives inside the modal instead — see #onboarding-preview.
+
+   Internal layout budget (border-box 472x240, 4px border -> the
+   padding-box abs-positioning origin is 464x232; children use left:12
+   like every other modal here):
+     title           top:10  h:16  -> ends 26
+     hello line 1    top:32  h:10  -> ends 42
+     hello line 2    top:44  h:10  -> ends 54
+     portrait        top:62  h:104 -> ends 166  (left column, w:208)
+     tint name       top:170 h:10  -> ends 180  (left column, w:208)
+     name label      top:62  h:10  -> ends 72   (right column, left:236)
+     name input      top:74  h:20  -> ends 94
+     colour label    top:104 h:10  -> ends 114
+     swatch row      top:118 h:16  -> ends 134
+     colour hint     top:138 h:10  -> ends 148
+     confirm / skip  top:164 h:24  -> ends 188 (skip ends x 436 of 464)
+     help footer     top:212 h:10  -> ends 222 (10px clear of 232) */
+
+#onboarding {
+  position: fixed;
+  left: 84px;
+  top: 80px;
+  width: 472px;
+  height: 240px;
+  margin: 0;
+  padding: 12px;
+  border: 4px solid var(--wall-light);
+  background: var(--metal);
+  color: var(--cream);
+  z-index: 1000;
+}
+
+#onboarding::backdrop { background: transparent; }
+
+#onboarding-title {
+  position: absolute;
+  left: 12px;
+  top: 10px;
+  width: 380px;
+  height: 16px;
+  line-height: 16px;
+  font-size: 8px;
+  color: var(--gold);
+  white-space: nowrap;
+}
+
+/* Two hand-broken lines rather than one wrapping paragraph: at 8px in a
+   monospace pixel font, a wrap point the browser picks can land anywhere,
+   and every other text box in this app is a fixed rect with
+   white-space:nowrap. Breaking it here keeps the two lines pixel-stable. */
+.onboarding-hello {
+  position: absolute;
+  left: 12px;
+  width: 440px;
+  height: 10px;
+  line-height: 10px;
+  font-size: 8px;
+  color: var(--screen-dim);
+  white-space: nowrap;
+}
+#onboarding-hello-1 { top: 32px; }
+#onboarding-hello-2 { top: 44px; }
+
+/* The portrait: the REAL developer sprite stack (dev_form tinted +
+   the hoodie style overlay + dev_base), composed by
+   features/onboarding-modal.ts at the SAME 2x scale #scene-sprites uses,
+   then cropped by this box to the hood/shoulders.
+   A first pass here showed the 40x40 tintable hoodie THUMBNAIL at 2x
+   instead — and the real running game (feature-build-and-verify's gate)
+   said it read as a purple dome, not a garment: a store card gets away
+   with that thumbnail because it sits next to the item's name in a list
+   of garments, and this modal has no such context. Showing the dexel
+   wearing it is both legible and the actual point of the screen.
+   overflow:hidden does the cropping; isolation:isolate is MANDATORY on
+   any box holding a .tint-shade, or the multiply blend reaches through to
+   the modal (and the scene) behind it — the same note
+   `#scene-sprites .tintable` carries. */
+#onboarding-preview {
+  position: absolute;
+  left: 12px;
+  top: 62px;
+  width: 208px;
+  height: 104px;
+  background: var(--wall-dark);
+  border: 2px solid var(--wall-light);
+  overflow: hidden;
+  isolation: isolate;
+}
+
+#onboarding-tint-name {
+  position: absolute;
+  left: 12px;
+  top: 170px;
+  width: 208px;
+  height: 10px;
+  line-height: 10px;
+  font-size: 8px;
+  color: var(--screen-dim);
+  text-align: center;
+  white-space: nowrap;
+  overflow: hidden;
+}
+
+#onboarding-name-label {
+  position: absolute;
+  left: 236px;
+  top: 62px;
+  width: 216px;
+  height: 10px;
+  line-height: 10px;
+  font-size: 8px;
+  color: var(--cream);
+  white-space: nowrap;
+}
+
+/* The app's first and only text input. Styled from scratch rather than
+   with NES.css's .nes-input, whose border-image + rem padding is exactly
+   what ui-spec.md §1 says to replace at this size. font-family is
+   restated because form controls do NOT inherit it from body. */
+#onboarding-name {
+  position: absolute;
+  left: 236px;
+  top: 74px;
+  width: 208px;
+  height: 20px;
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0 4px;
+  font-family: 'Press Start 2P', monospace;
+  font-size: 8px;
+  line-height: 18px;
+  color: var(--cream);
+  background: var(--shadow);
+  border: 2px solid var(--wall-light);
+  border-radius: 0;
+  caret-color: var(--gold);
+  -webkit-font-smoothing: none;
+}
+#onboarding-name::placeholder { color: var(--screen-dim); }
+/* A visible focus ring matters more here than anywhere else in the app:
+   this input is focused the moment the modal opens, and the keyboard
+   router (features/keybindings.ts) deliberately steps aside while it is —
+   so the user needs to see WHY [S] stopped opening the store. */
+#onboarding-name:focus {
+  outline: 2px solid var(--gold);
+  outline-offset: 0;
+}
+
+#onboarding-colour-label {
+  position: absolute;
+  left: 236px;
+  top: 104px;
+  width: 216px;
+  height: 10px;
+  line-height: 10px;
+  font-size: 8px;
+  color: var(--cream);
+  white-space: nowrap;
+}
+
+/* Reuses the store card's .swatch chip (and therefore its .selected
+   outline and its .unowned diagonal-slash overlay) at 16px instead of
+   10px — one swatch idiom in the app, per the add-a-menu-modal recipe's
+   "do not invent a second idiom". */
+#onboarding-swatches {
+  position: absolute;
+  left: 236px;
+  top: 118px;
+  width: 216px;
+  height: 16px;
+  display: flex;
+  gap: 4px;
+}
+#onboarding-swatches .swatch {
+  width: 16px;
+  height: 16px;
+}
+/* A colour the player does not own yet is shown, slashed, and NOT
+   clickable — it is a thing to earn in the store, never a locked door
+   that pretends to be a button. */
+#onboarding-swatches .swatch.unowned { cursor: default; }
+
+#onboarding-colour-hint {
+  position: absolute;
+  left: 236px;
+  top: 138px;
+  width: 216px;
+  height: 10px;
+  line-height: 10px;
+  font-size: 8px;
+  color: var(--screen-dim);
+  white-space: nowrap;
+}
+
+#onboarding-confirm {
+  position: absolute;
+  left: 236px;
+  top: 164px;
+  width: 120px;
+  height: 24px;
+  padding: 0;
+  font-size: 8px;
+}
+
+#onboarding-skip {
+  position: absolute;
+  left: 372px;
+  top: 164px;
+  width: 64px;
+  height: 24px;
+  padding: 0;
+  font-size: 8px;
+  color: var(--screen-dim);
+}
+
+#onboarding-help {
+  position: absolute;
+  left: 12px;
+  top: 212px;
+  width: 440px;
+  height: 10px;
+  line-height: 10px;
+  font-size: 8px;
+  color: var(--screen-dim);
+  text-align: right;
+}
+
+/* ================= name echo (Phase P1) ================= */
+/* The always-visible half of "the name is echoed in the UI". It sits in
+   the 12px of previously-EMPTY space at the bottom of #panel-status
+   (padding-box 66px tall; #ticker ends at 54), specifically so the
+   titlebar's top-left cluster stays coin-then-level and nothing else.
+   Empty text until the dexel is named, so a fresh install shows nothing
+   at all rather than a placeholder. */
+#status-name {
+  position: absolute;
+  left: 6px;
+  top: 55px;
+  width: 288px;
+  height: 10px;
+  line-height: 10px;
+  font-size: 8px;
+  color: var(--gold);
+  text-align: right;
+  white-space: nowrap;
+  overflow: hidden;
 }
 
 /* ============ NES.CSS OVERRIDES (single block, ui-spec.md §1) ============ */

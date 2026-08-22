@@ -72,10 +72,12 @@ verification harness and the spec both address elements by id.
            <span id="status-line">Working...</span></div>
       <hr id="status-rule">
       <ul id="ticker"><li></li><li></li><li></li></ul>
+      <div id="status-name"></div>    <!-- §7.4 the dexel's name; empty until named -->
     </div>
 
-    <div id="scrim"></div>            <!-- shown only while the store is open -->
+    <div id="scrim"></div>            <!-- shown while a modal is open -->
     <dialog id="store" class="nes-dialog is-dark"> … §4 … </dialog>
+    <dialog id="onboarding" class="nes-dialog is-dark"> … §7 … </dialog>
   </div>
 </body>
 ```
@@ -470,9 +472,31 @@ Store modal open:
 | `Esc` | close (native `<dialog>` behaviour — do not intercept) |
 | `S` / `Tab` | close |
 
+Onboarding modal open (§7):
+
+| Key | Action |
+|---|---|
+| any printable key | goes to `#onboarding-name`; **no global shortcut fires** |
+| `Enter` | confirm (same as `SAY HELLO`) |
+| `Esc` | skip (native `<dialog>` close; see §7.3 for what skipping means) |
+
 * The card list auto-scrolls to keep the selection fully visible.
 * `Tab` is bound to *open* on the main screen but must **not** be captured
   inside the dialog beyond closing it — leave native focus cycling alone.
+* **Bare-letter shortcuts never fire at a focused text field.** Every main
+  screen shortcut above is an unmodified letter, which was harmless until §8
+  introduced the app's first `<input>`: typing the name "sasha" would
+  otherwise fire `[S]`, `[A]`, `[S]`, `[H]`, `[A]` and stack three modals over
+  the field being typed into. The global router
+  (`features/keybindings.ts`) therefore **returns immediately** for any
+  keydown whose `target` is an `input`, `textarea`, `select` or
+  `contenteditable` element — checked before any other tier, and written
+  against the element KIND, not against §8's specific id, so any future field
+  inherits the rule. A modal that owns an input additionally takes the
+  keyboard-ownership tier for as long as it is open, so a bare letter cannot
+  reach a launcher even when focus sits on one of that modal's buttons.
+  `Esc` needs no exception: a native `<dialog>` handles `Esc` itself, above
+  this listener.
 * Window-level shortcuts (always-on-top toggle, quit) belong to the Wails
   shell, not to this document.
 
@@ -644,7 +668,9 @@ second to reflect a click.
       {"date": "2024-06-30", "keystrokes": 4210, "mouseActiveSeconds": 812, "activeSeconds": 3040, "idleSeconds": 260, "sprintsCompleted": 3, "focusSessions": 4, "appSwitches": 12, "coinsEarned": 12, "isActive": true, "longestFocusBlockSeconds": 900}
     ],
     "streak": {"current": 6, "longest": 14}
-  }
+  },
+  "config": {"name": "Pixel"},
+  "onboarding": false
 }
 ```
 
@@ -730,6 +756,41 @@ Field notes the implementers must not improvise on:
   `label → count` lines (Keystrokes, Mouse, Focus sessions, App switches).
   All five/four values render with `fmtInt`; nothing is formatted
   server-side.
+* `config` — Phase P1 (Identity & first minutes,
+  `docs/plan/PRODUCT-EVOLUTION.md` §5). Exactly one field today,
+  `config.name`: the dexel's name, **user-authored**, `""` when unset. The
+  server always sends the block; it is optional client-side
+  (`wire.ts: config?`) only so a pre-P1 server degrades to "unnamed".
+
+  This is the **one free-text string anywhere on this wire**, and it is
+  legitimate for a reason that must not be generalised: it lives on the
+  *editable* side of SEC-1's config/state split (`~/.config/dexel/config.json`,
+  unsigned and hand-editable), never in the protected HMAC'd save at
+  `state.db`. ADR 0014 states the category distinction outright — "the
+  user-authored name is a *different category* from observed activity — data
+  the user deliberately writes about their own pet, not surveillance of their
+  work". OBSERVED content (a window title, typed text, a path, a keycode) is
+  still forbidden here and still fails
+  `internal/game/content_free_test.go`'s allow-list, which gained `Config`
+  and `Onboarding` entries — and one extra test asserting the guard still
+  bites — in the same change.
+
+  Validation is entirely server-side (`game.NormalizeName`): control
+  characters dropped, surrounding whitespace trimmed, truncated to **24
+  runes** (`game.MaxNameLen`, counted as runes so a multi-byte name is never
+  cut mid-character), and an empty result rejected. The client's own
+  `maxlength`/trim are a courtesy, never the check.
+* `onboarding` — Phase P1. `true` **only** in the genuine first-launch state,
+  decided **once, by the server, at boot**, as *(no save of any kind existed)*
+  `&&` *(`config.name` is empty)*. Both halves matter: an existing
+  `state.db`/`state.json`/legacy Rust save means somebody has played here even
+  if they never named the dexel, and a named `config.json` means the one
+  question onboarding asks is already answered even on a machine whose save was
+  wiped. A tampered, future-schema or unreadable save all count as "a save
+  existed" — the failure worth avoiding is nagging a returning user, not
+  missing an intro. `SET_NAME` clears it for good; nothing sets it again for
+  the life of the process, and **no client action can ever set it**. Optional
+  client-side, defaulting to false. See §7.
 * The **`[H] HISTORY`** modal (`features/history-modal.ts`, A3, ADR 0013) is
   a second read-only render, opened the same way `[A]`/`[S]` are — native
   `<dialog>`, its own titlebar button, the `H` key, `Esc` to close — and
@@ -762,11 +823,24 @@ Field notes the implementers must not improvise on:
 {"type": "flash", "kind": "purchase", "text": "Racer chair!"}
 ```
 
-`kind` ∈ `purchase | equip | sprint | error`. Rendered for **1.5 s** as an 8px
-line, `var(--gold)` for `purchase`/`sprint`, `var(--cream)` for `equip`,
-`var(--pot)` for `error`. Position: over `#store-cash` while the modal is open,
-otherwise over `#sprint-name`. Only one flash at a time; a new one replaces the
-old.
+`kind` ∈ `purchase | equip | sprint | error | welcome`. Rendered for **1.5 s**
+as an 8px line, `var(--gold)` for `purchase`/`sprint`/`welcome`,
+`var(--cream)` for `equip`, `var(--pot)` for `error`. Position: over
+`#store-cash` while the store modal is open, otherwise over `#sprint-name`.
+Only one flash at a time; a new one replaces the old.
+
+* `welcome` is Phase P1's one-off `Hello, <name>!` on a successful
+  `SET_NAME` (§7) — gold, with the celebrations, not the acknowledgements.
+  The greeting is composed **server-side**, like every other flash text; the
+  frontend never assembles a sentence (§3).
+* **`#flash` paints an opaque `var(--metal)` fill.** "Over `#sprint-name`"
+  above always meant *covering* it, but the toast was transparent, so it
+  composited INTO the text underneath and the two interleaved glyph-by-glyph
+  into unreadable mush. Found by P1's real-running-game gate on
+  `Hello, Pixel!` over `SPRINT: Fix Bug #404`, and confirmed pre-existing —
+  a plain `kind: equip` toast (`Equipped Classic Pullover!`) mangles
+  identically. Position, size, font and colours are unchanged; only the
+  backdrop is now opaque, so "over" means what this section says.
 
 ### 6.2 Client → server
 
@@ -776,6 +850,7 @@ old.
 {"action": "EQUIP_ITEM", "slot": "chair", "itemId": "chair_racer", "tintId": "neon"}
 {"action": "STORE_OPEN"}
 {"action": "STORE_CLOSE"}
+{"action": "SET_NAME",   "name": "Pixel"}
 ```
 
 * **No dedicated ack.** Every successful action is answered by an immediate
@@ -789,11 +864,197 @@ old.
   a panic and never a partial write.
 * `EQUIP_ITEM` with a `tintId` the player does not own is rejected — equipping
   is not a back door around `BUY_TINT`.
+* `SET_NAME` (Phase P1, §7) sets the dexel's name. `name` is **raw user
+  text** and passes through exactly one door, `game.NormalizeName` (see
+  `config` in §6.1 for the rules). A rejected name — empty, whitespace-only,
+  control-characters-only, or the `name` key missing entirely — is a
+  `flash: error` and **no state change at all**: not the name, not the
+  `onboarding` flag. Anything that survives validation is stored, written
+  through to `config.json` immediately (never on the 30 s autosave timer —
+  naming is a one-shot first-minutes moment and must not be lost to a crash
+  30 seconds later), and answered with a full `state` broadcast carrying the
+  new `config.name` and `onboarding: false`, plus a `welcome` flash. If that
+  config write fails, the in-memory name still stands so the session works,
+  but the toast becomes a `flash: error` — a warm hello for a name that will
+  silently not survive a restart is a lie.
+  `SET_NAME` is not restricted to onboarding: a later Settings surface can
+  rename with the same action and no new wire.
 * **[DESIGN CALL] camelCase field names throughout** (`itemId`, not the PDF
   blueprint's `item_id`). The whole payload is consumed by JavaScript; one
   casing convention across the wire and the DOM removes a whole class of typo.
 
-## 7. Deferred, and why
+## 7. The onboarding modal
+
+Phase P1 — Identity & first minutes (`docs/plan/PRODUCT-EVOLUTION.md` §5,
+§2.9). Shown **once, ever**, on a genuine fresh install: name your dexel,
+pick a starter colour, get a warm hello. Built to the §4 store modal's
+mechanics (native `<dialog>` + `showModal()`, the shared `#scrim`, one
+`'close'` event every dismissal path funnels through) — not a second modal
+idiom.
+
+Two things make it unlike every other modal here:
+
+1. **Nothing opens it.** There is no launcher button and no key. It opens
+   because `state.onboarding` is `true` and closes because a later `state`
+   says `false` (§6.1). The client never decides that flag in either
+   direction.
+2. **It owns the app's first `<input>`**, which is a real keyboard hazard —
+   see §5.2's bare-letter rule, which exists because of this screen.
+
+It **gates nothing** (no `*_OPEN`/`*_CLOSE` action, unlike §5.3's store
+gate). The store's gate exists to stop keyboard-driven shopping minting Dev
+Cash; this modal can only ever be on screen *before any work has been
+accrued at all* — a fresh install at 0 Dev Cash and 0 sprint progress — so
+there is nothing to freeze. It also cannot spend: the starter colour is
+applied with the existing `EQUIP_ITEM` against a tint the player already
+owns, never `BUY_TINT`. No new economy path, no free cash.
+
+### 7.1 Geometry
+
+`#onboarding` at `left:84 top:80 width:472 height:240` — centered in the
+640x400 viewport, and deliberately *much* shorter than §4's store: this is a
+~30-second moment, not a browsing surface, and its four pieces (a warm line,
+a portrait, a name, a colour) should read in one glance. Well under the
+browser's 362px `dialog:modal` height cap. `padding: 12px`, `border: 4px
+solid var(--wall-light)`, `background: var(--metal)`, so the abs-positioning
+origin for children is the 464x232 padding box.
+
+| Element | id | Rect (within the padding box) |
+|---|---|---|
+| Title (`A DEXEL MOVED IN`, `var(--gold)`) | `#onboarding-title` | 12, 10, 380x16 |
+| Warm line 1 | `#onboarding-hello-1` | 12, 32, 440x10 |
+| Warm line 2 | `#onboarding-hello-2` | 12, 44, 440x10 |
+| Portrait | `#onboarding-preview` | 12, 62, 208x104 |
+| Selected colour's name | `#onboarding-tint-name` | 12, 170, 208x10 |
+| `WHAT IS ITS NAME?` | `#onboarding-name-label` | 236, 62, 216x10 |
+| Name field | `#onboarding-name` | 236, 74, 208x20 |
+| `STARTER COLOUR` | `#onboarding-colour-label` | 236, 104, 216x10 |
+| Swatch row (6 chips, 16x16, 4px gap) | `#onboarding-swatches` | 236, 118, 216x16 |
+| `MORE TO EARN IN THE STORE` | `#onboarding-colour-hint` | 236, 138, 216x10 |
+| `SAY HELLO` | `#onboarding-confirm` | 236, 164, 120x24 |
+| `SKIP` | `#onboarding-skip` | 372, 164, 64x24 |
+| Footer help | `#onboarding-help` | 12, 212, 440x10 |
+
+**The `#scrim` IS used here** — unlike §4.5's deliberate "watch the scene
+change live behind you" call for the store. Nothing is applied to the scene
+until `SAY HELLO`, so there is nothing live to watch; the colour feedback
+lives inside the modal instead.
+
+**The portrait is the real developer sprite stack**, not a thumbnail: the
+same three layers (`dev_form_<frame>` tinted, the hoodie style overlay,
+`dev_base_<frame>`), the same z-order and the same **2x** scale
+`#scene-sprites` renders at, cropped by the box's `overflow: hidden` to
+sprite-local `x 44..148, y 5..57` — hands, hood and shoulders, stopping just
+above local `y 58` = room row 150, which is exactly where chairs start
+painting, so the crop looks complete with no chair drawn. The frame is fixed
+to `idle` (the `mouse` pose reaches local `x 190` and would clip; and a
+portrait changing pose mid-decision is noise). The box needs
+`isolation: isolate`, like any box holding a `.tint-shade`.
+
+> **[DESIGN CALL] the portrait, not the thumbnail.** The first build showed
+> the 40x40 tintable hoodie *thumbnail* at 2x here. Rendered in the real
+> running game it read as a purple dome, not a garment: a store card gets
+> away with that thumbnail because it sits next to the item's name in a list
+> of garments, and this modal has no such context. Showing the dexel
+> *wearing* the colour is both legible and the actual point of the screen.
+
+### 7.2 The swatch row, and what a fresh install actually owns
+
+Chips are `.swatch` — the same class §4's store cards use, at 16px instead of
+10px, so the `.selected` outline and the `.unowned` diagonal slash come for
+free. One chip per catalog tint, **in catalog order**; the frontend hardcodes
+nothing about the tint table.
+
+Ownership is read from the server (`state.ownedTints` plus the item's
+implicit `defaultTint`). An unowned colour is rendered **shown, slashed and
+inert** — not hidden, and never a clickable-looking locked door. Its
+`title` names its store price.
+
+> **[DESIGN CALL] / OPEN QUESTION FOR THE OWNER.**
+> `PRODUCT-EVOLUTION.md` §2.9 assumes a starter pick from "the six free
+> tints the wardrobe already grants on first launch". **The catalog does not
+> grant six.** Every entry in `internal/game/catalog.go`'s `catalogTints`
+> costs 40, and `GrantTierZeroDefaults` grants tier-0 *items*, not tints —
+> so on a real fresh install exactly **one** chip is pickable
+> (`indigo`, `hoodie_classic`'s own `defaultTint`) and five are locked.
+> Rather than invent a grant (a new economy path, explicitly out of scope
+> for P1), this ships honest: all six shown, one pickable, and an explicit
+> `MORE TO EARN IN THE STORE` line so the row reads as a wardrobe barely
+> started instead of a broken picker. **If the owner wants a real choice at
+> first launch, the fix is one catalog decision — make some or all of
+> `catalogTints` price 0, or grant a starter set in
+> `GrantTierZeroDefaults` — and this modal lights up with zero frontend
+> change.**
+
+### 7.3 Confirm, skip, and why skipping sets a name
+
+| Trigger | Effect |
+|---|---|
+| `SAY HELLO` / `Enter` | `EQUIP_ITEM` for the chosen colour (only if it differs from what is worn), then `SET_NAME` with the typed name |
+| `SKIP` button | `SET_NAME` with `"dexel"` |
+| `Esc` (native `<dialog>` close) | identical to `SKIP` |
+
+Both dismissal paths converge on the dialog's single `'close'` handler, which
+sends the skip if no name was submitted — so any future exit route inherits
+the behaviour rather than needing its own wiring.
+
+> **[DESIGN CALL] skipping SETS the name `"dexel"`; it does not leave the
+> flag up.** The alternatives are both worse. Leaving `onboarding: true`
+> re-opens the modal on the very next 1 Hz broadcast — a nag loop. Letting
+> the client suppress it locally forever is the client asserting state the
+> server never sent, which §6.1's whole contract forbids. Naming the dexel
+> `"dexel"` is the only option that is both honest and quiet: the user opted
+> out of *choosing* a name, not into being asked again — and `SET_NAME`
+> already exists for renaming later. `"dexel"` is pinned on both sides
+> (`game.DefaultName`, and `SKIP_NAME` in `features/onboarding-modal.ts`)
+> with a Go test asserting the literal and that it survives validation.
+
+An empty typed name falls back to `"dexel"` client-side before sending, so
+the client never sends something it knows the server would reject (which
+would leave `onboarding: true` and re-open the modal). Between sending
+`SET_NAME` and seeing the confirming `state`, auto-open is suppressed by a
+one-shot flag — the same class of loop guard as `ws-client.ts`'s
+`storeReassertSent`, and it suppresses an *action*, never a render.
+
+### 7.4 Where the name is echoed
+
+Two places, both rendered by `render/chrome.ts` (which already owns the
+titlebar and the status panel) from `state.config.name`, as typed — never
+upper-cased to match the surrounding labels, and never assembled into a
+sentence (§3's zero-client-side-assembly rule; the one composed string, the
+welcome toast, is composed by the server).
+
+| Where | id | Behaviour |
+|---|---|---|
+| Status panel, bottom-right | `#status-name` | `left:6 top:55 288x10`, `var(--gold)`, right-aligned, truncated to 24. Sits in the 12px of previously-**empty** space below `#ticker` (the panel's padding box is 66px tall; the ticker ends at 54). Empty — and therefore invisible — until named. |
+| Hamburger panel heading | `#menu-panel-title` | The static text `MENU` becomes the dexel's name once set, truncated to 16, falling back to `MENU` when unset. |
+
+> **[DESIGN CALL] / FLAGGED FOR THE OWNER: not the titlebar cluster.**
+> P1's exit criterion says the name is "echoed in the HUD/titlebar", but the
+> standing owner directive is that the top-left titlebar cluster is
+> **coin-then-level only** — nothing added to it, and nothing left of or
+> before the coin (§2.1, BUG-2). Both echoes above therefore stay out of
+> that cluster: one takes dead space in the status panel (always visible,
+> no layout moved), the other replaces a static label. If the owner wants
+> the name in the titlebar proper, `#hud-level` ends at x120 and
+> `#menu-open` starts at x600, so there is room for a name box at roughly
+> `left:128 top:8 w:340 h:8` — one CSS rect plus one line in
+> `renderChrome`, and it would *not* disturb the coin/level cluster itself.
+
+### 7.5 Verified in the real running game
+
+Per `feature-build-and-verify`'s gate, against the built binary with the fake
+provider and temp `$HOME`s: the modal appears on a fresh install; typing
+`sasha mh` into the name field opens **no** modal (§5.2's guard) while `[S]`
+still opens the store the moment nothing is focused; a locked swatch cannot
+be selected; confirming closes the modal, shows the `welcome` flash and
+echoes the name in both places; `config.json` holds the name and `state.db`
+does not contain it anywhere; restarting the same `$HOME` shows no
+onboarding; a fresh `$HOME` whose `config.json` was named *before* first run
+shows no onboarding; an existing `state.db` with an unnamed `config.json`
+shows no onboarding; and `Esc` sets `"dexel"` and never re-opens.
+
+## 8. Deferred, and why
 
 Named explicitly so nobody re-derives them as missing features.
 

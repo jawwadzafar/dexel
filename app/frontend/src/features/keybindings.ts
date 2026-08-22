@@ -15,10 +15,40 @@
 import * as storeModal from './store-modal';
 import * as activityModal from './activity-modal';
 import * as historyModal from './history-modal';
+import * as onboardingModal from './onboarding-modal';
 import * as menu from './menu';
+
+// Phase P1 hazard guard. Every shortcut this module owns is a BARE letter
+// (S/A/H/M) with no modifier, which was harmless while the app had no text
+// input — and became a real bug the moment the onboarding modal added one:
+// typing the name "sasha" would fire [S], [A], [S], [H], [A] and open three
+// modals over the input the user was typing into.
+//
+// So: a keydown whose target is a text-entry element belongs to that
+// element, full stop. This is checked FIRST, before even the modal
+// ownership tiers below, and deliberately covers input/textarea/select and
+// anything contenteditable rather than just the one id that exists today,
+// so the next feature that adds a field inherits the fix instead of
+// rediscovering the bug. Esc is not special-cased: a native <dialog>
+// handles Esc itself, above this listener, so returning early here never
+// traps anyone.
+function isTextEntryTarget(target: EventTarget | null): boolean {
+  const node = target as HTMLElement | null;
+  if (!node || !node.tagName) return false;
+  const tag = node.tagName.toUpperCase();
+  return tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || node.isContentEditable === true;
+}
 
 export function init(): void {
   document.addEventListener('keydown', function (e: KeyboardEvent) {
+    if (isTextEntryTarget(e.target)) return;
+    // Onboarding takes the ownership tier first: it is modal over
+    // everything and must not let a bare letter reach the launchers even
+    // when focus sits on one of its buttons rather than its input.
+    if (onboardingModal.isOpen()) {
+      onboardingModal.handleKeydown(e);
+      return;
+    }
     if (storeModal.isOpen()) {
       storeModal.handleKeydown(e);
       return;
