@@ -12,18 +12,27 @@
 // `start` uses, because that poll races the child it just spawned and
 // must not delete the file that child is in the middle of writing.
 //
-// NOW vs PR-4 (MIGRATION_PLAN.md §PR-4 owns the other half):
-//   - the round-trip target is GET /api/health (which exists, and is
-//     unauthenticated by design); PR-4 moves it to
-//     GET /api/lifecycle/status and adds the pid-equality check;
-//   - `stop` sends SIGTERM (unix) / TerminateProcess (windows), the
-//     documented fallback; PR-4 makes POST /api/lifecycle/stop the
-//     preferred path with the signal as fallback;
-//   - `status` reports what /api/health knows; `paused` and
-//     `providerHonesty` arrive with PR-4's endpoint;
-//   - the X-Dexel-Token header is ALREADY sent on every probe, so the CLI
-//     half of ARCHITECTURE.md Decision 8's contract is complete and PR-4
-//     only has to start enforcing it server-side.
+// PR-4 (MIGRATION_PLAN.md §PR-4, ARCHITECTURE.md Decision 6/8) landed the
+// other half of that idea:
+//   - the round-trip target is GET /api/lifecycle/status (auth'd, and
+//     reporting the answering process's own pid), not GET /api/health
+//     (unauthenticated by design, and silent on pid) — Query/Discover's
+//     Probe call now requires the returned pid to equal runtime.json's,
+//     the last defence against pid reuse Decision 6 promises;
+//   - `stop` calls POST /api/lifecycle/stop first (lifecycle.RequestStop)
+//     — it drives the exact same shutdown sequence a signal does
+//     (app/main.go's shared shutdown() closure) — and falls back to
+//     SIGTERM/TerminateProcess (stopViaSignal) only if that endpoint is
+//     unreachable or does not act within stopGrace;
+//   - `status` reports app/internal/lifecycle.Status.Live, PR-4's
+//     GET /api/lifecycle/status body, preferring it over runtime.json's
+//     own copy for version/commit (see cmdStatus);
+//   - the X-Dexel-Token header PR-3 already sent on every probe is now
+//     actually enforced server-side (app/lifecycle_handlers.go).
+//
+// `pause`/`resume` are ARCHITECTURE.md Decision 5's other two lifecycle
+// verbs; they are not built here — PR-5 owns the Paused semantics a
+// pause/resume endpoint would otherwise have nothing real to flip.
 package main
 
 import (
@@ -315,6 +324,42 @@ func (e *cliEnv) stop() int {
 	}
 
 	pid := st.Runtime.Pid
+
+	// Endpoint-primary (MIGRATION_PLAN.md §PR-4: "the CLI calls the
+	// endpoints instead of poking signals"; PLATFORM_NOTES.md §2: "the
+	// lifecycle endpoint IS the graceful path... fallback is [a
+	// signal]"). POST /api/lifecycle/stop drives the exact same
+	// persist(); provider.Stop(); httpSrv.Shutdown() sequence a SIGTERM
+	// does (app/main.go's shared shutdown() closure) — there is one
+	// shutdown path either way; the endpoint is just a different
+	// doorbell, and the one that also works on Windows (no SIGTERM
+	// there at all — see spawn_windows.go's signalStop).
+	//
+	// A signal is the fallback for a runtime that cannot or will not
+	// answer HTTP: an unreachable/refused connection (a pre-PR-4 binary,
+	// a firewalled loopback) falls back immediately; a 202 that the
+	// runtime then never acts on (an HTTP server wedged independently of
+	// the shutdown path) falls back after stopGrace.
+	if reqErr := lifecycle.RequestStop(e.client, st.Runtime); reqErr != nil {
+		fmt.Fprintf(e.errOut, "dexel: lifecycle stop endpoint unreachable (%v) — falling back to a signal\n", reqErr)
+		return e.stopViaSignal(pid)
+	}
+	fmt.Fprintf(e.out, "stopping dexel (pid %d) via the lifecycle endpoint...\n", pid)
+	if e.waitGone(pid, stopGrace) {
+		fmt.Fprintln(e.out, "dexel stopped")
+		return e.cleanupAfterStop()
+	}
+	fmt.Fprintf(e.errOut, "dexel: pid %d did not exit within %s of the lifecycle endpoint accepting the stop request — falling back to a signal\n", pid, stopGrace)
+	return e.stopViaSignal(pid)
+}
+
+// stopViaSignal is PR-3's original stop mechanism (PLATFORM_NOTES.md §2:
+// SIGTERM/TerminateProcess, a stopGrace wait, then escalation to
+// SIGKILL). PR-4 makes the lifecycle endpoint the preferred path (see
+// stop() above); this is reached only when that endpoint could not be
+// reached, or accepted the request but the runtime did not act on it in
+// time.
+func (e *cliEnv) stopViaSignal(pid int) int {
 	p, err := os.FindProcess(pid)
 	if err != nil {
 		fmt.Fprintf(e.errOut, "dexel: find process %d: %v\n", pid, err)
@@ -331,7 +376,7 @@ func (e *cliEnv) stop() int {
 		fmt.Fprintf(e.errOut, "dexel: signal pid %d: %v\n", pid, err)
 		return 1
 	}
-	fmt.Fprintf(e.out, "stopping dexel (pid %d)...\n", pid)
+	fmt.Fprintf(e.out, "stopping dexel (pid %d) via signal...\n", pid)
 
 	if e.waitGone(pid, stopGrace) {
 		fmt.Fprintln(e.out, "dexel stopped")
@@ -465,8 +510,8 @@ func cmdStatus(args []string) int {
 		// commit: the file was written by whatever binary started the
 		// runtime, and after a `dexel update` the two can legitimately
 		// differ until the next restart. What is running is the truth.
-		out.Version = firstNonEmpty(st.Health.Version, st.Runtime.Version)
-		out.Commit = firstNonEmpty(st.Health.Commit, st.Runtime.Commit)
+		out.Version = firstNonEmpty(st.Live.Version, st.Runtime.Version)
+		out.Commit = firstNonEmpty(st.Live.Commit, st.Runtime.Commit)
 		out.StartedAt = st.Runtime.StartedAt
 		out.Uptime = uptimeSeconds(st.Runtime.StartedAt, time.Now())
 	} else {

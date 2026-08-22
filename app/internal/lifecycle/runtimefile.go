@@ -204,77 +204,118 @@ func RemoveRuntime(stateDir string) error {
 	return nil
 }
 
-// Health is the subset of /api/health this package needs in order to say
-// "yes, a dexel is answering on that port" (app/main.go's
-// healthResponse). Version and Source are the two fields that are ALWAYS
-// non-empty on a real dexel, which is what makes them usable as the
-// is-this-really-dexel test in Probe below.
-type Health struct {
-	Version      string `json:"version"`
-	Commit       string `json:"commit"`
-	Source       string `json:"source"`
-	PublicOk     bool   `json:"publicOk"`
-	PublicSource string `json:"publicSource"`
-	AssetsSource string `json:"assetsSource"`
+// RuntimeStatus is GET /api/lifecycle/status's response body
+// (app/lifecycle_handlers.go's lifecycleStatusResponse) — the subset of
+// it this package needs to confirm a runtime is alive and to perform
+// Decision 6's pid-equality check.
+type RuntimeStatus struct {
+	Running       bool   `json:"running"`
+	Pid           int    `json:"pid"`
+	Port          int    `json:"port"`
+	URL           string `json:"url"`
+	Version       string `json:"version"`
+	Commit        string `json:"commit"`
+	StartedAt     string `json:"startedAt"`
+	UptimeSeconds int64  `json:"uptimeSeconds"`
+	StatePath     string `json:"statePath"`
+	LogPath       string `json:"logPath"`
 }
 
-// probeLimit caps how much of a probe response is read. /api/health is a
-// fixed ~200-byte object; anything vastly larger is not dexel, and this
-// keeps a hostile or confused listener on that port from streaming
-// unbounded bytes into a CLI that only wanted a yes/no.
+// probeLimit caps how much of a probe response is read. /api/lifecycle/
+// status is a fixed, small object; anything vastly larger is not dexel,
+// and this keeps a hostile or confused listener on that port from
+// streaming unbounded bytes into a CLI that only wanted a yes/no.
 const probeLimit = 64 << 10
 
 // Probe performs THE round-trip that Decision 6 makes the sole authority
-// on "is there a runtime to talk to": GET <url>/api/health, carrying the
-// runtime.json token in X-Dexel-Token.
+// on "is there a runtime to talk to": GET <url>/api/lifecycle/status,
+// carrying runtime.json's token in X-Dexel-Token (PR-4 — MIGRATION_PLAN.md
+// §PR-4, ARCHITECTURE.md Decision 8 — enforces this token server-side;
+// PR-3 already sent it, unauthenticated, to the earlier /api/health
+// probe this replaces).
 //
-// NOW vs PR-4 (MIGRATION_PLAN.md §PR-4 owns the other half). PR-3 probes
-// /api/health, which exists today and is deliberately unauthenticated
-// (Decision 8: "/api/health stays exactly as it is — unauthenticated, the
-// browser reads it"). The token is sent anyway, so the CLI side of the
-// contract is already correct and PR-4 changes only the URL: PR-4's
-// GET /api/lifecycle/status returns the runtime's OWN pid, and the probe
-// then additionally requires it to equal runtime.json's pid — the last
-// defence against pid reuse. Until that endpoint exists, the honest
-// approximation is the one below: a live 200 from that exact port whose
-// body is a dexel health object. A recycled pid cannot fake that; only
-// another dexel on the same port could, and the flock (lock.go) is what
-// makes that impossible within one state dir.
-func Probe(client *http.Client, r Runtime) (Health, error) {
-	var h Health
+// Beyond a live 200 with a well-formed body, this is what makes the
+// round-trip the "last defence against pid reuse" Decision 6 promises: the
+// endpoint reports the answering process's OWN pid, and Probe requires it
+// to equal r.Pid (runtime.json's copy). A process that merely inherited
+// this port after the real dexel died cannot pass that check even if it
+// happens to answer something JSON-shaped on the same port; only a dexel
+// that is genuinely still the process named in runtime.json can.
+func Probe(client *http.Client, r Runtime) (RuntimeStatus, error) {
+	var s RuntimeStatus
 	if r.URL == "" {
-		return h, errors.New("probe: runtime has no url")
+		return s, errors.New("probe: runtime has no url")
 	}
-	req, err := http.NewRequest(http.MethodGet, r.URL+"/api/health", nil)
+	req, err := http.NewRequest(http.MethodGet, r.URL+"/api/lifecycle/status", nil)
 	if err != nil {
-		return h, fmt.Errorf("probe %s: %w", r.URL, err)
+		return s, fmt.Errorf("probe %s: %w", r.URL, err)
 	}
-	if r.Token != "" {
-		req.Header.Set(TokenHeader, r.Token)
-	}
+	req.Header.Set(TokenHeader, r.Token)
 	resp, err := client.Do(req)
 	if err != nil {
-		return h, fmt.Errorf("probe %s: %w", r.URL, err)
+		return s, fmt.Errorf("probe %s: %w", r.URL, err)
 	}
 	defer func() {
 		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, probeLimit))
 		_ = resp.Body.Close()
 	}()
 	if resp.StatusCode != http.StatusOK {
-		return h, fmt.Errorf("probe %s: http %d", r.URL, resp.StatusCode)
+		return s, fmt.Errorf("probe %s: http %d", r.URL, resp.StatusCode)
 	}
-	if err := json.NewDecoder(io.LimitReader(resp.Body, probeLimit)).Decode(&h); err != nil {
-		return h, fmt.Errorf("probe %s: decode health: %w", r.URL, err)
+	if err := json.NewDecoder(io.LimitReader(resp.Body, probeLimit)).Decode(&s); err != nil {
+		return s, fmt.Errorf("probe %s: decode lifecycle status: %w", r.URL, err)
 	}
-	// The is-this-dexel test. Both fields are unconditionally set by
-	// healthHandler at startup, so an empty one means whatever answered
-	// is not a dexel — a foreign process that inherited this port after
-	// our pid died, which is precisely the stale case Decision 6 exists
-	// to catch.
-	if h.Version == "" || h.Source == "" {
-		return h, fmt.Errorf("probe %s: response is not a dexel /api/health object", r.URL)
+	// The is-this-dexel test. Version is unconditionally set by
+	// lifecycleStatusHandler, so an empty one means whatever answered
+	// is not a dexel lifecycle status object at all.
+	if s.Version == "" {
+		return s, fmt.Errorf("probe %s: response is not a dexel /api/lifecycle/status object", r.URL)
 	}
-	return h, nil
+	// The pid-equality check itself: runtime.json's own pid must match
+	// what the live process just claimed as its own. A mismatch means
+	// runtime.json outlived the process it named — pid reuse, or a
+	// foreign listener on a recycled port — and the caller (Query/
+	// Discover) must treat this exactly like any other failed probe.
+	if s.Pid != r.Pid {
+		return s, fmt.Errorf("probe %s: pid mismatch (runtime.json says %d, live status says %d) — stale runtime.json", r.URL, r.Pid, s.Pid)
+	}
+	return s, nil
+}
+
+// RequestStop sends POST /api/lifecycle/stop to a live runtime — PR-4's
+// endpoint-primary graceful stop (MIGRATION_PLAN.md §PR-4: "the CLI calls
+// the endpoints instead of poking signals"; PLATFORM_NOTES.md §2: "the
+// lifecycle endpoint IS the graceful path... fallback is [a signal]").
+//
+// A non-2xx response, a transport error, or an unreachable server are all
+// reported as an error so the caller can fall back to a signal — this
+// function itself never signals anything, and never assumes the runtime
+// has actually exited by the time it returns 202: it only confirms the
+// request was ACCEPTED, exactly as ARCHITECTURE.md §3 specifies
+// ("stop -> 202, then the runtime does exactly what the existing
+// case <-sigCh: branch does"). The caller (cmd_lifecycle.go's stop()) is
+// the one that waits for the process to actually disappear.
+func RequestStop(client *http.Client, r Runtime) error {
+	if r.URL == "" {
+		return errors.New("request stop: runtime has no url")
+	}
+	req, err := http.NewRequest(http.MethodPost, r.URL+"/api/lifecycle/stop", nil)
+	if err != nil {
+		return fmt.Errorf("request stop %s: %w", r.URL, err)
+	}
+	req.Header.Set(TokenHeader, r.Token)
+	resp, err := client.Do(req)
+	if err != nil {
+		return fmt.Errorf("request stop %s: %w", r.URL, err)
+	}
+	defer func() {
+		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, probeLimit))
+		_ = resp.Body.Close()
+	}()
+	if resp.StatusCode != http.StatusAccepted {
+		return fmt.Errorf("request stop %s: http %d", r.URL, resp.StatusCode)
+	}
+	return nil
 }
 
 // DefaultProbeTimeout bounds one round-trip. Generous for loopback (where
@@ -307,7 +348,11 @@ func ProbeClient(timeout time.Duration) *http.Client {
 type Status struct {
 	Running bool
 	Runtime Runtime
-	Health  Health
+	// Live is the /api/lifecycle/status response Probe confirmed against
+	// (PR-4) — the runtime's own live answer, as opposed to Runtime's
+	// on-disk copy from runtime.json, which after a `dexel update` can
+	// legitimately differ from it until the next restart.
+	Live RuntimeStatus
 	// HasFile reports that a runtime.json was present, whether or not it
 	// could be parsed or confirmed. It is what lets Discover know there
 	// is something to clean up, without re-stat-ing the file.
@@ -350,11 +395,11 @@ func Query(stateDir string, client *http.Client) (Status, error) {
 		// WriteRuntime renames a COMPLETE file into place.
 		return Status{HasFile: true, Reason: err.Error()}, nil
 	}
-	h, probeErr := Probe(client, r)
+	s, probeErr := Probe(client, r)
 	if probeErr != nil {
 		return Status{HasFile: true, Runtime: r, Reason: probeErr.Error()}, nil
 	}
-	return Status{Running: true, HasFile: true, Runtime: r, Health: h}, nil
+	return Status{Running: true, HasFile: true, Runtime: r, Live: s}, nil
 }
 
 // Discover is Query plus ARCHITECTURE.md Decision 6's cleanup half: a

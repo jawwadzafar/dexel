@@ -223,16 +223,24 @@ func runServe(mode serveMode, args []string) {
 	// CLI that spawned us (whose stdout we are not, we are a log file)
 	// can learn which port we landed on. The token is minted per start
 	// and never leaves this file (Decision 8).
+	//
+	// runtimeInfo is kept around (PR-4, MIGRATION_PLAN.md §PR-4) purely so
+	// the lifecycle handlers registered below can be built from the SAME
+	// token/pid/port this file was just written with, rather than a
+	// second computation of them.
+	var runtimeInfo lifecycle.Runtime
 	if mode == modeRuntime {
-		if err := writeRuntimeFile(stateDir, actualAddr); err != nil {
+		rt, err := writeRuntimeFile(stateDir, actualAddr)
+		if err != nil {
 			log.Fatalf("%v", err)
 		}
-		// Removed on CLEAN exit only (the sigCh branch's return runs this
-		// defer). A crash or a log.Fatalf leaves the file behind on
-		// purpose: staleness is not this process's problem to solve, it
-		// is resolved by the next round-trip that fails to reach us
-		// (Decision 6), which is the only test that cannot be fooled by
-		// a recycled pid.
+		runtimeInfo = rt
+		// Removed on CLEAN exit only (the sigCh/control branch's return
+		// runs this defer). A crash or a log.Fatalf leaves the file
+		// behind on purpose: staleness is not this process's problem to
+		// solve, it is resolved by the next round-trip that fails to
+		// reach us (Decision 6), which is the only test that cannot be
+		// fooled by a recycled pid.
 		defer func() {
 			if err := lifecycle.RemoveRuntime(stateDir); err != nil {
 				log.Printf("%v", err)
@@ -337,6 +345,15 @@ func runServe(mode serveMode, args []string) {
 	hub.setInitialState(g.State())
 	catalog := game.NewCatalogMessage()
 	actions := make(chan actionRequest)
+	// controlCh is PR-4's "new control channel" (MIGRATION_PLAN.md §PR-4):
+	// POST /api/lifecycle/stop pushes onto it and the single-owner select
+	// loop below reads it, running the EXACT SAME shutdown sequence as
+	// `case <-sigCh:` (via the shared shutdown closure) — one shutdown
+	// path, not two to keep in sync. Buffered by 1 so the handler can
+	// signal and return without waiting for the loop to be ready to
+	// receive, and so a hypothetical second /stop landing before the
+	// first is processed never blocks a handler goroutine.
+	controlCh := make(chan struct{}, 1)
 
 	mux := http.NewServeMux()
 	mux.Handle("/", http.FileServer(http.FS(publicFS)))
@@ -346,6 +363,32 @@ func runServe(mode serveMode, args []string) {
 	mux.Handle("/assets/", http.StripPrefix("/assets/", http.FileServer(http.FS(assetsFS))))
 	mux.HandleFunc("/api/health", healthHandler(assetsDir, publicOk, version, buildVersion(), publicSource, assetsSource))
 	mux.HandleFunc("/ws", hub.handleWS(actions, catalog))
+
+	// PR-4 (MIGRATION_PLAN.md §PR-4, ARCHITECTURE.md §3 Decision 5/8): the
+	// lifecycle control plane exists only for a detached runtime that
+	// actually wrote a runtime.json and minted a token. `dexel serve` and
+	// the legacy foreground shape have neither, so per the plan these
+	// routes are simply ABSENT there — a request to them 404s off the
+	// bare mux like any other undefined path, rather than existing in
+	// some half-authenticated form with nothing to check a token
+	// against.
+	if mode == modeRuntime {
+		lifecycleLogPath, logPathErr := paths.LogFile()
+		if logPathErr != nil {
+			// Not fatal: the status endpoint's logPath field is a
+			// convenience for a human/CLI reading it, not something
+			// anything here depends on to function.
+			log.Printf("resolve log path for /api/lifecycle/status: %v", logPathErr)
+		}
+		lifecycleStartedAt, parseErr := time.Parse(time.RFC3339, runtimeInfo.StartedAt)
+		if parseErr != nil {
+			lifecycleStartedAt = time.Now()
+		}
+		mux.Handle("GET /api/lifecycle/status", requireLifecycleToken(runtimeInfo.Token,
+			lifecycleStatusHandler(runtimeInfo, savePath, lifecycleLogPath, lifecycleStartedAt)))
+		mux.Handle("POST /api/lifecycle/stop", requireLifecycleToken(runtimeInfo.Token,
+			lifecycleStopHandler(controlCh)))
+	}
 
 	httpSrv := &http.Server{Handler: mux}
 	go func() {
@@ -371,6 +414,21 @@ func runServe(mode serveMode, args []string) {
 		if err := store.Save(savePath, store.Snapshot(g)); err != nil {
 			log.Printf("save failed: %v", err)
 		}
+	}
+
+	// shutdown is the ONE graceful-exit sequence (PR-4, MIGRATION_PLAN.md
+	// §PR-4: "stop reuses the existing case <-sigCh: body verbatim — one
+	// shutdown path"). Both `case <-sigCh:` (a real SIGINT/SIGTERM) and
+	// `case <-controlCh:` (POST /api/lifecycle/stop) call this and only
+	// this, so there is exactly one place that decides what "shutting
+	// down" means.
+	shutdown := func() {
+		log.Println("shutting down: saving state...")
+		persist()
+		_ = provider.Stop()
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		_ = httpSrv.Shutdown(ctx)
+		cancel()
 	}
 
 	// persistConfig writes BOTH halves of config.json through to disk
@@ -487,12 +545,15 @@ func runServe(mode serveMode, args []string) {
 			close(req.done)
 
 		case <-sigCh:
-			log.Println("shutting down: saving state...")
-			persist()
-			_ = provider.Stop()
-			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-			_ = httpSrv.Shutdown(ctx)
-			cancel()
+			shutdown()
+			return
+
+		case <-controlCh:
+			// POST /api/lifecycle/stop's trigger (PR-4). Deliberately the
+			// SAME shutdown() as a real signal — see its doc comment —
+			// so a web page can never reach this by any path other than
+			// the token-gated handler that fed controlCh.
+			shutdown()
 			return
 		}
 	}
@@ -1184,16 +1245,25 @@ func loadOrInitConfig() (string, store.ConfigData) {
 // (ARCHITECTURE.md Decision 6's exact object). Split out of runServe so
 // the port-parsing and URL-normalising rules are testable on their own
 // (cli_test.go) rather than only reachable by starting a real server.
-func writeRuntimeFile(stateDir, actualAddr string) error {
+//
+// Returns the Runtime it wrote (PR-4, MIGRATION_PLAN.md §PR-4): the
+// lifecycle handlers registered in runServe need this exact
+// token/pid/port/url — the same values just persisted, not a second
+// computation of them — to enforce Decision 8's token check and answer
+// GET /api/lifecycle/status.
+func writeRuntimeFile(stateDir, actualAddr string) (lifecycle.Runtime, error) {
 	token, err := lifecycle.NewToken()
 	if err != nil {
-		return err
+		return lifecycle.Runtime{}, err
 	}
 	rt, err := runtimeRecord(actualAddr, os.Getpid(), token, time.Now())
 	if err != nil {
-		return err
+		return lifecycle.Runtime{}, err
 	}
-	return lifecycle.WriteRuntime(stateDir, rt)
+	if err := lifecycle.WriteRuntime(stateDir, rt); err != nil {
+		return lifecycle.Runtime{}, err
+	}
+	return rt, nil
 }
 
 // runtimeRecord is writeRuntimeFile's pure core: the exact object

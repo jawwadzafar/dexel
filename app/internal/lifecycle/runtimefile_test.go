@@ -16,20 +16,24 @@ import (
 	"time"
 )
 
-// healthBody is a stand-in for app/main.go's healthResponse — the exact
-// shape Probe must accept, with the two fields (version, source) it uses
-// as its "this really is a dexel" test.
-const healthBody = `{"assetsDir":null,"publicOk":true,"version":"v9.9.9","commit":"abc1234","source":"embedded","publicSource":"embedded","assetsSource":"embedded"}`
+// lifecycleStatusBody is a stand-in for app/lifecycle_handlers.go's
+// lifecycleStatusResponse — the exact shape Probe must accept, with the
+// two fields (version, pid) it uses as its "this really is a dexel, and
+// it is the SAME dexel" test (Decision 6's pid-equality check, PR-4).
+func lifecycleStatusBody(pid int) string {
+	return fmt.Sprintf(`{"running":true,"pid":%d,"port":1,"url":"http://127.0.0.1:1","version":"v9.9.9","commit":"abc1234","startedAt":"2026-08-22T09:14:02Z","uptimeSeconds":5,"statePath":"/s/state.db","logPath":"/s/logs/runtime.log"}`, pid)
+}
 
-// healthServer starts a loopback server that answers /api/health like a
-// real runtime, recording the token header it was sent so a test can
-// prove the CLI half of ARCHITECTURE.md Decision 8's contract is already
-// wired (the server-side enforcement is PR-4's).
-func healthServer(t *testing.T, body string) (*httptest.Server, *string) {
+// lifecycleServer starts a loopback server that answers
+// GET /api/lifecycle/status like a real runtime, recording the token
+// header it was sent so a test can prove the CLI half of
+// ARCHITECTURE.md Decision 8's contract is already wired (the
+// server-side enforcement is app/lifecycle_handlers.go's).
+func lifecycleServer(t *testing.T, body string) (*httptest.Server, *string) {
 	t.Helper()
 	var seenToken string
 	mux := http.NewServeMux()
-	mux.HandleFunc("/api/health", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/api/lifecycle/status", func(w http.ResponseWriter, r *http.Request) {
 		seenToken = r.Header.Get(TokenHeader)
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(body))
@@ -176,10 +180,11 @@ func TestNewTokenIsHexAndUnique(t *testing.T) {
 
 // TestDiscoverConfirmsALiveRuntimeByRoundTrip is the positive half of
 // ARCHITECTURE.md Decision 6: a runtime.json whose URL answers
-// /api/health with a dexel body is RUNNING, the file survives, and the
-// capability token was sent on the wire.
+// /api/lifecycle/status with a dexel body reporting the SAME pid is
+// RUNNING, the file survives, and the capability token was sent on the
+// wire.
 func TestDiscoverConfirmsALiveRuntimeByRoundTrip(t *testing.T) {
-	ts, seenToken := healthServer(t, healthBody)
+	ts, seenToken := lifecycleServer(t, lifecycleStatusBody(os.Getpid()))
 	dir := t.TempDir()
 	if err := WriteRuntime(dir, Runtime{Pid: os.Getpid(), Port: 1, URL: ts.URL, Token: "deadbeef"}); err != nil {
 		t.Fatalf("WriteRuntime: %v", err)
@@ -195,14 +200,47 @@ func TestDiscoverConfirmsALiveRuntimeByRoundTrip(t *testing.T) {
 	if st.Cleaned {
 		t.Fatal("Cleaned = true — a LIVE runtime's file must never be deleted")
 	}
-	if st.Health.Version != "v9.9.9" {
-		t.Fatalf("health version = %q, want v9.9.9", st.Health.Version)
+	if st.Live.Version != "v9.9.9" {
+		t.Fatalf("live status version = %q, want v9.9.9", st.Live.Version)
+	}
+	if st.Live.Pid != os.Getpid() {
+		t.Fatalf("live status pid = %d, want %d", st.Live.Pid, os.Getpid())
 	}
 	if *seenToken != "deadbeef" {
 		t.Fatalf("server saw %s = %q, want the runtime.json token — the CLI half of Decision 8's contract", TokenHeader, *seenToken)
 	}
 	if _, err := os.Stat(RuntimePath(dir)); err != nil {
 		t.Fatalf("runtime.json was removed under a live runtime: %v", err)
+	}
+}
+
+// TestProbeRejectsAPidMismatch is PR-4's addition to Decision 6: a
+// runtime.json whose file claims one pid, probed against a server that
+// honestly reports it is a DIFFERENT pid (pid reuse, or a foreign dexel
+// on a recycled port within the same state dir — impossible under the
+// flock, but the check must not depend on that), must be treated exactly
+// like any other failed probe: not running, and cleaned up.
+func TestProbeRejectsAPidMismatch(t *testing.T) {
+	const fileClaimsPid = 111111
+	const liveReportsPid = 222222
+	ts, _ := lifecycleServer(t, lifecycleStatusBody(liveReportsPid))
+	dir := t.TempDir()
+	if err := WriteRuntime(dir, Runtime{Pid: fileClaimsPid, Port: 1, URL: ts.URL, Token: "t"}); err != nil {
+		t.Fatalf("WriteRuntime: %v", err)
+	}
+
+	st, err := Discover(dir, ProbeClient(0))
+	if err != nil {
+		t.Fatalf("Discover: %v", err)
+	}
+	if st.Running {
+		t.Fatal("Running = true despite a pid mismatch between runtime.json and the live status response")
+	}
+	if !st.Cleaned {
+		t.Fatal("Cleaned = false — a pid-mismatched runtime.json is stale and must be removed")
+	}
+	if !strings.Contains(st.Reason, "pid mismatch") {
+		t.Fatalf("Reason = %q, want it to name the pid mismatch", st.Reason)
 	}
 }
 
@@ -251,7 +289,7 @@ func TestDiscoverTreatsADeadPortAsStaleAndCleansUp(t *testing.T) {
 func TestDiscoverRejectsAForeignListener(t *testing.T) {
 	for _, body := range []string{`{}`, `{"version":""}`, `{"hello":"world"}`, `[]`} {
 		t.Run(body, func(t *testing.T) {
-			ts, _ := healthServer(t, body)
+			ts, _ := lifecycleServer(t, body)
 			dir := t.TempDir()
 			if err := WriteRuntime(dir, Runtime{Pid: os.Getpid(), Port: 1, URL: ts.URL}); err != nil {
 				t.Fatalf("WriteRuntime: %v", err)
@@ -452,7 +490,7 @@ func TestQueryNeverDeletesTheFile(t *testing.T) {
 // TestDiscoverIsQueryPlusCleanup pins the split: Discover's ONLY addition
 // is deleting an unconfirmable file and saying it did.
 func TestDiscoverIsQueryPlusCleanup(t *testing.T) {
-	ts, _ := healthServer(t, healthBody)
+	ts, _ := lifecycleServer(t, lifecycleStatusBody(os.Getpid()))
 	dir := t.TempDir()
 	if err := WriteRuntime(dir, Runtime{Pid: os.Getpid(), Port: 1, URL: ts.URL}); err != nil {
 		t.Fatalf("WriteRuntime: %v", err)
