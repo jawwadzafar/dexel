@@ -17,6 +17,16 @@ const scene = byId<HTMLDivElement>('scene-sprites');
 let sceneBuilt = false;
 const sceneNodes: Record<string, HTMLElement> = {}; // slot -> container node (for slots we clear+refill)
 let devFrameIndex = 0; // toggles 0/1 for type_a/type_b while coding
+// The `mouse` dev pose (right hand off the keyboard and onto the mouse) is
+// SIGNAL-DRIVEN, not a timed flourish: the server already reports mouse
+// activity honestly and content-free (stats.today.mouseActiveSeconds ticks up
+// once per second in which the activity provider saw mouse motion/scroll/
+// drag), so the hand moves to the mouse exactly when the player's really did
+// — and never otherwise. Inventing a periodic mouse beat would be the client
+// asserting state the server never sent, which this frontend does not do.
+let lastMouseSecs = -1;        // -1 = no baseline observed yet
+let mouseHoldTicks = 0;        // frame ticks left holding the mouse pose
+const MOUSE_HOLD_TICKS = 8;    // ~1.6s at the 200ms tick below
 
 function buildSceneSkeleton(): void {
   scene.innerHTML = '';
@@ -54,6 +64,12 @@ function buildSceneSkeleton(): void {
 export function currentDevFrame(): string {
   const state = store.getState();
   if (!state) return 'idle';
+  // `onBreak` owns the sleep pose outright; otherwise reported mouse activity
+  // wins over the typing cycle. Note mouse activity ALONE leaves the server in
+  // `idle` (mood follows keystrokes), and reading/scrolling with one hand on
+  // the mouse is exactly what that is, so the mouse pose is allowed there too.
+  if (state.activeState === 'onBreak') return FRAME_FOR_STATE.onBreak;
+  if (mouseHoldTicks > 0) return 'mouse';
   if (state.activeState === 'coding') return devFrameIndex === 0 ? 'type_a' : 'type_b';
   return FRAME_FOR_STATE[state.activeState] || 'idle';
 }
@@ -167,8 +183,16 @@ export function renderScene(): void {
 setInterval(function () {
   const state = store.getState();
   if (!state) return;
-  if (state.activeState === 'coding') {
-    devFrameIndex = devFrameIndex === 0 ? 1 : 0;
-    if (sceneBuilt) renderDev();
+  const today = state.stats && state.stats.today;
+  const mouseSecs = today ? today.mouseActiveSeconds : 0;
+  if (lastMouseSecs >= 0 && mouseSecs > lastMouseSecs) mouseHoldTicks = MOUSE_HOLD_TICKS;
+  lastMouseSecs = mouseSecs;
+  if (state.activeState === 'onBreak') {
+    mouseHoldTicks = 0;
+    return;
   }
+  if (mouseHoldTicks > 0) mouseHoldTicks -= 1;
+  else if (state.activeState !== 'coding') return;   // idle, hands still
+  else devFrameIndex = devFrameIndex === 0 ? 1 : 0;
+  if (sceneBuilt) renderDev();
 }, 200);
