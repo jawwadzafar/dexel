@@ -53,17 +53,29 @@ needed to run the game — only if you're changing the frontend (see
 ```bash
 git clone git@github.com:jawwadzafar/dexel.git
 cd dexel/app
-go run .
+go build -o dexel .
+./dexel
 ```
 
-Open **http://localhost:8080**. That's it — the compiled frontend bundle is
-committed, so `go run .` alone always serves a working game with zero
-Node/npm involved.
+`./dexel` with no arguments starts dexel's background runtime if one isn't
+already running, then opens the game in your browser — no port to
+remember, no terminal to leave open. Run it again any time to reopen the
+window. `./dexel status` reports whether it's running (pid, url, uptime);
+`./dexel stop` shuts it down cleanly, saving on the way out — closing the
+browser tab does **not** stop it.
 
-By default the server binds to `127.0.0.1:8080` (loopback only). Binding
-`-addr` beyond `127.0.0.1`/`localhost` exposes the activity monitor and your
-save file to your LAN or tailnet — the flag's own help text warns about
-this; leave it at the default unless you specifically intend that.
+State (`state.db`, `config.json`) and the runtime's own bookkeeping
+(`runtime.json`, `runtime.lock`, logs) live under `~/.config/dexel`
+(`$DEXEL_HOME` if set, or the platform default on macOS/Windows);
+`./dexel status` prints the exact paths.
+
+Iterating on the Go source, or want the classic foreground server on a
+fixed port? See [Development](#development) below for `go run . serve`.
+
+Binding `-addr` beyond `127.0.0.1`/`localhost` (relevant to `serve`/legacy
+flag-style invocations) exposes the activity monitor and your save file to
+your LAN or tailnet — the flag's own help text warns about this; leave it
+at the default unless you specifically intend that.
 
 macOS and Linux both run the exact commands above; see
 [Building from source](#building-from-source) for platform setup (Linux
@@ -109,10 +121,11 @@ go build -o dexel .        # Windows: go build -o dexel.exe .
 ./dexel                    # Windows: dexel.exe
 ```
 
-Then open **http://localhost:8080**. For iterating on the Go source
-without a separate build step, use `go run .` instead (as in
-[Quick start](#quick-start)) — both accept the same flags, documented in
-[Configuration](#configuration).
+`./dexel` starts the background runtime and opens your browser (see
+[Quick start](#quick-start)). For the foreground developer server instead
+— fixed `127.0.0.1:8080`, no background process, no `runtime.json`/lock —
+run `./dexel serve` (or `go run . serve` straight from source); both
+accept the same flags, documented in [Configuration](#configuration).
 
 ### Platform support for activity capture
 
@@ -321,11 +334,19 @@ path.
 cd app
 go test ./...
 go vet ./...
-go run .
+go run . serve
 ```
 
+`go run . serve` is the classic foreground dev loop: `127.0.0.1:8080`,
+output straight to your terminal, no background process, no
+`runtime.json`/lock file. Bare `go run .` now behaves like the installed
+CLI — it starts the background runtime and opens a browser — so use
+`serve` while iterating on the Go source. Any invocation that starts with
+a flag (`go run . -addr 127.0.0.1:0 -provider fake`, etc.) is unaffected
+and still runs the legacy foreground server exactly as before.
+
 **Frontend build** (only needed when changing the frontend — the compiled
-bundle is committed so `go run .` alone always serves a working game):
+bundle is committed so `go run . serve` alone always serves a working game):
 
 ```bash
 cd app/frontend

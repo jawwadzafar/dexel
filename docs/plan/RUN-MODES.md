@@ -3,7 +3,11 @@
 dexel is **one program with two front doors**. The game itself is always the
 same Go server (`app/`) serving the same HTML/NES.css frontend over loopback;
 what changes is whether you look at it through your browser or through a
-native window.
+native window. Orthogonal to that is *who manages the process*: a terminal
+you keep open (modes A/B below), or the CLI's own detached background
+runtime — mode P, the primary way dexel is meant to run day to day. See
+[ADR 0018](../adr/0018-dexel-cli-and-background-runtime.md) for the CLI's
+design.
 
 This document is the honest status of each way in. Nothing here is aspirational
 without saying so.
@@ -14,25 +18,75 @@ without saying so.
 
 | | Mode | What you get | Needs | Status |
 |---|---|---|---|---|
-| **A** | **Browser (dev)** | `go run .`, open a tab | Go 1.27+ | **Works today** |
+| **P** | **CLI-managed (production)** | `dexel` / `dexel start` + `open` — a background runtime, browser or app window | a built/installed `dexel` binary | **Works today — the primary way to run dexel** |
+| **A** | **Browser (dev)** | `go run . serve`, open a tab | Go 1.27+ | **Works today** |
 | **B** | **App (dev)** | `cargo tauri dev` — a native window | Go + Rust + webview deps | **Authored, never built** |
 | **C** | **Installer** | `.AppImage` / `.deb` / `.dmg` / `.msi` | nothing (that's the point) | **Not shipped** — needs CI runners |
 | **D** | **Build from source** | either of the above, from a clean clone | see below | A: works · B: unbuilt |
 
 Modes B and C are the same code (`desktop/`, ADR 0015); C is just B packaged.
 Neither has ever been compiled — see [Why B and C are not
-verified](#why-b-and-c-are-not-verified).
+verified](#why-b-and-c-are-not-verified). Mode P wraps mode A's own binary —
+it is not a different server, just a different way of starting and stopping
+it.
 
 ---
 
-## Mode A — Browser (works today)
+## Mode P — CLI-managed (works today, the primary production mode)
 
-The zero-extra-dependency path, and the only one that is proven.
+The same Go binary as mode A, run as a detached background process instead
+of a foreground terminal session. This is how dexel is meant to be used day
+to day: build or install it once, then forget the terminal — `dexel open`
+(or the button on the desktop app, once mode B/C ship) whenever you want the
+window back.
+
+```bash
+cd app
+go build -o dexel .
+./dexel          # bare = start-if-needed, then open
+```
+
+- **`dexel` / `dexel open`** — ensure the background runtime is running
+  (spawning a detached child of itself if not), then show the UI:
+  `dexel-desktop` if installed, else the default browser.
+- **`dexel start` / `dexel stop` / `dexel restart`** — explicit lifecycle
+  control. `stop` saves on the way out; a second `start` refuses with the
+  already-running pid instead of spawning a duplicate.
+- **`dexel status [--json]`** — pid, url, version, uptime, and the exact
+  state/log paths. It never trusts a pid on its own: it round-trips an HTTP
+  call to the runtime it found before believing it is actually alive.
+- **`dexel logs [-f] [-n N]`** — the runtime's own log, since a detached
+  process has no terminal to print to.
+- **Closing the browser tab or app window does not stop the runtime** — only
+  `dexel stop` does. The game keeps ticking and autosaving with zero clients
+  connected; that was already true of mode A's server, this mode just gives
+  it a correct owner instead of a terminal that has to stay open.
+- Any invocation that starts with a flag (`dexel -addr 127.0.0.1:0 -provider
+  fake`, `dexel-server -addr ...`) is untouched: it is byte-for-byte today's
+  foreground server, so every existing sidecar/CI invocation keeps meaning
+  exactly what it meant before this mode existed.
+- State (`state.db`, `config.json`) and the runtime's own bookkeeping
+  (`runtime.json`, `runtime.lock`, `logs/`) live under `~/.config/dexel`
+  (`$DEXEL_HOME` if set, or the platform default on macOS/Windows);
+  `dexel status` prints the exact paths.
+
+**Status: works today.** See
+[ADR 0018](../adr/0018-dexel-cli-and-background-runtime.md) for the design,
+and [`dev_docs/production-runtime/ARCHITECTURE.md`](../../dev_docs/production-runtime/ARCHITECTURE.md)
+for the full decision record this mode was built from.
+
+---
+
+## Mode A — Browser, dev (works today)
+
+The zero-extra-dependency path for iterating on the Go source, and the mode
+every screenshot, test and visual verification in this repo was produced
+with.
 
 ```bash
 git clone git@github.com:jawwadzafar/dexel.git
 cd dexel/app
-go run .
+go run . serve
 ```
 
 Open **<http://localhost:8080>**.
@@ -40,6 +94,11 @@ Open **<http://localhost:8080>**.
 - **Needs:** [Go 1.27+](https://go.dev/dl/). **No Node, no npm, no Rust.** The
   compiled frontend bundle (`app/public/js/dexel.js`) is committed, so this
   always serves a working game.
+- **`serve`, not bare:** bare `go run .` (no arguments) now does what mode P
+  does — starts the background runtime and opens a browser — so the
+  foreground dev server needs its explicit name. Any invocation starting
+  with a flag, e.g. `go run . -addr 127.0.0.1:0 -provider fake`, is
+  unaffected either way and runs exactly as it always has.
 - **Binds:** `127.0.0.1:8080`, loopback only. Moving `-addr` beyond
   `127.0.0.1`/`localhost` exposes your activity monitor and save file to your
   LAN or tailnet; the flag's help text says so. Leave it alone unless you mean
@@ -145,12 +204,13 @@ follow-up ([F3-design.md](F3-design.md) §6).
 
 Both paths, from a clean clone.
 
-### D1 — Go only (browser mode). Works today.
+### D1 — Go only (modes A and P). Works today.
 
 ```bash
 cd app
 go build -o dexel .          # Windows: go build -o dexel.exe .
-./dexel                      # then open http://localhost:8080
+./dexel                      # mode P: starts in the background, opens a browser itself
+./dexel serve                # or, mode A's foreground dev server; then open http://localhost:8080
 ```
 
 One dependency: Go. Node is needed **only** if you edit
@@ -216,7 +276,10 @@ real and what is merely written down.
 
 ## Which mode should I use?
 
-- **Just want to play / develop the game?** Mode A. It works, it is one
+- **Just want to use dexel day to day?** Mode P — build (or install) once,
+  then `dexel start`/`open`/`stop` from a terminal you don't have to keep
+  open.
+- **Developing the Go source or the frontend?** Mode A. It works, it is one
   command, and it is what the whole repo is tested against.
 - **Working on the desktop shell itself?** Mode B, on a machine with Rust.
 - **Want to hand dexel to someone who does not have Go?** Mode C — which
@@ -224,8 +287,13 @@ real and what is merely written down.
 
 ## See also
 
+- [ADR 0018 — dexel CLI and background runtime](../adr/0018-dexel-cli-and-background-runtime.md) —
+  mode P's design: the argv dispatch, the detached runtime, discovery and
+  single-instance locking.
 - [ADR 0015 — Tauri desktop shell](../adr/0015-tauri-desktop-shell.md) — the
-  decision and its alternatives.
+  decision and its alternatives for modes B/C.
+- [`dev_docs/production-runtime/ARCHITECTURE.md`](../../dev_docs/production-runtime/ARCHITECTURE.md) —
+  the full production-runtime design mode P and ADR 0018 were built from.
 - [F3-design.md](F3-design.md) — the full design, build matrix and phasing.
 - [`desktop/README.md`](../../desktop/README.md) — build instructions and the
   verified/unverified split.
