@@ -258,3 +258,15 @@ can be COMPARED head-to-head and the better one chosen. Rules:
   test parity, build time, cross-compile matrix — documented measurements, a
   declared winner, and the loser archived (not deleted).
 Plan + scorecard: dev_docs/rust-port-evaluation.md (in flight).
+
+### Decisions (2026-08-22, user): Rust experimental · Go main · day-1 production
+- The RUST-PARALLEL track is EXPERIMENTAL: Go remains the main implementation;
+  Rust reports/artifacts live in dev_docs/rust-parallel/ for a later decision.
+- PRODUCTION DAY-1 GOAL: a build the owner starts using immediately —
+  including the Tauri desktop app. Path: (1) BLOCKING review fixes (B-1/2/3),
+  (2) PR-6 autostart, (3) binary slimming (-s -w + drop embedded sourcemap,
+  −6.1MB), (4) tag v0.1.0 + build release archives locally and publish the
+  GitHub Release via gh (Actions is account-blocked — SF-2 — so the pipeline
+  runs by hand until billing is fixed), (5) install to ~/.local/bin on this box
+  + autostart, (6) Tauri first-compile + window gate — UNBLOCKED BY OWNER
+  installing the webkit dev packages (exact apt command in the session log).
