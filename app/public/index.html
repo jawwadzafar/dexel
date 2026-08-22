@@ -27,6 +27,16 @@
            titlebar's empty space between #hud-level (ends 120) and
            #menu-open (starts 600), so nothing else moves. -->
       <span id="session-pill"><span id="session-pill-dot"></span><span id="session-pill-text"></span></span>
+      <!-- PR-5 (dev_docs/production-runtime/MIGRATION_PLAN.md §PR-5): the
+           always-visible paused badge. Owned by render/chrome.ts, which
+           toggles the .visible class exactly the way #session-pill does
+           above — empty box, hidden by default, shown only while
+           state.paused is true. Sits to the RIGHT of #hud-level (the
+           coin-then-level titlebar cluster never gains anything to its
+           left, per the standing owner directive at §2.1/§7.4) and clear
+           of #session-pill's own box, since a session can be active and
+           paused at the same time. -->
+      <span id="paused-badge"><span id="paused-badge-dot"></span><span id="paused-badge-text">PAUSED</span></span>
       <button id="menu-open" class="nes-btn" aria-haspopup="true" aria-expanded="false" aria-label="Menu">
         <span class="menu-icon"><span class="bar"></span><span class="bar"></span><span class="bar"></span></span>
       </button>
@@ -38,6 +48,11 @@
         <button id="activity-open" class="nes-btn menu-item">[A] ACTIVITY</button>
         <button id="history-open" class="nes-btn menu-item">[H] HISTORY</button>
         <button id="sessions-open" class="nes-btn menu-item">[W] SESSIONS</button>
+        <!-- PR-5 (dev_docs/production-runtime/MIGRATION_PLAN.md §PR-5):
+             label toggles PAUSE/RESUME and the click action flips with
+             it — both driven by live state.paused, read fresh from the
+             store at click time (features/menu.ts). -->
+        <button id="pause-toggle" class="nes-btn menu-item">[P] PAUSE</button>
       </div>
     </div>
 

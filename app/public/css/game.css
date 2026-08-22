@@ -301,6 +301,39 @@ img, .sprite {
   vertical-align: top;
 }
 
+/* PR-5 (dev_docs/production-runtime/MIGRATION_PLAN.md §PR-5) — the
+   always-visible paused badge. Sits to the RIGHT of #hud-level (80..120)
+   and clear of #session-pill's own box (132..372, §9.5) with an 8px gap
+   on each side, since a session can be active AND paused at once and
+   both must stay readable together; still well clear of #menu-open
+   (600). Same display:none/.visible idiom as #session-pill. */
+#paused-badge {
+  display: none;
+  position: absolute;
+  left: 380px;
+  top: 8px;
+  width: 96px;
+  height: 8px;
+  line-height: 8px;
+  font-size: 8px;
+  color: var(--screen-dim);
+  white-space: nowrap;
+  overflow: hidden;
+}
+#paused-badge.visible { display: block; }
+/* Same 8px solid SQUARE idiom as #session-pill-dot (border-radius
+   explicitly 0 — the #mood-dot lesson), muted rather than gold: this
+   badge signals tracking being OFF, not an earning session being on. */
+#paused-badge-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  margin-right: 4px;
+  background: var(--screen-dim);
+  border-radius: 0;
+  vertical-align: top;
+}
+
 /* Hamburger button (top-right). Per the A2 lesson (a fancy glyph like ☰
    can render blurry/inconsistent at this app's 1x DPI in the pixel font),
    the icon is three plain 1px-tall divs (.menu-icon .bar), not a

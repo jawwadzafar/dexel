@@ -48,11 +48,17 @@ func TestClassifyImplementsForkADispatchTable(t *testing.T) {
 			dispatchLegacy, "", []string{"-fake-script", "type:20s,idle:40s"}},
 		{"public override", []string{"-public", "./public"}, dispatchLegacy, "", []string{"-public", "./public"}},
 		{"gnu style long flag", []string{"--addr=127.0.0.1:0"}, dispatchLegacy, "", []string{"--addr=127.0.0.1:0"}},
-		// -h/--help deliberately stay the SERVER's flag usage rather than
-		// being re-pointed at the CLI help: they are pre-existing
-		// behaviour of the legacy shape.
-		{"dash h", []string{"-h"}, dispatchLegacy, "", []string{"-h"}},
-		{"dash dash help", []string{"--help"}, dispatchLegacy, "", []string{"--help"}},
+		// N-4: -h/-help/--help are the ONE exception to the shape rule —
+		// they route to the CLI's own command list, because the server's
+		// flag wall was the wrong answer to the first question every user
+		// asks. `dexel serve -h` still reaches the flag set, and the
+		// usage text points at it.
+		{"dash h", []string{"-h"}, dispatchSubcommand, "help", []string{}},
+		{"dash help", []string{"-help"}, dispatchSubcommand, "help", []string{}},
+		{"dash dash help", []string{"--help"}, dispatchSubcommand, "help", []string{}},
+		// ...but only as the FIRST word: mid-flag-typing stays legacy.
+		{"help flag after another flag", []string{"-public", "./public", "-h"},
+			dispatchLegacy, "", []string{"-public", "./public", "-h"}},
 
 		// Row 2: known subcommands, with their own args stripped of the
 		// verb.
@@ -75,7 +81,8 @@ func TestClassifyImplementsForkADispatchTable(t *testing.T) {
 		{"typo", []string{"statsu"}, dispatchUnknown, "statsu", []string{}},
 		{"pause", []string{"pause"}, dispatchSubcommand, "pause", []string{}},
 		{"resume", []string{"resume"}, dispatchSubcommand, "resume", []string{}},
-		{"a future command not yet built", []string{"autostart"}, dispatchUnknown, "autostart", []string{}},
+		{"autostart", []string{"autostart", "enable"}, dispatchSubcommand, "autostart", []string{"enable"}},
+		{"a future command not yet built", []string{"uninstall"}, dispatchUnknown, "uninstall", []string{}},
 		{"a bare path", []string{"state.db"}, dispatchUnknown, "state.db", []string{}},
 	}
 
@@ -130,10 +137,17 @@ func TestEverySubcommandIsWiredAndDocumented(t *testing.T) {
 			t.Errorf("§PR-5 requires a %q subcommand and there is none", name)
 		}
 	}
+	// ...as must PR-6's, now that autostart has a real mechanism behind
+	// it (MIGRATION_PLAN.md §PR-6, cmd_autostart.go).
+	for _, name := range []string{"autostart"} {
+		if _, ok := subcommands[name]; !ok {
+			t.Errorf("§PR-6 requires a %q subcommand and there is none", name)
+		}
+	}
 	// ...and the words later PRs own must NOT be, because a word that is
 	// listed but does nothing is worse than an honest "unknown command"
-	// (PR-6 owns autostart, PR-7 update/uninstall).
-	for _, name := range []string{"autostart", "update", "uninstall"} {
+	// (PR-7 owns update/uninstall).
+	for _, name := range []string{"update", "uninstall"} {
 		if _, ok := subcommands[name]; ok {
 			t.Errorf("%q is registered but its PR has not landed — it would do nothing", name)
 		}

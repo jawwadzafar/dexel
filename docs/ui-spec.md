@@ -151,7 +151,8 @@ after) is zero titlebar layout work.
 | `#menu-open` | 600, 4, 32, 16 | hamburger button, `padding: 0`. Icon is three plain 1px-tall `.bar` divs inside `.menu-icon` (16x7), **not** a `☰` glyph — a fancy character renders blurry/inconsistent at this app's 1x DPI in the pixel font, the same lesson A2 already recorded for `→` |
 | `#menu-panel` | 496, 26, 136, auto | dropdown opened by `#menu-open`, closed by default (`display:none`, shown via `.visible`); right edge (632) lines up with `#menu-open`'s right edge (632) so it never overflows the 640px titlebar |
 | `#menu-panel-title` | inside `#menu-panel`, 128 x 16 | static `MENU`, replaced by the dexel's name once set (§7.4), 8px `var(--screen-dim)`, bottom rule separating it from the items |
-| `.menu-item` (×N) | inside `#menu-panel`, 128 x 20 each, 4px gap | one `nes-btn` per launcher, in menu order: `#store-open` (`[S] STORE`), `#activity-open` (`[A] ACTIVITY`), `#history-open` (`[H] HISTORY`), and (P2, §9.1) `#sessions-open` (`[W] SESSIONS`) |
+| `.menu-item` (×N) | inside `#menu-panel`, 128 x 20 each, 4px gap | one `nes-btn` per launcher, in menu order: `#store-open` (`[S] STORE`), `#activity-open` (`[A] ACTIVITY`), `#history-open` (`[H] HISTORY`), `#sessions-open` (`[W] SESSIONS`, P2, §9.1), and (PR-5, §2.4) `#pause-toggle` — label and action both flip live between `[P] PAUSE` (sends `PAUSE`) and `[P] RESUME` (sends `RESUME`), decided by `state.paused` read fresh from the store at click time, never assumed from the label |
+| `#paused-badge` | 380, 8, 96, 8 | (PR-5, §2.4) the always-visible paused indicator — an 8px dim solid square (`#paused-badge-dot`) + `PAUSED`, 8px `var(--screen-dim)`. Empty/hidden (`display:none` / `.visible`, same idiom as `#session-pill`) unless `state.paused` is true. Sits clear of both `#hud-level` (ends 120) and `#session-pill`'s box (132..372, §9.5) — a session can be active *and* paused at the same time, so both must stay visible together |
 
 Dev Cash lives in the titlebar, next to Level. **[DESIGN CALL]** the mockups
 only show the balance *inside* the store modal, but a currency you cannot see
@@ -201,6 +202,39 @@ not decoration.
 * The three rows below it are the character's own chatter. They are dimmer, are
   prefixed `>`, and are separated by the rule. **Never merge the two zones,
   never let a ticker line borrow a word from the real one.**
+* **PR-5 override:** while `state.paused` is true, `#status-line` shows a
+  fixed client-side string, `PAUSED — tracking is off`, in place of
+  `activityLine` — see §2.4.
+
+### 2.4 Paused chrome (PR-5 — Pause semantics)
+
+`dev_docs/production-runtime/MIGRATION_PLAN.md` §PR-5. Three things change,
+all driven by the one `state.paused` bool (§6.1) and nothing else —
+`activeState` never gains a fourth value for this (ADR 0010; pausedness is
+conveyed only via `paused`, never by inventing a mood string):
+
+1. **`#status-line`** (§2.3) shows the fixed client-side string `PAUSED —
+   tracking is off` instead of `activityLine`. This is the one place
+   `render/chrome.ts` composes its own text rather than rendering the
+   server's verbatim — safe specifically because it asserts nothing the
+   server did not say (`state.paused` is the server's own signal) and the
+   string itself carries no observed content.
+2. **`#status-dot`** (§2.3) renders `var(--screen-dim)` — the dim half of
+   the same screen/screen-dim pair already used elsewhere for
+   bright-vs-muted (e.g. `.nes-btn.is-disabled`) — instead of whatever
+   `MOOD_COLOR[activeState]` would otherwise show, so paused reads as a
+   visually distinct state from plain idle.
+3. **`#paused-badge`** (§2.1) becomes visible in the titlebar, to the
+   right of `#hud-level` and clear of `#session-pill`'s box — a session
+   survives a pause (§9's `sessions.active`), with its own
+   `pausedSeconds` accruing instead of its other counters, so the pill and
+   the badge must be readable together, never mutually exclusive.
+
+The menu gains one entry (§2.1's `.menu-item` row): `#pause-toggle`, label
+and action both driven live by `state.paused`, read fresh from the store at
+the moment of the click (`features/menu.ts`) — never assumed from whatever
+label was last painted. No keybinding is bound to it; `[S]`/`[A]`/`[H]`/`[W]`/
+`[M]` (§5.2) are unaffected and keep routing exactly as before.
 
 ## 3. Status ticker & terminal content rules
 
@@ -652,6 +686,7 @@ second to reflect a click.
   "level": 5,
   "xp": 1240,
   "storeOpen": false,
+  "paused": false,
   "sprint": {
     "index": 3,
     "name": "Fix Bug #404",
@@ -681,7 +716,8 @@ second to reflect a click.
       "idleSeconds": 260,
       "sprintsCompleted": 3,
       "focusSessions": 4,
-      "appSwitches": 12
+      "appSwitches": 12,
+      "pausedSeconds": 90
     },
     "lifetime": {
       "keystrokes": 88420,
@@ -690,13 +726,14 @@ second to reflect a click.
       "idleSeconds": 5100,
       "sprintsCompleted": 41,
       "focusSessions": 57,
-      "appSwitches": 205
+      "appSwitches": 205,
+      "pausedSeconds": 640
     },
     "coinsToday": {"keystrokes": 6, "mouse": 2, "focusSessions": 4, "appSwitches": 0},
     "history": [
-      {"date": "2024-06-01", "keystrokes": 3980, "mouseActiveSeconds": 740, "activeSeconds": 2900, "idleSeconds": 300, "sprintsCompleted": 2, "focusSessions": 3, "appSwitches": 9, "coinsEarned": 41, "isActive": true, "longestFocusBlockSeconds": 1380},
+      {"date": "2024-06-01", "keystrokes": 3980, "mouseActiveSeconds": 740, "activeSeconds": 2900, "idleSeconds": 300, "sprintsCompleted": 2, "focusSessions": 3, "appSwitches": 9, "coinsEarned": 41, "isActive": true, "longestFocusBlockSeconds": 1380, "pausedSeconds": 0},
       "... 28 more DayStat entries, dense and ascending ...",
-      {"date": "2024-06-30", "keystrokes": 4210, "mouseActiveSeconds": 812, "activeSeconds": 3040, "idleSeconds": 260, "sprintsCompleted": 3, "focusSessions": 4, "appSwitches": 12, "coinsEarned": 12, "isActive": true, "longestFocusBlockSeconds": 900}
+      {"date": "2024-06-30", "keystrokes": 4210, "mouseActiveSeconds": 812, "activeSeconds": 3040, "idleSeconds": 260, "sprintsCompleted": 3, "focusSessions": 4, "appSwitches": 12, "coinsEarned": 12, "isActive": true, "longestFocusBlockSeconds": 900, "pausedSeconds": 90}
     ],
     "streak": {"current": 6, "longest": 14}
   },
@@ -715,11 +752,12 @@ second to reflect a click.
       "focusSessions": 2,
       "appSwitches": 3,
       "coinsEarned": 9,
-      "longestFocusBlockSeconds": 720
+      "longestFocusBlockSeconds": 720,
+      "pausedSeconds": 0
     },
     "summary": {"completed": 27, "thisWeek": 4, "longestSessionSeconds": 9840},
     "recent": [
-      {"id": 27, "name": "", "startedAt": "2024-06-29T09:00:00Z", "endedAt": "2024-06-29T10:24:00Z", "durationSeconds": 5040, "keystrokes": 4182, "mouseActiveSeconds": 610, "activeSeconds": 4700, "idleSeconds": 200, "sprintsCompleted": 2, "focusSessions": 3, "appSwitches": 5, "coinsEarned": 18, "longestFocusBlockSeconds": 840, "endReason": "user"},
+      {"id": 27, "name": "", "startedAt": "2024-06-29T09:00:00Z", "endedAt": "2024-06-29T10:24:00Z", "durationSeconds": 5040, "keystrokes": 4182, "mouseActiveSeconds": 610, "activeSeconds": 4700, "idleSeconds": 200, "sprintsCompleted": 2, "focusSessions": 3, "appSwitches": 5, "coinsEarned": 18, "longestFocusBlockSeconds": 840, "pausedSeconds": 0, "endReason": "user"},
       "... up to 9 more SessionView entries, newest first ..."
     ]
   },
@@ -765,6 +803,12 @@ Field notes the implementers must not improvise on:
   detection there, ADR 0009). Seconds are whole seconds; the frontend
   formats them (`fmtDuration`/`fmtInt`), never the server. `stats` itself
   stays optional so a pre-A1 server degrades to an all-zero block.
+  `pausedSeconds` (PR-5, `dev_docs/production-runtime/MIGRATION_PLAN.md`
+  §PR-5) adds a **third** time bucket alongside `activeSeconds`/
+  `idleSeconds` — time spent with tracking stopped — never folded into
+  idle: for any bucket, `activeSeconds + idleSeconds + pausedSeconds`
+  equals that bucket's whole runtime uptime. Optional client-side for the
+  same stale-server reason as the rest of this shape.
 * `stats.coinsToday` — optional `CoinBreakdown { keystrokes, mouse,
   focusSessions, appSwitches: number }` (A2, ADR 0012), all whole coin
   counts, content-free. The DevCash actually attributed to each signal
@@ -781,15 +825,19 @@ Field notes the implementers must not improvise on:
   array is always date-complete, so the client does no gap/date arithmetic.
   Each `DayStat` is `{ date, keystrokes, mouseActiveSeconds, activeSeconds,
   idleSeconds, sprintsCompleted, focusSessions, appSwitches, coinsEarned,
-  isActive, longestFocusBlockSeconds }` — the same seven A1/A2 counters as
-  `stats.today`/`stats.lifetime`, plus `coinsEarned` (that day's total, the
-  same sum `coinsToday`'s four fields add to) and `isActive` (a **bool set by
-  the server**, never re-derived client-side: `activeSeconds >=
-  game.ActiveDayMinSeconds`, default **300s** — the client and the streak
-  banner must agree on one "active day" definition, so the client only
-  renders this flag). `longestFocusBlockSeconds` is Fork B of A3-design.md §0
-  (shipped by default) — the day's longest single sustained-typing run.
-  camelCase throughout; `history` stays optional so a stale (pre-A3) server
+  isActive, longestFocusBlockSeconds, pausedSeconds }` — the same seven
+  A1/A2 counters as `stats.today`/`stats.lifetime`, plus `coinsEarned`
+  (that day's total, the same sum `coinsToday`'s four fields add to) and
+  `isActive` (a **bool set by the server**, never re-derived client-side:
+  `activeSeconds >= game.ActiveDayMinSeconds`, default **300s** — the
+  client and the streak banner must agree on one "active day" definition,
+  so the client only renders this flag). `longestFocusBlockSeconds` is
+  Fork B of A3-design.md §0 (shipped by default) — the day's longest
+  single sustained-typing run. `pausedSeconds` is PR-5's addition to this
+  same shape (see `stats.today`/`stats.lifetime` above) — that day's total
+  paused time, optional for the same reason `longestFocusBlockSeconds` is:
+  a day bucket predating PR-5 landing may omit it. camelCase throughout;
+  `history` stays optional so a stale (pre-A3) server
   degrades to "no history" rather than crashing, matching the existing
   `stats`/`coinsToday` optionality pattern.
 * `stats.streak` — optional `StreakView { current, longest }` (A3, ADR 0013).
@@ -845,7 +893,13 @@ Field notes the implementers must not improvise on:
     `coinsEarned` and `longestFocusBlockSeconds` — **per-session
     accumulators**, not deltas, because neither has a monotonic lifetime
     counter to subtract from (P2-design §2.3). `elapsedSeconds` is
-    **server-computed**; the client never derives live time.
+    **server-computed**; the client never derives live time. `pausedSeconds`
+    (PR-5, `dev_docs/production-runtime/MIGRATION_PLAN.md` §PR-5) joins
+    this same delta set: a running session's counters freeze while
+    `state.paused` is true (no ticks land), and this is the session's own
+    accrued paused time so far — non-optional in `wire.ts` (unlike the
+    `stats`/`history` fields above), since every PR-5-era server always
+    emits it on every session view it sends.
   - `summary` — `SessionsSummary { completed, thisWeek,
     longestSessionSeconds }`, all server-computed over the **whole verified
     log**, not just the wire window below.
@@ -858,6 +912,18 @@ Field notes the implementers must not improvise on:
     category citation exactly as `config.name` was (§2.7 of P2-design): a
     session name is CONFIG, never a `state.db` column, and is looked up by
     the server from `config.json`'s `sessionNames` map, keyed by `id`.
+* `paused` — PR-5 (`dev_docs/production-runtime/MIGRATION_PLAN.md` §PR-5).
+  `true` while tracking is stopped: `provider.Stop()` has been called,
+  `eng.Tick()` is not invoked, and there is no accrual and no analytics
+  tally for as long as it stays true. **`activeState` does not gain a
+  fourth value for this** (ADR 0010) — pausedness is conveyed only via
+  this bool, never by inventing a mood string. Optional client-side for
+  the same stale-server reason as `onboarding`/`sessions` below: a
+  pre-PR-5 server sends no `paused` field at all, which must degrade to
+  "not paused". Drives §2.4's PAUSED chrome (the status line, the mood
+  dot, the titlebar badge) and the menu's `[P] PAUSE`/`[P] RESUME` entry.
+  A running session **survives** a pause — see `sessions.active.pausedSeconds`
+  above.
 * `onboarding` — Phase P1. `true` **only** in the genuine first-launch state,
   decided **once, by the server, at boot**, as *(no save of any kind existed)*
   `&&` *(`config.name` is empty)*. Both halves matter: an existing
@@ -957,6 +1023,8 @@ replaces the old.
 {"action": "SET_NAME",   "name": "Pixel"}
 {"action": "SESSION_START", "name": "auth refactor"}   // name optional
 {"action": "SESSION_STOP"}
+{"action": "PAUSE"}
+{"action": "RESUME"}
 ```
 
 * **No dedicated ack.** Every successful action is answered by an immediate
@@ -1000,6 +1068,21 @@ replaces the old.
   success answered by `state` + `flash` (and, on a non-discarded stop, the
   `sessionComplete` message, §6.1), failure by `flash: error` and no state
   change. `SESSION_RENAME` is deferred, named, not built.
+* `PAUSE` / `RESUME` (PR-5, `dev_docs/production-runtime/MIGRATION_PLAN.md`
+  §PR-5) — no payload, same shape as the `STORE_OPEN`/`STORE_CLOSE`
+  no-payload-action precedent above, and the **same no-flash precedent**
+  too: pause is a state, not an event, so success is answered by an
+  updated `state` broadcast alone — `state.paused` on the next broadcast
+  is what the UI renders, never a toast. `PAUSE` calls `provider.Stop()`:
+  no more accrual and no more analytics tally until resumed. `RESUME`
+  calls `Engine.Reset()` + `provider.Start()`, so a stale pre-pause
+  recency state (e.g. a focus-bonus run in progress) never carries across
+  the gap. An already-paused `PAUSE` (or an already-running `RESUME`) is
+  a genuine server-side no-op — no second provider stop/start, no
+  redundant save — not an error. A running session **survives** a pause
+  (§6.1's `sessions.active`) — it just stops accruing everything except
+  `pausedSeconds` while paused. §2.4 covers the resulting chrome; §2.1
+  covers the menu's `[P] PAUSE`/`[P] RESUME` entry.
 * **[DESIGN CALL] camelCase field names throughout** (`itemId`, not the PDF
   blueprint's `item_id`). The whole payload is consumed by JavaScript; one
   casing convention across the wire and the DOM removes a whole class of typo.

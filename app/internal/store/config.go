@@ -45,9 +45,24 @@ import (
 // a hand edit, an id reused after a discarded short session); that is
 // accepted and honest (§2.7): a logged session simply renders unnamed,
 // and the protected counts are never affected.
+// Autostart (PR-6, dev_docs/production-runtime/MIGRATION_PLAN.md §PR-6,
+// PLATFORM_NOTES.md §3) is the first of the "future cosmetic prefs"
+// this struct's doc comment above anticipated: which login-autostart
+// mechanism `dexel autostart enable` last installed —
+// "launchd" | "systemd-user" | "xdg-autostart" | "windows-run", or ""
+// for none. It is written ONLY by `dexel autostart enable`/`disable`
+// (app/cmd_autostart.go) — nothing else in this codebase may set it,
+// which is the whole point of ADR-level explicit consent for autostart
+// — and it is advisory, never authoritative: `dexel autostart status`
+// always asks the OS directly (app/internal/autostart.Query), because
+// this field can legitimately drift from reality (a hand-deleted unit
+// file, a hand-edited config.json, a platform switch), the same
+// "config.json can desync and that is accepted and honest" posture
+// SessionNames' doc comment above already describes for its own field.
 type ConfigData struct {
 	Name         string            `json:"name"`
 	SessionNames map[string]string `json:"sessionNames"`
+	Autostart    string            `json:"autostart"`
 }
 
 // ConfigPath returns <StateDir>/config.json — the same directory as

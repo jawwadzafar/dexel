@@ -148,22 +148,22 @@ const DEV_STREAK: StreakView = { current: 8, longest: 12 };
 // DEV_STATE.sessions.active below (id 27 — "the ordinal it WILL have",
 // §2.2) lines up honestly with it.
 const DEV_SESSIONS_RECENT_OLDEST_FIRST: SessionView[] = [
-  { id: 17, name: 'onboarding polish', startedAt: '2026-08-09T13:00:00Z', endedAt: '2026-08-09T14:30:00Z', durationSeconds: 5400, keystrokes: 2200, mouseActiveSeconds: 300, activeSeconds: 4800, idleSeconds: 600, sprintsCompleted: 2, focusSessions: 3, appSwitches: 2, coinsEarned: 45, longestFocusBlockSeconds: 1800, endReason: 'user' },
+  { id: 17, name: 'onboarding polish', startedAt: '2026-08-09T13:00:00Z', endedAt: '2026-08-09T14:30:00Z', durationSeconds: 5400, keystrokes: 2200, mouseActiveSeconds: 300, activeSeconds: 4800, idleSeconds: 600, sprintsCompleted: 2, focusSessions: 3, appSwitches: 2, coinsEarned: 45, longestFocusBlockSeconds: 1800, pausedSeconds: 0, endReason: 'user' },
   // The one unnamed session (§6.5) — legal, per §2.2's "unnamed is a
   // first-class state" — and the one whose coinsEarned is 0.
-  { id: 18, name: '', startedAt: '2026-08-10T09:00:00Z', endedAt: '2026-08-10T09:30:00Z', durationSeconds: 1800, keystrokes: 600, mouseActiveSeconds: 80, activeSeconds: 1500, idleSeconds: 300, sprintsCompleted: 0, focusSessions: 1, appSwitches: 0, coinsEarned: 0, longestFocusBlockSeconds: 900, endReason: 'user' },
-  { id: 19, name: 'bug bash', startedAt: '2026-08-11T10:00:00Z', endedAt: '2026-08-11T12:33:20Z', durationSeconds: 9200, keystrokes: 3400, mouseActiveSeconds: 500, activeSeconds: 8000, idleSeconds: 900, sprintsCompleted: 3, focusSessions: 4, appSwitches: 5, coinsEarned: 70, longestFocusBlockSeconds: 2400, endReason: 'idle' },
-  { id: 20, name: 'docs pass', startedAt: '2026-08-13T15:00:00Z', endedAt: '2026-08-13T16:00:00Z', durationSeconds: 3600, keystrokes: 1500, mouseActiveSeconds: 200, activeSeconds: 3000, idleSeconds: 400, sprintsCompleted: 1, focusSessions: 2, appSwitches: 1, coinsEarned: 30, longestFocusBlockSeconds: 1200, endReason: 'user' },
-  { id: 21, name: 'perf tuning', startedAt: '2026-08-14T11:00:00Z', endedAt: '2026-08-14T13:00:00Z', durationSeconds: 7200, keystrokes: 2800, mouseActiveSeconds: 420, activeSeconds: 6500, idleSeconds: 500, sprintsCompleted: 2, focusSessions: 3, appSwitches: 2, coinsEarned: 58, longestFocusBlockSeconds: 2100, endReason: 'user' },
+  { id: 18, name: '', startedAt: '2026-08-10T09:00:00Z', endedAt: '2026-08-10T09:30:00Z', durationSeconds: 1800, keystrokes: 600, mouseActiveSeconds: 80, activeSeconds: 1500, idleSeconds: 300, sprintsCompleted: 0, focusSessions: 1, appSwitches: 0, coinsEarned: 0, longestFocusBlockSeconds: 900, pausedSeconds: 0, endReason: 'user' },
+  { id: 19, name: 'bug bash', startedAt: '2026-08-11T10:00:00Z', endedAt: '2026-08-11T12:33:20Z', durationSeconds: 9200, keystrokes: 3400, mouseActiveSeconds: 500, activeSeconds: 8000, idleSeconds: 900, sprintsCompleted: 3, focusSessions: 4, appSwitches: 5, coinsEarned: 70, longestFocusBlockSeconds: 2400, pausedSeconds: 0, endReason: 'idle' },
+  { id: 20, name: 'docs pass', startedAt: '2026-08-13T15:00:00Z', endedAt: '2026-08-13T16:00:00Z', durationSeconds: 3600, keystrokes: 1500, mouseActiveSeconds: 200, activeSeconds: 3000, idleSeconds: 400, sprintsCompleted: 1, focusSessions: 2, appSwitches: 1, coinsEarned: 30, longestFocusBlockSeconds: 1200, pausedSeconds: 0, endReason: 'user' },
+  { id: 21, name: 'perf tuning', startedAt: '2026-08-14T11:00:00Z', endedAt: '2026-08-14T13:00:00Z', durationSeconds: 7200, keystrokes: 2800, mouseActiveSeconds: 420, activeSeconds: 6500, idleSeconds: 500, sprintsCompleted: 2, focusSessions: 3, appSwitches: 2, coinsEarned: 58, longestFocusBlockSeconds: 2100, pausedSeconds: 0, endReason: 'user' },
   // The 16h hard cap (game.SessionMaxDurationSeconds, §2.6) — an honest
   // overnight-watch session with little activity, which is why it is
   // also this fixture's `longestSessionSeconds` below (duration is real
   // wall-clock time, never a proxy for effort).
-  { id: 22, name: 'overnight build watch', startedAt: '2026-08-16T02:00:00Z', endedAt: '2026-08-16T18:00:00Z', durationSeconds: 57600, keystrokes: 400, mouseActiveSeconds: 60, activeSeconds: 900, idleSeconds: 200, sprintsCompleted: 0, focusSessions: 0, appSwitches: 0, coinsEarned: 6, longestFocusBlockSeconds: 0, endReason: 'maxDuration' },
-  { id: 23, name: 'release cut', startedAt: '2026-08-17T09:00:00Z', endedAt: '2026-08-17T10:15:00Z', durationSeconds: 4500, keystrokes: 1800, mouseActiveSeconds: 260, activeSeconds: 3900, idleSeconds: 300, sprintsCompleted: 1, focusSessions: 2, appSwitches: 1, coinsEarned: 34, longestFocusBlockSeconds: 1500, endReason: 'user' },
-  { id: 24, name: 'auth refactor pt2', startedAt: '2026-08-19T10:00:00Z', endedAt: '2026-08-19T11:42:00Z', durationSeconds: 6120, keystrokes: 3100, mouseActiveSeconds: 340, activeSeconds: 5400, idleSeconds: 500, sprintsCompleted: 2, focusSessions: 3, appSwitches: 3, coinsEarned: 52, longestFocusBlockSeconds: 1320, endReason: 'user' },
-  { id: 25, name: 'flaky test hunt', startedAt: '2026-08-20T14:00:00Z', endedAt: '2026-08-20T14:45:00Z', durationSeconds: 2700, keystrokes: 1100, mouseActiveSeconds: 160, activeSeconds: 2300, idleSeconds: 300, sprintsCompleted: 1, focusSessions: 1, appSwitches: 1, coinsEarned: 20, longestFocusBlockSeconds: 1100, endReason: 'user' },
-  { id: 26, name: 'changelog + release notes', startedAt: '2026-08-21T16:00:00Z', endedAt: '2026-08-21T16:25:00Z', durationSeconds: 1500, keystrokes: 500, mouseActiveSeconds: 70, activeSeconds: 1200, idleSeconds: 200, sprintsCompleted: 0, focusSessions: 1, appSwitches: 0, coinsEarned: 9, longestFocusBlockSeconds: 600, endReason: 'idle' }
+  { id: 22, name: 'overnight build watch', startedAt: '2026-08-16T02:00:00Z', endedAt: '2026-08-16T18:00:00Z', durationSeconds: 57600, keystrokes: 400, mouseActiveSeconds: 60, activeSeconds: 900, idleSeconds: 200, sprintsCompleted: 0, focusSessions: 0, appSwitches: 0, coinsEarned: 6, longestFocusBlockSeconds: 0, pausedSeconds: 0, endReason: 'maxDuration' },
+  { id: 23, name: 'release cut', startedAt: '2026-08-17T09:00:00Z', endedAt: '2026-08-17T10:15:00Z', durationSeconds: 4500, keystrokes: 1800, mouseActiveSeconds: 260, activeSeconds: 3900, idleSeconds: 300, sprintsCompleted: 1, focusSessions: 2, appSwitches: 1, coinsEarned: 34, longestFocusBlockSeconds: 1500, pausedSeconds: 0, endReason: 'user' },
+  { id: 24, name: 'auth refactor pt2', startedAt: '2026-08-19T10:00:00Z', endedAt: '2026-08-19T11:42:00Z', durationSeconds: 6120, keystrokes: 3100, mouseActiveSeconds: 340, activeSeconds: 5400, idleSeconds: 500, sprintsCompleted: 2, focusSessions: 3, appSwitches: 3, coinsEarned: 52, longestFocusBlockSeconds: 1320, pausedSeconds: 0, endReason: 'user' },
+  { id: 25, name: 'flaky test hunt', startedAt: '2026-08-20T14:00:00Z', endedAt: '2026-08-20T14:45:00Z', durationSeconds: 2700, keystrokes: 1100, mouseActiveSeconds: 160, activeSeconds: 2300, idleSeconds: 300, sprintsCompleted: 1, focusSessions: 1, appSwitches: 1, coinsEarned: 20, longestFocusBlockSeconds: 1100, pausedSeconds: 0, endReason: 'user' },
+  { id: 26, name: 'changelog + release notes', startedAt: '2026-08-21T16:00:00Z', endedAt: '2026-08-21T16:25:00Z', durationSeconds: 1500, keystrokes: 500, mouseActiveSeconds: 70, activeSeconds: 1200, idleSeconds: 200, sprintsCompleted: 0, focusSessions: 1, appSwitches: 0, coinsEarned: 9, longestFocusBlockSeconds: 600, pausedSeconds: 0, endReason: 'idle' }
 ];
 // The wire sends `recent` newest-first (§6.1) — reverse the readable
 // oldest-first list above once, here, rather than writing it backwards.
@@ -186,7 +186,11 @@ const DEV_ACTIVE_SESSION = {
   focusSessions: 2,
   appSwitches: 1,
   coinsEarned: 14,
-  longestFocusBlockSeconds: 380
+  longestFocusBlockSeconds: 380,
+  // PR-5 (dev_docs/production-runtime/MIGRATION_PLAN.md §PR-5) — this
+  // session predates the pause feature in this fixture's own timeline, so
+  // an honest 0 rather than an invented paused stretch.
+  pausedSeconds: 0
 };
 
 const DEV_SESSIONS: SessionsView = {
@@ -221,6 +225,7 @@ export const DEV_SESSION_COMPLETE_SAMPLE: SessionView = {
   appSwitches: 2,
   coinsEarned: 18,
   longestFocusBlockSeconds: 840,
+  pausedSeconds: 0,
   endReason: 'user'
 };
 
@@ -326,4 +331,24 @@ export const DEV_STATE_ONBOARDING: Partial<StateMessage> = {
 //   window.devApply(window.devStateNoSession)
 export const DEV_STATE_NO_SESSION: Partial<StateMessage> = {
   sessions: { active: null, summary: { completed: 0, thisWeek: 0, longestSessionSeconds: 0 }, recent: [] }
+};
+
+// DEV_STATE_PAUSED — PR-5 (dev_docs/production-runtime/MIGRATION_PLAN.md
+// §PR-5) fixture: tracking is stopped. `activeState` stays 'idle' — the
+// honest value while no keystroke/mouse ticks are landing — never a
+// fourth mood string; pausedness is conveyed only via `paused: true`
+// (ADR 0010). `stats.today`/`stats.lifetime` spread the default fixture's
+// blocks and add a non-zero `pausedSeconds`, rather than replacing the
+// whole `stats` block wholesale, so this fixture's history/streak stay
+// intact for a devApply() layered on top of the default DEV_STATE. Hand
+// it to window.devApply to see the PAUSED chrome without a backend:
+//   window.devApply(window.devStatePaused)
+export const DEV_STATE_PAUSED: Partial<StateMessage> = {
+  paused: true,
+  activeState: 'idle',
+  stats: {
+    ...DEV_STATE.stats!,
+    today: { ...DEV_STATE.stats!.today, pausedSeconds: 420 },
+    lifetime: { ...DEV_STATE.stats!.lifetime, pausedSeconds: 9600 }
+  }
 };

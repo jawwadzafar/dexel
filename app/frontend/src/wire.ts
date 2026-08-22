@@ -89,6 +89,14 @@ export interface StatBlock {
   sprintsCompleted: number;
   focusSessions?: number;
   appSwitches?: number;
+  // PR-5 — Pause semantics (dev_docs/production-runtime/MIGRATION_PLAN.md
+  // §PR-5). Seconds spent paused (tracking stopped, no ticks, no accrual)
+  // — a THIRD bucket alongside activeSeconds/idleSeconds, never folded
+  // into idle: `activeSeconds + idleSeconds + pausedSeconds` covers the
+  // bucket's whole runtime uptime. Optional so a stale (pre-PR-5) server
+  // degrades to 0, matching the existing `focusSessions?`/`appSwitches?`
+  // pattern above.
+  pausedSeconds?: number;
 }
 
 // Phase A2 (A2-design.md §6/§5) — coins (DevCash) attributed today, split
@@ -124,6 +132,12 @@ export interface DayStat {
   coinsEarned: number;
   isActive: boolean;
   longestFocusBlockSeconds?: number;
+  // PR-5 — Pause semantics (dev_docs/production-runtime/MIGRATION_PLAN.md
+  // §PR-5) — that day's total paused seconds, the same third bucket
+  // StatBlock gains above. Optional for the same reason
+  // `longestFocusBlockSeconds` is: a still-older/degraded server, or a day
+  // bucket predating PR-5 landing, may omit it per-entry.
+  pausedSeconds?: number;
 }
 
 // Server-computed (A3-design.md §2) — the client renders this verbatim and
@@ -179,6 +193,14 @@ export interface ActiveSessionView {
   appSwitches: number;
   coinsEarned: number;
   longestFocusBlockSeconds: number;
+  // PR-5 — Pause semantics (dev_docs/production-runtime/MIGRATION_PLAN.md
+  // §PR-5) — joins P2's session delta set (P2-design.md §2.3/§5.6): a
+  // running session's counters freeze while paused (no ticks), and this
+  // is the accrued paused time for the session so far. Non-optional
+  // (unlike the wire-level StatBlock/DayStat fields above) because a
+  // PR-5-era server always emits it on every ActiveSessionView/SessionView
+  // it sends — there is no pre-PR-5 session-view shape to degrade from.
+  pausedSeconds: number;
 }
 
 // A session has an end, and the end is one of a closed three-value set
@@ -200,6 +222,10 @@ export interface SessionView { // one finished session
   appSwitches: number;
   coinsEarned: number;
   longestFocusBlockSeconds: number;
+  // PR-5 (dev_docs/production-runtime/MIGRATION_PLAN.md §PR-5) — same
+  // field/rationale as ActiveSessionView.pausedSeconds above, carried
+  // through to the finished-session record verbatim.
+  pausedSeconds: number;
   endReason: SessionEndReason;
 }
 
@@ -257,6 +283,15 @@ export interface StateMessage {
   // clean empty state (no active session, no recent list) rather than
   // crashing or fabricating one client-side.
   sessions?: SessionsView;
+  // PR-5 — Pause semantics (dev_docs/production-runtime/MIGRATION_PLAN.md
+  // §PR-5). TRUE while tracking is stopped (provider.Stop() called,
+  // eng.Tick() not invoked, no accrual and no analytics tally). Optional
+  // for the same stale-server reason as `onboarding`/`sessions` above: a
+  // pre-PR-5 server sends no `paused` field at all, which must degrade to
+  // "not paused" rather than crashing. `activeState` does NOT gain a
+  // fourth value for this (ADR 0010) — pausedness is conveyed only via
+  // this bool, never by inventing a mood string.
+  paused?: boolean;
 }
 
 export interface FlashMessage {
@@ -302,4 +337,14 @@ export type ClientAction =
   // runes, empty is legal) — the client's own maxlength is a courtesy,
   // never the validation.
   | { action: 'SESSION_START'; name?: string }
-  | { action: 'SESSION_STOP' };
+  | { action: 'SESSION_STOP' }
+  // PR-5 — Pause semantics (dev_docs/production-runtime/MIGRATION_PLAN.md
+  // §PR-5). No payload, same shape as the `STORE_OPEN`/`STORE_CLOSE`
+  // no-payload-action precedent above. `PAUSE` calls provider.Stop() and
+  // stops tracking (no accrual, no analytics tally, no engine ticks);
+  // `RESUME` calls Engine.Reset() + provider.Start() so a stale pre-pause
+  // recency state (e.g. a focus-bonus run) never survives across the gap.
+  // A running session survives pause — it just stops accruing while
+  // paused (its `pausedSeconds` grows instead).
+  | { action: 'PAUSE' }
+  | { action: 'RESUME' };

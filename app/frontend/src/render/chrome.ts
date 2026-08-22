@@ -26,13 +26,24 @@ const menuPanelTitle = byId('menu-panel-title');
 // Phase P2 (docs/ui-spec.md §9.5) — the always-visible session indicator.
 const sessionPill = byId('session-pill');
 const sessionPillText = byId('session-pill-text');
+// PR-5 (dev_docs/production-runtime/MIGRATION_PLAN.md §PR-5) — the
+// always-visible paused badge, same idiom as #session-pill above.
+const pausedBadge = byId('paused-badge');
 
 export function renderChrome(): void {
   const state = store.getState();
   if (!state) return;
   // The title bar no longer shows a mood dot (BUG-2) — mood is still
   // conveyed via #status-dot in the bottom status panel.
-  const moodColor = MOOD_COLOR[state.activeState] || MOOD_COLOR.idle;
+  //
+  // PR-5: while paused, the dot goes dimmed/muted (var(--screen-dim),
+  // the same "dim" half of the existing screen/screen-dim pair the rest
+  // of this palette already uses for bright-vs-muted, e.g.
+  // .nes-btn.is-disabled) rather than showing whatever mood colour idle
+  // would otherwise pick — pausedness is a distinct visual state from
+  // idle, even though `activeState` itself stays 'idle' (ADR 0010: no
+  // fourth mood string).
+  const moodColor = state.paused ? 'var(--screen-dim)' : (MOOD_COLOR[state.activeState] || MOOD_COLOR.idle);
   statusDot.style.background = moodColor;
   hudLevel.textContent = 'LV ' + fmtInt(state.level);
   hudCash.textContent = fmtInt(state.devCash);
@@ -45,7 +56,14 @@ export function renderChrome(): void {
   // without it) must never render the literal string "undefined".
   sprintUnits.textContent = fmtInt(state.sprint.progress) + ' / ' + fmtInt(state.sprint.target) + ' ' + (state.sprint.unitLabel || 'units');
 
-  statusLine.textContent = truncate(state.activityLine, 34);
+  // PR-5: while paused, the status line is a fixed CLIENT-SIDE string —
+  // never the server's `activityLine`, which would otherwise still read
+  // as though tracking were live. This is the one place this module
+  // composes its own text rather than rendering the server's verbatim,
+  // and it is safe specifically because it asserts nothing the server
+  // did not say: `state.paused` is the server's own signal, and the
+  // string itself carries no observed content.
+  statusLine.textContent = state.paused ? 'PAUSED — tracking is off' : truncate(state.activityLine, 34);
 
   // The name is USER text, so it is rendered as typed — never upper-cased
   // to match the surrounding labels, and never assembled into a sentence
@@ -77,6 +95,12 @@ export function renderChrome(): void {
     sessionPillText.textContent = '';
     sessionPill.classList.remove('visible');
   }
+
+  // PR-5: the badge is visible only while state.paused is true — same
+  // .visible-class toggle idiom as #session-pill just above. A session
+  // can be active AND paused simultaneously (sessions survive pause,
+  // pausedSeconds accrues instead), so this never suppresses the pill.
+  pausedBadge.classList.toggle('visible', !!state.paused);
 }
 
 // fmtClock renders a whole-seconds duration as "H:MM:SS" for the

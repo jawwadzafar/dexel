@@ -77,25 +77,29 @@ type subcommand struct {
 
 // subcommands is that table.
 //
-// ARCHITECTURE.md Decision 3 also specifies `autostart`, `update` and
-// `uninstall`. They are deliberately ABSENT until the PRs that own them
-// land (PR-6, PR-7): a word that is listed but does nothing is worse than
-// a word that honestly reports "unknown command", which is why
-// MIGRATION_PLAN.md's exit criteria are per-PR in the first place.
-// `pause`/`resume` join the table with PR-5, which is the PR that gives
-// them something real to flip (MIGRATION_PLAN.md §PR-5).
+// ARCHITECTURE.md Decision 3 also specifies `update` and `uninstall`.
+// They are deliberately ABSENT until PR-7, which owns them: a word that
+// is listed but does nothing is worse than a word that honestly reports
+// "unknown command", which is why MIGRATION_PLAN.md's exit criteria are
+// per-PR in the first place. `pause`/`resume` joined the table with
+// PR-5, which is the PR that gave them something real to flip
+// (MIGRATION_PLAN.md §PR-5); `autostart` joins it here with PR-6
+// (MIGRATION_PLAN.md §PR-6, PLATFORM_NOTES.md §3) — its own three
+// sub-verbs (enable/disable/status) are dispatched from cmd_autostart.go,
+// the same one-word-fans-out-to-sub-verbs shape cmdPause/cmdResume use.
 var subcommands = map[string]subcommand{
-	"start":   {"start the background runtime (detached) and print its URL", cmdStart},
-	"stop":    {"stop the background runtime; it saves on the way out", cmdStop},
-	"restart": {"stop, wait for exit, then start", cmdRestart},
-	"status":  {"is a runtime running? pid, port, url, version, paused [--json]", cmdStatus},
-	"pause":   {"stop observing activity (the provider is stopped; nothing accrues)", cmdPause},
-	"resume":  {"start observing again, from a clean slate", cmdResume},
-	"open":    {"start if needed, then open the UI (desktop app, else browser)", cmdOpen},
-	"logs":    {"the runtime log [-n N] [-f] [--path] [--truncate]", cmdLogs},
-	"serve":   {"run the server in the FOREGROUND (the developer path; all of today's flags)", func(args []string) int { runServe(modeServe, args); return 0 }},
-	"runtime": {"the detached runtime's own entry point — `start` execs this", func(args []string) int { runServe(modeRuntime, args); return 0 }},
-	"version": {"print version, commit and os/arch", func([]string) int { fmt.Println(versionLine()); return 0 }},
+	"start":     {"start the background runtime (detached) and print its URL", cmdStart},
+	"stop":      {"stop the background runtime; it saves on the way out", cmdStop},
+	"restart":   {"stop, wait for exit, then start", cmdRestart},
+	"status":    {"is a runtime running? pid, port, url, version, paused [--json]", cmdStatus},
+	"pause":     {"stop observing activity (the provider is stopped; nothing accrues)", cmdPause},
+	"resume":    {"start observing again, from a clean slate", cmdResume},
+	"autostart": {"enable|disable|status the login autostart entry — never enabled implicitly", cmdAutostart},
+	"open":      {"start if needed, then open the UI (desktop app, else browser)", cmdOpen},
+	"logs":      {"the runtime log [-n N] [-f] [--path] [--truncate]", cmdLogs},
+	"serve":     {"run the server in the FOREGROUND (the developer path; all of today's flags)", func(args []string) int { runServe(modeServe, args); return 0 }},
+	"runtime":   {"the detached runtime's own entry point — `start` execs this", func(args []string) int { runServe(modeRuntime, args); return 0 }},
+	"version":   {"print version, commit and os/arch", func([]string) int { fmt.Println(versionLine()); return 0 }},
 }
 
 // init registers `help` separately, for a mechanical reason worth stating
@@ -120,10 +124,23 @@ func classify(args []string) decision {
 		return decision{Kind: dispatchBare}
 	}
 	first := args[0]
-	// SHAPE, not membership: anything beginning with "-" is the legacy
-	// foreground runtime, including "-h"/"--help", which therefore keep
-	// printing the SERVER's flag usage exactly as they do today rather
-	// than being quietly re-pointed at the new CLI help.
+	// N-4 (docs/plan/REVIEW-2026-08-22.md): the three spellings of "help"
+	// every user tries FIRST are the one exception to the shape rule
+	// below. They used to fall into the legacy shape and print the
+	// SERVER's flag list — a wall of -addr/-provider/-fake-script — which
+	// left the product's own command list reachable only by typing the
+	// exact word `help`. The server's flags are still one hop away and
+	// the usage text says so (`dexel serve -h`).
+	//
+	// Only the FIRST argument is treated this way: `dexel -public ./x -h`
+	// is still the legacy foreground shape asking its own flag set for
+	// help, which is what someone mid-flag-typing means.
+	switch first {
+	case "-h", "-help", "--help":
+		return decision{Kind: dispatchSubcommand, Name: "help", Args: args[1:]}
+	}
+	// SHAPE, not membership: anything else beginning with "-" is the
+	// legacy foreground runtime.
 	if strings.HasPrefix(first, "-") {
 		return decision{Kind: dispatchLegacy, Args: args}
 	}
@@ -137,7 +154,7 @@ func classify(args []string) decision {
 // `dexel help` can go to stdout (it is what the user asked for) while an
 // unknown word goes to stderr (it is an error report).
 func usage(w io.Writer) {
-	fmt.Fprintf(w, "dexel — your developer companion\n\nUsage:\n  dexel                 start the runtime if needed, then open the UI\n  dexel <command> [flags]\n  dexel -addr ... [...] run the server in the foreground (legacy shape, unchanged)\n\nCommands:\n")
+	fmt.Fprintf(w, "dexel — your developer companion\n\nUsage:\n  dexel                 start the runtime if needed, then open the UI\n  dexel <command> [flags]\n  dexel -addr ... [...] run the server in the foreground (legacy shape, unchanged;\n                        `dexel serve -h` prints that flag set)\n\nCommands:\n")
 	names := make([]string, 0, len(subcommands))
 	for name := range subcommands {
 		names = append(names, name)
