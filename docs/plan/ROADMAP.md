@@ -242,3 +242,19 @@ PRIVATE. In-flight: proportion art pass; release-pipeline modernization.
 - Exit: `./dexel` alone (empty dir, no public/, no assets/) serves the full
   game; dev override still works; drift check green on the renamed bundle;
   release script ships single-binary archives; Tauri scaffold updated.
+
+### RUST-PARALLEL track (2026-08-22, user)
+A parallel Rust implementation of the dexel backend lives IN THIS REPO
+(top-level Rust workspace) built to feature parity with the Go app, so the two
+can be COMPARED head-to-head and the better one chosen. Rules:
+- NO migration burden: the Rust app uses its own save (nothing shipped broadly
+  yet); the Go app keeps shipping — production is NOT blocked on this track.
+- The TS frontend + the WS wire contract + public/ are the SHARED spec: the
+  Rust app must speak the identical wire contract and serve the identical
+  frontend so the same client works against either backend (apples-to-apples).
+- Same invariants re-expressed: content-free privacy (serde-level guarantees),
+  ADR 0010 honesty, anti-cheat (own SQLite + HMAC, fresh format fine).
+- Comparison scorecard: binary size, RSS, startup, feature-parity checklist,
+  test parity, build time, cross-compile matrix — documented measurements, a
+  declared winner, and the loser archived (not deleted).
+Plan + scorecard: dev_docs/rust-port-evaluation.md (in flight).
