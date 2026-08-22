@@ -22,8 +22,9 @@ on:
 #   - `frontend`: the TypeScript source under app/frontend/ (Frontend
 #     architecture track F1, docs/plan/ROADMAP.md) — npm ci, tsc --noEmit,
 #     and a fresh esbuild run diffed against the committed
-#     app/public/js/game.js so the checked-in bundle can never silently
-#     drift from its TS source.
+#     app/public/js/dexel.js so the checked-in bundle can never silently
+#     drift from its TS source. (The bundle was named game.js before
+#     EMBED-1 renamed it after the product.)
 #
 # Targets produced by `build` (Linux host):
 #   - x86_64-unknown-linux-gnu   (native)
@@ -156,9 +157,11 @@ jobs:
         run: go test -race ./...
 
   # Frontend architecture track F1 (docs/plan/ROADMAP.md): the TypeScript
-  # source under app/frontend/ that builds into app/public/js/game.js (the
-  # bundle the `go` job's binary — and any Go-only user running `go run .`
-  # — actually serves). That bundle is committed deliberately (see
+  # source under app/frontend/ that builds into app/public/js/dexel.js — the
+  # bundle every dexel binary serves, and since EMBED-1 the bundle go:embed
+  # compiles INTO that binary (app/embed.go), which is exactly why a stale
+  # committed bundle must fail CI: it would be baked into a release
+  # invisibly. That bundle is committed deliberately (see
   # app/frontend/README.md "Why the bundle is committed"), so this job's
   # real job is to prove it hasn't drifted from source: a fresh `npm run
   # build` must reproduce the committed file byte-for-byte.
@@ -190,7 +193,7 @@ jobs:
 
       - name: Assert the committed bundle matches a fresh build
         run: |
-          if ! git diff --exit-code -- app/public/js/game.js app/public/js/game.js.map; then
-            echo "::error::app/public/js/game.js (and/or its .map) is out of date with app/frontend/src/*.ts — run 'npm run build' in app/frontend/ and commit the result." >&2
+          if ! git diff --exit-code -- app/public/js/dexel.js app/public/js/dexel.js.map; then
+            echo "::error::app/public/js/dexel.js (and/or its .map) is out of date with app/frontend/src/*.ts — run 'npm run build' in app/frontend/ and commit the result." >&2
             exit 1
           fi

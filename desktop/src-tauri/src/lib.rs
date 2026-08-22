@@ -8,20 +8,25 @@
 //!
 //! Lifecycle, in the order it happens:
 //!
-//! 1. `setup` resolves where the bundled `public/` and `assets/` trees live.
-//! 2. It spawns the `dexel-server` sidecar with `-addr 127.0.0.1:0` (loopback
-//!    only, OS-assigned port), `-public <res>/public`, and
-//!    `DEXEL_ASSETS_DIR=<res>/assets`.
-//! 3. A dedicated reader thread drains the sidecar's stdout/stderr into the
+//! 1. `setup` spawns the `dexel-server` sidecar with `-addr 127.0.0.1:0`
+//!    (loopback only, OS-assigned port) and nothing else. Since EMBED-1
+//!    (docs/plan/ROADMAP.md) the sidecar is a SELF-CONTAINED binary: it
+//!    carries the frontend (`app/public`) and the sprites (`app/assets`)
+//!    inside itself via `go:embed`, so there is nothing for this shell to
+//!    locate, bundle as a Tauri resource, or point it at. The `-public` /
+//!    `DEXEL_ASSETS_DIR` arguments this file used to pass — and the
+//!    `bundle.resources` map in tauri.conf.json that fed them — are gone;
+//!    both survive in the Go server only as explicit dev overrides.
+//! 2. A dedicated reader thread drains the sidecar's stdout/stderr into the
 //!    log and watches for the one machine-readable handshake line
 //!    `DEXEL_LISTENING http://127.0.0.1:<port>` (printed by app/main.go the
 //!    moment its listener binds), then hands that URL back to `setup`.
-//! 4. `setup` builds the single window on that URL via
+//! 3. `setup` builds the single window on that URL via
 //!    [`tauri::WebviewUrl::External`]. Because the page's origin IS the
 //!    server's origin, the frontend's `location.host`-derived WebSocket URL
 //!    is already correct and the server's same-origin check accepts it with
 //!    no `-insecure-origin` and no wildcard (ADR 0015 §Security).
-//! 5. On exit the sidecar is SIGTERM'd (so main.go's handler runs its final
+//! 4. On exit the sidecar is SIGTERM'd (so main.go's handler runs its final
 //!    save) and hard-killed only if it outstays the grace period.
 //!
 //! Why the shell — not the JS — learns the port: the window cannot be created
@@ -33,12 +38,10 @@
 //! * <https://v2.tauri.app/develop/sidecar/> — `bundle.externalBin`, the
 //!   `<name>-<target-triple>` naming rule, `app.shell().sidecar(..)`,
 //!   `(Receiver<CommandEvent>, CommandChild)`, `CommandEvent::Stdout(Vec<u8>)`.
-//! * <https://v2.tauri.app/develop/resources/> — `bundle.resources` map form
-//!   and `app.path().resolve(.., BaseDirectory::Resource)`.
 //! * <https://docs.rs/tauri/latest/tauri/webview/struct.WebviewWindowBuilder.html>
 //!   and `tauri::{WebviewUrl, RunEvent, Url}` (tauri 2.11.x).
 //! * <https://docs.rs/tauri-plugin-shell/latest/tauri_plugin_shell/process/>
-//!   — `Command::{arg, env}`, `CommandChild::{pid, kill}` (note `kill`
+//!   — `Command::arg`, `CommandChild::{pid, kill}` (note `kill`
 //!   consumes `self`, which is why the child lives in an `Option`).
 //!
 //! ## NOT verified
@@ -48,7 +51,6 @@
 //! build-checked. See `../README.md` for what the first real build must
 //! confirm.
 
-use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, RecvTimeoutError};
 use std::sync::{Arc, Mutex};
@@ -158,52 +160,15 @@ impl SidecarGuard {
     }
 }
 
-/// Resolve the directories the sidecar must be pointed at.
-///
-/// Inside a packaged `.app`/`.msi`/AppImage the sidecar's working directory
-/// is not the repo, so `app/internal/assets`'s upward walk cannot find
-/// `assets/` and a relative `-public` would resolve to the wrong place.
-/// `bundle.resources` in tauri.conf.json is declared in **map** form
-/// (`"../../app/public/": "public/"`) precisely so the trees land at
-/// `<resource dir>/public` and `<resource dir>/assets` instead of mirroring
-/// their `../../` source paths — see F3-design.md §3.
-///
-/// Returns `(public_dir, assets_dir)`.
-fn resolve_roots(app: &tauri::AppHandle) -> (PathBuf, PathBuf) {
-    match app.path().resource_dir() {
-        Ok(res) => {
-            let public = res.join("public");
-            if public.join("index.html").is_file() {
-                log::info!("resources: {}", res.display());
-                return (public, res.join("assets"));
-            }
-            log::warn!(
-                "resource dir {} has no public/index.html; falling back to the source tree",
-                res.display()
-            );
-        }
-        Err(e) => log::warn!("could not resolve the resource dir ({e}); trying the source tree"),
-    }
-
-    // Dev fallback. UNVERIFIED: whether `cargo tauri dev` stages
-    // bundle.resources next to the dev binary has not been observed here, so
-    // this branch exists so `tauri dev` works either way. CARGO_MANIFEST_DIR
-    // is desktop/src-tauri, so ../.. is the repository root.
-    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("..").join("..");
-    log::info!("resources: source-tree fallback at {}", root.display());
-    (root.join("app").join("public"), root.join("assets"))
-}
-
 /// Spawn the sidecar and block until it reports its URL.
 ///
 /// On any failure the child is terminated before returning, so a shell that
 /// cannot come up never leaves a headless Go server (and its loopback
 /// socket) behind.
 fn spawn_sidecar(app: &tauri::AppHandle) -> Result<(String, SidecarGuard), String> {
-    let (public_dir, assets_dir) = resolve_roots(app);
-    log::info!("sidecar -public {}", public_dir.display());
-    log::info!("sidecar DEXEL_ASSETS_DIR {}", assets_dir.display());
-
+    // No -public, no DEXEL_ASSETS_DIR, no resource-directory resolution:
+    // EMBED-1 made the sidecar self-contained (see the module docs), so the
+    // only thing this shell tells it is which address to bind.
     let command = app
         .shell()
         .sidecar(SIDECAR_NAME)
@@ -212,12 +177,7 @@ fn spawn_sidecar(app: &tauri::AppHandle) -> Result<(String, SidecarGuard), Strin
         // so a busy 8080 or a second instance can never collide. The real
         // port comes back over the handshake below.
         .arg("-addr")
-        .arg("127.0.0.1:0")
-        .arg("-public")
-        // OsStr, not String: a resource path can be non-UTF-8 on both unix
-        // and Windows, and to_string_lossy() would silently corrupt it.
-        .arg(public_dir.as_os_str())
-        .env("DEXEL_ASSETS_DIR", assets_dir.as_os_str());
+        .arg("127.0.0.1:0");
 
     let (mut rx, child) = command.spawn().map_err(|e| format!("spawn sidecar: {e}"))?;
 

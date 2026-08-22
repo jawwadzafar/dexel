@@ -14,6 +14,14 @@
 # Verified against https://v2.tauri.app/develop/sidecar/ ("Tauri requires
 # you to add the target triple to the sidecar binary name").
 #
+# Since EMBED-1 (docs/plan/ROADMAP.md) each binary this produces is fully
+# self-contained: app/embed.go compiles app/public/ and app/assets/ into it
+# with go:embed, so the bundle no longer ships those trees as Tauri resources
+# and the shell no longer passes -public / $DEXEL_ASSETS_DIR. This script's
+# job is unchanged — build ./app per target and name the output the way the
+# Tauri bundler looks it up — but the artifact it drops is now the whole
+# product rather than one third of it.
+#
 # Usage:
 #   scripts/build-sidecar.sh              # host triple only (the common case)
 #   scripts/build-sidecar.sh --all        # host + every cross target below

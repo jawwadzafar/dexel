@@ -1,7 +1,13 @@
 // Command app is the dexel server (ADR 0011): a Go backend that
 // samples real activity, runs the ADR 0005/0010 economy+honesty engine,
 // and serves the live game state over HTTP/WebSocket to the NES.css
-// frontend in ./public, per docs/ui-spec.md's wire contract.
+// frontend, per docs/ui-spec.md's wire contract.
+//
+// Since EMBED-1 (docs/plan/ROADMAP.md) both static trees it serves — the
+// frontend (app/public) and the sprites (app/assets) — are compiled into
+// this binary by embed.go, so the shipped product is ONE file with nothing
+// to locate at runtime. -public and $DEXEL_ASSETS_DIR remain as explicit
+// DEV overrides that serve those trees off disk instead.
 package main
 
 import (
@@ -10,6 +16,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io/fs"
 	"log"
 	"net"
 	"net/http"
@@ -40,7 +47,7 @@ const (
 
 func main() {
 	addr := flag.String("addr", "127.0.0.1:8080", "listen address (loopback by default — binding beyond 127.0.0.1/localhost exposes the activity monitor and save to your LAN/tailnet); a port of 0 (e.g. 127.0.0.1:0) binds an OS-assigned free port, reported via the DEXEL_LISTENING stdout handshake — see ADR 0015")
-	publicDir := flag.String("public", "./public", "static frontend directory (owned by the frontend agent)")
+	publicDir := flag.String("public", "", "DEV OVERRIDE: serve the frontend from this directory on disk instead of the copy embedded in this binary (EMBED-1) — point it at app/public to iterate on the frontend without rebuilding Go; empty (the default) always serves the embedded copy")
 	providerKind := flag.String("provider", "auto", `activity provider: "auto" (native for this OS) or "fake"`)
 	fakeScript := flag.String("fake-script", "", "explicit fake-provider script (e.g. type:20s,idle:40s,mouse:15s); overrides DEXEL_FAKE_SCRIPT; implies -provider=fake")
 	insecureOrigin := flag.Bool("insecure-origin", false, "accept WebSocket connections from ANY Origin, skipping same-origin verification entirely — for embedded webviews only (e.g. a file:// or app:// frontend whose Origin header, if any, will never match a loopback host pattern); never enable this if -addr binds beyond 127.0.0.1/localhost")
@@ -70,11 +77,12 @@ func main() {
 	// parses stdout, a person reads the log.
 	fmt.Println(handshakeLine(actualAddr))
 
-	ensurePublicDirExists(*publicDir)
-	publicOk := publicIndexExists(*publicDir)
-	if !publicOk {
-		log.Printf("WARNING: %s has no index.html — the frontend will not load; check -public or the directory this process was launched from", *publicDir)
-	}
+	// EMBED-1: decide which copy of each static tree this run serves —
+	// the embedded default, or an explicitly requested disk override —
+	// before anything is mounted, so the startup log states it once and
+	// /api/health can report it for the life of the process.
+	publicFS, publicSource, publicOk := resolvePublicSource(*publicDir)
+	assetsFS, assetsDir, assetsSource := resolveAssetsSource()
 
 	provider, providerDesc := selectProvider(*providerKind, *fakeScript)
 	if err := provider.Start(); err != nil {
@@ -120,14 +128,17 @@ func main() {
 	actions := make(chan actionRequest)
 
 	mux := http.NewServeMux()
-	mux.Handle("/", http.FileServer(http.Dir(*publicDir)))
-	assetsDir := registerAssetsRoute(mux, *publicDir)
-	mux.HandleFunc("/api/health", healthHandler(assetsDir, publicOk, buildVersion()))
+	mux.Handle("/", http.FileServer(http.FS(publicFS)))
+	// "/assets/<file>" is the URL prefix the frontend's assetUrl() builds
+	// against (app/frontend/src/assets.ts); StripPrefix turns it back into
+	// the bare filename the tree — embedded or on disk — is keyed by.
+	mux.Handle("/assets/", http.StripPrefix("/assets/", http.FileServer(http.FS(assetsFS))))
+	mux.HandleFunc("/api/health", healthHandler(assetsDir, publicOk, buildVersion(), publicSource, assetsSource))
 	mux.HandleFunc("/ws", hub.handleWS(actions, catalog))
 
 	httpSrv := &http.Server{Handler: mux}
 	go func() {
-		log.Printf("dexel listening on http://%s (serving %s)", actualAddr, *publicDir)
+		log.Printf("dexel listening on http://%s (frontend: %s, assets: %s)", actualAddr, publicSource, assetsSource)
 		if err := httpSrv.Serve(ln); err != nil && err != http.ErrServerClosed {
 			log.Fatalf("http server: %v", err)
 		}
@@ -376,124 +387,149 @@ func selectProvider(kind, fakeScript string) (activity.Provider, string) {
 	}
 }
 
-// registerAssetsRoute serves the repository's assets/ directory (the art
-// agent's sprite/thumbnail PNGs) at "/assets/<file>", the URL prefix
-// game.js's assetUrl() already builds against. This is a real route, not
-// the app/public/assets -> ../../assets symlink an earlier pass used as a
-// stopgap: a symlink checked into git breaks the moment this binary is
-// built and run from anywhere that is not this exact checkout, and a repo
-// symlink is also just one more thing a fresh clone or a zip download can
-// silently fail to preserve. internal/assets.LocateVerbose() finds the real
-// directory (env override, then upward from the executable, then upward
-// from cwd, then the assets/ directory implied by wherever publicDir itself
-// actually resolved — see that package's doc comment for the full lookup
-// order and internal/assets.LocateVerbose's doc comment for why the
-// public-derived candidate exists: it unifies this route's resolution with
-// "/"'s, so the two static trees can no longer silently disagree about
-// where the checkout root is).
+// staticSource labels where one of the two static trees is being served
+// from this run. Both values reach the outside world verbatim: they are
+// logged at startup and reported by /api/health, so a bug report can say
+// "the binary was serving its own embedded copy" or "it was serving my
+// working tree" without anyone having to guess from flags.
+const (
+	sourceEmbedded = "embedded"
+	sourceDisk     = "disk"
+	// sourceMixed is only ever the AGGREGATE "source" field's value: one
+	// tree embedded and the other overridden onto disk, which is a normal
+	// dev combination (iterate on sprites, keep the shipped frontend) but
+	// never something either individual tree reports about itself.
+	sourceMixed = "mixed"
+)
+
+// resolvePublicSource decides which frontend tree "/" serves (EMBED-1).
 //
-// Every attempt LocateVerbose made is logged, in order, so a broken lookup
-// (most commonly: $DEXEL_ASSETS_DIR set to a stale or wrong path,
-// which is trusted verbatim with no existence check) is diagnosable from
-// the log alone instead of just "sprite requests will 404".
+// publicDir is -public's value. Empty (the default, and the only thing a
+// released binary ever sees) means "the copy embed.go compiled into this
+// binary" — that is what makes ./dexel work alone in an empty directory. A
+// non-empty value is an explicit DEV override: serve that directory off
+// disk, so editing app/public and reloading the page needs no Go rebuild.
 //
-// If assets/ cannot be found, the server still starts (matching the
-// activity-provider failure mode elsewhere in main: never fatal for a
-// missing *optional* signal source) — sprite requests simply 404, the same
-// degraded-but-alive behaviour the DOM/CSS already tolerate per game.js's
-// own comments. The frontend's own defence against that silent 404 is a
-// visible in-scene banner (game.js's room_back.png <img> error handler),
-// fed by this function's result via /api/health.
+// The override is deliberately the ONLY way to get disk mode. There is no
+// implicit "is there a ./public next to my cwd?" probe, and nothing is ever
+// created on disk: the old behaviour (default -public "./public", plus an
+// ensurePublicDirExists that manufactured an empty directory when that path
+// missed) turned "launched from the wrong cwd" into a silent 200 serving a
+// bare file listing. Now the default cannot miss, and a bad override warns
+// loudly instead of being papered over.
 //
-// Returns the located directory (nil if none was found) for healthHandler.
-func registerAssetsRoute(mux *http.ServeMux, publicDir string) *string {
-	derived := deriveAssetsCandidateFromPublic(publicDir)
-	dir, attempts, err := assets.LocateVerbose(derived)
-	for _, a := range attempts {
-		log.Printf("assets lookup: %s", a.Strategy)
+// Returns the tree to serve, its source label, and whether index.html is
+// really present (/api/health's publicOk).
+func resolvePublicSource(publicDir string) (fsys fs.FS, source string, ok bool) {
+	if publicDir == "" {
+		embedded := embeddedPublicFS()
+		ok = fsFileExists(embedded, "index.html")
+		if !ok {
+			// Unreachable in a binary built from a tree with a committed
+			// bundle; worth saying out loud rather than 404ing mutely.
+			log.Print("WARNING: the embedded frontend has no index.html — this binary was built without a frontend bundle")
+		}
+		log.Print("frontend: serving / from the copy embedded in this binary")
+		return embedded, sourceEmbedded, ok
 	}
-	if err != nil {
-		log.Printf("assets route not registered: %v (sprite requests will 404)", err)
-		return nil
+
+	dir := publicDir
+	if abs, err := filepath.Abs(publicDir); err == nil {
+		dir = abs
 	}
-	log.Printf("serving /assets/ from %s", dir)
-	mux.Handle("/assets/", http.StripPrefix("/assets/", http.FileServer(http.Dir(dir))))
-	return &dir
+	ok = diskIndexExists(dir)
+	log.Printf("frontend: -public %s — serving / from disk (dev override)", dir)
+	if !ok {
+		log.Printf("WARNING: %s has no index.html — the frontend will not load; check -public, or drop the flag to serve the embedded copy", dir)
+	}
+	return os.DirFS(dir), sourceDisk, ok
 }
 
-// deriveAssetsCandidateFromPublic returns the assets/ directory implied by
-// wherever publicDir actually resolves to on disk. publicDir is normally
-// ".../app/public" (the -public default, "./public", resolved relative to
-// cwd with no upward walk of its own — unlike internal/assets.Locate, so a
-// cwd that isn't exactly app/ silently gets an empty directory from
-// ensurePublicDirExists instead of the real frontend); its grandparent is
-// then the repo root, and "<repo root>/assets" is where the art agent's
-// sprites really live. This gives LocateVerbose one more thing to try
-// beyond the executable/cwd upward walks: whatever base directory main.go
-// is ALREADY trusting for the frontend, so public/ and assets/ are resolved
-// from one consistent base rather than two lookups that can disagree.
-// Returns "" if publicDir itself doesn't resolve to a real directory (no
-// point deriving a candidate from a base that's already broken).
-func deriveAssetsCandidateFromPublic(publicDir string) string {
-	abs, err := filepath.Abs(publicDir)
-	if err != nil {
-		return ""
-	}
-	if info, statErr := os.Stat(abs); statErr != nil || !info.IsDir() {
-		return ""
-	}
-	return filepath.Join(filepath.Dir(filepath.Dir(abs)), "assets")
-}
-
-// ensurePublicDirExists creates an empty ./public (with a .gitkeep) if it
-// doesn't exist yet. app/public/ belongs to the frontend agent — this
-// backend only needs the directory to exist so http.FileServer doesn't
-// 404 the whole server at startup; it never writes an index.html or any
-// asset into it.
+// resolveAssetsSource decides which sprite tree "/assets/" serves (EMBED-1),
+// the same way resolvePublicSource does for the frontend: embedded by
+// default, disk only when $DEXEL_ASSETS_DIR explicitly asks for it.
 //
-// Creating this placeholder is itself a silent-failure hazard: run from the
-// wrong cwd with a relative -public (the default), this quietly manufactures
-// an empty directory that makes "/" 200 with a bare file listing instead of
-// erroring — see publicIndexExists, which main() uses right after this call
-// to detect exactly that case and warn loudly instead of leaving it silent.
-func ensurePublicDirExists(dir string) {
-	if _, err := os.Stat(dir); err == nil {
-		return
+// This replaced a multi-strategy runtime lookup (walk upward from the
+// executable, then upward from the cwd, then a candidate derived from
+// wherever -public resolved) that existed purely because the sprites lived
+// outside the binary and had to be FOUND. Embedded, there is nothing to find
+// and nothing to disagree about — which also removes the failure mode that
+// lookup was built to diagnose: sprites silently 404ing because the binary
+// had been moved away from its checkout.
+//
+// The override is still trusted verbatim (no search), matching
+// assets.EnvOverride's long-standing documented contract, but a value that
+// does not look like a real assets directory now warns instead of only
+// showing up later as 404s.
+//
+// Returns the tree to serve, the disk directory for /api/health (nil when
+// embedded — there is no path to report), and the source label.
+func resolveAssetsSource() (fsys fs.FS, dir *string, source string) {
+	override, set := assets.OverrideDir()
+	if !set {
+		log.Print("assets: serving /assets/ from the copy embedded in this binary")
+		return embeddedAssetsFS(), nil, sourceEmbedded
 	}
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		log.Printf("could not create %s: %v", dir, err)
-		return
+
+	resolved := override
+	if abs, err := filepath.Abs(override); err == nil {
+		resolved = abs
 	}
-	keep := dir + string(os.PathSeparator) + ".gitkeep"
-	if _, err := os.Stat(keep); os.IsNotExist(err) {
-		_ = os.WriteFile(keep, nil, 0o644)
+	log.Printf("assets: $%s=%q — serving /assets/ from disk (dev override)", assets.EnvOverride, override)
+	if !assets.HasSentinel(resolved) {
+		log.Printf("WARNING: %s has no %s — sprite requests will 404; unset $%s to serve the embedded copy", resolved, assets.SentinelFile, assets.EnvOverride)
 	}
+	return os.DirFS(resolved), &resolved, sourceDisk
 }
 
-// publicIndexExists reports whether dir actually holds the frontend's
-// index.html, as opposed to being an empty (possibly just-created by
-// ensurePublicDirExists) directory that http.FileServer would otherwise
-// serve as a silent-but-200 bare file listing.
-func publicIndexExists(dir string) bool {
+// fsFileExists reports whether name is a regular file in fsys — the io/fs
+// equivalent of diskIndexExists, used to sanity-check the embedded tree.
+func fsFileExists(fsys fs.FS, name string) bool {
+	info, err := fs.Stat(fsys, name)
+	return err == nil && !info.IsDir()
+}
+
+// diskIndexExists reports whether dir actually holds the frontend's
+// index.html, as opposed to being an empty or wrong directory that
+// http.FileServer would otherwise serve as a silent-but-200 bare listing.
+func diskIndexExists(dir string) bool {
 	info, err := os.Stat(filepath.Join(dir, "index.html"))
 	return err == nil && !info.IsDir()
 }
 
 // healthResponse is GET /api/health's body: a small, stable, machine-
-// readable summary of the two things known to silently misbehave (the
-// assets/ and public/ lookups) plus a build identifier, so a bug report or
-// an automated check can distinguish "the server is fine, the browser lost
-// the socket" from "the server itself never found its own files".
+// readable summary of the things known to silently misbehave (which static
+// trees are in play, and whether the frontend is really there) plus a build
+// identifier, so a bug report or an automated check can distinguish "the
+// server is fine, the browser lost the socket" from "the server itself never
+// found its own files".
+//
+// Source/PublicSource/AssetsSource are EMBED-1 additions; every field that
+// existed before it kept its name and meaning.
 type healthResponse struct {
-	AssetsDir *string `json:"assetsDir"` // null if assets.LocateVerbose found nothing
-	PublicOk  bool    `json:"publicOk"`  // true iff <publicDir>/index.html exists
+	AssetsDir *string `json:"assetsDir"` // the disk directory /assets/ is served from; null when it is served from the embedded copy
+	PublicOk  bool    `json:"publicOk"`  // true iff the serving frontend tree holds index.html
 	Version   string  `json:"version"`
+	// Source is the aggregate: "embedded" when this binary is serving
+	// only itself (the shipped configuration), "disk" when both trees are
+	// overridden, "mixed" when one of each.
+	Source       string `json:"source"`
+	PublicSource string `json:"publicSource"` // "embedded" | "disk"
+	AssetsSource string `json:"assetsSource"` // "embedded" | "disk"
 }
 
 // healthHandler serves the fixed healthResponse computed once at startup
-// (assetsDir/publicOk never change for the life of the process) as JSON.
-func healthHandler(assetsDir *string, publicOk bool, version string) http.HandlerFunc {
-	body, err := json.Marshal(healthResponse{AssetsDir: assetsDir, PublicOk: publicOk, Version: version})
+// (every field is decided during startup and never changes for the life of
+// the process) as JSON.
+func healthHandler(assetsDir *string, publicOk bool, version, publicSource, assetsSource string) http.HandlerFunc {
+	body, err := json.Marshal(healthResponse{
+		AssetsDir:    assetsDir,
+		PublicOk:     publicOk,
+		Version:      version,
+		Source:       aggregateSource(publicSource, assetsSource),
+		PublicSource: publicSource,
+		AssetsSource: assetsSource,
+	})
 	if err != nil {
 		log.Fatalf("marshal health response: %v", err) // unreachable: healthResponse always marshals
 	}
@@ -501,6 +537,16 @@ func healthHandler(assetsDir *string, publicOk bool, version string) http.Handle
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write(body)
 	}
+}
+
+// aggregateSource collapses the two per-tree labels into /api/health's
+// headline "source": the two agree in both configurations anyone ships or
+// debugs end-to-end, and disagree only in a partial dev override.
+func aggregateSource(publicSource, assetsSource string) string {
+	if publicSource == assetsSource {
+		return publicSource
+	}
+	return sourceMixed
 }
 
 // buildVersion returns the VCS revision this binary was built from (plus a

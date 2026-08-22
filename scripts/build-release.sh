@@ -3,11 +3,14 @@
 # dexel — release build script.
 #
 # Builds the Go server binary (module github.com/jawwadzafar/dexel/app,
-# source under app/) for each release target, and packages each one into a
-# self-contained archive: the binary plus the two static trees it serves
-# (app/public/ and the repo's assets/) plus the licensing files a
-# redistributed binary needs (README.md, LICENSE, NOTICE,
-# THIRD-PARTY-LICENSES.md).
+# source under app/) for each release target, and packages each one into an
+# archive holding the binary plus the licensing files a redistributed binary
+# needs (README.md, LICENSE, NOTICE, THIRD-PARTY-LICENSES.md).
+#
+# Since EMBED-1 (docs/plan/ROADMAP.md) the binary IS the product: app/embed.go
+# compiles both static trees it serves — app/public/ (the committed frontend
+# bundle) and app/assets/ (the sprite PNGs) — into it with go:embed, so no
+# public/ or assets/ directory is shipped, copied, or needed beside it.
 #
 # Why this exists as a script rather than inline YAML: it needs to be
 # runnable and testable on a laptop with no CI involved at all — the exact
@@ -55,30 +58,28 @@
 # DIST_DIR/sha256sums.txt covering every archive produced this run.
 #
 # ---------------------------------------------------------------------------
-# Archive layout (why it's flat)
+# Archive layout
 # ---------------------------------------------------------------------------
-# app/internal/assets.LocateVerbose() finds assets/ by walking upward from
-# the *executable's own directory* looking for an "assets" subdirectory
-# (among other strategies — see that file's doc comment). main.go's
-# -public flag defaults to "./public", resolved relative to the process's
-# cwd with no upward walk of its own. So a binary run as `./dexel` from a
-# directory that itself contains ./public and ./assets satisfies both
-# lookups with zero flags or environment variables: publicDir="./public"
-# resolves directly, and searchUpward(executableDir) finds
-# "<executableDir>/assets" on its very first probe. That is why each
-# archive is packaged flat:
+# The archive is the binary and its paperwork, nothing else:
 #
 #   dexel-<version>-<os>-<arch>/
 #     dexel (or dexel.exe)
-#     public/                  (copy of app/public — the committed frontend bundle)
-#     assets/                  (copy of the repo's assets/ — sprites)
 #     README.md
 #     LICENSE
 #     NOTICE
 #     THIRD-PARTY-LICENSES.md
 #
-# `cd` into the extracted directory and run `./dexel` (or `dexel.exe`) —
-# it Just Works with no flags.
+# Extract it anywhere — or copy just the binary out of it and delete the rest
+# — and run `./dexel` (or `dexel.exe`). It serves the whole game from its own
+# embedded copies of app/public and app/assets (app/embed.go), so there is
+# nothing next to it to find, nothing to keep in sync, and no flags or
+# environment variables to set. Earlier releases shipped public/ and assets/
+# directories alongside the binary and depended on a runtime lookup finding
+# them; EMBED-1 deleted that whole class of failure.
+#
+# The two "is the source tree complete" checks below stay, and matter MORE
+# than before: whatever is missing from app/public or app/assets at build
+# time is missing from the binary itself, permanently and invisibly.
 
 set -euo pipefail
 
@@ -120,9 +121,9 @@ rm -f "$DIST_DIR/sha256sums.txt"
 
 # ---- helpers ----------------------------------------------------------------
 
-# License/doc files bundled into every archive alongside the binary and the
-# two static trees. Fails loudly if one is missing rather than silently
-# shipping an incomplete archive.
+# License/doc files bundled into every archive alongside the binary. Fails
+# loudly if one is missing rather than silently shipping an incomplete
+# archive.
 license_files=(README.md LICENSE NOTICE THIRD-PARTY-LICENSES.md)
 for f in "${license_files[@]}"; do
   if [ ! -f "$REPO_ROOT/$f" ]; then
@@ -131,13 +132,21 @@ for f in "${license_files[@]}"; do
   fi
 done
 
+# app/public and app/assets are go:embed inputs, not files to copy: if either
+# is missing or incomplete the build still SUCCEEDS and produces a binary
+# that silently serves an incomplete game. Check them here, before building.
 if [ ! -f "$APP_DIR/public/index.html" ]; then
-  echo "ERROR: $APP_DIR/public/index.html not found — the frontend bundle must be built and committed before packaging a release" >&2
+  echo "ERROR: $APP_DIR/public/index.html not found — the frontend bundle must be built and committed before packaging a release (it is embedded into the binary)" >&2
   exit 1
 fi
 
-if [ ! -f "$REPO_ROOT/assets/room_back.png" ]; then
-  echo "ERROR: $REPO_ROOT/assets/room_back.png not found — assets/ is missing or incomplete" >&2
+if [ ! -f "$APP_DIR/public/js/dexel.js" ]; then
+  echo "ERROR: $APP_DIR/public/js/dexel.js not found — run 'npm run build' in app/frontend/ and commit the bundle before packaging a release" >&2
+  exit 1
+fi
+
+if [ ! -f "$APP_DIR/assets/room_back.png" ]; then
+  echo "ERROR: $APP_DIR/assets/room_back.png not found — app/assets/ is missing or incomplete (regenerate with 'python3 tools/gen_assets.py')" >&2
   exit 1
 fi
 
@@ -171,8 +180,7 @@ build_one() {
     CGO_ENABLED="$cgo" GOOS="$os" GOARCH="$arch" go build -trimpath -o "$stage/$bin_name" .
   )
 
-  cp -r "$APP_DIR/public" "$stage/public"
-  cp -r "$REPO_ROOT/assets" "$stage/assets"
+  # No public/ or assets/ copy: both are inside the binary (app/embed.go).
   for f in "${license_files[@]}"; do
     cp "$REPO_ROOT/$f" "$stage/$f"
   done

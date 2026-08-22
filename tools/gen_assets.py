@@ -18,7 +18,7 @@ bytes. The run ends with a self-check (size, palette/ramp purity, opaque-pixel
 count, the chair hard-region constraint, the two frame-difference rules, the
 monitor's exact screen rect) and exits non-zero if any sprite fails it, so a
 botched edit here cannot quietly ship a blank, off-palette, or mis-anchored
-asset. It also deletes any stale file in assets/ that is not part of the v2
+asset. It also deletes any stale file in app/assets/ that is not part of the v2
 manifest, so a rewrite like this one cannot leave v0.2 corpses behind.
 """
 
@@ -30,7 +30,12 @@ from pathlib import Path
 from PIL import Image
 
 REPO = Path(__file__).resolve().parent.parent
-ASSETS = REPO / "assets"
+# Output lives INSIDE the Go module (app/), not at the repository root:
+# app/embed.go compiles these PNGs into the server binary with go:embed, and
+# go:embed can only reach files inside the module that declares the directive
+# (EMBED-1, docs/plan/ROADMAP.md). Moving this path is the whole reason the
+# sprites are no longer at <repo>/assets.
+ASSETS = REPO / "app" / "assets"
 
 # The palette from docs/art-direction.md, verbatim (18 colours). Sprites
 # reference these by name only - a hex literal anywhere below would be a
@@ -287,7 +292,7 @@ def chair_back_top_rim(s: "Sprite", x0: int, x1: int, y: int) -> None:
 
 # The 47-file v2 manifest (docs/art-direction.md, "Sprite manifest v2"), used
 # both to author and to verify. Keep in sync with the doc; the self-check
-# compares against this and the final assets/ directory listing must equal
+# compares against this and the final app/assets/ directory listing must equal
 # exactly these files plus their derived thumbnails - nothing else survives.
 SPEC: list[tuple[str, int, int]] = [
     # Fixed scenery (3)
@@ -2658,9 +2663,9 @@ def check_frame_diff(name_a: str, name_b: str, expect_max_px: int | None = None)
 
 
 def cleanup_stale(expected: set[str]) -> list[str]:
-    """Delete any file in assets/ that is not part of this run's expected
+    """Delete any file in app/assets/ that is not part of this run's expected
     output (the 45-file manifest plus its derived thumbnails). This is what
-    guarantees assets/ contains EXACTLY the v2 files after a run - the v0.2
+    guarantees app/assets/ contains EXACTLY the v2 files after a run - the v0.2
     corpses (room_bg.png, dev_idle.png, chair.png, ...) do not survive a
     rewrite by omission, they are actively removed."""
     removed = []
@@ -2791,7 +2796,7 @@ def main() -> int:
         if extra:
             print("UNEXPECTED EXTRA:", sorted(extra))
     else:
-        print(f"\nassets/ contains exactly {len(expected)} files "
+        print(f"\napp/assets/ contains exactly {len(expected)} files "
               f"({len(SPEC)} manifest + {len(thumb_names)} thumbnails)")
 
     if not ok:

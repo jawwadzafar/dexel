@@ -26,10 +26,6 @@
     "externalBin": [
       "binaries/dexel-server"
     ],
-    "resources": {
-      "../../app/public/": "public/",
-      "../../assets/": "assets/"
-    },
     "category": "DeveloperTool",
     "shortDescription": "A developer companion that earns Dev Cash from your real activity",
     "longDescription": "dexel is a desktop companion that watches how much you actually type and move, turns that into Dev Cash, and lets you spend it dressing up your little developer. The window is a native frame around dexel's own loopback server; nothing leaves your machine."

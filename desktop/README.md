@@ -40,7 +40,8 @@ desktop/
   src-tauri/
     Cargo.toml               declares its OWN empty [workspace] (see below)
     build.rs                 tauri_build::build()
-    tauri.conf.json          window, bundle.resources, externalBin, icons
+    tauri.conf.json          window, externalBin, icons (no bundle.resources —
+                             the sidecar is self-contained, see EMBED-1 below)
     capabilities/default.json  minimal ACL; grants the loopback page NOTHING
     icons/                   PLACEHOLDER icon set (see Icons)
     binaries/                sidecar build artifacts — gitignored
@@ -127,9 +128,11 @@ needs `rpmbuild`. Pass `--bundles` to narrow it, as CI does.
 
 > `cargo tauri build` will also rebuild the frontend? **No.** There is no
 > `beforeBuildCommand`: dexel's frontend bundle is committed
-> (`app/public/js/game.js`) and `bundle.resources` ships `app/public/`
-> verbatim. If you changed the TypeScript, run `npm run build` in
-> `app/frontend/` first — CI asserts the committed bundle has not drifted.
+> (`app/public/js/dexel.js`) and is compiled into the sidecar binary by
+> `go:embed` when `scripts/build-sidecar.sh` runs. If you changed the
+> TypeScript, run `npm run build` in `app/frontend/` first **and then rebuild
+> the sidecar** — otherwise the bundle you edited is not in the binary the
+> bundler picks up. CI asserts the committed bundle has not drifted.
 
 ---
 
@@ -137,24 +140,28 @@ needs `rpmbuild`. Pass `--bundles` to narrow it, as CI does.
 
 All of it is in [`src-tauri/src/lib.rs`](src-tauri/src/lib.rs).
 
+Since **EMBED-1** (`docs/plan/ROADMAP.md`) the sidecar is a *self-contained*
+binary: `app/embed.go` compiles the frontend (`app/public/`) and the sprites
+(`app/assets/`) into it with `go:embed`. So this shell hands it an address and
+nothing else. What used to be step 1 — resolve the Tauri resource directory,
+then pass `-public <res>/public` and `DEXEL_ASSETS_DIR=<res>/assets` — is
+gone, along with the `bundle.resources` map that staged those trees and the
+`resolve_roots()` fallback that guessed when staging did not happen. Those two
+Go flags still exist, but only as explicit dev overrides for iterating on the
+frontend/art without a rebuild; a packaged app never sets them.
+
 ```
 setup()
   |
-  1. resolve_roots()      <resource dir>/public + <resource dir>/assets
-  |                       (falls back to the source tree when the resource
-  |                        dir has no public/index.html, e.g. `tauri dev`)
-  |
-  2. app.shell().sidecar("dexel-server")
+  1. app.shell().sidecar("dexel-server")
   |      .arg("-addr").arg("127.0.0.1:0")     loopback only, ephemeral port
-  |      .arg("-public").arg(<res>/public)
-  |      .env("DEXEL_ASSETS_DIR", <res>/assets)
   |      .spawn()  ->  (Receiver<CommandEvent>, CommandChild)
   |
-  3. reader thread: drain stdout/stderr into the log forever; on the line
+  2. reader thread: drain stdout/stderr into the log forever; on the line
   |      "DEXEL_LISTENING http://127.0.0.1:<port>"  send the URL back
   |      (bounded wait: HANDSHAKE_TIMEOUT = 20s, then fail loudly)
   |
-  4. WebviewWindowBuilder::new(app, "main", WebviewUrl::External(url))
+  3. WebviewWindowBuilder::new(app, "main", WebviewUrl::External(url))
   |      .title("dexel").inner_size(660,460).min_inner_size(660,460)
   |      .always_on_top(true).decorations(true).center().build()
   |
@@ -223,10 +230,13 @@ Tested for real on the authoring machine (Go 1.27, no Rust):
   `x86_64-pc-windows-msvc`, `aarch64-pc-windows-msvc`, and *loudly skips* the
   two darwin targets (they need cgo for the real macOS provider, so they are
   built on the Mac that builds the macOS bundle).
-- The linux sidecar, launched exactly as `lib.rs` launches it, prints
+- The linux sidecar, launched exactly as `lib.rs` launches it — `-addr
+  127.0.0.1:0` and no other argument, from an **empty directory** with no
+  `public/` or `assets/` beside it — prints
   `DEXEL_LISTENING http://127.0.0.1:<port>` as its first stdout line, binds
-  `127.0.0.1` only, serves `GET /` as 200 with `publicOk: true` and the
-  `DEXEL_ASSETS_DIR` override honoured, and on **SIGTERM** logs
+  `127.0.0.1` only, serves `GET /` as 200 with `/api/health` reporting
+  `publicOk: true` and `"source": "embedded"`, serves its sprites from the
+  embedded copy, and on **SIGTERM** logs
   `shutting down: saving state...`, writes `state.json`, and exits 0 — which
   is precisely why the shell sends SIGTERM rather than SIGKILL.
 - `tauri.conf.json` and `capabilities/default.json` parse as JSON;
@@ -239,7 +249,6 @@ Doc sources every API/config key was checked against:
   `(Receiver<CommandEvent>, CommandChild)`, `CommandEvent::Stdout(Vec<u8>)`,
   the `shell:allow-execute` capability shape.
 - <https://v2.tauri.app/reference/config/> — the config key names and nesting.
-- <https://v2.tauri.app/develop/resources/> — `bundle.resources` map form.
 - <https://v2.tauri.app/security/capabilities/> — capability file format and
   auto-discovery from `capabilities/`.
 - <https://v2.tauri.app/plugin/logging/> — default targets are exactly
@@ -258,21 +267,13 @@ thing that is wrong":
 
 1. **It compiles at all.** Type inference, trait bounds, and whether
    `CommandChild` is `Send + Sync` enough for `app.manage()`.
-2. **`bundle.resources` map form lands where `resolve_roots` looks.** The
-   config maps `"../../app/public/" -> "public/"`; the code expects
-   `<resource dir>/public/index.html`. If the trailing-slash semantics differ,
-   the fallback branch fires and `/api/health` will say `publicOk: false`.
-   `/api/health` is the diagnostic — check it first.
-3. **Whether `cargo tauri dev` stages `bundle.resources`** next to the dev
-   binary. The source-tree fallback in `resolve_roots` exists so `dev` works
-   either way, but which branch it takes is unobserved.
-4. **`always_on_top` + a native frame** on each platform.
-5. **The quit gate.** After closing the window, `pgrep -f dexel-server` must
+2. **`always_on_top` + a native frame** on each platform.
+3. **The quit gate.** After closing the window, `pgrep -f dexel-server` must
    come back empty, and the save must be newer than the session start (proving
    SIGTERM won, not SIGKILL).
-6. **The macOS `.icns`** is written by Pillow's pure-Python ICNS encoder, not
+4. **The macOS `.icns`** is written by Pillow's pure-Python ICNS encoder, not
    `iconutil`. It reads back correctly, but no macOS bundler has consumed it.
-7. **Whether the `shell:allow-execute` capability is needed at all.** The
+5. **Whether the `shell:allow-execute` capability is needed at all.** The
    official docs state the ACL scope applies to frontend JS calls, not
    Rust-side ones; the entry is kept because the sidecar guide shows it and it
    costs nothing.
