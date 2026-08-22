@@ -63,6 +63,21 @@ type StatCountersSave struct {
 	// schema 1->2 bump.
 	FocusSessions uint64 `json:"focusSessions"`
 	AppSwitches   uint64 `json:"appSwitches"`
+	// PausedSeconds (PR-5, dev_docs/production-runtime/ARCHITECTURE.md
+	// Decision 14) mirrors game.StatCounters.PausedSeconds, added in
+	// schema 7 (see CurrentSchema's doc comment). A schema-6 file has no
+	// such key; json.Unmarshal leaves it at 0, the correct "this build
+	// never recorded a paused second" state — additive and non-breaking,
+	// the same pattern as every bump before it.
+	//
+	// It reaches THREE places for the price of one, because every one of
+	// them reuses this type: the today/lifetime buckets (StatsSave), every
+	// finalized day (DayBucketSave.Counters), and both halves of an
+	// in-progress session (ActiveSessionSave.Baseline/Watermark) — which
+	// is exactly the "a counter added to it later (e.g. PR-5's
+	// pausedSeconds...) joins the session with no edit here" property
+	// ActiveSessionSave's own doc comment predicted.
+	PausedSeconds uint64 `json:"pausedSeconds"`
 }
 
 // CoinBreakdownSave is the persisted analogue of game.CoinBreakdown — the
@@ -244,7 +259,21 @@ type SaveData struct {
 	// exactly like ImportedFromRust/ImportedAt.
 	Session        *ActiveSessionSave `json:"session,omitzero"`
 	SessionLogHead string             `json:"sessionLogHead,omitempty"`
-	Mac            string             `json:"mac,omitempty"`
+	// Paused (PR-5, dev_docs/production-runtime/ARCHITECTURE.md Decision
+	// 16 and FORK D, schema 7) persists the user's pause INTENT across a
+	// restart: "pause is a user intent, and `dexel update` restarts the
+	// runtime; a pause that silently evaporated mid-update would be a lie
+	// in the other direction". A paused dexel therefore comes back paused
+	// — and says so loudly on startup (main.go logs one line) and in
+	// `dexel status`, so a paused-and-forgotten dexel is never mute.
+	//
+	// `omitempty` because false is both the zero value and the correct
+	// grandfathered default: a schema-6-or-earlier payload has no key at
+	// all, json.Unmarshal leaves this false, and Apply hands that to
+	// game.Game.RestorePaused — exactly the "not paused" state such a
+	// save represents.
+	Paused bool   `json:"paused,omitempty"`
+	Mac    string `json:"mac,omitempty"`
 }
 
 // CurrentSchema is the schema version this build writes.
@@ -320,10 +349,27 @@ type SaveData struct {
 // predates P2. No dedicated migration code beyond this bump; nothing is
 // backfilled, because inventing past sessions would be fabrication, not
 // migration (§5.6: "we never had sessions before, so inventing past ones
-// would be fabrication"). PR-5 (pause) must take schema 6 -> 7 next — only
-// one schema-bumping task may be in flight at a time
-// (dev_docs/production-runtime/MIGRATION_PLAN.md sequencing constraint 3).
-const CurrentSchema = 6
+// would be fabrication").
+//
+// Bumped 6 -> 7 for PR-5 (pause; dev_docs/production-runtime/
+// MIGRATION_PLAN.md §PR-5, ARCHITECTURE.md §6 Decisions 14/16 and FORK D
+// — P2/Sessions had already claimed 5 -> 6, so pause takes the next
+// number, per MIGRATION_PLAN.md sequencing constraint 3's "only ONE
+// schema-bumping task in flight at a time"): SaveData gains Paused (the
+// persisted pause intent) and StatCountersSave gains PausedSeconds (the
+// third, disjoint time bucket). Additive in exactly the way every prior
+// bump was: a schema-6 payload has neither key, json.Unmarshal leaves
+// Paused false and every PausedSeconds 0, and Apply hands those to
+// game.Game.RestorePaused/RestoreStats — respectively "not paused" and
+// "this build never recorded a paused second", which is precisely what a
+// pre-PR-5 save means. Nothing is backfilled: pause did not exist before
+// this bump, so inventing paused time (or, worse, reinterpreting some
+// recorded IdleSeconds as paused) would be fabrication, not migration. No
+// dedicated migration code beyond the bump. ErrFutureSchema is unchanged:
+// a schema-8 save is still renamed ".future" and refused, never silently
+// downgraded (see TestFutureSchema8RefusalStillFiresAfterTheSchema7Bump,
+// which pins the concrete future number one bump later again).
+const CurrentSchema = 7
 
 // DefaultPath returns <StateDir>/state.db — on Linux with
 // $XDG_CONFIG_HOME unset this is byte-identical to the
@@ -441,6 +487,12 @@ func Snapshot(g *game.Game) SaveData {
 		},
 		Session:        activeSession,
 		SessionLogHead: g.SessionLogHead(),
+		// Paused (PR-5, schema 7): the pause intent, persisted so a paused
+		// dexel restarts paused (FORK D). main.go writes an IMMEDIATE save
+		// on both pause and resume rather than waiting for the 30s
+		// autosave, so the boolean on disk can never disagree with what
+		// the user just asked for by more than a crash window.
+		Paused: g.Paused(),
 	}
 }
 
@@ -475,6 +527,7 @@ func statCountersToSave(c game.StatCounters) StatCountersSave {
 		SprintsCompleted:   c.SprintsCompleted,
 		FocusSessions:      c.FocusSessions,
 		AppSwitches:        c.AppSwitches,
+		PausedSeconds:      c.PausedSeconds,
 	}
 }
 
@@ -487,6 +540,7 @@ func statCountersFromSave(c StatCountersSave) game.StatCounters {
 		SprintsCompleted:   c.SprintsCompleted,
 		FocusSessions:      c.FocusSessions,
 		AppSwitches:        c.AppSwitches,
+		PausedSeconds:      c.PausedSeconds,
 	}
 }
 
@@ -548,6 +602,13 @@ func Apply(g *game.Game, d SaveData) {
 	}
 	g.RestoreActiveSession(id, startedAt, lastActivityAt, baseline, watermark, coinsEarned, longestFocusBlockSeconds)
 	g.SetSessionLogHead(d.SessionLogHead)
+
+	// Paused (PR-5, schema 7, ARCHITECTURE.md FORK D): restore the pause
+	// intent. Like the two calls above this has no ordering constraint
+	// against RestoreStats — it is a flag the server READS after Apply
+	// returns (to decide whether to start the activity provider at all),
+	// not an input to the day-rollover logic.
+	g.RestorePaused(d.Paused)
 
 	// RestoreHistory/RestoreStreak MUST run before RestoreStats (A3,
 	// docs/plan/A3-design.md §4/§7 Task GO-2, extending A2's

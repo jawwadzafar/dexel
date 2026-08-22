@@ -30,9 +30,12 @@
 //   - the X-Dexel-Token header PR-3 already sent on every probe is now
 //     actually enforced server-side (app/lifecycle_handlers.go).
 //
-// `pause`/`resume` are ARCHITECTURE.md Decision 5's other two lifecycle
-// verbs; they are not built here — PR-5 owns the Paused semantics a
-// pause/resume endpoint would otherwise have nothing real to flip.
+// PR-5 (MIGRATION_PLAN.md §PR-5) adds the last two verbs,
+// `pause`/`resume`, on the same endpoint-only footing: they post to
+// /api/lifecycle/{pause,resume} and there is deliberately no signal
+// fallback, because no signal can express "stop the activity provider"
+// (see lifecycle.RequestPause). `status` reports the live `paused` flag
+// the same round-trip already returns.
 package main
 
 import (
@@ -463,10 +466,18 @@ type statusJSON struct {
 	Commit    string `json:"commit,omitempty"`
 	StartedAt string `json:"startedAt,omitempty"`
 	Uptime    int64  `json:"uptimeSeconds,omitempty"`
-	StateDir  string `json:"stateDir"`
-	LogPath   string `json:"logPath"`
-	Cleaned   bool   `json:"cleanedStaleRuntimeFile,omitempty"`
-	Reason    string `json:"reason,omitempty"`
+	// Paused (PR-5) is the live pause state, present only when it is
+	// TRUE — matching the omitempty style of every other running-only
+	// field here, and meaning a consumer reads "absent or false" as "not
+	// paused" exactly as it already reads an absent pid as "no pid".
+	// ARCHITECTURE.md Decision 16 requires this to be visible from a
+	// terminal at all: "a paused-and-forgotten dexel must be obvious,
+	// never mute".
+	Paused   bool   `json:"paused,omitempty"`
+	StateDir string `json:"stateDir"`
+	LogPath  string `json:"logPath"`
+	Cleaned  bool   `json:"cleanedStaleRuntimeFile,omitempty"`
+	Reason   string `json:"reason,omitempty"`
 }
 
 // cmdStatus answers "is a dexel running here" by round-trip
@@ -514,6 +525,10 @@ func cmdStatus(args []string) int {
 		out.Commit = firstNonEmpty(st.Live.Commit, st.Runtime.Commit)
 		out.StartedAt = st.Runtime.StartedAt
 		out.Uptime = uptimeSeconds(st.Runtime.StartedAt, time.Now())
+		// PR-5: only the LIVE answer can know this — runtime.json is
+		// written once at startup and never rewritten, so it has no
+		// opinion about a pause that happened later.
+		out.Paused = st.Live.Paused
 	} else {
 		out.Reason = st.Reason
 	}
@@ -530,6 +545,15 @@ func cmdStatus(args []string) int {
 
 	if st.Running {
 		fmt.Fprintln(env.out, "dexel is running")
+		if out.Paused {
+			// Said in the same breath as "running", because the two
+			// together are the whole answer: the process is alive AND it
+			// is not watching anything. Printing only "running" for a
+			// paused dexel would be the mute failure Decision 16 names.
+			fmt.Fprintln(env.out, "  tracking  PAUSED — nothing is being observed or counted (`dexel resume` to resume)")
+		} else {
+			fmt.Fprintln(env.out, "  tracking  on")
+		}
 		fmt.Fprintf(env.out, "  pid       %d\n", out.Pid)
 		fmt.Fprintf(env.out, "  url       %s\n", out.URL)
 		fmt.Fprintf(env.out, "  version   %s (commit %s)\n", out.Version, out.Commit)
@@ -817,4 +841,68 @@ func (e *cliEnv) followLog() int {
 		}
 		time.Sleep(250 * time.Millisecond)
 	}
+}
+
+// --------------------------------------------------------- pause/resume
+
+// cmdPause / cmdResume are ARCHITECTURE.md Decision 3's last two lifecycle
+// verbs and PR-5's CLI surface (MIGRATION_PLAN.md §PR-5).
+//
+// Not-running is an ERROR here, unlike `stop` (where "make sure it is not
+// running" is already satisfied). Pause is a state a RUNNING runtime holds
+// and persists; there is nothing to pause when nothing is running, and
+// silently exiting 0 would let a user believe tracking had been turned off
+// when the next `dexel start` would happily start observing. Saying so and
+// exiting non-zero is the honest answer.
+//
+// Both verbs are idempotent server-side (game.Game.SetPaused reports no
+// change, so no second provider stop and no second save happen), so a
+// repeated `dexel pause` is harmless and still prints the truth.
+func cmdPause(args []string) int  { return cmdSetPaused("pause", true, args) }
+func cmdResume(args []string) int { return cmdSetPaused("resume", false, args) }
+
+func cmdSetPaused(verb string, pause bool, args []string) int {
+	env, code := cliEnvOrReport()
+	if env == nil {
+		return code
+	}
+	fs := flag.NewFlagSet("dexel "+verb, flag.ExitOnError)
+	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+	return env.setPaused(verb, pause)
+}
+
+func (e *cliEnv) setPaused(verb string, pause bool) int {
+	st, err := lifecycle.Discover(e.stateDir, e.client)
+	if err != nil {
+		fmt.Fprintf(e.errOut, "dexel: %v\n", err)
+		return 1
+	}
+	if !st.Running {
+		fmt.Fprintf(e.errOut, "dexel: not running — there is nothing to %s (start it with `dexel start`)\n", verb)
+		return 1
+	}
+
+	paused, err := lifecycle.RequestPause(e.client, st.Runtime, pause)
+	if err != nil {
+		// No signal fallback exists, by design (lifecycle.RequestPause) —
+		// so this is a plain failure, reported as one, never a silent
+		// half-success.
+		fmt.Fprintf(e.errOut, "dexel: %v\n", err)
+		return 1
+	}
+	// Report what the runtime SAID is in effect, not what was asked for.
+	// If the two disagree (they never should) the user learns it here
+	// rather than trusting an echo.
+	if paused != pause {
+		fmt.Fprintf(e.errOut, "dexel: asked to %s, but the runtime reports paused=%v — investigate\n", verb, paused)
+		return 1
+	}
+	if paused {
+		fmt.Fprintf(e.out, "dexel PAUSED (pid %d) — tracking is off; nothing is observed or counted while paused. `dexel resume` resumes.\n", st.Runtime.Pid)
+	} else {
+		fmt.Fprintf(e.out, "dexel RESUMED (pid %d) — tracking is on again, from a clean slate (nothing from before the pause counts).\n", st.Runtime.Pid)
+	}
+	return 0
 }

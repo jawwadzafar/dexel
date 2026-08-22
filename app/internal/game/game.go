@@ -89,6 +89,20 @@ type StateMessage struct {
 	// SET_NAME — the client never decides it, never sets it, and never
 	// keeps showing the intro against a false here.
 	Onboarding bool `json:"onboarding"`
+	// Paused is PR-5's pause signal (dev_docs/production-runtime/
+	// ARCHITECTURE.md Decision 15, MIGRATION_PLAN.md §PR-5) and it is the
+	// AUTHORITATIVE one: while it is true the activity provider is
+	// STOPPED, engine.Engine.Tick is not called, and nothing about the
+	// economy or the analytics is accruing.
+	//
+	// Deliberately a boolean rather than a fourth `activeState` string:
+	// docs/ui-spec.md §6.1 pins activeState to exactly `coding | idle |
+	// onBreak`, and while paused this field reports `idle` — the
+	// engine's own non-claiming fallback. `onBreak` would be ADR 0010's
+	// exact lie ("on break because you paused me") and `coding` is
+	// obviously false, so the honest encoding is "the mood says nothing,
+	// and `paused` says why".
+	Paused bool `json:"paused"`
 }
 
 // StatCounters is one bucket's plain activity counts — content-free by
@@ -131,6 +145,25 @@ type StatCounters struct {
 	// the game layer — see Game.recordStats). Always 0 on Linux, which
 	// never sets ActiveApp (ADR 0009); shown honestly, no special-casing.
 	AppSwitches uint64 `json:"appSwitches"`
+	// PausedSeconds (PR-5, dev_docs/production-runtime/ARCHITECTURE.md
+	// Decision 14) counts one second for every tick the runtime spent
+	// PAUSED — the user having explicitly said "stop watching me", with
+	// the provider stopped and no engine tick taken at all.
+	//
+	// It is its OWN bucket and it must never be folded into IdleSeconds:
+	// idle means "observed, and doing nothing", paused means "not
+	// observed". Conflating them would be the ADR 0010 lie in the other
+	// direction — a suspiciously idle stretch where the honest answer is
+	// "dexel wasn't looking".
+	//
+	// Together with ActiveSeconds/IdleSeconds this partitions every
+	// second the runtime was up during the bucket, exactly once:
+	// ActiveSeconds counts MoodCoding ticks, IdleSeconds counts every
+	// OTHER ticked second, and PausedSeconds counts every second no tick
+	// was taken because the user paused. Hence the unit-tested
+	// invariant `ActiveSeconds + IdleSeconds + PausedSeconds == uptime
+	// seconds in that bucket` (see stats_test.go).
+	PausedSeconds uint64 `json:"pausedSeconds"`
 }
 
 // StatsView is the `stats` object inside a `state` message
@@ -285,6 +318,20 @@ type Game struct {
 	// by SetConfigName. Never set by a client.
 	configName string
 	onboarding bool
+
+	// paused is PR-5's pause state (dev_docs/production-runtime/
+	// ARCHITECTURE.md §6). Unlike onboarding it IS persisted
+	// (SaveData.Paused, FORK D: "pause is a user intent... a pause that
+	// silently evaporated mid-update would be a lie in the other
+	// direction"), so a dexel that was paused when it exited comes back
+	// paused.
+	//
+	// This package only HOLDS the flag and stops accruing; the server
+	// (main.go) owns the two side effects that make it true —
+	// activity.Provider.Stop()/Start() and skipping engine.Engine.Tick()
+	// — because game.Game is pure and knows about neither. See SetPaused,
+	// TickPaused, and Tick's own doc comment.
+	paused bool
 
 	// session/pendingSession/sessionLog/sessionLogHead/sessionNames are
 	// Phase P2's (docs/plan/P2-design.md, ADR 0017) session state — see
@@ -897,11 +944,22 @@ func (g *Game) State() StateMessage {
 	}
 	ticker := append([]string(nil), g.tickerLines...)
 
+	// While paused, the wire's mood is pinned to the engine's own
+	// non-claiming fallback (ARCHITECTURE.md Decision 15: "While paused,
+	// activeState reports idle... paused: true is the authoritative
+	// signal"). SetPaused already parks g.Mood/g.ActiveApp there, so this
+	// is belt-and-braces for the one state a hand-restored save could
+	// otherwise present: paused, with a mood loaded from somewhere else.
+	mood := g.Mood
+	if g.paused {
+		mood = engine.MoodIdle
+	}
+
 	return StateMessage{
 		Type:         "state",
 		V:            1,
-		ActiveState:  string(g.Mood),
-		ActivityLine: ActivityLine(g.Mood, g.ActiveApp, g.ActiveAppDisplay),
+		ActiveState:  string(mood),
+		ActivityLine: ActivityLine(mood, g.ActiveApp, g.ActiveAppDisplay),
 		DevCash:      g.DevCash,
 		Level:        levelForXP(g.XP),
 		XP:           g.XP,
@@ -928,5 +986,6 @@ func (g *Game) State() StateMessage {
 		Sessions:   g.sessionsView(),
 		Config:     ConfigView{Name: g.configName},
 		Onboarding: g.onboarding,
+		Paused:     g.paused,
 	}
 }

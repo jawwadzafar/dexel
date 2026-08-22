@@ -268,13 +268,13 @@ func runServe(mode serveMode, args []string) {
 
 	log.Printf("%s starting", versionLine())
 
+	// PR-5 (MIGRATION_PLAN.md §PR-5, ARCHITECTURE.md Decision 13/16): the
+	// provider is SELECTED here but deliberately not STARTED yet. Whether
+	// it may observe anything at all depends on SaveData.Paused, which is
+	// not known until loadOrImport below has run — and a paused dexel must
+	// never observe, not even for the few milliseconds it would take to
+	// start a provider and stop it again. See startProvider below.
 	provider, providerDesc := selectProvider(*providerKind, *fakeScript)
-	if err := provider.Start(); err != nil {
-		// Not fatal: every provider degrades to a blind, zero-signal state
-		// rather than crashing (ADR 0010's honesty rules then simply never
-		// claim onBreak from it).
-		log.Printf("activity provider start warning: %v", err)
-	}
 	log.Printf("activity provider: %s", providerDesc)
 
 	g := game.New()
@@ -331,6 +331,30 @@ func runServe(mode serveMode, args []string) {
 		log.Print("first launch: no save and no name — onboarding")
 	}
 
+	// startProvider is the ONE place observation begins — at boot (just
+	// below) and again on resume (the action loop's RESUME branch) — so
+	// "starting the provider" means the same thing, and logs the same
+	// way, in both.
+	startProvider := func() {
+		if err := provider.Start(); err != nil {
+			// Not fatal: every provider degrades to a blind, zero-signal
+			// state rather than crashing (ADR 0010's honesty rules then
+			// simply never claim onBreak from it).
+			log.Printf("activity provider start warning: %v", err)
+		}
+	}
+
+	// PR-5 / FORK D: a dexel that was paused when it last exited comes
+	// back PAUSED, and says so — "a paused-and-forgotten dexel must be
+	// obvious, never mute" (ARCHITECTURE.md Decision 16). The provider is
+	// simply never started, so this process observes nothing at all until
+	// somebody resumes it.
+	if g.Paused() {
+		log.Printf("PAUSED: this dexel was paused when it last exited — the activity provider (%s) has NOT been started and nothing is being observed. Resume with `dexel resume`, or from the UI.", providerDesc)
+	} else {
+		startProvider()
+	}
+
 	eng := engine.New(provider)
 	extraOrigins, err := wsExtraOriginPatterns(allowOrigins)
 	if err != nil {
@@ -384,10 +408,28 @@ func runServe(mode serveMode, args []string) {
 		if parseErr != nil {
 			lifecycleStartedAt = time.Now()
 		}
+		// PR-5 (MIGRATION_PLAN.md §PR-5): `paused` is a LIVE fact, unlike
+		// every other field of this response, so it is read through the
+		// hub's cached last-broadcast state rather than from g — which
+		// only the select loop below may touch (see Hub.getLastState).
+		// The cache is seeded before the HTTP server starts, so it is
+		// already correct for a runtime that booted paused.
+		livePaused := func() bool { return hub.getLastState().Paused }
 		mux.Handle("GET /api/lifecycle/status", requireLifecycleToken(runtimeInfo.Token,
-			lifecycleStatusHandler(runtimeInfo, savePath, lifecycleLogPath, lifecycleStartedAt)))
+			lifecycleStatusHandler(runtimeInfo, savePath, lifecycleLogPath, lifecycleStartedAt, livePaused)))
 		mux.Handle("POST /api/lifecycle/stop", requireLifecycleToken(runtimeInfo.Token,
 			lifecycleStopHandler(controlCh)))
+		// PR-5's two verbs. They ride the EXISTING actions channel
+		// (ARCHITECTURE.md Decision 5: "pause/resume funnel through the
+		// existing actions channel... so the single-owner invariant on
+		// game.Game is untouched"), which is also why the WebSocket UI
+		// gets a pause button for free with no second code path — unlike
+		// `stop`, which is deliberately NOT a WS action and reaches the
+		// runtime only through controlCh.
+		mux.Handle("POST /api/lifecycle/pause", requireLifecycleToken(runtimeInfo.Token,
+			lifecyclePauseHandler(actions, livePaused, true)))
+		mux.Handle("POST /api/lifecycle/resume", requireLifecycleToken(runtimeInfo.Token,
+			lifecyclePauseHandler(actions, livePaused, false)))
 	}
 
 	httpSrv := &http.Server{Handler: mux}
@@ -467,6 +509,24 @@ func runServe(mode serveMode, args []string) {
 	for {
 		select {
 		case <-tickTicker.C:
+			// PR-5 (ARCHITECTURE.md Decisions 13/14): while paused there
+			// is NO sampling. eng.Tick() is not called, so no mood is
+			// computed, no work unit is produced, no focus run is
+			// tracked and no analytics counter moves — and the provider
+			// feeding it was stopped when the pause was applied, so
+			// there is nothing to sample even if something asked. The
+			// only thing that happens is the paused second being
+			// credited to its own bucket (g.TickPaused), and the state
+			// still being broadcast: "the UI stays live and shows
+			// PAUSED — a frozen window would be indistinguishable from
+			// a crash". The 30s autosave, the terminal/ticker scroll and
+			// the HTTP server all keep running on their own branches
+			// below, untouched, for the same reason.
+			if g.Paused() {
+				g.TickPaused()
+				hub.broadcastState(g.State())
+				continue
+			}
 			prevCash := g.DevCash
 			prevSprintName := g.State().Sprint.Name
 			r := eng.Tick()
@@ -522,6 +582,43 @@ func runServe(mode serveMode, args []string) {
 					flash = &flashMessage{Type: "flash", Kind: "error", Text: errText}
 				}
 			}
+			// PR-5's pause/resume side effects (MIGRATION_PLAN.md §PR-5,
+			// ARCHITECTURE.md Decisions 13/16). Kept HERE for the same
+			// reason the config write-through above is: applyAction stays
+			// a pure state transition over *game.Game, and this loop owns
+			// every piece of I/O and every non-game resource — the
+			// activity provider, the engine, the save file. `mutated`
+			// gates them, so a second `dexel pause` while already paused
+			// is a genuine no-op rather than a redundant provider
+			// stop/save.
+			if mutated && (req.msg.Action == actionPause || req.msg.Action == actionResume) {
+				if req.msg.Action == actionPause {
+					// Decision 13: dexel stops OBSERVING, it does not
+					// sample-and-discard. Stopping the provider is the
+					// strongest honest reading of "pause tracking", and
+					// it is what makes "nothing accrued" structurally
+					// true rather than a promise.
+					if err := provider.Stop(); err != nil {
+						log.Printf("activity provider stop warning: %v", err)
+					}
+					log.Print("PAUSED: tracking is off — the activity provider is stopped and nothing is being observed or counted (paused time is recorded as its own stat, never as idle)")
+				} else {
+					// Decision 16: Reset FIRST, then restart the
+					// provider. Without the reset, resume would inherit a
+					// stale lastKeystrokeAt (and briefly claim `coding`
+					// for typing from before the pause) and a stale focus
+					// run (and pay a focus bonus for a "sustained" run
+					// with the whole pause missing from its middle).
+					eng.Reset()
+					startProvider()
+					log.Print("RESUMED: tracking is on — the activity provider is running again and the engine started from a clean slate (no pre-pause keystroke or focus run carried over)")
+				}
+				// "On resume the runtime writes an immediate save, so a
+				// crash right after resume cannot come back paused"
+				// (Decision 16) — and symmetrically for pause, so a
+				// crash right after pausing cannot come back tracking.
+				persist()
+			}
 			if mutated {
 				hub.broadcastState(g.State())
 			}
@@ -574,6 +671,25 @@ const actionSetName = "SET_NAME"
 const (
 	actionSessionStart = "SESSION_START"
 	actionSessionStop  = "SESSION_STOP"
+)
+
+// actionPause/actionResume are PR-5's wire literals
+// (dev_docs/production-runtime/ARCHITECTURE.md §3's `PAUSE`/`RESUME` on the
+// existing actions channel). Named once for exactly the reason
+// actionSetName and the two session literals are: applyAction handles them,
+// and runServe's action loop has to recognise the SAME literal to know that
+// a provider stop/start, an engine reset and an immediate save are owed.
+//
+// They are reachable two ways, both of which land here: POST
+// /api/lifecycle/{pause,resume} (token-gated, the CLI's path) and a
+// WebSocket action from the UI. That is deliberate — Decision 5's "the
+// WebSocket UI gets a pause button for free, with no second code path" —
+// and it is safe in a way `stop` is not: pausing is a privacy-positive,
+// fully reversible act, whereas "a web page must never be able to kill the
+// runtime".
+const (
+	actionPause  = "PAUSE"
+	actionResume = "RESUME"
 )
 
 // applyAction runs one client action against g and reports whether state
@@ -633,6 +749,26 @@ func applyAction(g *game.Game, msg actionMessage, connID uint64) (mutated bool, 
 			return false, errFlash(err)
 		}
 		return true, &flashMessage{Type: "flash", Kind: "welcome", Text: "Hello, " + name + "!"}
+
+	case actionPause, actionResume:
+		// PR-5 (ARCHITECTURE.md §6). This is the whole of pause's
+		// game-state transition: flip the flag (and, on the way in, park
+		// the mood so nothing keeps claiming an observation that has
+		// stopped — see game.Game.SetPaused). Everything that makes the
+		// pause REAL rather than cosmetic — provider.Stop(), skipping
+		// eng.Tick(), Engine.Reset() on the way back, the immediate save
+		// — belongs to the caller's loop, which owns those resources.
+		//
+		// No flash: pause is a state, not an event, and `paused` on the
+		// next state broadcast is what the UI renders (Decision 15).
+		// STORE_OPEN/STORE_CLOSE below set the same precedent — mutate
+		// state, produce no toast.
+		//
+		// An already-paused PAUSE (or an already-running RESUME) reports
+		// mutated=false, which is what makes a repeated `dexel pause`
+		// idempotent all the way down: no second provider stop, no
+		// second save, no redundant broadcast.
+		return g.SetPaused(msg.Action == actionPause), nil
 
 	case "STORE_OPEN":
 		g.OpenStore(connID)

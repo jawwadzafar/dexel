@@ -311,3 +311,39 @@ func (e *Engine) mood(snap activity.Snapshot, honesty activity.Honesty, now time
 	}
 	return MoodIdle
 }
+
+// Reset clears every piece of engine-local state that carries meaning
+// ACROSS ticks, so the next Tick behaves exactly like the first tick of a
+// freshly-constructed Engine. It is the resume seam
+// (dev_docs/production-runtime/ARCHITECTURE.md Decision 16, MIGRATION_PLAN.md
+// §PR-5): called when a paused runtime resumes, BEFORE the provider is
+// started again.
+//
+// Without it, resume would inherit:
+//
+//   - lastKeystrokeCount — a stale baseline against a provider counter that
+//     may have been reset to 0 (FakeProvider) or kept climbing invisibly
+//     while stopped, so the first tick after resume could hand out (or
+//     refuse) work it never earned;
+//   - lastKeystrokeAt — and briefly claim MoodCoding for typing that
+//     happened BEFORE the pause (the ADR 0010 lie: a keystroke observed
+//     ten hours ago is not "coding right now");
+//   - focusRunActive/focusRunStart — and pay a FocusSessionBonusWork bonus
+//     for a "sustained" typing run with a ten-hour hole in the middle;
+//   - lastActiveApp — and count one fabricated AppSwitch on the first tick
+//     back.
+//
+// Clearing `initialized` is what re-arms Tick's own first-tick guard
+// (`wasInitialized`), which is what makes the tick after resume contribute
+// exactly zero work no matter what counter the restarted provider reports.
+// Deliberately does NOT touch the provider: the engine "only samples, it
+// never manages the provider's lifecycle" (see New) — the caller stops and
+// starts it.
+func (e *Engine) Reset() {
+	e.initialized = false
+	e.lastKeystrokeCount = 0
+	e.lastKeystrokeAt = time.Time{}
+	e.lastActiveApp = ""
+	e.focusRunActive = false
+	e.focusRunStart = time.Time{}
+}

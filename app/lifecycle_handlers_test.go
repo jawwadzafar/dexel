@@ -91,12 +91,17 @@ func TestRequireLifecycleTokenRight(t *testing.T) {
 func TestLifecyclePreflightGetsNoPermissiveHeaders(t *testing.T) {
 	mux := http.NewServeMux()
 	mux.Handle("GET /api/lifecycle/status", requireLifecycleToken(testToken,
-		lifecycleStatusHandler(lifecycle.Runtime{Pid: 1, Port: 2, URL: "http://127.0.0.1:2", Version: "v9.9.9"}, "/s/state.db", "/s/logs/runtime.log", time.Now())))
+		lifecycleStatusHandler(lifecycle.Runtime{Pid: 1, Port: 2, URL: "http://127.0.0.1:2", Version: "v9.9.9"}, "/s/state.db", "/s/logs/runtime.log", time.Now(), func() bool { return false })))
 	mux.Handle("POST /api/lifecycle/stop", requireLifecycleToken(testToken, lifecycleStopHandler(make(chan struct{}, 1))))
+	// PR-5's two verbs are registered here too, so the preflight rule is
+	// proven for every route under /api/lifecycle/*, not just the two
+	// PR-4 shipped.
+	mux.Handle("POST /api/lifecycle/pause", requireLifecycleToken(testToken, lifecyclePauseHandler(make(chan actionRequest), func() bool { return true }, true)))
+	mux.Handle("POST /api/lifecycle/resume", requireLifecycleToken(testToken, lifecyclePauseHandler(make(chan actionRequest), func() bool { return false }, false)))
 	ts := httptest.NewServer(mux)
 	defer ts.Close()
 
-	for _, path := range []string{"/api/lifecycle/status", "/api/lifecycle/stop"} {
+	for _, path := range []string{"/api/lifecycle/status", "/api/lifecycle/stop", "/api/lifecycle/pause", "/api/lifecycle/resume"} {
 		req, err := http.NewRequest(http.MethodOptions, ts.URL+path, nil)
 		if err != nil {
 			t.Fatalf("build OPTIONS request: %v", err)
@@ -138,7 +143,7 @@ func TestLifecycleStatusHandlerShape(t *testing.T) {
 		Token: testToken,
 	}
 	started := time.Now().Add(-30 * time.Second)
-	h := lifecycleStatusHandler(rt, "/state/state.db", "/state/logs/runtime.log", started)
+	h := lifecycleStatusHandler(rt, "/state/state.db", "/state/logs/runtime.log", started, func() bool { return false })
 
 	req := httptest.NewRequest(http.MethodGet, "/api/lifecycle/status", nil)
 	rec := httptest.NewRecorder()

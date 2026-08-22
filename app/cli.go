@@ -77,17 +77,20 @@ type subcommand struct {
 
 // subcommands is that table.
 //
-// ARCHITECTURE.md Decision 3 also specifies `pause`, `resume`,
-// `autostart`, `update` and `uninstall`. They are deliberately ABSENT
-// until the PRs that own them land (PR-4, PR-6, PR-7): a word that is
-// listed but does nothing is worse than a word that honestly reports
-// "unknown command", which is why MIGRATION_PLAN.md's exit criteria are
-// per-PR in the first place.
+// ARCHITECTURE.md Decision 3 also specifies `autostart`, `update` and
+// `uninstall`. They are deliberately ABSENT until the PRs that own them
+// land (PR-6, PR-7): a word that is listed but does nothing is worse than
+// a word that honestly reports "unknown command", which is why
+// MIGRATION_PLAN.md's exit criteria are per-PR in the first place.
+// `pause`/`resume` join the table with PR-5, which is the PR that gives
+// them something real to flip (MIGRATION_PLAN.md §PR-5).
 var subcommands = map[string]subcommand{
 	"start":   {"start the background runtime (detached) and print its URL", cmdStart},
 	"stop":    {"stop the background runtime; it saves on the way out", cmdStop},
 	"restart": {"stop, wait for exit, then start", cmdRestart},
-	"status":  {"is a runtime running? pid, port, url, version [--json]", cmdStatus},
+	"status":  {"is a runtime running? pid, port, url, version, paused [--json]", cmdStatus},
+	"pause":   {"stop observing activity (the provider is stopped; nothing accrues)", cmdPause},
+	"resume":  {"start observing again, from a clean slate", cmdResume},
 	"open":    {"start if needed, then open the UI (desktop app, else browser)", cmdOpen},
 	"logs":    {"the runtime log [-n N] [-f] [--path] [--truncate]", cmdLogs},
 	"serve":   {"run the server in the FOREGROUND (the developer path; all of today's flags)", func(args []string) int { runServe(modeServe, args); return 0 }},

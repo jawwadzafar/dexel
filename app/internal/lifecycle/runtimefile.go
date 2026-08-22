@@ -219,6 +219,13 @@ type RuntimeStatus struct {
 	UptimeSeconds int64  `json:"uptimeSeconds"`
 	StatePath     string `json:"statePath"`
 	LogPath       string `json:"logPath"`
+	// Paused (PR-5) is the live pause state the answering runtime
+	// reports. It is read-only intelligence for the CLI: `dexel status`
+	// prints it so a paused-and-forgotten dexel is discoverable from a
+	// terminal (ARCHITECTURE.md Decision 16), and nothing here or in
+	// Probe treats it as a liveness signal — a paused runtime is fully
+	// alive and answers every endpoint exactly as an unpaused one does.
+	Paused bool `json:"paused"`
 }
 
 // probeLimit caps how much of a probe response is read. /api/lifecycle/
@@ -316,6 +323,60 @@ func RequestStop(client *http.Client, r Runtime) error {
 		return fmt.Errorf("request stop %s: http %d", r.URL, resp.StatusCode)
 	}
 	return nil
+}
+
+// RequestPause sends POST /api/lifecycle/pause (pause=true) or
+// POST /api/lifecycle/resume (pause=false) to a live runtime, and returns
+// the state that is ACTUALLY in effect afterwards as the runtime itself
+// reported it (app/lifecycle_handlers.go's lifecyclePauseResponse) — never
+// an optimistic echo of what was asked for.
+//
+// Unlike RequestStop there is no signal fallback and there deliberately
+// cannot be one: pausing means calling activity.Provider.Stop() inside the
+// runtime and flipping a flag on its single-owner game state, and no
+// signal can express either. A runtime that cannot be reached over HTTP
+// therefore simply cannot be paused, and the caller must say so rather
+// than pretend — which is also why this waits for a 200 (the endpoint
+// blocks until the action has really been applied and saved) instead of
+// accepting a 202 "noted".
+func RequestPause(client *http.Client, r Runtime, pause bool) (bool, error) {
+	verb := "resume"
+	if pause {
+		verb = "pause"
+	}
+	if r.URL == "" {
+		return false, fmt.Errorf("request %s: runtime has no url", verb)
+	}
+	req, err := http.NewRequest(http.MethodPost, r.URL+"/api/lifecycle/"+verb, nil)
+	if err != nil {
+		return false, fmt.Errorf("request %s %s: %w", verb, r.URL, err)
+	}
+	req.Header.Set(TokenHeader, r.Token)
+	resp, err := client.Do(req)
+	if err != nil {
+		return false, fmt.Errorf("request %s %s: %w", verb, r.URL, err)
+	}
+	defer func() {
+		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, probeLimit))
+		_ = resp.Body.Close()
+	}()
+	if resp.StatusCode != http.StatusOK {
+		return false, fmt.Errorf("request %s %s: http %d", verb, r.URL, resp.StatusCode)
+	}
+	var body struct {
+		Paused *bool `json:"paused"`
+	}
+	if err := json.NewDecoder(io.LimitReader(resp.Body, probeLimit)).Decode(&body); err != nil {
+		return false, fmt.Errorf("request %s %s: decode response: %w", verb, r.URL, err)
+	}
+	// A POINTER, so "the key was absent" is distinguishable from "the key
+	// said false". A 200 with no `paused` field is not a dexel pause
+	// response, and reporting the requested value as if it had been
+	// confirmed would be exactly the kind of claim ADR 0010 forbids.
+	if body.Paused == nil {
+		return false, fmt.Errorf("request %s %s: response has no `paused` field", verb, r.URL)
+	}
+	return *body.Paused, nil
 }
 
 // DefaultProbeTimeout bounds one round-trip. Generous for loopback (where

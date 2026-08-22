@@ -1,0 +1,28 @@
+# app-rs — the parallel Rust implementation of the Go dexel server
+# (dev_docs/rust-port-evaluation.md, §5.0).
+#
+# This is its OWN workspace root, exactly like desktop/src-tauri/Cargo.toml,
+# and for the same reason: the repository root Cargo.toml is a workspace
+# whose members are the frozen Bevy track (activity/, companion/,
+# tools/shotcap/). Declaring [workspace] here stops cargo's upward search
+# at this file, so app-rs/'s lockfile, feature resolution and target/ are
+# fully independent of that 566-crate / 70 GiB tree.
+#
+# P0a scope only: a single dexel-bin crate exercising the crates the plan's
+# §2.1 probe used (tiny_http, rust-embed, serde_json, rusqlite bundled,
+# hmac, sha2), for the cross-compile matrix probe. §5.0's full crate split
+# (dexel-store / dexel-engine / dexel-game / dexel-activity / dexel-bin)
+# is P1+ scope, not created yet.
+[workspace]
+resolver = "2"
+members = ["crates/dexel-bin"]
+
+[workspace.package]
+edition = "2021"
+
+[profile.release]
+opt-level = "z"
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true

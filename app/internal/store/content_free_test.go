@@ -52,6 +52,16 @@ func TestSaveDataIsContentFree(t *testing.T) {
 		// comment for why), so this allow-list staying free of any name
 		// field is itself part of the privacy proof, not an omission.
 		"Mac": "string",
+		// Paused (PR-5, dev_docs/production-runtime/ARCHITECTURE.md
+		// Decision 16 / FORK D, schema 7): a single bool recording that
+		// the user asked dexel to STOP observing. It is a user intent,
+		// like ConfigView.Name — but unlike a name it is not text and
+		// carries no information beyond one bit, so it needs no ADR 0014
+		// category argument to sit inside the protected save; it belongs
+		// here precisely BECAUSE it must be MAC-protected (a save whose
+		// `paused` could be flipped by hand is a save whose privacy
+		// posture could be flipped by hand).
+		"Paused": "bool",
 	}
 
 	// Field/type names whose presence anywhere on SaveData is itself a
@@ -153,6 +163,13 @@ func TestStatsSaveAndStatCountersSaveAreContentFree(t *testing.T) {
 		"SprintsCompleted":   "uint64",
 		"FocusSessions":      "uint64",
 		"AppSwitches":        "uint64",
+		// PausedSeconds (PR-5, schema 7, ARCHITECTURE.md Decision 14):
+		// the persisted third time bucket — seconds during which dexel
+		// observed nothing at all. The same content-free duration class
+		// as every sibling, and because this type is reused it lands in
+		// the today/lifetime buckets, every finalized DayBucketSave and
+		// both halves of an ActiveSessionSave at once.
+		"PausedSeconds": "uint64",
 	}
 	// CoinBreakdownSave (A2, docs/plan/A2-design.md §5/§7 Task GO-3): the
 	// persisted per-signal coin split. Every field a whole-number coin

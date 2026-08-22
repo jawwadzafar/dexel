@@ -73,7 +73,9 @@ func TestClassifyImplementsForkADispatchTable(t *testing.T) {
 		// Row 4: an unknown word is an error, NEVER a silent fall-through
 		// to starting a server.
 		{"typo", []string{"statsu"}, dispatchUnknown, "statsu", []string{}},
-		{"a future command not yet built", []string{"pause"}, dispatchUnknown, "pause", []string{}},
+		{"pause", []string{"pause"}, dispatchSubcommand, "pause", []string{}},
+		{"resume", []string{"resume"}, dispatchSubcommand, "resume", []string{}},
+		{"a future command not yet built", []string{"autostart"}, dispatchUnknown, "autostart", []string{}},
 		{"a bare path", []string{"state.db"}, dispatchUnknown, "state.db", []string{}},
 	}
 
@@ -121,10 +123,17 @@ func TestEverySubcommandIsWiredAndDocumented(t *testing.T) {
 			t.Errorf("§PR-3 requires a %q subcommand and there is none", name)
 		}
 	}
+	// ...as must PR-5's two, now that pause has semantics to flip
+	// (MIGRATION_PLAN.md §PR-5).
+	for _, name := range []string{"pause", "resume"} {
+		if _, ok := subcommands[name]; !ok {
+			t.Errorf("§PR-5 requires a %q subcommand and there is none", name)
+		}
+	}
 	// ...and the words later PRs own must NOT be, because a word that is
 	// listed but does nothing is worse than an honest "unknown command"
-	// (PR-4 owns pause/resume, PR-6 autostart, PR-7 update/uninstall).
-	for _, name := range []string{"pause", "resume", "autostart", "update", "uninstall"} {
+	// (PR-6 owns autostart, PR-7 update/uninstall).
+	for _, name := range []string{"autostart", "update", "uninstall"} {
 		if _, ok := subcommands[name]; ok {
 			t.Errorf("%q is registered but its PR has not landed — it would do nothing", name)
 		}

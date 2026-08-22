@@ -165,6 +165,24 @@ func subtractCounters(watermark, baseline StatCounters) StatCounters {
 		SprintsCompleted:   sub(watermark.SprintsCompleted, baseline.SprintsCompleted),
 		FocusSessions:      sub(watermark.FocusSessions, baseline.FocusSessions),
 		AppSwitches:        sub(watermark.AppSwitches, baseline.AppSwitches),
+		// PausedSeconds (PR-5, MIGRATION_PLAN.md §PR-5: "pausedSeconds
+		// joins P2's session delta set"; docs/plan/P2-design.md §2.3's
+		// "(+ PausedSeconds once PR-5 lands)"). A session SURVIVES a
+		// pause, so the honest reading of its own numbers has to include
+		// how much of its wall-clock length was spent not being watched —
+		// otherwise a two-hour session with a 90-minute pause in it would
+		// look like 90 minutes of unexplained idle.
+		//
+		// Note for a future counter: §2.3 claims a new StatCounters field
+		// "joins the session automatically, with no per-field
+		// maintenance". That is true of the DESIGN (every session number
+		// is watermark−baseline over the same struct) but NOT of this
+		// implementation, which enumerates the fields by hand — so this
+		// line, and the two wire views below, had to be added
+		// deliberately. Adding a StatCounters field without touching them
+		// silently drops it from every session; the delta-set test in
+		// session_test.go is what turns that into a failure.
+		PausedSeconds: sub(watermark.PausedSeconds, baseline.PausedSeconds),
 	}
 }
 
@@ -516,6 +534,7 @@ type ActiveSessionView struct {
 	SprintsCompleted         uint64 `json:"sprintsCompleted"`
 	FocusSessions            uint64 `json:"focusSessions"`
 	AppSwitches              uint64 `json:"appSwitches"`
+	PausedSeconds            uint64 `json:"pausedSeconds"`
 	CoinsEarned              uint64 `json:"coinsEarned"`
 	LongestFocusBlockSeconds uint64 `json:"longestFocusBlockSeconds"`
 }
@@ -535,6 +554,7 @@ type SessionView struct {
 	SprintsCompleted         uint64 `json:"sprintsCompleted"`
 	FocusSessions            uint64 `json:"focusSessions"`
 	AppSwitches              uint64 `json:"appSwitches"`
+	PausedSeconds            uint64 `json:"pausedSeconds"`
 	CoinsEarned              uint64 `json:"coinsEarned"`
 	LongestFocusBlockSeconds uint64 `json:"longestFocusBlockSeconds"`
 	EndReason                string `json:"endReason"` // user|idle|maxDuration
@@ -573,6 +593,7 @@ func (g *Game) sessionsView() SessionsView {
 			SprintsCompleted:         c.SprintsCompleted,
 			FocusSessions:            c.FocusSessions,
 			AppSwitches:              c.AppSwitches,
+			PausedSeconds:            c.PausedSeconds,
 			CoinsEarned:              s.coinsEarned,
 			LongestFocusBlockSeconds: s.longestFocusBlockSeconds,
 		}
@@ -604,6 +625,7 @@ func sessionViewFromRecord(rec SessionRecord, name string) SessionView {
 		SprintsCompleted:         rec.Counters.SprintsCompleted,
 		FocusSessions:            rec.Counters.FocusSessions,
 		AppSwitches:              rec.Counters.AppSwitches,
+		PausedSeconds:            rec.Counters.PausedSeconds,
 		CoinsEarned:              rec.CoinsEarned,
 		LongestFocusBlockSeconds: rec.LongestFocusBlockSeconds,
 		EndReason:                rec.EndReason,

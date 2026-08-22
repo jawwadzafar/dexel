@@ -62,8 +62,14 @@ type DayStat struct {
 	SprintsCompleted   uint64 `json:"sprintsCompleted"`
 	FocusSessions      uint64 `json:"focusSessions"`
 	AppSwitches        uint64 `json:"appSwitches"`
-	CoinsEarned        uint64 `json:"coinsEarned"`
-	IsActive           bool   `json:"isActive"`
+	// PausedSeconds (PR-5, ARCHITECTURE.md Decision 14) mirrors
+	// StatCounters' field of the same name, so "a day's row can honestly
+	// show a paused band instead of a suspiciously idle stretch". A day
+	// finalized before PR-5 landed simply has 0 here — an honest "this
+	// build never recorded pauses", never a backfilled guess.
+	PausedSeconds uint64 `json:"pausedSeconds"`
+	CoinsEarned   uint64 `json:"coinsEarned"`
+	IsActive      bool   `json:"isActive"`
 	// LongestFocusBlockSeconds (Fork B) mirrors DayBucket's field of the
 	// same name; for the final (today, live) entry this is
 	// Game.statsFocusBlockMax rather than a finalized bucket's value.
@@ -230,6 +236,7 @@ func dayStatFromCounters(date string, c StatCounters, coinsEarned uint64, focusB
 		SprintsCompleted:         c.SprintsCompleted,
 		FocusSessions:            c.FocusSessions,
 		AppSwitches:              c.AppSwitches,
+		PausedSeconds:            c.PausedSeconds,
 		CoinsEarned:              coinsEarned,
 		IsActive:                 c.ActiveSeconds >= ActiveDayMinSeconds,
 		LongestFocusBlockSeconds: focusBlockMax,

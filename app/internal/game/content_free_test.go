@@ -59,6 +59,15 @@ func TestStateMessageIsContentFree(t *testing.T) {
 		// Onboarding is a plain server-computed bool.
 		"Config":     "game.ConfigView",
 		"Onboarding": "bool",
+		// PR-5 (pause, dev_docs/production-runtime/ARCHITECTURE.md
+		// Decision 15): a plain server-computed bool saying whether
+		// tracking is currently off. It is the OPPOSITE of a privacy
+		// concern — it is the wire's proof that dexel has stopped
+		// observing — and it can carry nothing but true/false.
+		// Deliberately a boolean rather than a fourth `activeState`
+		// string, which is what keeps docs/ui-spec.md §6.1's closed
+		// three-string set closed.
+		"Paused": "bool",
 	}
 
 	// Field/type names whose presence anywhere on StateMessage is itself a
@@ -205,7 +214,7 @@ func TestStateMessageRejectsObservedContentFields(t *testing.T) {
 	// The allow-list is exact-count, so ANY unlisted field fails: assert
 	// the production type's field count still equals its allow-list, which
 	// is what makes "add a field, forget the list" a build failure.
-	if got, want := reflect.TypeOf(StateMessage{}).NumField(), 18; got != want {
+	if got, want := reflect.TypeOf(StateMessage{}).NumField(), 19; got != want {
 		t.Errorf("StateMessage has %d fields, this test pins %d — update BOTH allow-lists deliberately, never just the count", got, want)
 	}
 }
@@ -234,6 +243,13 @@ func TestStatsViewAndStatCountersAreContentFree(t *testing.T) {
 		"SprintsCompleted":   "uint64",
 		"FocusSessions":      "uint64",
 		"AppSwitches":        "uint64",
+		// PausedSeconds (PR-5, ARCHITECTURE.md Decision 14): "one more
+		// content-free duration; it goes on
+		// app/internal/game/content_free_test.go's allow-list
+		// explicitly" — a count of seconds during which dexel observed
+		// NOTHING, which is structurally the least content-bearing
+		// number on this struct.
+		"PausedSeconds": "uint64",
 	}
 
 	checkExact := func(t *testing.T, typ reflect.Type, allowed map[string]string) {
@@ -287,14 +303,19 @@ func TestStatsViewAndStatCountersAreContentFree(t *testing.T) {
 	// forbidden-substring scan above (which does not (and must not)
 	// treat "date" itself as content-like).
 	allowedDayStat := map[string]string{
-		"Date":                     "string",
-		"Keystrokes":               "uint64",
-		"MouseActiveSeconds":       "uint64",
-		"ActiveSeconds":            "uint64",
-		"IdleSeconds":              "uint64",
-		"SprintsCompleted":         "uint64",
-		"FocusSessions":            "uint64",
-		"AppSwitches":              "uint64",
+		"Date":               "string",
+		"Keystrokes":         "uint64",
+		"MouseActiveSeconds": "uint64",
+		"ActiveSeconds":      "uint64",
+		"IdleSeconds":        "uint64",
+		"SprintsCompleted":   "uint64",
+		"FocusSessions":      "uint64",
+		"AppSwitches":        "uint64",
+		// PausedSeconds (PR-5, Decision 14): the per-day paused band, so
+		// a day's row "can honestly show a paused band instead of a
+		// suspiciously idle stretch". Same content-free duration class as
+		// every sibling here.
+		"PausedSeconds":            "uint64",
 		"CoinsEarned":              "uint64",
 		"IsActive":                 "bool",
 		"LongestFocusBlockSeconds": "uint64",
@@ -363,17 +384,23 @@ func TestSessionWireTypesAreContentFree(t *testing.T) {
 	checkExact(t, reflect.TypeOf(SessionsView{}), allowedSessionsView)
 
 	allowedActiveSessionView := map[string]string{
-		"ID":                       "int",
-		"Name":                     "string",
-		"StartedAt":                "string",
-		"ElapsedSeconds":           "uint64",
-		"Keystrokes":               "uint64",
-		"MouseActiveSeconds":       "uint64",
-		"ActiveSeconds":            "uint64",
-		"IdleSeconds":              "uint64",
-		"SprintsCompleted":         "uint64",
-		"FocusSessions":            "uint64",
-		"AppSwitches":              "uint64",
+		"ID":                 "int",
+		"Name":               "string",
+		"StartedAt":          "string",
+		"ElapsedSeconds":     "uint64",
+		"Keystrokes":         "uint64",
+		"MouseActiveSeconds": "uint64",
+		"ActiveSeconds":      "uint64",
+		"IdleSeconds":        "uint64",
+		"SprintsCompleted":   "uint64",
+		"FocusSessions":      "uint64",
+		"AppSwitches":        "uint64",
+		// PausedSeconds (PR-5): "pausedSeconds joins P2's session delta
+		// set" (MIGRATION_PLAN.md §PR-5) — how much of this session's
+		// wall-clock length was spent NOT being observed. A duration,
+		// derived by subtraction from the same lifetime bucket every
+		// other counter here comes from.
+		"PausedSeconds":            "uint64",
 		"CoinsEarned":              "uint64",
 		"LongestFocusBlockSeconds": "uint64",
 	}
@@ -392,6 +419,7 @@ func TestSessionWireTypesAreContentFree(t *testing.T) {
 		"SprintsCompleted":         "uint64",
 		"FocusSessions":            "uint64",
 		"AppSwitches":              "uint64",
+		"PausedSeconds":            "uint64", // PR-5 — see ActiveSessionView's entry above
 		"CoinsEarned":              "uint64",
 		"LongestFocusBlockSeconds": "uint64",
 		"EndReason":                "string", // closed set: user|idle|maxDuration
