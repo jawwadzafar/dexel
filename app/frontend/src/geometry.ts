@@ -21,16 +21,19 @@ export const SLOT_RECT: Record<string, Rect> = {
 };
 export const DEV_RECT: Rect = { left: 116, top: 92, w: 88, h: 104 };
 // Chairs are bottom-centre anchored (bottom = room row 200, centre x = 160,
-// matching DEV_RECT's centre) and now rise well up behind the developer's
-// upper body so the seated read is unambiguous: each chair's top reaches the
-// shoulder/head band (near or above DEV_RECT.top=92), with raised backrest
-// corners / bolsters flanking the head above room row 120 and armrests at the
-// sides. Sizes match the sprite canvases in tools/gen_assets.py 1:1.
+// matching DEV_RECT's centre). FURNITURE REWRITE: the canvases are now narrow
+// and shoulder-proportioned (was 136-152px wide — a near-full-scene slab that
+// read as a wall/throne) so each chair sits BEHIND the developer as real
+// furniture: the backrest crown peeks a little above the hood, the seat/back
+// edges frame the torso, small armrest pads sit at the sides, and the caster
+// base splays out below/beside the lower body. The developer (drawn on top,
+// z 12-14 > chair z 10-11) stays the dominant silhouette. Sizes match the
+// sprite canvases in tools/gen_assets.py 1:1.
 export const CHAIR_RECT: Record<string, Rect> = {
-  chair_basic: { w: 144, h: 108, left: 88, top: 92 },
-  chair_racer: { w: 148, h: 112, left: 86, top: 88 },
-  chair_exec: { w: 152, h: 118, left: 84, top: 82 },
-  chair_antigrav: { w: 136, h: 100, left: 92, top: 100 }
+  chair_basic: { w: 92, h: 84, left: 114, top: 116 },
+  chair_racer: { w: 96, h: 86, left: 112, top: 114 },
+  chair_exec: { w: 100, h: 86, left: 110, top: 114 },
+  chair_antigrav: { w: 88, h: 82, left: 116, top: 118 }
 };
 
 export interface SceneryItem extends Rect {
