@@ -21,3 +21,5 @@ say something different — supersede it with a new one and cross-link.
 | [0013](0013-analytics-over-time-history-streaks-and-charts.md) | Analytics A3 over time: 30-day rolling history, server-side streaks, CSS pixel charts | accepted |
 | [0014](0014-save-integrity-hmac-and-config-split.md) | Save integrity: HMAC-signed state.json + unsigned config.json; honest local anti-cheat ceiling | accepted |
 | [0015](0015-tauri-desktop-shell.md) | Tauri desktop shell: Go binary as sidecar, webview on local server, phased build matrix | accepted |
+| [0016](0016-sqlite-persistence.md) | SQLite persistence: signed snapshot row, pure-Go driver, tamper-tighter than JSON | accepted |
+| [0017](0017-sessions.md) | Sessions: intention as a lens, names on the config side, a chained-MAC append log, rewards outside the economy | accepted |

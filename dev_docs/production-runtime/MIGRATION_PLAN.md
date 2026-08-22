@@ -20,10 +20,14 @@ Nothing here is started. This is the order, not a status board.
 2. **DB-GO-2 / SQLite has landed** (`app/internal/store/db.go`, ADR 0016). PR-1
    edits `store.DefaultPath`/`ConfigPath` — it must not run concurrently with any
    other task inside `app/internal/store/`.
-3. **Only ONE schema-bumping task in flight at a time.** PR-5 bumps
-   `CurrentSchema` 5 → 6. The PRODUCT-EVOLUTION phases (P1 Identity, P2 Sessions,
-   …) each bump it too. Two agents bumping to 6 in parallel produces two
-   incompatible "schema 6"s. Serialize: PR-5 **or** a product phase, never both.
+3. **Only ONE schema-bumping task in flight at a time.** `docs/plan/P2-design.md`
+   Fork P2-B claims `CurrentSchema` **5 → 6 for P2 (Sessions)**, since P2 started
+   first and PR-5 had not. PR-5 now bumps `CurrentSchema` **6 → 7** instead (and
+   adds `pausedSeconds` to P2's session delta set, `docs/plan/P2-design.md`
+   §2.3/§5.6 — see PR-5 below). The PRODUCT-EVOLUTION phases (P1 Identity, P2
+   Sessions, …) each bump the schema too. Two agents bumping to the same next
+   number in parallel produces two incompatible schemas. Serialize: PR-5 **or**
+   a product phase, never both.
 4. **PR-1 through PR-8 are independent of P1+.** The product phases touch
    `game`/frontend features; this track touches `main`, `paths`, CI, and
    `desktop/`. The only overlap is PR-5's wire/save fields — see (3).
@@ -181,8 +185,13 @@ Per `ARCHITECTURE.md` §6:
 * `StatCounters.PausedSeconds` + `DayStat.PausedSeconds`.
 * `StateMessage.Paused bool`; `activeState` stays `idle` while paused — no fourth
   mood string.
-* `SaveData.Paused bool`; `CurrentSchema` 5 → 6, additive; immediate save on
-  pause and on resume.
+* `SaveData.Paused bool`; `CurrentSchema` **6 → 7** (P2/Sessions already claimed
+  5 → 6 — `docs/plan/P2-design.md` Fork P2-B — so PR-5 takes the next number),
+  additive; immediate save on pause and on resume.
+* `pausedSeconds` joins P2's session delta set (`docs/plan/P2-design.md`
+  §2.3/§5.6): a running session's counters freeze while paused (no ticks), and
+  the auto-end idle rule cannot fire while paused — it fires on the **first
+  tick after resume**, backdated, once P2 has landed.
 * Frontend renders PAUSED and offers resume.
 
 **Exit:**
@@ -193,8 +202,8 @@ Per `ARCHITECTURE.md` §6:
   `idleSeconds` did **not** absorb the paused seconds.
 - Unit test: resume after a long pause grants no work on the first tick and no
   focus bonus from a pre-pause run (`Engine.Reset()` proven).
-- Unit test: a schema-5 save loads with `paused=false`; a schema-6 paused save
-  round-trips; a schema-7 save is still refused.
+- Unit test: a schema-6 save loads with `paused=false`; a schema-7 paused save
+  round-trips; a schema-8 save is still refused.
 - The two structural allow-list tests updated deliberately, with the field count
   bumped and each new field justified in a comment.
 - **In-game gate** (`docs/plan/ROADMAP.md` ground rules, the

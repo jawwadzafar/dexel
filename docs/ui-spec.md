@@ -53,11 +53,17 @@ verification harness and the spec both address elements by id.
     </div>
 
     <div id="titlebar">
-      <span id="title-text">dexel</span>
-      <span id="mood-dot"></span>
-      <span id="hud-level">LV 1</span>
       <span id="hud-cash"><i class="nes-icon coin is-small"></i> 0</span>
-      <button id="store-open" class="nes-btn">[S] STORE</button>
+      <span id="hud-level">LV 1</span>
+      <button id="menu-open" aria-haspopup="true" aria-expanded="false"
+              aria-label="Menu"><!-- three .bar divs, never a glyph --></button>
+      <div id="menu-panel">           <!-- dropdown, hidden until .visible -->
+        <div id="menu-panel-title">MENU</div>  <!-- becomes the name, §7.4 -->
+        <button id="store-open"    class="nes-btn menu-item">[S] STORE</button>
+        <button id="activity-open" class="nes-btn menu-item">[A] ACTIVITY</button>
+        <button id="history-open"  class="nes-btn menu-item">[H] HISTORY</button>
+        <!-- P2: #sessions-open joins here, §9.1 -->
+      </div>
     </div>
 
     <div id="panel-sprint" class="pixel-panel">
@@ -77,6 +83,9 @@ verification harness and the spec both address elements by id.
 
     <div id="scrim"></div>            <!-- shown while a modal is open -->
     <dialog id="store" class="nes-dialog is-dark"> … §4 … </dialog>
+    <dialog id="activity" class="nes-dialog is-dark"> … §6.1 … </dialog>
+    <dialog id="history" class="nes-dialog is-dark"> … §6.1 … </dialog>
+    <!-- P2: <dialog id="sessions"> joins here, §9.2 -->
     <dialog id="onboarding" class="nes-dialog is-dark"> … §7 … </dialog>
   </div>
 </body>
@@ -124,26 +133,39 @@ screen, the answer is no.
 
 ### 2.1 Title bar — `#titlebar`
 
+**Current reality (BUG-2 titlebar redesign):** the wordmark and mood dot are
+gone from the titlebar — mood now shows only via `#status-dot` in the bottom
+status panel (§2.3). The top-left cluster is coin-then-level, and nothing
+else, ever (the standing owner directive quoted again at §7.4). The three
+separate `[S]`/`[A]`/`[H]` launcher buttons that used to sit in the titlebar
+were replaced by a single hamburger (`#menu-open`, top-right) that opens a
+dropdown (`#menu-panel`) listing every section launcher as one more
+`.menu-item` button — so a future entry (P2's Sessions, and whatever comes
+after) is zero titlebar layout work.
+
 | Element | Rect (x, y, w, h) | Content |
 |---|---|---|
 | `#titlebar` | 0, 0, 640, 24 | `background: var(--metal)`; 2px bottom border `var(--wall-light)` |
-| `#title-text` | 8, 8, 104, 8 | `dexel`, 8px, `var(--cream)` (5 chars) |
-| `#mood-dot` | 120, 8, 8, 8 | solid square, colour per the `activeState` table in docs/art-direction.md ("Visual states"). `border-radius: 0` — an 8px circle is mush |
-| `#hud-level` | 456, 8, 40, 8 | `LV 5`, 8px, `var(--cream)`, right-aligned |
-| `#hud-cash` | 500, 8, 44, 8 | coin icon + `2150`, 8px, `var(--gold)`, right-aligned |
-| `#store-open` | 552, 4, 80, 16 | `nes-btn`, label `[S] STORE`, 8px, padding 0 4px |
+| `#hud-cash` | 8, 4, 64, 16 | coin icon + `2150`, 8px, `var(--gold)`, left-aligned |
+| `#hud-level` | 80, 8, 40, 8 | `LV 5`, 8px, `var(--cream)` |
+| `#menu-open` | 600, 4, 32, 16 | hamburger button, `padding: 0`. Icon is three plain 1px-tall `.bar` divs inside `.menu-icon` (16x7), **not** a `☰` glyph — a fancy character renders blurry/inconsistent at this app's 1x DPI in the pixel font, the same lesson A2 already recorded for `→` |
+| `#menu-panel` | 496, 26, 136, auto | dropdown opened by `#menu-open`, closed by default (`display:none`, shown via `.visible`); right edge (632) lines up with `#menu-open`'s right edge (632) so it never overflows the 640px titlebar |
+| `#menu-panel-title` | inside `#menu-panel`, 128 x 16 | static `MENU`, replaced by the dexel's name once set (§7.4), 8px `var(--screen-dim)`, bottom rule separating it from the items |
+| `.menu-item` (×N) | inside `#menu-panel`, 128 x 20 each, 4px gap | one `nes-btn` per launcher, in menu order: `#store-open` (`[S] STORE`), `#activity-open` (`[A] ACTIVITY`), `#history-open` (`[H] HISTORY`), and (P2, §9.1) `#sessions-open` (`[W] SESSIONS`) |
 
-Dev Cash lives here, next to the button that spends it. **[DESIGN CALL]** the
-mockups only show the balance *inside* the store modal, but a currency you
-cannot see is a currency you forget you have; the decluttering the user asked
-for removed three header *panels*, not the score. One 8px text run next to the
-button that spends it is one glanceable pair, and it keeps both bottom panels
-single-purpose.
+Dev Cash lives in the titlebar, next to Level. **[DESIGN CALL]** the mockups
+only show the balance *inside* the store modal, but a currency you cannot see
+is a currency you forget you have; the decluttering the user asked for removed
+three header *panels*, not the score. This reasoning outlived BUG-2's move of
+the store *button* into the menu — the balance itself never left the titlebar.
 
-**[DESIGN CALL]** the button label is `[S] STORE`, not `STORE`. ADR 0010
-requires the store be permanently discoverable *and* the shortcut be
-discoverable; the bracketed key does both jobs in one element, which is how
-the shipped Bevy build already presented it.
+**[DESIGN CALL]** every menu item keeps its bracketed shortcut in its label,
+e.g. `[S] STORE`, `[A] ACTIVITY`, `[H] HISTORY`, `[W] SESSIONS`. ADR 0010
+requires the store (and, by the same reasoning, every section) be permanently
+discoverable *and* its shortcut be discoverable; the bracketed key does both
+jobs in one element, which is how the shipped Bevy build already presented
+it. BUG-2 moved these buttons off the titlebar and into `#menu-panel`; it did
+not change this convention.
 
 ### 2.2 Sprint panel — `#panel-sprint`
 
@@ -458,6 +480,7 @@ Main screen:
 |---|---|
 | `S` | open the store |
 | `Tab` | open the store (`preventDefault()` so focus does not move) |
+| `W` | open the Sessions modal (P2, §9.1 — "work session"; `S`/`Tab`/`A`/`H`/`M` are taken) |
 
 Store modal open:
 
@@ -479,6 +502,14 @@ Onboarding modal open (§7):
 | any printable key | goes to `#onboarding-name`; **no global shortcut fires** |
 | `Enter` | confirm (same as `SAY HELLO`) |
 | `Esc` | skip (native `<dialog>` close; see §7.3 for what skipping means) |
+
+Sessions modal open (P2, §9):
+
+| Key | Action |
+|---|---|
+| any printable key | idle view only: goes to `#sessions-name`; **no global shortcut fires** (the modal owns an input, so it claims the keyboard-ownership tier the same way onboarding does) |
+| `Enter` | idle view only, input focused: start the session — same as `START SESSION` |
+| `W` / `Esc` | close (idle or live view); on the summary card, closes back to the live view — the same action as `[ NICE ]` |
 
 * The card list auto-scrolls to keep the selection fully visible.
 * `Tab` is bound to *open* on the main screen but must **not** be captured
@@ -670,6 +701,28 @@ second to reflect a click.
     "streak": {"current": 6, "longest": 14}
   },
   "config": {"name": "Pixel"},
+  "sessions": {
+    "active": {
+      "id": 28,
+      "name": "auth refactor",
+      "startedAt": "2024-06-30T14:02:00Z",
+      "elapsedSeconds": 4931,
+      "keystrokes": 2110,
+      "mouseActiveSeconds": 340,
+      "activeSeconds": 1500,
+      "idleSeconds": 90,
+      "sprintsCompleted": 1,
+      "focusSessions": 2,
+      "appSwitches": 3,
+      "coinsEarned": 9,
+      "longestFocusBlockSeconds": 720
+    },
+    "summary": {"completed": 27, "thisWeek": 4, "longestSessionSeconds": 9840},
+    "recent": [
+      {"id": 27, "name": "", "startedAt": "2024-06-29T09:00:00Z", "endedAt": "2024-06-29T10:24:00Z", "durationSeconds": 5040, "keystrokes": 4182, "mouseActiveSeconds": 610, "activeSeconds": 4700, "idleSeconds": 200, "sprintsCompleted": 2, "focusSessions": 3, "appSwitches": 5, "coinsEarned": 18, "longestFocusBlockSeconds": 840, "endReason": "user"},
+      "... up to 9 more SessionView entries, newest first ..."
+    ]
+  },
   "onboarding": false
 }
 ```
@@ -780,6 +833,31 @@ Field notes the implementers must not improvise on:
   runes** (`game.MaxNameLen`, counted as runes so a multi-byte name is never
   cut mid-character), and an empty result rejected. The client's own
   `maxlength`/trim are a courtesy, never the check.
+* `sessions` — Phase P2 (Sessions, `docs/plan/PRODUCT-EVOLUTION.md` §3 Bet 1,
+  ADR 0017, `docs/plan/P2-design.md` §6.1). One nested block, **always sent**
+  (the same `config` precedent: the server always sends the block, it may be
+  empty); typed `sessions?` in `wire.ts` so a stale frontend degrades to "no
+  sessions" rather than breaking. `SessionsView { active, summary, recent }`:
+  - `active` — `null` when no session is running, otherwise an
+    `ActiveSessionView` carrying the seven counters **flattened**, mirroring
+    `DayStat`'s shape, computed live as `watermark − baseline` (a delta of
+    lifetime, never a re-implementation of `recordStats`), plus
+    `coinsEarned` and `longestFocusBlockSeconds` — **per-session
+    accumulators**, not deltas, because neither has a monotonic lifetime
+    counter to subtract from (P2-design §2.3). `elapsedSeconds` is
+    **server-computed**; the client never derives live time.
+  - `summary` — `SessionsSummary { completed, thisWeek,
+    longestSessionSeconds }`, all server-computed over the **whole verified
+    log**, not just the wire window below.
+  - `recent` — up to `SessionsWireWindow` (**10**) finished `SessionView`
+    entries, newest first. Storage is unbounded; only the wire is windowed.
+  - Every field across `ActiveSessionView` / `SessionView` / `SessionsSummary`
+    is a count, a duration, an ISO timestamp, an integer id, or a closed
+    three-value `endReason` enum (`user | idle | maxDuration`) — **except
+    `name`**, the one user-authored string, allow-listed on ADR 0014's
+    category citation exactly as `config.name` was (§2.7 of P2-design): a
+    session name is CONFIG, never a `state.db` column, and is looked up by
+    the server from `config.json`'s `sessionNames` map, keyed by `id`.
 * `onboarding` — Phase P1. `true` **only** in the genuine first-launch state,
   decided **once, by the server, at boot**, as *(no save of any kind existed)*
   `&&` *(`config.name` is empty)*. Both halves matter: an existing
@@ -817,22 +895,48 @@ Field notes the implementers must not improvise on:
   `state/store.ts` are untouched — the modal reads `store.getState().stats`
   directly, exactly as `activity-modal` does.
 
+**`sessionComplete`** — Phase P2 (§9.6). Sent to every connection immediately
+after the `state` broadcast that cleared the session (never in its place):
+
+```json
+{ "type": "sessionComplete", "v": 1, "session": { …one SessionView… } }
+```
+
+`session` is exactly one `SessionView` — the same shape `sessions.recent`
+carries, verbatim. **Why a dedicated message rather than reusing `flash`:**
+§6.2's "no dedicated ack" rule still governs the ordinary flash+state
+pattern, but a flash alone would force the client to *infer* which
+`sessions.recent` entry just ended, and inference is exactly what this
+contract forbids — the client never asserts state the server did not send.
+One explicit message keeps the server the sole source of truth, and gives a
+later phase a single clean event to hook (P2-design §3.1/§3.3). A discarded
+short session (< 60 s, P2-design §2.2) produces **no** `sessionComplete` and
+**no** card — only the warm flash below.
+
 **`flash`** — a transient toast for a discrete event.
 
 ```json
 {"type": "flash", "kind": "purchase", "text": "Racer chair!"}
 ```
 
-`kind` ∈ `purchase | equip | sprint | error | welcome`. Rendered for **1.5 s**
-as an 8px line, `var(--gold)` for `purchase`/`sprint`/`welcome`,
-`var(--cream)` for `equip`, `var(--pot)` for `error`. Position: over
-`#store-cash` while the store modal is open, otherwise over `#sprint-name`.
-Only one flash at a time; a new one replaces the old.
+`kind` ∈ `purchase | equip | sprint | error | welcome | session`. Rendered
+for **1.5 s** as an 8px line, `var(--gold)` for
+`purchase`/`sprint`/`welcome`/`session`, `var(--cream)` for `equip`,
+`var(--pot)` for `error`. Position: over `#store-cash` while the store modal
+is open, otherwise over `#sprint-name`. Only one flash at a time; a new one
+replaces the old.
 
 * `welcome` is Phase P1's one-off `Hello, <name>!` on a successful
   `SET_NAME` (§7) — gold, with the celebrations, not the acknowledgements.
   The greeting is composed **server-side**, like every other flash text; the
   frontend never assembles a sentence (§3).
+* `session` is Phase P2's flash, sent alongside `SESSION_START` (`"Session
+  started."`), a normal `SESSION_STOP` (composed server-side, e.g. `"auth
+  refactor — 1h 24m together."`, or `"Session complete — 1h 24m together."`
+  when unnamed — paired with `sessionComplete` above), and a discarded short
+  session (`"Session ended — too short to keep."` — a warm flash, never a
+  scold). Gold, joining `purchase`/`sprint`/`welcome` in that CSS group
+  (P2-design §3.1).
 * **`#flash` paints an opaque `var(--metal)` fill.** "Over `#sprint-name`"
   above always meant *covering* it, but the toast was transparent, so it
   composited INTO the text underneath and the two interleaved glyph-by-glyph
@@ -851,6 +955,8 @@ Only one flash at a time; a new one replaces the old.
 {"action": "STORE_OPEN"}
 {"action": "STORE_CLOSE"}
 {"action": "SET_NAME",   "name": "Pixel"}
+{"action": "SESSION_START", "name": "auth refactor"}   // name optional
+{"action": "SESSION_STOP"}
 ```
 
 * **No dedicated ack.** Every successful action is answered by an immediate
@@ -879,6 +985,21 @@ Only one flash at a time; a new one replaces the old.
   silently not survive a restart is a lie.
   `SET_NAME` is not restricted to onboarding: a later Settings surface can
   rename with the same action and no new wire.
+* `SESSION_START` / `SESSION_STOP` (Phase P2, §9.6) — names **pinned**
+  exactly as written. PRODUCT-EVOLUTION §2.1 wrote `SESSION_START`/
+  `SESSION_END`; the imperative pair became `SESSION_START`/`SESSION_STOP` to
+  match the UI's Start/Stop buttons and the `STORE_OPEN`/`STORE_CLOSE`
+  verb-pair precedent — **STOP** wins for the action while the *data* keeps
+  `endedAt`/`endReason` (a session has an end; the user performs a stop).
+  `name` on `SESSION_START` is optional and passes through
+  `game.NormalizeSessionName` — the same door `SET_NAME` uses, allow-listing
+  the same ADR 0014 category, truncating to `MaxSessionNameLen` (**32**
+  runes). Starting while a session is already active, or stopping with none
+  active, is `flash: error` and no state change — exactly one session at a
+  time. Both actions obey this section's contract in full: no dedicated ack,
+  success answered by `state` + `flash` (and, on a non-discarded stop, the
+  `sessionComplete` message, §6.1), failure by `flash: error` and no state
+  change. `SESSION_RENAME` is deferred, named, not built.
 * **[DESIGN CALL] camelCase field names throughout** (`itemId`, not the PDF
   blueprint's `item_id`). The whole payload is consumed by JavaScript; one
   casing convention across the wire and the DOM removes a whole class of typo.
@@ -1079,3 +1200,143 @@ Named explicitly so nobody re-derives them as missing features.
   never allowed to imply they describe the user's real work.
 * **Resizing, multiple windows, and any responsive behaviour** — out of scope.
   640x400 fixed.
+
+## 9. The Sessions modal
+
+Phase P2 — Sessions & the session-complete moment
+(`docs/plan/PRODUCT-EVOLUTION.md` §3 Bet 1 / §5 Phase P2, ADR 0017,
+`docs/plan/P2-design.md`). A session is a user-declared work interval:
+start it (optionally named), work, stop it, and dexel hands back a cozy
+summary card — *"here's what we did together."* It grants nothing economic
+and gates nothing: it is a **lens** over tracking that already happens
+(P2-design §1), never a second earning path, and never a hold on the
+`ws-client` connection the way `STORE_OPEN` is.
+
+### 9.1 Opening it
+
+- **Menu entry:** `#sessions-open` (`nes-btn menu-item`, label
+  `[W] SESSIONS`), placed in `#menu-panel` after `#history-open` (§2.1). No
+  `features/menu.ts` change is needed — the panel's CSS rule targets the
+  `.menu-item` class, not an id list, so it auto-grows around any new entry.
+- **Keybinding `[W]`** ("work session") on the main screen (§5.2).
+  `S`/`Tab`/`A`/`H`/`M` are already taken; `W` is free.
+- Opened the same way `[A]`/`[H]` are: native `<dialog>` + `showModal()`, the
+  shared `#scrim`, `Esc` handled natively (never intercepted).
+
+### 9.2 Geometry
+
+`#sessions` is a `nes-dialog is-dark`, `position: fixed; left: 80px; top:
+50px; width: 480px; height: 300px;` — under BUG-8's ~346px UA
+`dialog::backdrop` `max-height` cap, and centred by the `(400 − h) / 2`
+convention `#activity`/`#history` already establish. Ids: `#sessions-title`,
+`#sessions-close`, `#sessions-help` (content `W / ESC CLOSE`, the same help-
+line idiom `#activity-help`/`#history-help` use). Repeated content uses
+`.sessions-*` classes plus the shared `.label`/`.value` (+ `.value.gold`)
+idiom already established by `#history-streak`. ASCII only (`->`, never `→`
+— the A2 lesson recorded at §3.2); any date string uses `parseLocalDate`-
+style parsing, matching `#history`'s own convention.
+
+### 9.3 The three views
+
+Switched by which one the server's state makes true — **never** by a
+client-held mode:
+
+1. **Idle** (`sessions.active == null`) — a name input (`#sessions-name`,
+   `maxlength="32"`, `autocomplete="off"`, `spellcheck="false"`, focused on
+   open, the same shape as `#onboarding-name`) + a `START SESSION` button,
+   then the `recent` list (one line each: date · name · duration · keys ·
+   focus blocks, newest first, up to the wire's 10), then the summary line
+   (`SessionsSummary`, e.g. `SESSION 27 · 4 THIS WEEK`).
+2. **Live** (`sessions.active != null`) — the name (or `unnamed session`),
+   elapsed, and the effort-so-far counters, redrawn on every 1 s `state`. The
+   one action button reads `END SESSION`, or `CANCEL SESSION` while
+   `elapsedSeconds < 60` — the label flips on the **server-sent** number,
+   the same one-action-button precedence idea §4.3 uses for the store.
+3. **Summary card** (§9.4), shown by `showSummary(session)` on
+   `sessionComplete` (§6.1) and dismissed by `[ NICE ]` / `Esc`.
+
+**Module surface** matches the existing feature modules exactly: `isOpen()`,
+`renderSessions()`, `refreshIfOpen()`, `open()`, `close()`,
+`handleKeydown(e)`, plus `showSummary(s: SessionView)`. State is **pulled**
+from `state/store.ts` (`store.getState()`), never pushed — the modal reads,
+it is never told.
+
+### 9.4 The session-complete card
+
+Rendered as a panel **inside this modal**, which auto-opens on
+`sessionComplete` — not a fifth `<dialog>`. It reuses the modal already
+needed, and a modal is the expected response to a button the user just
+pressed. Content, in this order (largest first, cozy phrasing, no
+percentages, no scores, no "efficiency"):
+
+```
+        SESSION COMPLETE
+        auth refactor                      ← omitted entirely when unnamed
+        1h 24m                             ← duration, large
+        ------------------------------------
+        TYPED        4,182 keys
+        FOCUS        3 blocks   BEST 14m
+        SPRINTS      2 finished
+        COINS        +18 earned during it
+        ------------------------------------
+        SESSION 27  ·  4 THIS WEEK
+                              [ NICE ]
+```
+
+- Every number comes from the message's `session` object verbatim; the
+  client only formats (`fmtDuration`, `fmtInt` — the existing utils).
+- `COINS` is honest about its verb: coins were **earned during** the session
+  by the ordinary sprint payout. The card must not imply the session paid
+  them.
+- No target, no comparison, no "you were X% focused", no red anything. A
+  zero row renders as a zero, not as a failure.
+- `[ NICE ]` closes the card back to the live view; `Esc` does the same
+  (native `<dialog>`, never intercepted).
+- A discarded short session (< 60 s, §6.1) produces **no card** — only the
+  warm flash.
+
+### 9.5 The always-visible indicator
+
+A session the user cannot see from the main screen is a feature they forget
+is running. `#session-pill` sits in `#titlebar` at `left:132 top:8 width:240
+height:8`, 8px font — the titlebar is empty between `#hud-level` (ends 120)
+and `#menu-open` (starts 600, §2.1), so nothing else moves. Content: an 8px
+solid gold square (`border-radius: 0` — the `#mood-dot` lesson) followed by
+the name truncated to 16 chars with `…`, then `H:MM:SS`. **Empty, and
+therefore invisible, when no session is active** — the same idiom
+`#status-name` already uses. Owned by `render/chrome.ts` (a render-layer
+module: reads state, sends nothing).
+
+### 9.6 Actions and messages
+
+Covered in full at §6.1 (`sessionComplete`, the `sessions` state block, the
+`session` flash kind) and §6.2 (`SESSION_START`/`SESSION_STOP`). Summarised
+here for the modal's own reference:
+
+```json
+{"action": "SESSION_START", "name": "auth refactor"}   // name optional
+{"action": "SESSION_STOP"}
+```
+```json
+{ "type": "sessionComplete", "v": 1, "session": { …one SessionView… } }
+```
+
+Alongside `sessionComplete`, the ordinary gold flash `flash{kind:"session",
+text:"…"}`, text composed **server-side** — the frontend never assembles a
+sentence (§3).
+
+### 9.7 What the modal deliberately does not do
+
+- **Gates nothing.** No `SESSION_MODAL_OPEN`/`*_CLOSE` action, no
+  `ws-client` hold — same as the Activity/History/onboarding modals (§7).
+  `setStoreOpenHoldDesired` stays store-specific by name and is untouched.
+  Typing a project name earns a few crumbs of ordinary keystroke work while
+  the modal is open (bounded at ~0.26 work units per full-length name,
+  landing outside the session's own numbers since the baseline is taken at
+  start) — named as a residual risk in P2-design §9, not fixed here.
+- **Does not appear in the `[H]` History modal.** `[H]` is per-**day**
+  analytics; a sessions row there would duplicate this modal for no gain,
+  and a later phase is explicitly where sessions, moments and days merge
+  into one scrapbook.
+- **`SESSION_RENAME`, session goals/targets/quotas, tags/categories, and
+  exporting a card** are all deferred, named, not built.
