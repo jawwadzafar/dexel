@@ -193,3 +193,19 @@ Repo stays PRIVATE until the user says otherwise.
   personal-journey/history, onboarding/identity; social = future-only). Respects
   the privacy model + honest mechanics; no AI/LLM/code-reading. Seeds the
   post-infra roadmap for morning review.
+
+---
+
+## FULL-EXECUTION MANDATE (2026-08-22, user)
+
+"Build all the things next — whatever is on the roadmap we should now do 100%
+and have all types of pipeline." Standing order: execute the ENTIRE remaining
+roadmap autonomously — every PRODUCT-EVOLUTION phase in order (P1 Identity →
+P2 Sessions → P3 Character life → P4 Moments+collectibles → P5 Journeys →
+P6 Memory scrapbook, + the continuous world-content stream) plus full CI/CD
+pipelines (release pipeline modernized for the Go product with a cross-compiled
+target matrix; desktop/Tauri pipeline when a mac/windows runner exists). Each
+phase: design-checked against PRODUCT-EVOLUTION.md → parallel implementation
+waves with exclusive ownership → overseer clean-cache + real-game gate → commit.
+Privacy invariant + honest mechanics are non-negotiable throughout. Repo stays
+PRIVATE. In-flight: proportion art pass; release-pipeline modernization.
