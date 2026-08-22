@@ -339,6 +339,26 @@ func TestStrategyComparisonA2(t *testing.T) {
 	}
 }
 
+// TestSeesGlobalInput is GO-0's coverage (docs/plan/P2-design.md §GO-0,
+// pinned contract: "func (r TickResult) SeesGlobalInput() bool"). P2's idle
+// auto-end rule may fire only when the provider genuinely SEES idle, so
+// this method must report true for a HonestyGlobal tick and false for a
+// HonestyBlind one — a blind provider must never be read as "not seeing
+// input" (the ADR 0010 lie).
+func TestSeesGlobalInput(t *testing.T) {
+	globalProvider := &stubProvider{honesty: activity.HonestyGlobal}
+	e := New(globalProvider)
+	if r := e.Tick(); !r.SeesGlobalInput() {
+		t.Errorf("HonestyGlobal tick: SeesGlobalInput() = false, want true")
+	}
+
+	blindProvider := &stubProvider{honesty: activity.HonestyBlind}
+	e = New(blindProvider)
+	if r := e.Tick(); r.SeesGlobalInput() {
+		t.Errorf("HonestyBlind tick: SeesGlobalInput() = true, want false")
+	}
+}
+
 // TestFocusRunSecondsGrowsAndResetsOnBreak is the A3 Fork B / GO-0 coverage
 // (docs/plan/A3-design.md §7 pinned contract): TickResult.FocusRunSeconds
 // must track the length of the CURRENT sustained-typing run — growing tick

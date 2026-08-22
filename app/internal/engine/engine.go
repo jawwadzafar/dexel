@@ -149,6 +149,21 @@ type TickResult struct {
 	FocusRunSeconds uint64
 }
 
+// SeesGlobalInput reports whether this tick's activity data comes from a
+// provider with genuine global visibility (docs/plan/P2-design.md §GO-0 /
+// §2.5's pinned contract: "TickResult.SeesGlobalInput() bool, returning
+// r.Honesty == activity.HonestyGlobal"). It is a METHOD, not a new field —
+// Honesty already crosses the engine/game boundary on TickResult, so this
+// adds no data, only a name for the one honesty question P2's idle
+// auto-end rule depends on: the rule may fire only when the provider
+// genuinely SEES idle. A blind provider (HonestyBlind) must never be read
+// as "saw no input" — that is the ADR 0010 lie the mood rules already
+// refuse (a blind provider can never produce MoodOnBreak either, see
+// mood() below), and the idle auto-end must refuse it identically.
+func (r TickResult) SeesGlobalInput() bool {
+	return r.Honesty == activity.HonestyGlobal
+}
+
 // Engine samples a Provider once per Tick call (the caller drives the 1s
 // cadence — see main.go) and turns the delta into work units + mood.
 type Engine struct {
