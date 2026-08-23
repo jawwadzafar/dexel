@@ -202,5 +202,13 @@ func (p *LinuxProvider) Snapshot() Snapshot {
 		// detection is compositor-specific (X11 vs. the many Wayland
 		// compositors) and out of scope here; we report counts honestly
 		// rather than guess an app identity from /proc.
+		//
+		// AppIdentityAvailable is therefore false, and that is now the
+		// SAID part rather than the implied part: an empty ActiveApp used
+		// to be this provider's way of expressing "I have no focus source"
+		// and also what a working provider returns for "nothing is
+		// frontmost", so downstream could not tell them apart. This
+		// provider is not looking at a bare desktop; it cannot look at all.
+		AppIdentityAvailable: false,
 	}
 }

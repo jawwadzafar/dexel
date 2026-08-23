@@ -1,6 +1,7 @@
 package activity
 
 import (
+	"os"
 	"reflect"
 	"strings"
 	"testing"
@@ -15,12 +16,30 @@ import (
 // content, fails this test rather than silently shipping a privacy
 // regression.
 func TestSnapshotIsContentFree(t *testing.T) {
+	// Each entry is a justification, not just a registration. In field order:
+	//   KeystrokeCount   — a count of presses, never which key.
+	//   MouseActive      — a recency bool, never a position.
+	//   IdleSeconds      — a duration.
+	//   ActiveApp        — an APPLICATION identity, sanitized and capped
+	//                      (SanitizeAppID), never a window title/doc/URL.
+	//   ActiveAppDisplay — a static table lookup on ActiveApp only.
+	//   AppIdentityAvailable — a bool about the PROVIDER's capability in this
+	//                      process context, carrying nothing about the user or
+	//                      what they are doing. Added (ADR 0019) because
+	//                      ActiveApp == "" was overloaded to mean both
+	//                      "nothing is frontmost" and "I cannot see apps from
+	//                      here", which made a total capture failure render
+	//                      identically to a real observation. A capability bit
+	//                      is the smallest thing that can separate them, and
+	//                      it is strictly less revealing than the app identity
+	//                      it qualifies.
 	allowed := map[string]string{
-		"KeystrokeCount":   "uint64",
-		"MouseActive":      "bool",
-		"IdleSeconds":      "float64",
-		"ActiveApp":        "string",
-		"ActiveAppDisplay": "string",
+		"KeystrokeCount":       "uint64",
+		"MouseActive":          "bool",
+		"IdleSeconds":          "float64",
+		"ActiveApp":            "string",
+		"ActiveAppDisplay":     "string",
+		"AppIdentityAvailable": "bool",
 	}
 
 	// Field/type names whose presence anywhere on Snapshot is itself a
@@ -70,5 +89,49 @@ func TestFriendlyNamesCarryNoLongText(t *testing.T) {
 		if strings.ContainsAny(name, "\n\t") {
 			t.Errorf("friendlyNames[%q] = %q contains control characters", id, name)
 		}
+	}
+}
+
+// TestDarwinProviderNeverReadsWindowTitle is the structural guard for the one
+// place on macOS where a window TITLE is a single dictionary key away.
+//
+// CGWindowListCopyWindowInfo hands back, for every on-screen window, both
+// kCGWindowOwnerName (the owning APPLICATION's name — permissionless, and
+// what ADR 0009 allows) and kCGWindowName (the window's TITLE — the document
+// you have open, the URL of your tab; forbidden by ADR 0002/0009, and gated
+// behind a Screen Recording TCC grant that ADR 0010 refuses to ask for).
+// They are adjacent keys on the same dictionary, so "read the title too" is a
+// three-character edit away from being correct-looking code.
+//
+// Snapshot's allow-list above stops a title from ever reaching the boundary
+// as a FIELD, but it cannot stop one from being read and logged. This test
+// closes that gap by asserting the read expression does not exist. It scans
+// the source rather than running the provider deliberately: it must fail on a
+// Linux CI box with no window server, where the darwin provider cannot be
+// executed at all.
+func TestDarwinProviderNeverReadsWindowTitle(t *testing.T) {
+	src, err := os.ReadFile("provider_darwin.go")
+	if err != nil {
+		t.Fatalf("reading provider_darwin.go: %v (this test must run from the package dir)", err)
+	}
+	// The forbidden thing is the READ, not the identifier: the file discusses
+	// kCGWindowName at length in the HARD BOUNDARY comment explaining why it
+	// is never read, and that documentation must not be what breaks the test.
+	forbidden := []string{
+		"CFDictionaryGetValue(w, kCGWindowName)",
+		"CFDictionaryGetValue(window, kCGWindowName)",
+		"valueForKey:kCGWindowName",
+	}
+	text := string(src)
+	for _, expr := range forbidden {
+		if strings.Contains(text, expr) {
+			t.Errorf("provider_darwin.go reads the window TITLE via %q — forbidden by ADR 0002/0009 (and it would require a Screen Recording grant, breaking ADR 0010's permissionless property). Read kCGWindowOwnerName only.", expr)
+		}
+	}
+	// Sanity-check the test itself: if the provider stopped using
+	// CGWindowList altogether the scan above would pass vacuously and stop
+	// guarding anything.
+	if !strings.Contains(text, "kCGWindowOwnerName") {
+		t.Error("provider_darwin.go no longer mentions kCGWindowOwnerName — this title guard has gone vacuous; re-point it at whatever API replaced CGWindowList")
 	}
 }

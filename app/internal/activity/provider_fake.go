@@ -63,6 +63,16 @@ func NewFakeProvider(script []FakeStep, honesty Honesty) *FakeProvider {
 	return p
 }
 
+// appIdentityAvailable derives Snapshot.AppIdentityAvailable for the fake:
+// it simulates a provider that CAN see app identity exactly when it was
+// given one to report. WithActiveApp("", "") is how callers ask for a
+// provider with no focus source at all (see provider_select_other.go's
+// non-darwin/linux fallback), so that case must report the capability as
+// unavailable rather than as "nothing is frontmost" — otherwise the fake
+// would be modelling a state no real provider can be in. Callers must hold
+// p.mu.
+func (p *FakeProvider) appIdentityAvailable() bool { return p.activeApp != "" }
+
 // WithActiveApp overrides the constant fake app identity the provider
 // reports (default "code" / "VS Code").
 func (p *FakeProvider) WithActiveApp(id, display string) *FakeProvider {
@@ -171,7 +181,11 @@ func (p *FakeProvider) Snapshot() Snapshot {
 	defer p.mu.Unlock()
 
 	if !p.started || len(p.script) == 0 || p.total <= 0 {
-		return Snapshot{ActiveApp: p.activeApp, ActiveAppDisplay: p.activeAppDisplay}
+		return Snapshot{
+			ActiveApp:            p.activeApp,
+			ActiveAppDisplay:     p.activeAppDisplay,
+			AppIdentityAvailable: p.appIdentityAvailable(),
+		}
 	}
 
 	elapsed := time.Since(p.startedAt)
@@ -217,9 +231,10 @@ func (p *FakeProvider) Snapshot() Snapshot {
 	keystrokes := uint64(totalTypeSeconds * fakeTypingRate)
 
 	snap := Snapshot{
-		KeystrokeCount:   keystrokes,
-		ActiveApp:        p.activeApp,
-		ActiveAppDisplay: p.activeAppDisplay,
+		KeystrokeCount:       keystrokes,
+		ActiveApp:            p.activeApp,
+		ActiveAppDisplay:     p.activeAppDisplay,
+		AppIdentityAvailable: p.appIdentityAvailable(),
 	}
 	switch cur.Kind {
 	case FakeType:

@@ -56,11 +56,35 @@ type Snapshot struct {
 	// ActiveApp via a small static lookup table (FriendlyName) — never
 	// derived from anything else the OS reports.
 	ActiveAppDisplay string
+
+	// AppIdentityAvailable reports whether app identity is OBSERVABLE by
+	// this provider in the current process context — a capability bit, not
+	// an observation. It exists because ActiveApp == "" was doing two
+	// incompatible jobs: "I looked and nothing is frontmost" and "I cannot
+	// see apps from here at all." Both rendered as "Working...", so a total
+	// capability failure was indistinguishable from a real answer — which is
+	// exactly the ADR 0010 lie ("on break because you minimized me") in a
+	// different costume. It is false on Linux (no permissionless focus
+	// source across X11/Wayland) and false on macOS only if there is no
+	// window-server session to query.
+	//
+	// Content-free by construction: a single bool about the PROVIDER, not
+	// about the user. See AppIdentity.Available for the full state table.
+	AppIdentityAvailable bool
 }
 
-// Honesty describes what a Provider can actually observe, so the engine's
-// mood rules (ADR 0010) can refuse to claim things a blind source cannot
-// know. This is the Go port of the Rust game's ActivitySource.is_global().
+// Honesty describes what a Provider can actually observe ABOUT INPUT, so the
+// engine's mood rules (ADR 0010) can refuse to claim things a blind source
+// cannot know. This is the Go port of the Rust game's
+// ActivitySource.is_global().
+//
+// Scope note: this is deliberately about input visibility ONLY. Whether the
+// provider can also name the frontmost application is a separate,
+// independent capability reported by Snapshot.AppIdentityAvailable — a
+// provider can see every keystroke system-wide (HonestyGlobal) while being
+// unable to name a single app, and vice versa. Collapsing the two into this
+// enum would mean a provider that lost app identity also stopped being
+// trusted for OnBreak.
 type Honesty int
 
 const (
