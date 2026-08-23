@@ -10,11 +10,20 @@
 // install.sh explicitly leaves it off), not `dexel start`, not
 // first-run. `enable` is idempotent (a second run yields the same one
 // entry, never two, all the way down in app/internal/autostart); the
-// binary path baked into whichever mechanism gets written is always
+// binary path baked into whichever mechanism gets written starts from
 // cliEnv.self (os.Executable(), resolved once in cliEnvOrReport) — never
 // os.Args[0] — because it must point at the INSTALLED binary autostart
 // will invoke at the next login, not however this particular invocation
 // happened to be spelled.
+//
+// On macOS the package may substitute an installed /Applications/Dexel.app
+// bundle's own executable for cliEnv.self, so that System Settings →
+// Login Items & Extensions can attribute the background item to a bundle
+// and show its icon and name instead of a generic `exec`
+// (app/internal/autostart/autostart.go's launchdProgram explains the
+// mechanism and the evidence). Because of that substitution `enable` no
+// longer prints env.self — it prints autostart.Result.Program, the path
+// that was really written — and `--bare` opts out.
 //
 // Dispatches the same way cmdPause/cmdResume fan a single lifecycle verb
 // out to sub-behaviour (cmd_lifecycle.go's cmdSetPaused): one table entry
@@ -58,6 +67,11 @@ func cmdAutostart(args []string) int {
 func cmdAutostartEnable(args []string) int {
 	fs := flag.NewFlagSet("dexel autostart enable", flag.ExitOnError)
 	linger := fs.Bool("linger", false, "also run `loginctl enable-linger` (Linux/systemd-user only) so the runtime survives with nobody logged in -- NOT implied by plain enable")
+	// No backticks in this usage string: package flag treats a backquoted
+	// word as the name of the flag's VALUE, which is nonsense for a bool --
+	// `dexel autostart enable -h` rendered "-bare dexel update", as if
+	// --bare took an argument.
+	bare := fs.Bool("bare", false, "macOS only: point the launchd plist at this binary instead of an installed Dexel.app's executable -- keeps 'dexel update' in charge of what runs at login, at the cost of a generic icon in System Settings")
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
@@ -67,22 +81,29 @@ func cmdAutostartEnable(args []string) int {
 		return code
 	}
 
-	mech, err := autostart.Enable(env.self, env.logPath)
+	res, err := autostart.Enable(env.self, env.logPath, autostart.Options{BareExecutable: *bare})
 	if err != nil {
 		fmt.Fprintf(env.errOut, "dexel: autostart enable: %v\n", err)
 		return 1
 	}
 
-	if err := recordAutostartMechanism(mech); err != nil {
+	if err := recordAutostartMechanism(res.Mechanism); err != nil {
 		// The OS-level mechanism is already in place; failing to record
 		// it in config.json is reported but never reverted -- `disable`
 		// probes the OS directly on Linux and `status` always asks the
 		// OS (autostart.Query), so a stale/missing config.json entry is
 		// cosmetic drift, never a correctness problem.
-		fmt.Fprintf(env.errOut, "dexel: autostart enabled (%s) but failed to record it in config.json: %v\n", mech, err)
+		fmt.Fprintf(env.errOut, "dexel: autostart enabled (%s) but failed to record it in config.json: %v\n", res.Mechanism, err)
 	}
 
-	fmt.Fprintf(env.out, "dexel: autostart ENABLED via %s (%s)\n", mech, env.self)
+	// Print res.Program, NOT env.self: on macOS they can differ, and
+	// printing the path we asked for rather than the one that was
+	// written would be exactly the kind of "looks right, isn't" output
+	// this project refuses to ship.
+	fmt.Fprintf(env.out, "dexel: autostart ENABLED via %s (%s)\n", res.Mechanism, res.Program)
+	if res.Note != "" {
+		fmt.Fprintf(env.out, "  %s\n", res.Note)
+	}
 
 	if *linger {
 		if err := autostart.EnableLinger(); err != nil {

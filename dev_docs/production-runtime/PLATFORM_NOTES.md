@@ -140,6 +140,16 @@ Path: `~/Library/LaunchAgents/com.jawwadzafar.dexel.plist`
 (identifier matches `desktop/src-tauri/tauri.conf.json`'s
 `"identifier": "com.jawwadzafar.dexel"` — one identity for the product).
 
+There are two shapes of this plist, differing in exactly two things —
+`ProgramArguments[0]` and the presence of `AssociatedBundleIdentifiers`.
+Which one `enable` writes depends only on whether an installed app bundle is
+present; §3.1.1 explains why. Everything supervision-related is identical in
+both, and that identity is pinned by a byte-for-byte unit test
+(`app/internal/autostart/autostart_test.go`).
+
+**A. With an installed `/Applications/Dexel.app`** (what `enable` writes when it
+finds one):
+
 ```xml
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
@@ -149,8 +159,12 @@ Path: `~/Library/LaunchAgents/com.jawwadzafar.dexel.plist`
   <key>Label</key>              <string>com.jawwadzafar.dexel</string>
   <key>ProgramArguments</key>
   <array>
-    <string>/Users/USER/.local/bin/dexel</string>
+    <string>/Applications/Dexel.app/Contents/MacOS/dexel-server</string>
     <string>runtime</string>
+  </array>
+  <key>AssociatedBundleIdentifiers</key>
+  <array>
+    <string>com.jawwadzafar.dexel</string>
   </array>
   <key>RunAtLoad</key>          <true/>
   <key>KeepAlive</key>
@@ -164,6 +178,19 @@ Path: `~/Library/LaunchAgents/com.jawwadzafar.dexel.plist`
 </plist>
 ```
 
+**B. Bare-binary fallback** — no app bundle installed, or `enable --bare`. This
+is byte-identical to what shipped before bundle attribution existed: no
+`AssociatedBundleIdentifiers` key at all, and `ProgramArguments[0]` is the
+resolved `os.Executable()`:
+
+```xml
+  <key>ProgramArguments</key>
+  <array>
+    <string>/Users/USER/.local/bin/dexel</string>
+    <string>runtime</string>
+  </array>
+```
+
 * Absolute paths only — launchd has almost no environment and no `PATH`.
 * `KeepAlive → SuccessfulExit: false` means "restart if it crashed, do not
   restart after a clean `dexel stop`". A bare `KeepAlive: true` would make
@@ -172,15 +199,161 @@ Path: `~/Library/LaunchAgents/com.jawwadzafar.dexel.plist`
   a 1 Hz ticker.
 * launchd owns the log redirection here, so the child's stdio is launchd's
   business and `dexel start` is not involved.
+* `dexel-server` inside the bundle is the SAME Go program as the bare `dexel`
+  (Tauri ships it as a sidecar); it accepts `runtime` and every other
+  subcommand, and it resolves the same state directory, because
+  `app/internal/paths` derives `StateDir` from `$DEXEL_HOME`/`$HOME` and never
+  from the executable's own path.
 
 Commands: `launchctl bootstrap gui/$(id -u) <plist>` and
 `launchctl bootout gui/$(id -u)/com.jawwadzafar.dexel`, falling back to
 `launchctl load -w` / `unload -w` on older macOS. `status` = `launchctl print
-gui/$(id -u)/com.jawwadzafar.dexel` exit code, plus the plist's existence.
+gui/$(id -u)/com.jawwadzafar.dexel` exit code, plus the plist's existence, plus
+`ProgramArguments[0]` read back off disk (so `status` reports which of the two
+shapes above is actually installed rather than assuming).
 
 Not designed here: the first launch will prompt nothing (the macOS provider is
 permissionless by ADR 0010 decision 1 — that is why it was chosen), so autostart
-needs no consent dialog of its own.
+needs no consent dialog of its own. That same permissionlessness is why moving
+the program path from the bare binary into the app bundle costs nothing: there is
+no TCC (Accessibility / Input Monitoring) grant tied to the old path to lose,
+because there was never a grant.
+
+### 3.1.1 System Settings → Login Items & Extensions: the icon, the name, and "unidentified developer"
+
+Investigated 2026-08-23 on the owner's Mac (macOS 26.6, Apple Silicon), because
+the entry under **General → Login Items & Extensions → Allow in the Background**
+showed a generic `exec` icon named "dexel", subtitled *"Item from unidentified
+developer"* — next to properly-branded entries like Docker. Written down so
+nobody re-derives it.
+
+That pane is a UI over **BTM** (Background Task Management, macOS 13+), whose
+store is `/var/db/com.apple.backgroundtaskmanagement/BackgroundItems-v*.btm`
+(dump it with `sudo sfltool dumpbtm`). Each record carries a `Name`,
+`Developer Name`, `Team Identifier` and `Assoc. Bundle IDs`. Apple's own framing
+is *responsible code*: the pane shows the name of the app it holds responsible
+for the item, resolved through the LaunchServices database.
+
+**What drives the NAME and ICON — three findings, at three different confidence
+levels. The difference matters, so it is stated per item.**
+
+1. **`AssociatedBundleIdentifiers` — documented.** `launchd.plist(5)`, verbatim:
+   "This optional key indicates which bundles are associated with this job in
+   the System Settings Login Items UI. If an app installs a legacy plist the
+   plist should include this key with a value of the app's bundle identifier."
+   This is the only officially supported lever for a hand-installed
+   `~/Library/LaunchAgents` plist, and Apple DTS recommends it repeatedly. So
+   `enable` now sets it (to `com.jawwadzafar.dexel`, which is deliberately the
+   same string as the launchd `Label` and the Tauri bundle's `identifier`).
+2. **Naming an executable *inside* the `.app` — strong circumstantial evidence,
+   not documentation.** On this machine, every third-party LaunchAgent that
+   shows a real icon and name points at an executable inside an app bundle,
+   often a nested one — OneDrive's `StandaloneUpdater.app` and
+   `SyncReporter.app`, `Microsoft Defender.app`'s helper, Intune's
+   `Microsoft Intune Agent.app`, Company Portal's SSO XPC service. Every one
+   that shows a generic icon points at a bare Unix executable — FortiClient's
+   `.../FortiClient/bin/*`, XQuartz's `/opt/X11/libexec/launchd_startx`. That
+   is why `enable` prefers `/Applications/Dexel.app/Contents/MacOS/dexel-server`
+   over `~/.local/bin/dexel` when the bundle exists. **No Apple document was
+   found stating that path-containment alone triggers bundle attribution.**
+3. **The plist's `Label` is irrelevant to the displayed name — confirmed.** The
+   standing counter-example is nix-darwin, whose labels are `org.nixos.*` but
+   whose `ProgramArguments[0]` is `/bin/sh`: the pane shows entries literally
+   named "sh". Attribution follows the process actually `exec`'d, which is a
+   second reason to name a real Mach-O rather than a wrapper script. (`Label`
+   *is* what MDM matches on — a different feature.) `BundleProgram` is no use
+   either: the man page scopes it to `SMAppService` installs only.
+
+**The "Item from unidentified developer" subtitle: NOT fixable without a paid
+Apple Developer ID. This is not a workaround-shaped problem.**
+
+That subtitle is the `Developer Name` field, and it is read out of the **code
+signing certificate** of the responsible code. Every dexel binary today is
+ad-hoc signed — specifically *linker-signed*, which is simply what the Go
+toolchain emits on Apple Silicon, where an unsigned Mach-O cannot execute at
+all:
+
+```
+$ codesign -dvv ~/.local/bin/dexel
+Identifier=a.out
+CodeDirectory ... flags=0x20002(adhoc,linker-signed)
+Signature=adhoc
+TeamIdentifier=not set
+```
+
+An ad-hoc signature has **no certificate chain and no Team Identifier**, so
+there is no developer name for macOS to read. The proof is already on the
+owner's machine and cost nothing to obtain: the binary above was *already*
+ad-hoc signed while the pane said "unidentified developer". **`codesign -s -`
+therefore changes nothing here** — it produces exactly the signature that is
+already present. Do not ship a commit claiming otherwise.
+
+Third-party (non-Apple) certificates buy nothing either: Apple DTS is explicit
+that macOS treats code signed with a third-party identity "more-or-less like
+unsigned code".
+
+Worse — and this is the honest ceiling on §3.1's change — *responsible code*
+tracking keys off the Team Identifier, and Apple DTS states that a job whose
+executable has no Team Identifier causes `AssociatedBundleIdentifiers` to be
+**ignored outright**. So findings 1 and 2 above may buy nothing at all until
+there is a real signature. They are cheap, documented/observed-in-the-field, and
+correct; they are not a guarantee. Nobody should record "the icon is fixed"
+without looking at the pane.
+
+**What the owner would have to buy and do for a real name in that subtitle:**
+
+1. **Apple Developer Program membership — $99 USD/year.** A free Apple ID only
+   yields "Apple Development" certificates, which are not distribution
+   identities and give no Developer ID. Creating the certificate requires the
+   Account Holder role. Code-signing and notarization cost nothing beyond
+   membership.
+2. Create a **Developer ID Application** certificate, then sign the app bundle
+   *and* the sidecar with the **same** identity (Apple DTS: a helper must be
+   signed the same way as its parent app for the responsible-code link to be
+   tracked):
+
+   ```sh
+   security find-identity -v -p codesigning       # confirm the identity is present
+   codesign --force --timestamp --options runtime \
+            --sign "Developer ID Application: NAME (TEAMID)" \
+            /Applications/Dexel.app/Contents/MacOS/dexel-server
+   codesign --force --timestamp --options runtime \
+            --sign "Developer ID Application: NAME (TEAMID)" \
+            /Applications/Dexel.app                          # never --deep
+   codesign -d -vvv /Applications/Dexel.app                  # Authority + TeamIdentifier must match
+   ```
+3. **Notarize**, which needs a container (a bare Mach-O cannot be submitted),
+   then **staple** — and stapling only works on a bundle/dmg/pkg, never on a
+   bare Mach-O. That is an independent argument for shipping the runtime inside
+   `Dexel.app` rather than only as `~/.local/bin/dexel`:
+
+   ```sh
+   ditto -c -k --keepParent /Applications/Dexel.app Dexel.zip
+   xcrun notarytool submit Dexel.zip --apple-id … --team-id … --password … --wait
+   xcrun stapler staple /Applications/Dexel.app
+   ```
+
+   Whether the Developer ID signature alone moves the subtitle, or notarization
+   is also required, was **not** established — Apple's phrasing bundles "signed
+   and notarised" together, while every description of the field says the name
+   comes from the certificate. Practically moot: notarization is free once
+   you're a member and needed for Gatekeeper anyway.
+4. Do **not** codesign the plist itself (Apple DTS: "doesn't actually do
+   anything useful"), and do **not** use `codesign --deep`.
+
+**Two testing traps, both from Apple DTS.** The LaunchServices database gets
+"thoroughly scramble[d]" by repeated development builds, so what a developer
+sees in that pane is not what a fresh user sees — the real check is a machine or
+VM that has never seen the product. And BTM only refreshes third-party items
+during overnight Service Management maintenance; `sudo sfltool resetbtm` plus a
+reboot forces a rescan, at the cost of clearing *all* third-party login items.
+
+**One consequence of §3.1's change, stated plainly.** With the plist pointing
+into the bundle, the binary that runs at login is the one `Dexel.app` ships, not
+the one `dexel update` replaces in `~/.local/bin`. The two can drift in version.
+`dexel autostart status` prints the registered program path for exactly this
+reason, and `dexel autostart enable --bare` opts back out (macOS-only; a no-op
+on Linux and Windows, which have no bundle concept).
 
 ### 3.2 Linux — **systemd `--user`**, with XDG autostart as the fallback
 
