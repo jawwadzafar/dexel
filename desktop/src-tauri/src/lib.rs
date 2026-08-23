@@ -82,7 +82,12 @@ const SIDECAR_NAME: &str = "dexel-server";
 const CLI_TIMEOUT: Duration = Duration::from_secs(20);
 
 const WINDOW_LABEL: &str = "main";
-const WINDOW_TITLE: &str = "dexel";
+/// The window's title bar — a DISPLAY string, so it is the capitalised product
+/// name that `tauri.conf.json`'s `productName` also carries. Everything else in
+/// this file stays lowercase `dexel` on purpose: those are artifacts, not
+/// display text (the `dexel-server` sidecar, `~/.local/bin/dexel`, the
+/// `dexel stop` command a log line tells the user to run).
+const WINDOW_TITLE: &str = "Dexel";
 /// The frontend root is a fixed 640x400 canvas plus its sprint/ticker chrome
 /// (~660x430). 660x460 is both the default AND the minimum, so the
 /// fixed-pixel layout can never be clipped (F3-design.md §5).

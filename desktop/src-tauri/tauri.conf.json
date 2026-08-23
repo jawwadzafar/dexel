@@ -1,7 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "dexel",
-  "version": "0.1.0",
+  "productName": "Dexel",
+  "mainBinaryName": "dexel",
+  "version": "0.3.0",
   "identifier": "com.jawwadzafar.dexel",
   "build": {
     "frontendDist": "../dist"
@@ -28,6 +29,6 @@
     ],
     "category": "DeveloperTool",
     "shortDescription": "A developer companion that earns Dev Cash from your real activity",
-    "longDescription": "dexel is a desktop companion that watches how much you actually type and move, turns that into Dev Cash, and lets you spend it dressing up your little developer. The window is a native frame around dexel's own loopback server; nothing leaves your machine."
+    "longDescription": "Dexel is a desktop companion that watches how much you actually type and move, turns that into Dev Cash, and lets you spend it dressing up your little developer. The window is a native frame around Dexel's own loopback server; nothing leaves your machine."
   }
 }

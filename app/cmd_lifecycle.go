@@ -733,8 +733,13 @@ func desktopAppCandidates(goos, binDir, localAppData string) []string {
 	switch goos {
 	case "darwin":
 		// The .app bundle itself, opened via `open` — which is what a
-		// macOS app is, rather than an executable on a path.
-		out = append(out, "/Applications/dexel.app")
+		// macOS app is, rather than an executable on a path. Capital D:
+		// the bundle is named after tauri.conf.json's productName
+		// ("Dexel"), not after the lowercase binary inside it. macOS
+		// paths are case-insensitive by default so the old
+		// "dexel.app" spelling usually still resolved — this is a
+		// correctness statement, not a bug fix.
+		out = append(out, "/Applications/Dexel.app")
 	case "windows":
 		if localAppData != "" {
 			out = append(out, filepath.Join(localAppData, "Programs", "dexel", exe))

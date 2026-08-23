@@ -250,7 +250,7 @@ func TestDesktopAppCandidatesPerOS(t *testing.T) {
 		want                       []string
 	}{
 		{"linux", "/home/u/.local/bin", "", []string{"/home/u/.local/bin/dexel-desktop"}},
-		{"darwin", "/Users/u/.local/bin", "", []string{"/Users/u/.local/bin/dexel-desktop", "/Applications/dexel.app"}},
+		{"darwin", "/Users/u/.local/bin", "", []string{"/Users/u/.local/bin/dexel-desktop", "/Applications/Dexel.app"}},
 		{"windows", `C:\Users\u\AppData\Local\dexel\bin`, `C:\Users\u\AppData\Local`, []string{
 			`C:\Users\u\AppData\Local\dexel\bin\dexel-desktop.exe`,
 			`C:\Users\u\AppData\Local\Programs\dexel\dexel-desktop.exe`,

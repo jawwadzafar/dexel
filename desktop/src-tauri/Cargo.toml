@@ -2,16 +2,29 @@
 # server (ADR 0015 / docs/plan/F3-design.md task T1).
 #
 # STATUS: BUILT. First compiled and bundled on macOS arm64 (2026-08-23);
-# `cargo tauri build --bundles app` produces a launchable dexel.app. See
+# `cargo tauri build --bundles app` produces a launchable Dexel.app. See
 # ../README.md for what that first build confirmed.
 
 [package]
-# The package name is deliberately "dexel", matching tauri.conf.json's
-# productName: Tauri's bundlers expect the compiled main binary's name to
-# match `mainBinaryName` (which defaults to productName), so keeping
-# package name == productName avoids that whole class of rename mismatch.
+# The package name is "dexel", lowercase, and it STAYS lowercase even though
+# tauri.conf.json's productName is now "Dexel" (the display name: the bundle
+# directory, CFBundleName, and the macOS app menu). Those two are allowed to
+# differ, and here they must:
+#
+#   * The product is spelled "Dexel" wherever a human reads it.
+#   * Every ARTIFACT is spelled "dexel" — this crate, the compiled binary,
+#     the `dexel` CLI, the `dexel-server` sidecar, `~/.local/bin/dexel`.
+#
+# Mechanically (tauri-cli 2.11's `get_binaries` / `rename_app`, and
+# tauri-bundler's `Settings::main_binary_name`): the main binary's name comes
+# from THIS package name unless `mainBinaryName` overrides it — it does NOT
+# default to productName, despite what an earlier version of this comment
+# claimed. tauri.conf.json therefore sets `mainBinaryName: "dexel"`
+# explicitly. That makes the contract a statement rather than a side effect of
+# the Cargo package name, and it keeps `Dexel.app/Contents/MacOS/dexel`
+# (CFBundleExecutable `dexel`) correct if this package is ever renamed.
 name = "dexel"
-version = "0.1.0"
+version = "0.3.0"
 description = "dexel — a developer companion that earns Dev Cash from your real activity"
 authors = ["Jawwad Zafar"]
 edition = "2021"
