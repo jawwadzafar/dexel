@@ -6,23 +6,95 @@
 # ../README.md for what that first build confirmed.
 
 [package]
-# The package name is "dexel", lowercase, and it STAYS lowercase even though
-# tauri.conf.json's productName is now "Dexel" (the display name: the bundle
-# directory, CFBundleName, and the macOS app menu). Those two are allowed to
-# differ, and here they must:
+# ----------------------------------------------------------------------
+# THREE NAMES, AND WHICH FILE EACH ONE PRODUCES
+# ----------------------------------------------------------------------
+# This crate's package name, tauri.conf.json's `productName`, and
+# tauri.conf.json's `mainBinaryName` are three different strings on
+# purpose. Getting them confused once cost a silent, build-error-free
+# bundle corruption (see below), so the arrangement is written out here in
+# full rather than left to be re-derived.
 #
-#   * The product is spelled "Dexel" wherever a human reads it.
-#   * Every ARTIFACT is spelled "dexel" — this crate, the compiled binary,
-#     the `dexel` CLI, the `dexel-server` sidecar, `~/.local/bin/dexel`.
+#   package name        "dexel"          -> the crate, the lockfile, and
+#                                          cargo's own target/release/dexel
+#                                          before the bundler renames it
+#   productName         "Dexel"          -> `Dexel.app`, CFBundleName and
+#                                          CFBundleDisplayName: everything
+#                                          a human reads in the Dock, the
+#                                          menu bar and Finder
+#   mainBinaryName      "dexel-desktop"  -> `Dexel.app/Contents/MacOS/
+#                                          dexel-desktop`, and
+#                                          CFBundleExecutable
 #
-# Mechanically (tauri-cli 2.11's `get_binaries` / `rename_app`, and
-# tauri-bundler's `Settings::main_binary_name`): the main binary's name comes
-# from THIS package name unless `mainBinaryName` overrides it — it does NOT
-# default to productName, despite what an earlier version of this comment
-# claimed. tauri.conf.json therefore sets `mainBinaryName: "dexel"`
-# explicitly. That makes the contract a statement rather than a side effect of
-# the Cargo package name, and it keeps `Dexel.app/Contents/MacOS/dexel`
-# (CFBundleExecutable `dexel`) correct if this package is ever renamed.
+# Mechanically (tauri-cli 2.11's `get_binaries`/`rename_app`, and
+# tauri-bundler 2.9's `Settings::main_binary_name`): the main binary's name
+# comes from THIS package name unless `mainBinaryName` overrides it — it
+# does NOT default to productName. tauri.conf.json therefore states
+# `mainBinaryName` explicitly, so the contract is a statement rather than
+# a side effect of the Cargo package name, and stays correct if this
+# package is ever renamed.
+#
+# # The artifacts-stay-lowercase contract, and its ONE exception
+#
+# The product is spelled "Dexel" wherever a human reads it, and every
+# ARTIFACT is spelled lowercase `dexel`: this crate, the `dexel` CLI,
+# `~/.local/bin/dexel`, and — since the rename recorded below —
+# `dexel-desktop`, the GUI shell this crate builds.
+#
+# There is exactly ONE exception, and it is deliberate: the bundled Go
+# daemon is named `Dexel`, with a capital D
+# (tauri.conf.json's `bundle.externalBin`, `SIDECAR_NAME` in src/lib.rs,
+# `BIN_BASE` in ../../scripts/build-sidecar.sh). It is the one artifact
+# whose FILENAME is display text — macOS's System Settings → General →
+# Login Items & Extensions pane names each background item after the
+# executable that is actually exec'd, and `dexel autostart enable` points
+# its LaunchAgent at that file inside the installed `Dexel.app`. So that
+# filename is what the owner reads in that pane.
+# dev_docs/production-runtime/PLATFORM_NOTES.md §3.1.2–§3.1.3 has the
+# whole account, including the two earlier names (`dexel-server`, then
+# `Dexel Runtime`) and what the pane showed for each.
+#
+# # Why the MAIN binary is `dexel-desktop` and not `dexel`
+#
+# Because the daemon needs the name `Dexel`, and `Contents/MacOS/` is one
+# flat directory on a volume that is case-INsensitive by default: `Dexel`
+# and `dexel` are the SAME FILE there. Worse, the collision does not
+# error. tauri-bundler's macOS path copies external binaries first
+# (`Settings::copy_binaries`) and the main binary second
+# (`copy_binaries_to_bundle`), both with a plain `fs::copy`, so the Rust
+# GUI shell would silently overwrite the Go daemon and every login would
+# open a WINDOW instead of starting a runtime. (The .deb path copies them
+# in the OPPOSITE order into `/usr/bin`, so which program survives a
+# collision is not even stable across targets — another reason to make the
+# names distinct rather than to reason about who wins.)
+#
+# `dexel-desktop` is not a new name invented for this: it is already the
+# product's word for this exact artifact — `app/cmd_lifecycle.go`'s
+# `desktopAppName`, ARCHITECTURE.md Decision 17, PLATFORM_NOTES.md §1's
+# "desktop app" row and RUN-MODES.md all call the optional window
+# `dexel-desktop`, and `dexel open` looks for precisely that filename on
+# `PATH`. The rename makes the bundle agree with the rest of the product
+# instead of shipping a `dexel` that shadows the CLI of the same name
+# (which the .deb, whose main binary and sidecar share `/usr/bin`, would
+# have done literally).
+#
+# What it costs, stated honestly: `Foo.app/Contents/MacOS/Foo` is Apple's
+# convention, and this bundle no longer follows it for its main binary.
+# Nothing user-visible changes — `CFBundleName`/`CFBundleDisplayName` are
+# still "Dexel", and `CFBundleExecutable` (which LaunchServices, and
+# therefore `open -a`, actually reads) is authoritative — so the Dock, the
+# menu bar and Finder all still say Dexel. Only a raw process listing
+# (Activity Monitor, `ps`) shows `dexel-desktop`.
+#
+# # The invariant, and where it is enforced
+#
+# The real rule underneath all of the above is: **no two executables
+# destined for one flat install directory may collide case-insensitively.**
+# That was unenforced and cost real debugging twice. It is now a test —
+# `mod bundle_layout` in src/lib.rs reads this crate's own
+# tauri.conf.json and fails on a colliding config — plus a matching
+# assertion in .github/workflows/desktop.yml, which is the one that runs
+# on a push that touches only the JSON.
 name = "dexel"
 version = "0.1.0"
 description = "dexel — a developer companion that earns Dev Cash from your real activity"

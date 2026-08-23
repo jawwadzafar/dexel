@@ -74,10 +74,12 @@ use tauri_plugin_shell::process::CommandEvent;
 use tauri_plugin_shell::ShellExt;
 
 /// The `bundle.externalBin` base name. Tauri appends the target triple on
-/// disk (`Dexel Runtime-x86_64-unknown-linux-gnu`) and strips it again inside
-/// the bundle, so the name used here is the bare one — and it must stay in
+/// disk (`Dexel-x86_64-unknown-linux-gnu`) and strips it again inside the
+/// bundle, so the name used here is the bare one — and it must stay in
 /// lockstep with `tauri.conf.json`'s `externalBin` entry and the
 /// `shell:allow-execute` scope entry in `capabilities/default.json`.
+/// `bundle_layout` asserts that lockstep so a half-finished rename fails
+/// `cargo test` instead of failing at bundle time.
 ///
 /// ## Why this ONE artifact is capitalised, when every other artifact is not
 ///
@@ -86,34 +88,34 @@ use tauri_plugin_shell::ShellExt;
 /// pane names each background item after the executable that is actually
 /// `exec`'d — not after the launchd `Label`, and not after the enclosing
 /// bundle (PLATFORM_NOTES.md §3.1.1). `dexel autostart enable` points its
-/// LaunchAgent at this file inside the installed `Dexel.app`, so whatever this
-/// is called is the string the owner sees in that pane. It was
-/// `dexel-server`, and the pane read "dexel-server" (PLATFORM_NOTES.md
-/// §3.1.2 records that observation and its date).
+/// LaunchAgent at this file inside the installed `Dexel.app`, so whatever
+/// this is called is the string the owner sees in that pane. It has been
+/// `dexel-server` (the pane read "dexel-server") and then `Dexel Runtime`;
+/// PLATFORM_NOTES.md §3.1.2 and §3.1.3 record each observation and its date.
 ///
-/// ## Why not simply `Dexel`
+/// ## How `Dexel` became available, and the trap that made it unavailable before
 ///
-/// Because `Contents/MacOS/dexel` is ALREADY taken by this crate's own
-/// binary (`tauri.conf.json`'s `mainBinaryName: "dexel"` — the Tauri shell,
-/// a different program from the Go daemon), and macOS's default APFS volume
-/// is case-INsensitive, so `Contents/MacOS/Dexel` and `Contents/MacOS/dexel`
-/// are the same file. tauri-bundler copies external binaries first
-/// (`macos/app.rs`'s `copy_binaries`) and the main binary second
-/// (`copy_binaries_to_bundle`), so the collision would not even error: the
-/// Rust shell would silently overwrite the Go daemon, and the LaunchAgent
-/// would launch a GUI window at every login instead of the runtime.
-/// "Runtime" is then the product's own word for the thing that starts at
-/// login (`dexel runtime`, `runtime.json`, `runtime.lock`).
+/// `Contents/MacOS/` is ONE FLAT DIRECTORY, and macOS's default APFS volume
+/// is case-INsensitive, so `Dexel` and `dexel` name the same file there.
+/// While the Tauri shell's own main binary was called `dexel`
+/// (`mainBinaryName`), this name was therefore unusable — and the collision
+/// would not even have errored: tauri-bundler copies external binaries first
+/// (`Settings::copy_binaries`) and the main binary second
+/// (`copy_binaries_to_bundle`), both with a plain `fs::copy`, so the Rust GUI
+/// shell would have silently overwritten the Go daemon and the LaunchAgent
+/// would have opened a window at every login instead of starting the runtime.
 ///
-/// The space is deliberate and is safe at every layer: `tauri_utils`
-/// composes the on-disk name with a plain `format!`, `tauri-plugin-shell`
-/// resolves it with `Path::join` and hands it to `std::process::Command`
-/// (no shell, so no word splitting), NSIS's generated `File /a "/oname=.."`
-/// directive is quoted, and launchd's `ProgramArguments` is an array of
-/// strings. Only hand-written shell scripts need care — see
-/// `scripts/build-sidecar.sh` and the CI assertion in
-/// `.github/workflows/desktop.yml`.
-const SIDECAR_NAME: &str = "Dexel Runtime";
+/// The main binary was therefore renamed to `dexel-desktop` — which is
+/// already the product's own word for it (`app/cmd_lifecycle.go`'s
+/// `desktopAppName`, ARCHITECTURE.md Decision 17) — which frees `Dexel` for
+/// the daemon. See `../Cargo.toml`'s `[package]` header for the full
+/// three-names table and what the rename costs.
+///
+/// The invariant underneath all of that — no two executables destined for
+/// one flat install directory may collide case-insensitively — is now
+/// enforced by `bundle_layout`, because it was unenforced twice and cost
+/// real debugging both times.
+const SIDECAR_NAME: &str = "Dexel";
 
 /// How long any one short-lived CLI call (`status`, `start`) gets before we
 /// give up and fail loudly. `start` is the slow one and it only has to fork a
@@ -126,9 +128,10 @@ const WINDOW_LABEL: &str = "main";
 /// name that `tauri.conf.json`'s `productName` also carries. The rest of this
 /// file stays lowercase `dexel` on purpose: those are artifacts, not display
 /// text (`~/.local/bin/dexel`, the `dexel stop` command a log line tells the
-/// user to run). `SIDECAR_NAME` is the one deliberate exception, and its doc
-/// comment says why: that filename IS display text, because System Settings
-/// names the login item after it.
+/// user to run, and `dexel-desktop`, which is what this shell's own binary is
+/// called inside the bundle). `SIDECAR_NAME` is the one deliberate exception,
+/// and its doc comment says why: that filename IS display text, because
+/// System Settings names the login item after it.
 const WINDOW_TITLE: &str = "Dexel";
 /// The frontend root is a fixed 640x400 canvas plus its sprint/ticker chrome
 /// (~660x430). 660x460 is both the default AND the minimum, so the
@@ -475,4 +478,187 @@ pub fn run() {
                 );
             }
         });
+}
+
+// ---------------------------------------------------------------------------
+// The bundle-layout guard.
+// ---------------------------------------------------------------------------
+
+/// Guards the ONE invariant that governs how this bundle's executables are
+/// named, and that nothing else in the toolchain checks.
+///
+/// # The invariant
+///
+/// **No two executables destined for one flat install directory may collide
+/// case-insensitively.**
+///
+/// The names in play are `tauri.conf.json`'s `mainBinaryName` (this crate's
+/// GUI shell) and every entry of `bundle.externalBin` (today just the Go
+/// daemon). On macOS all of them land in `Dexel.app/Contents/MacOS/`; in the
+/// `.deb` all of them land in `/usr/bin`; in the NSIS installer all of them
+/// land in the install directory. Two of those three filesystems are
+/// case-insensitive in their default configuration, and Windows always is.
+///
+/// # Why a test, rather than trusting a build error
+///
+/// **There is no build error.** Verified in the vendored bundler
+/// (`tauri-bundler-2.9.4`):
+///
+/// * `src/bundle/macos/app.rs`'s `bundle_project` calls
+///   `settings.copy_binaries(&bin_dir)` — the `externalBin` entries — and
+///   THEN `copy_binaries_to_bundle(..)` — the main binary.
+/// * `src/bundle/linux/debian.rs`'s `generate_data` does it in the OPPOSITE
+///   order: the main binary first, `copy_binaries` second.
+/// * Both ultimately call `utils::fs_utils::copy_file`, whose body is
+///   `fs::create_dir_all(dest_dir)?; fs::copy(from, to)?` — an overwrite.
+///   `fs::copy` truncates an existing destination and returns `Ok`.
+///
+/// So a colliding pair produces a bundle that is missing one of its two
+/// programs, with a zero exit code and no warning, and *which* program
+/// survives depends on the target. On macOS the survivor would be the GUI
+/// shell, which means the login item would open a WINDOW at every login
+/// instead of starting the runtime — the exact bug this guard exists to make
+/// impossible. PLATFORM_NOTES.md §3.1.3 has the field account.
+///
+/// The check is split in two on purpose: `case_insensitive_collision` is a
+/// pure function with its own test that feeds it a KNOWN-BAD list, so the
+/// checker itself is proven to catch a collision rather than being trusted
+/// to. The other test then points it at this crate's real config.
+#[cfg(test)]
+mod bundle_layout {
+    use super::SIDECAR_NAME;
+
+    /// The config is read at COMPILE time, so this test cannot pass against
+    /// a stale copy of a file that was edited after the build.
+    const TAURI_CONF: &str = include_str!("../tauri.conf.json");
+    const CAPABILITY: &str = include_str!("../capabilities/default.json");
+
+    fn conf() -> serde_json::Value {
+        serde_json::from_str(TAURI_CONF).expect("tauri.conf.json is not valid JSON")
+    }
+
+    /// Every filename this config will place in one flat install directory:
+    /// the main binary plus each `externalBin`, with Tauri's `binaries/`
+    /// source-directory prefix stripped the way the bundler strips it (only
+    /// the final component becomes a filename).
+    fn flat_install_names(conf: &serde_json::Value) -> Vec<String> {
+        // Absent `mainBinaryName` would silently fall back to the Cargo
+        // package name, which would make the whole arrangement implicit
+        // again. It is required to be stated.
+        let main = conf
+            .get("mainBinaryName")
+            .and_then(|v| v.as_str())
+            .expect("tauri.conf.json must state mainBinaryName explicitly");
+        let mut names = vec![main.to_string()];
+
+        let external = conf
+            .get("bundle")
+            .and_then(|b| b.get("externalBin"))
+            .and_then(|e| e.as_array())
+            .expect("tauri.conf.json must have bundle.externalBin");
+        for entry in external {
+            let entry = entry.as_str().expect("externalBin entries are strings");
+            let base = entry.rsplit('/').next().unwrap_or(entry);
+            names.push(base.to_string());
+        }
+        names
+    }
+
+    /// The first case-insensitively colliding pair, in the order given, or
+    /// `None`. Deliberately returns the offending pair rather than a bool so
+    /// a failure message can name both halves.
+    fn case_insensitive_collision(names: &[String]) -> Option<(String, String)> {
+        for (i, a) in names.iter().enumerate() {
+            for b in &names[i + 1..] {
+                if a.to_lowercase() == b.to_lowercase() {
+                    return Some((a.clone(), b.clone()));
+                }
+            }
+        }
+        None
+    }
+
+    /// The checker itself, against a list that is known to collide. Without
+    /// this, a `case_insensitive_collision` that always returned `None`
+    /// would make the real test below pass while asserting nothing.
+    #[test]
+    fn the_collision_check_catches_a_known_collision() {
+        let colliding = vec!["dexel".to_string(), "Dexel".to_string()];
+        let (a, b) = case_insensitive_collision(&colliding)
+            .expect("case_insensitive_collision missed `dexel` vs `Dexel` — the exact pair that broke this bundle before, so this checker is not checking anything");
+        assert_eq!((a.as_str(), b.as_str()), ("dexel", "Dexel"));
+
+        // A space and a hyphen are ordinary characters here: only case is
+        // folded. `Dexel` and `Dexel Runtime` must NOT read as a collision,
+        // or the guard would reject a perfectly valid pair of names.
+        assert!(
+            case_insensitive_collision(&[
+                "dexel-desktop".to_string(),
+                "Dexel".to_string(),
+                "Dexel Runtime".to_string(),
+            ])
+            .is_none(),
+            "distinct names were reported as colliding"
+        );
+    }
+
+    /// The real config. This is the assertion that would have failed on the
+    /// `mainBinaryName: "dexel"` + `externalBin: "binaries/Dexel"` pair that
+    /// tauri-bundler would otherwise have collapsed into one file.
+    #[test]
+    fn no_two_installed_executables_collide_case_insensitively() {
+        let names = flat_install_names(&conf());
+        assert!(
+            names.len() >= 2,
+            "expected at least the main binary and one externalBin, got {names:?}"
+        );
+        if let Some((a, b)) = case_insensitive_collision(&names) {
+            panic!(
+                "tauri.conf.json names two executables that collide case-insensitively: {a:?} and {b:?}.\n\
+                 Both land in Dexel.app/Contents/MacOS/ (and in /usr/bin for the .deb), and macOS's \
+                 default APFS volume is case-INsensitive, so they are ONE FILE. tauri-bundler copies \
+                 them with a plain fs::copy and does NOT error — one program silently overwrites the \
+                 other, and which one survives differs between the macOS and .deb code paths. Rename \
+                 one of them; do not delete this test. See ../Cargo.toml's [package] header and \
+                 PLATFORM_NOTES.md §3.1.3.\n\
+                 full list: {names:?}"
+            );
+        }
+    }
+
+    /// `SIDECAR_NAME`, `bundle.externalBin` and the `shell:allow-execute`
+    /// scope entry are three copies of one string. They have drifted before
+    /// — the ACL is the quiet one, because a stale entry only shows up as a
+    /// permission denial in a packaged build — so the lockstep is asserted
+    /// rather than maintained by hand.
+    #[test]
+    fn sidecar_name_matches_the_config_and_the_acl() {
+        let names = flat_install_names(&conf());
+        assert!(
+            names[1..].iter().any(|n| n == SIDECAR_NAME),
+            "SIDECAR_NAME is {SIDECAR_NAME:?} but bundle.externalBin holds {:?}; \
+             app.shell().sidecar(SIDECAR_NAME) resolves the on-disk name, so a mismatch \
+             is a runtime 'sidecar not found', not a build error",
+            &names[1..]
+        );
+
+        let acl: serde_json::Value =
+            serde_json::from_str(CAPABILITY).expect("capabilities/default.json is not valid JSON");
+        let wanted = format!("binaries/{SIDECAR_NAME}");
+        let found = acl["permissions"]
+            .as_array()
+            .expect("permissions is an array")
+            .iter()
+            .filter_map(|p| p.get("allow"))
+            .filter_map(|a| a.as_array())
+            .flatten()
+            .filter_map(|e| e.get("name"))
+            .filter_map(|n| n.as_str())
+            .any(|n| n == wanted);
+        assert!(
+            found,
+            "capabilities/default.json's shell:allow-execute scope does not allow {wanted:?}; \
+             the shell's bundled-driver fallback would be denied at runtime in a packaged build"
+        );
+    }
 }

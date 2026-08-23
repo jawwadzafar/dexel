@@ -92,11 +92,52 @@ independent of that frozen track.
    cargo install tauri-cli --version "^2.0.0" --locked
    ```
 
+### What ends up in `Dexel.app`, and why the names look wrong
+
+`Contents/MacOS/` holds **two** executables, and neither is named the way an
+`.app` normally names its main binary:
+
+| file | program | named by |
+|---|---|---|
+| `Dexel` | the Go daemon — the runtime, and what `dexel autostart enable` points its LaunchAgent at | `bundle.externalBin` |
+| `dexel-desktop` | this crate: the Tauri GUI shell | `mainBinaryName` |
+
+Both halves of that are deliberate.
+
+The daemon is capitalised because **its filename is display text**: macOS's
+System Settings → General → Login Items & Extensions names each background
+item after the executable that is actually `exec`'d, so that filename is what
+the owner reads in that pane. It is the one exception to "the product is
+*Dexel* in prose, `dexel` in every artifact".
+
+The main binary is `dexel-desktop` because `Contents/MacOS/` is one flat
+directory on a volume that is **case-insensitive by default** — `Dexel` and
+`dexel` are the same file there — and the collision would not have errored:
+tauri-bundler copies `externalBin` entries before the main binary, with a
+plain `fs::copy`, so the Rust shell would have silently overwritten the Go
+daemon and every login would have opened a window instead of starting a
+runtime. `dexel-desktop` is also already the product's own word for this
+artifact (`app/cmd_lifecycle.go`'s `desktopAppName`, ARCHITECTURE.md
+Decision 17).
+
+Nothing user-visible changes: `CFBundleName`/`CFBundleDisplayName` come from
+`productName` and are still "Dexel", and `CFBundleExecutable` — which
+LaunchServices and `open -a` actually read — points at `dexel-desktop`. Only
+Activity Monitor and `ps` show the raw name.
+
+**The invariant, and where it is enforced.** No two executables destined for
+one flat install directory may collide case-insensitively. That is checked by
+`mod bundle_layout` in `src-tauri/src/lib.rs` (a unit test over this crate's
+own `tauri.conf.json`) and by a step in `.github/workflows/desktop.yml`'s
+`sidecar` job, which is the copy that runs on a push touching only the JSON.
+`dev_docs/production-runtime/PLATFORM_NOTES.md` §3.1.3 has the full account,
+including the two rejected alternatives.
+
 ### Build, in order
 
 **Step 1 — build the sidecar. This is not optional.** `bundle.externalBin`
-points at `binaries/Dexel Runtime`, and Tauri resolves that to
-`binaries/Dexel Runtime-<target triple>`. If the file is not there the build
+points at `binaries/Dexel`, and Tauri resolves that to
+`binaries/Dexel-<target triple>`. If the file is not there the build
 fails (or, worse, bundles no server), so run this first and after every
 change to `app/`:
 
@@ -149,7 +190,7 @@ frontend/art without a rebuild; a packaged app never sets them.
 setup()
   |
   1. resolve_driver()          `dexel` on PATH  ->  ~/.local/bin/dexel
-  |                            ->  the bundled binaries/Dexel Runtime
+  |                            ->  the bundled binaries/Dexel
   |                            (an INSTALLED dexel wins: it is what
   |                             `dexel update` keeps current)
   |
@@ -201,7 +242,7 @@ owned, there is nothing to terminate.
 
 ### Verified end to end on macOS (2026-08-23)
 
-1. No runtime running, launch `Dexel.app` -> log: `driving Dexel Runtime
+1. No runtime running, launch `Dexel.app` -> log: `driving Dexel
    (bundled)`, `no runtime yet`, `started the dexel runtime at
    http://127.0.0.1:52465`. `dexel status` now reports that runtime (pid,
    url, uptime) — the old shell's server was invisible to it.

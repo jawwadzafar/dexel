@@ -19,11 +19,12 @@
 //	| `launchctl bootstrap`/`bootout`/`print` actually invoked            | VERIFIED — enable/disable/enable round-tripped, `launchctl print` shows the job with the expected program and `state = running` |
 //	| enable-twice idempotency (exactly one plist, one job)               | VERIFIED |
 //	| disable removes everything enable created (plist + loaded job)      | VERIFIED — plist gone, `launchctl print` reports "Could not find service", runtime stopped, config.json cleared |
-//	| The bundle-attributed plist runs and resolves the same state dir    | VERIFIED — the runtime started from /Applications/Dexel.app/Contents/MacOS/"Dexel Runtime" (and, before the rename, .../dexel-server) loaded the same state.db under ~/Library/Application Support/dexel |
+//	| The bundle-attributed plist runs and resolves the same state dir    | VERIFIED — the runtime started from /Applications/Dexel.app/Contents/MacOS/Dexel (and, under each earlier name, .../"Dexel Runtime" and .../dexel-server) loaded the same state.db under ~/Library/Application Support/dexel |
 //	| Load at ACTUAL login (as opposed to bootstrap in a live session)    | never observed |
 //	| KeepAlive/ProcessType behaviour under a real crash                  | never observed |
-//	| The NAME in System Settings follows the exec'd file's name          | VERIFIED BY THE OWNER — the pane read "dexel-server" after the program moved into the bundle, having read "dexel" before; that is what the rename to "Dexel Runtime" acts on (PLATFORM_NOTES.md §3.1.1) |
-//	| That the pane now reads "Dexel Runtime"                             | NOT VERIFIABLE FROM HERE — needs a human looking at the pane, and BTM caches; see PLATFORM_NOTES.md §3.1.1 |
+//	| The NAME in System Settings follows the exec'd file's name          | VERIFIED BY THE OWNER — the pane read "dexel-server" after the program moved into the bundle, having read "dexel" before; that is what the renames to "Dexel Runtime" and then "Dexel" act on (PLATFORM_NOTES.md §3.1.1) |
+//	| That the pane now reads "Dexel"                                     | NOT VERIFIABLE FROM HERE — needs a human looking at the pane, and BTM caches; see PLATFORM_NOTES.md §3.1.1 |
+//	| The plist never names the GUI shell, on a pre- OR post-rename bundle | unit-tested against a real directory (TestLaunchdProgramOnAPreRenameBundle) — the name-collision half is only a REAL test on a case-insensitive volume, which the test says out loud |
 //	| The ICON and the "unidentified developer" subtitle                  | NOT FIXABLE without a paid Developer ID — settled, see PLATFORM_NOTES.md §3.1.1 |
 package autostart
 
@@ -76,6 +77,10 @@ func enablePlatform(exePath, logPath string, opts Options) (Result, error) {
 	if err != nil {
 		return Result{}, fmt.Errorf("resolve home dir: %w", err)
 	}
+	// isExecutableFile lives in autostart.go, untagged, so its
+	// case-exactness rule (which is what stops a pre-rename bundle
+	// resolving ".../MacOS/Dexel" to the GUI shell) is compiled and
+	// tested on every host rather than only on a Mac.
 	program, bundleID, note := launchdProgram(exePath, launchdBundleCandidates(home), isExecutableFile, opts)
 
 	path := launchdPlistPath(home)
@@ -113,20 +118,6 @@ func enablePlatform(exePath, logPath string, opts Options) (Result, error) {
 		}
 	}
 	return Result{Mechanism: MechanismLaunchd, Program: program, Note: note}, nil
-}
-
-// isExecutableFile is launchdProgram's real-filesystem predicate: a
-// regular file (never a directory or symlink-to-nothing) with at least
-// one execute bit. Both halves matter — an .app directory that exists
-// with none of bundleServerExecutables inside it, or a zero-permission
-// leftover, must not be baked into a plist as a program launchd will
-// fail to spawn at every login.
-func isExecutableFile(path string) bool {
-	info, err := os.Stat(path)
-	if err != nil || !info.Mode().IsRegular() {
-		return false
-	}
-	return info.Mode().Perm()&0o111 != 0
 }
 
 // disablePlatform unloads the job (bootout, falling back to unload -w

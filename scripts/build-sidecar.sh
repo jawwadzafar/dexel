@@ -9,31 +9,51 @@
 # inside the bundle. So this script's whole job is: build ./app for a set of
 # GOOS/GOARCH pairs and drop each result at
 #
-#     desktop/src-tauri/binaries/Dexel Runtime-<triple>[.exe]
+#     desktop/src-tauri/binaries/Dexel-<triple>[.exe]
 #
 # Verified against https://v2.tauri.app/develop/sidecar/ ("Tauri requires
 # you to add the target triple to the sidecar binary name").
 #
-# THE BASE NAME HAS A CAPITAL D AND A SPACE, AND THAT IS LOAD-BEARING.
-# It used to be `dexel-server`, in line with the rule that every dexel
-# ARTIFACT is spelled lowercase. It is the one artifact that rule does not
-# fit, because it is the one artifact whose filename a human reads: macOS's
-# System Settings -> General -> Login Items & Extensions -> App Background
-# Activity pane names each background item after the executable that is
-# actually exec'd, and `dexel autostart enable` points its LaunchAgent at
-# this file inside the installed Dexel.app. The pane read "dexel-server".
-# It cannot be called just `Dexel`: `Contents/MacOS/dexel` is already the
-# Tauri shell's own main binary (`mainBinaryName: "dexel"`, a different
-# program), and macOS's default APFS volume is case-INsensitive, so the two
-# would be one file — silently, since tauri-bundler copies external binaries
-# before the main binary and the second copy just wins.
-# dev_docs/production-runtime/PLATFORM_NOTES.md §3.1.2 has the full account.
+# THE BASE NAME HAS A CAPITAL D, AND THAT IS LOAD-BEARING.
+# Every other dexel ARTIFACT is spelled lowercase. This is the one artifact
+# that rule does not fit, because it is the one artifact whose filename a
+# human reads: macOS's System Settings -> General -> Login Items &
+# Extensions -> App Background Activity pane names each background item
+# after the executable that is actually exec'd, and `dexel autostart enable`
+# points its LaunchAgent at this file inside the installed Dexel.app. The
+# pane has read "dexel-server", then "Dexel Runtime"; the owner wants it to
+# read exactly "Dexel".
 #
-# Consequence for anyone editing below: $BIN_BASE CONTAINS A SPACE. Every
-# expansion of it, and of anything derived from it, must be quoted. The
-# matching assertion in .github/workflows/desktop.yml uses a quoted bash
-# array for the same reason -- a `for f in $expected` word-split loop would
-# read one filename as two and "pass" while asserting nothing.
+# WHY THIS NAME WAS UNAVAILABLE UNTIL NOW, AND WHAT CHANGED.
+# `Contents/MacOS/` is one flat directory, and macOS's default APFS volume
+# is case-INsensitive, so `Dexel` and `dexel` are the SAME FILE there.
+# While the Tauri shell's own main binary was called `dexel`
+# (`mainBinaryName`), this base name would have silently destroyed the
+# daemon: tauri-bundler copies external binaries BEFORE the main binary
+# (macos/app.rs: `copy_binaries` then `copy_binaries_to_bundle`), both with
+# a plain `fs::copy`, so the Rust GUI shell would have overwritten the Go
+# daemon with no build error at all, and every login would have opened a
+# WINDOW instead of starting a runtime. The .deb path copies them in the
+# opposite order into /usr/bin, so which program survives is not even
+# consistent across targets.
+#
+# The main binary is therefore now `dexel-desktop` — which is already the
+# product's own word for it (app/cmd_lifecycle.go's `desktopAppName`,
+# ARCHITECTURE.md Decision 17) — which frees `Dexel` for this daemon.
+# desktop/src-tauri/Cargo.toml's [package] header has the full three-names
+# table, and dev_docs/production-runtime/PLATFORM_NOTES.md §3.1.3 has the
+# field account. The invariant underneath it — no two executables destined
+# for one flat install directory may collide case-insensitively — is
+# enforced by `mod bundle_layout` in desktop/src-tauri/src/lib.rs and by an
+# assertion in .github/workflows/desktop.yml.
+#
+# Consequence for anyone editing below: $BIN_BASE is display text, so it
+# may acquire a SPACE again (it had one for the whole "Dexel Runtime"
+# generation). Every expansion of it, and of anything derived from it, must
+# stay quoted. The matching assertion in .github/workflows/desktop.yml uses
+# a quoted bash array for the same reason -- a `for f in $expected`
+# word-split loop would read one filename as two and "pass" while asserting
+# nothing.
 #
 # Since EMBED-1 (docs/plan/ROADMAP.md) each binary this produces is fully
 # self-contained: app/embed.go compiles app/public/ and app/assets/ into it
@@ -73,7 +93,7 @@ set -euo pipefail
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 APP_DIR="$REPO_ROOT/app"
 OUT_DIR="${OUT_DIR:-$REPO_ROOT/desktop/src-tauri/binaries}"
-BIN_BASE="Dexel Runtime"
+BIN_BASE="Dexel"
 GO="${GO:-go}"
 
 # PR-2 (MIGRATION_PLAN.md §PR-2): stamp main.version the same way
@@ -163,6 +183,31 @@ build_one() {
   note "  -> $out"
 }
 
+# purge_previous_names removes artifacts left over from an earlier value of
+# $BIN_BASE. They are inert -- bundle.externalBin resolves exactly one name
+# -- but each one is a ~12 MB executable sitting in the same directory under
+# a name a human will read as "the sidecar", and on this project that
+# confusion has already been paid for once. OUT_DIR is this script's own
+# gitignored output directory, so cleaning it is in scope; the removal is
+# printed rather than silent, and the globs name only the two retired bases.
+#
+# Do NOT add "dexel" here, or anything that case-insensitively matches
+# $BIN_BASE: on a case-insensitive volume that would delete the artifact
+# this script just built.
+PREVIOUS_BIN_BASES=("Dexel Runtime" "dexel-server")
+
+purge_previous_names() {
+  local base f
+  for base in "${PREVIOUS_BIN_BASES[@]}"; do
+    for f in "$OUT_DIR/$base"-*; do
+      # An unmatched glob expands to itself; test for a real file.
+      [ -e "$f" ] || continue
+      note "removing stale artifact under the retired base name '$base': $(basename "$f")"
+      rm -f "$f"
+    done
+  done
+}
+
 main() {
   command -v "$GO" >/dev/null 2>&1 || die "no Go toolchain on PATH (set \$GO or install Go); app/go.mod needs $( sed -n 's/^go //p' "$APP_DIR/go.mod" 2>/dev/null | head -n1 )"
   [ -f "$APP_DIR/go.mod" ] || die "expected a Go module at $APP_DIR/go.mod"
@@ -194,6 +239,8 @@ main() {
 
   local t
   for t in "${wanted[@]}"; do build_one "$t"; done
+
+  purge_previous_names
 
   note "done. contents of $OUT_DIR:"
   ls -l "$OUT_DIR" >&2

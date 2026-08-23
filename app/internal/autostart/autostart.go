@@ -34,6 +34,7 @@ package autostart
 
 import (
 	"fmt"
+	"os"
 	"os/exec"
 	"os/user"
 	"path/filepath"
@@ -319,42 +320,124 @@ func xmlUnescape(s string) string { return xmlUnescaper.Replace(s) }
 
 // bundleServerExecutables are the names the dexel Go binary may carry
 // inside the Tauri bundle (desktop/src-tauri ships it as an external
-// binary/sidecar next to the Tauri shell's own `dexel` executable),
-// newest FIRST. Whichever one is found, it is the SAME program as the
-// bare `dexel` — same subcommands, `runtime` included — so launchd can
-// invoke it exactly as it invokes the bare binary today.
+// binary/sidecar next to the Tauri shell's own executable), newest
+// FIRST. Whichever one is found, it is the SAME program as the bare
+// `dexel` — same subcommands, `runtime` included — so launchd can invoke
+// it exactly as it invokes the bare binary today.
 //
-// # Why the current name is "Dexel Runtime", capitalised and spaced
+// # Why the current name is "Dexel", capitalised
 //
 // This is the ONE dexel artifact whose filename a human reads, which is
 // why it is the one exception to "every artifact is spelled lowercase
 // `dexel`". System Settings names a background item after the executable
 // that is actually exec'd (§3.1.1's finding 3: not the launchd Label,
 // not the enclosing bundle), so this filename IS the pane's display
-// string. Under the old name the owner's pane read, verbatim,
-// "dexel-server" — see PLATFORM_NOTES.md §3.1.2.
+// string. It has read "dexel-server" and then "Dexel Runtime"; the owner
+// asked for exactly "Dexel". PLATFORM_NOTES.md §3.1.2 and §3.1.3 record
+// each generation and what the pane showed.
 //
-// It cannot be called simply "Dexel". `Contents/MacOS/dexel` is already
-// the Tauri SHELL's own main binary (`mainBinaryName: "dexel"`) — a
-// different program from this one — and macOS's default APFS volume is
-// case-INsensitive, so `Contents/MacOS/Dexel` and `Contents/MacOS/dexel`
-// name one file. That collision is silent rather than loud:
-// tauri-bundler copies external binaries before the main binary, so the
-// Rust GUI shell would simply overwrite the Go daemon and launchd would
-// open a window at every login instead of starting the runtime.
+// The name only became available once the Tauri shell's own main binary
+// stopped being called `dexel`. `Contents/MacOS/` is one flat directory
+// and macOS's default APFS volume is case-INsensitive, so `Dexel` and
+// `dexel` are the SAME FILE there; while the shell owned `dexel`, an
+// externalBin called `Dexel` would have been silently overwritten by it
+// at bundle time (tauri-bundler copies external binaries before the main
+// binary, with a plain fs::copy and no error), and this LaunchAgent
+// would have opened a GUI window at every login. The shell's binary is
+// now `dexel-desktop` — see desktop/src-tauri/Cargo.toml's [package]
+// header.
 //
-// # Why the OLD name is still probed
+// # Why the OLD names are still probed
 //
-// A bundle installed before the rename still contains `dexel-server` and
-// nothing else. Dropping the old name would make `enable` silently fall
-// through to the bare-binary plist on those machines — a downgrade the
-// user would never be told about beyond one line of note text. Probing
-// both costs one extra stat per bundle candidate.
+// A bundle installed before a rename still contains only the older name.
+// Dropping it would make `enable` silently fall through to the
+// bare-binary plist on those machines — a downgrade the user would never
+// be told about beyond one line of note text. Probing all three costs
+// two extra stats per bundle candidate.
 //
-// Note what is deliberately NOT in this list: "dexel". That is the Tauri
-// shell's main binary, and pointing a LaunchAgent at it would launch a
-// GUI window at login rather than the runtime.
-var bundleServerExecutables = []string{"Dexel Runtime", "dexel-server"}
+// # What is deliberately NOT in this list, and the trap that makes it
+// # subtler than it looks
+//
+// Neither "dexel-desktop" (the Tauri shell's main binary today) nor
+// "dexel" (what it was called in every bundle built before that rename).
+// Pointing a LaunchAgent at either would open a GUI window at login
+// instead of starting the runtime.
+//
+// Leaving them out is NOT sufficient on its own, and this is the part
+// that is easy to get wrong: on a case-insensitive volume, probing for
+// "Dexel" inside a PRE-RENAME bundle — one holding `dexel` (the GUI
+// shell) and `Dexel Runtime` (the daemon) — resolves to `dexel`, the GUI
+// shell, because the two names are one file. The first entry of this
+// list would then win and the login item would open a window. What
+// prevents that is not this list's contents but its predicate:
+// isExecutableFile requires the name to match the DIRECTORY ENTRY'S OWN
+// SPELLING (see nameIsCaseExactOnDisk), so on a pre-rename bundle
+// ".../MacOS/Dexel" is rejected and the probe falls through to
+// "Dexel Runtime" — the correct file — while on a post-rename bundle
+// ".../MacOS/Dexel" is spelled exactly that way on disk and is accepted.
+// TestLaunchdProgramOnAPreRenameBundle exercises that against a real
+// directory.
+var bundleServerExecutables = []string{"Dexel", "Dexel Runtime", "dexel-server"}
+
+// isExecutableFile is launchdProgram's real-filesystem predicate: a
+// regular file (never a directory or symlink-to-nothing) with at least
+// one execute bit, whose name is spelled on disk exactly as asked. All
+// three halves matter — an .app directory that exists with none of
+// bundleServerExecutables inside it, or a zero-permission leftover, must
+// not be baked into a plist as a program launchd will fail to spawn at
+// every login; and the case-exactness is what stops a pre-rename bundle
+// resolving ".../MacOS/Dexel" to the GUI shell it actually stores as
+// `dexel` (see bundleServerExecutables' last section).
+//
+// It lives in this untagged file, rather than beside the launchd code it
+// serves, so that both halves are compiled and unit-tested on every
+// host. The bug it guards against is a macOS-filesystem property, but
+// the code that guards against it does not have to be macOS-only, and a
+// guard that only ever runs on the one machine nobody runs `go test` on
+// is not much of a guard.
+func isExecutableFile(path string) bool {
+	info, err := os.Stat(path)
+	if err != nil || !info.Mode().IsRegular() {
+		return false
+	}
+	if info.Mode().Perm()&0o111 == 0 {
+		return false
+	}
+	return nameIsCaseExactOnDisk(path)
+}
+
+// nameIsCaseExactOnDisk reports whether path's final component matches
+// the spelling of the actual directory entry, byte for byte.
+//
+// os.Stat cannot answer this: on a case-insensitive volume it happily
+// resolves "Dexel" to a file stored as "dexel" and reports success, and
+// there is no POSIX call that asks "what is this file really called?".
+// Reading the parent directory is the only way to see the stored
+// spelling — the entries os.ReadDir returns are the names as recorded,
+// not as requested.
+//
+// A missing directory, or an unreadable one, reads as "no" rather than
+// as an error: every caller is asking "is this a usable target?", and
+// "cannot tell" and "no" lead to the same, safe, fall-through.
+//
+// The cost is one directory read per candidate. Contents/MacOS holds two
+// files.
+func nameIsCaseExactOnDisk(path string) bool {
+	dir, base := filepath.Split(path)
+	if base == "" {
+		return false
+	}
+	entries, err := os.ReadDir(filepath.Clean(dir))
+	if err != nil {
+		return false
+	}
+	for _, e := range entries {
+		if e.Name() == base {
+			return true
+		}
+	}
+	return false
+}
 
 // launchdBundleCandidates is where an installed dexel .app might be, in
 // preference order.

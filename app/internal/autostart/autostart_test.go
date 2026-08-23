@@ -2,6 +2,8 @@ package autostart
 
 import (
 	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -178,9 +180,16 @@ func TestMechanismValues(t *testing.T) {
 // an un-stoppable job — must be byte-identical to the bare-binary plist.
 // Asserted as a full literal rather than a diff of two calls so a future
 // edit to launchdPlistContent has to be typed out here deliberately.
+//
+// The program is the CURRENT bundled name, so this literal is also the
+// documented shape A in PLATFORM_NOTES.md §3.1 and the two cannot drift
+// apart unnoticed. Nothing about space-handling is lost by that: the name
+// is display text and has carried a space before, so
+// TestLaunchdPlistProgramRoundTrip still feeds spaced paths through
+// deliberately.
 func TestLaunchdPlistContentExactBundleProgram(t *testing.T) {
 	got := launchdPlistContent(
-		"/Applications/Dexel.app/Contents/MacOS/Dexel Runtime",
+		"/Applications/Dexel.app/Contents/MacOS/Dexel",
 		"/Users/dev/Library/Application Support/dexel/logs/runtime.log",
 		"com.jawwadzafar.dexel",
 	)
@@ -192,7 +201,7 @@ func TestLaunchdPlistContentExactBundleProgram(t *testing.T) {
   <key>Label</key>              <string>com.jawwadzafar.dexel</string>
   <key>ProgramArguments</key>
   <array>
-    <string>/Applications/Dexel.app/Contents/MacOS/Dexel Runtime</string>
+    <string>/Applications/Dexel.app/Contents/MacOS/Dexel</string>
     <string>runtime</string>
   </array>
   <key>AssociatedBundleIdentifiers</key>
@@ -226,7 +235,7 @@ func TestLaunchdPlistContentExactBundleProgram(t *testing.T) {
 func TestLaunchdPlistContentBundleDiffersOnlyInAttribution(t *testing.T) {
 	const logPath = "/Users/dev/Library/Application Support/dexel/logs/runtime.log"
 	bare := launchdPlistContent("/Users/dev/.local/bin/dexel", logPath, "")
-	bundled := launchdPlistContent("/Applications/Dexel.app/Contents/MacOS/Dexel Runtime", logPath, "com.jawwadzafar.dexel")
+	bundled := launchdPlistContent("/Applications/Dexel.app/Contents/MacOS/Dexel", logPath, "com.jawwadzafar.dexel")
 
 	bareLines := splitLines(bare)
 	bundledLines := splitLines(bundled)
@@ -263,7 +272,7 @@ func TestLaunchdPlistContentBundleDiffersOnlyInAttribution(t *testing.T) {
 	if len(diffs) != 1 {
 		t.Fatalf("want exactly 1 differing line (ProgramArguments[0]), got %d at lines %v", len(diffs), diffs)
 	}
-	if want := "    <string>/Applications/Dexel.app/Contents/MacOS/Dexel Runtime</string>"; stripped[diffs[0]] != want {
+	if want := "    <string>/Applications/Dexel.app/Contents/MacOS/Dexel</string>"; stripped[diffs[0]] != want {
 		t.Fatalf("the differing line is %q, want %q", stripped[diffs[0]], want)
 	}
 }
@@ -331,6 +340,7 @@ func TestLaunchdBundleCandidates(t *testing.T) {
 
 func TestBundleServerPath(t *testing.T) {
 	for name, want := range map[string]string{
+		"Dexel":         "/Applications/Dexel.app/Contents/MacOS/Dexel",
 		"Dexel Runtime": "/Applications/Dexel.app/Contents/MacOS/Dexel Runtime",
 		"dexel-server":  "/Applications/Dexel.app/Contents/MacOS/dexel-server",
 	} {
@@ -341,20 +351,31 @@ func TestBundleServerPath(t *testing.T) {
 }
 
 // TestBundleServerExecutablesOrderAndContents pins the probe list itself.
-// All three of its properties are load-bearing and none is observable from
+// Every one of its properties is load-bearing and none is observable from
 // any other test in this file:
 //
-//   - "Dexel Runtime" comes FIRST, so a bundle carrying the current name
-//     resolves to it rather than to a leftover legacy copy beside it.
-//   - "dexel-server" is still present, so a bundle installed BEFORE the
-//     rename keeps resolving instead of silently degrading to the
-//     bare-binary plist on an upgrade the user never asked about.
-//   - "dexel" is absent, and must stay absent: inside the bundle that name
-//     belongs to the Tauri GUI shell's own main binary (tauri.conf.json's
-//     mainBinaryName), a DIFFERENT program, and a LaunchAgent pointed at it
-//     would open a window at every login instead of starting the runtime.
+//   - "Dexel" comes FIRST, so a bundle carrying the current name resolves
+//     to it rather than to a leftover legacy copy beside it. That filename
+//     is what System Settings displays, which is the whole point of the
+//     rename.
+//   - "Dexel Runtime" and "dexel-server" are still present, so a bundle
+//     installed BEFORE either rename keeps resolving instead of silently
+//     degrading to the bare-binary plist on an upgrade the user never
+//     asked about.
+//   - Neither "dexel-desktop" (the Tauri GUI shell's main binary today,
+//     tauri.conf.json's mainBinaryName) nor "dexel" (what that binary was
+//     called in every bundle built before that rename) appears. Both are a
+//     DIFFERENT program, and a LaunchAgent pointed at either would open a
+//     window at every login instead of starting the runtime.
+//
+// Note what this test can NOT establish, so nobody reads more into it than
+// it says: "Dexel" and the legacy "dexel" fold to the same string, so the
+// absence of "dexel" from this list does not by itself keep the GUI shell
+// out of the plist on a case-insensitive volume. That is
+// isExecutableFile's case-exactness rule, and it is
+// TestLaunchdProgramOnAPreRenameBundle that proves it.
 func TestBundleServerExecutablesOrderAndContents(t *testing.T) {
-	want := []string{"Dexel Runtime", "dexel-server"}
+	want := []string{"Dexel", "Dexel Runtime", "dexel-server"}
 	if len(bundleServerExecutables) != len(want) {
 		t.Fatalf("bundleServerExecutables = %v, want %v", bundleServerExecutables, want)
 	}
@@ -363,13 +384,156 @@ func TestBundleServerExecutablesOrderAndContents(t *testing.T) {
 			t.Fatalf("bundleServerExecutables[%d] = %q, want %q (full list %v)", i, bundleServerExecutables[i], want[i], bundleServerExecutables)
 		}
 	}
+	// EqualFold, not ==: macOS's default APFS volume is case-INsensitive,
+	// so a name differing from the shell's main binary only in case is the
+	// SAME FILE and just as wrong.
 	for _, name := range bundleServerExecutables {
-		// EqualFold, not ==: macOS's default APFS volume is
-		// case-INsensitive, so a name differing from the shell's main
-		// binary only in case is the SAME FILE and just as wrong.
-		if strings.EqualFold(name, "dexel") {
-			t.Fatalf("bundleServerExecutables contains %q, which case-insensitively collides with the Tauri shell's own main binary", name)
+		if strings.EqualFold(name, "dexel-desktop") {
+			t.Fatalf("bundleServerExecutables contains %q, which case-insensitively collides with the Tauri shell's own main binary (tauri.conf.json's mainBinaryName)", name)
 		}
+	}
+}
+
+// TestNameIsCaseExactOnDisk covers the predicate that makes the probe list
+// safe, against a REAL directory — the only way to exercise it, since the
+// behaviour it defends against is a property of the filesystem rather than
+// of this code.
+//
+// It asserts the same outcome on both kinds of volume, which is what makes
+// it a portable test rather than a darwin-only one:
+//
+//   - case-INsensitive (macOS default): os.Stat("<dir>/Dexel") SUCCEEDS and
+//     hands back the file stored as "dexel". This function must still say
+//     no, because the caller asked for a name the directory does not
+//     actually contain.
+//   - case-sensitive (Linux CI, and a non-default macOS volume): there is
+//     no such file at all, so the answer is no for the ordinary reason.
+func TestNameIsCaseExactOnDisk(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "dexel"), []byte("gui shell"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "Dexel Runtime"), []byte("go daemon"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	if !nameIsCaseExactOnDisk(filepath.Join(dir, "dexel")) {
+		t.Fatal(`nameIsCaseExactOnDisk said no to "dexel", which is exactly how it is spelled on disk`)
+	}
+	if !nameIsCaseExactOnDisk(filepath.Join(dir, "Dexel Runtime")) {
+		t.Fatal(`nameIsCaseExactOnDisk said no to "Dexel Runtime", spaces and all`)
+	}
+	if nameIsCaseExactOnDisk(filepath.Join(dir, "Dexel")) {
+		t.Fatal(`nameIsCaseExactOnDisk said yes to "Dexel" when the directory stores "dexel" -- on a case-insensitive volume that is the GUI shell, and this is the check that keeps it out of the LaunchAgent`)
+	}
+	if nameIsCaseExactOnDisk(filepath.Join(dir, "nothing-here")) {
+		t.Fatal("nameIsCaseExactOnDisk said yes to a file that does not exist")
+	}
+	// A directory that cannot be read is "no", never a panic or an error.
+	if nameIsCaseExactOnDisk(filepath.Join(dir, "no-such-dir", "dexel")) {
+		t.Fatal("nameIsCaseExactOnDisk said yes inside a directory that does not exist")
+	}
+}
+
+// TestIsExecutableFileRejectsNonExecutables covers the other two halves of
+// the predicate: a directory is not a program, and neither is a file with
+// no execute bit. Both would otherwise be baked into a plist as a program
+// launchd fails to spawn at every login — a failure visible only in a log
+// nobody reads.
+func TestIsExecutableFileRejectsNonExecutables(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.Mkdir(filepath.Join(dir, "Dexel.app"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "Dexel"), []byte("not executable"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if isExecutableFile(filepath.Join(dir, "Dexel.app")) {
+		t.Fatal("isExecutableFile said yes to a directory")
+	}
+	if isExecutableFile(filepath.Join(dir, "Dexel")) {
+		t.Fatal("isExecutableFile said yes to a file with no execute bit")
+	}
+	if err := os.Chmod(filepath.Join(dir, "Dexel"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if !isExecutableFile(filepath.Join(dir, "Dexel")) {
+		t.Fatal("isExecutableFile said no to a regular, executable, correctly-spelled file")
+	}
+}
+
+// TestLaunchdProgramOnAPreRenameBundle is the regression test for the trap
+// the rename to "Dexel" created, and it runs against a real directory
+// because a fake `exists` set cannot model a case-insensitive filesystem.
+//
+// The shape: a bundle built BEFORE the main binary was renamed, so
+// Contents/MacOS holds `dexel` (the Tauri GUI shell) and `Dexel Runtime`
+// (the Go daemon). "Dexel" is the FIRST entry of bundleServerExecutables,
+// and on the owner's Mac os.Stat(".../MacOS/Dexel") resolves to `dexel` and
+// succeeds — so a probe that trusted os.Stat would put the GUI shell in the
+// plist and open a window at every login. The plist must name
+// `Dexel Runtime` instead.
+//
+// On a case-sensitive volume the same assertion holds for the boring
+// reason (no ".../MacOS/Dexel" exists), so this test is correct everywhere
+// and only STRONG on a case-insensitive one. It reports which kind of
+// volume it actually ran on rather than leaving that to be guessed.
+func TestLaunchdProgramOnAPreRenameBundle(t *testing.T) {
+	root := t.TempDir()
+	bundle := filepath.Join(root, "Dexel.app")
+	macOS := filepath.Join(bundle, "Contents", "MacOS")
+	if err := os.MkdirAll(macOS, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// Deliberately DIFFERENT contents, so a wrong answer is unmistakable.
+	if err := os.WriteFile(filepath.Join(macOS, "dexel"), []byte("tauri gui shell"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(macOS, "Dexel Runtime"), []byte("go daemon"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := os.Stat(filepath.Join(macOS, "Dexel")); err == nil {
+		t.Log("this volume is case-INsensitive: .../MacOS/Dexel resolves to the GUI shell, so the assertion below is the real thing")
+	} else {
+		t.Log("this volume is case-sensitive: .../MacOS/Dexel does not exist, so the assertion below holds for the ordinary reason")
+	}
+
+	const bare = "/Users/dev/.local/bin/dexel"
+	program, bundleID, _ := launchdProgram(bare, []string{bundle}, isExecutableFile, Options{})
+
+	want := filepath.Join(macOS, "Dexel Runtime")
+	if program != want {
+		t.Fatalf("launchdProgram = %q, want %q -- a plist naming the GUI shell opens a WINDOW at every login instead of starting the runtime", program, want)
+	}
+	if bundleID != launchdLabel {
+		t.Fatalf("launchdProgram bundleID = %q, want %q", bundleID, launchdLabel)
+	}
+}
+
+// TestLaunchdProgramOnACurrentBundle is the other half: in a bundle built
+// AFTER the rename, Contents/MacOS holds `Dexel` (the daemon) and
+// `dexel-desktop` (the GUI shell), and the plist must name `Dexel` — the
+// capital-D spelling is the whole reason the rename happened, since that
+// filename is what System Settings prints.
+func TestLaunchdProgramOnACurrentBundle(t *testing.T) {
+	root := t.TempDir()
+	bundle := filepath.Join(root, "Dexel.app")
+	macOS := filepath.Join(bundle, "Contents", "MacOS")
+	if err := os.MkdirAll(macOS, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(macOS, "Dexel"), []byte("go daemon"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(macOS, "dexel-desktop"), []byte("tauri gui shell"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	program, _, _ := launchdProgram("/Users/dev/.local/bin/dexel", []string{bundle}, isExecutableFile, Options{})
+	want := filepath.Join(macOS, "Dexel")
+	if program != want {
+		t.Fatalf("launchdProgram = %q, want %q", program, want)
 	}
 }
 
@@ -453,9 +617,10 @@ func TestLaunchdProgramPrefersCurrentNameWithinOneBundle(t *testing.T) {
 	exists := onlyThese(
 		"/Applications/Dexel.app/Contents/MacOS/dexel-server",
 		"/Applications/Dexel.app/Contents/MacOS/Dexel Runtime",
+		"/Applications/Dexel.app/Contents/MacOS/Dexel",
 	)
 	program, _, _ := launchdProgram("/Users/dev/.local/bin/dexel", launchdBundleCandidates("/Users/dev"), exists, Options{})
-	if want := "/Applications/Dexel.app/Contents/MacOS/Dexel Runtime"; program != want {
+	if want := "/Applications/Dexel.app/Contents/MacOS/Dexel"; program != want {
 		t.Fatalf("launchdProgram = %q, want the current name %q", program, want)
 	}
 }
@@ -568,6 +733,7 @@ func TestLaunchdProgramKeepsExeAlreadyInsideABundle(t *testing.T) {
 func TestLaunchdPlistProgramRoundTrip(t *testing.T) {
 	for _, exe := range []string{
 		"/Users/dev/.local/bin/dexel",
+		"/Applications/Dexel.app/Contents/MacOS/Dexel",
 		"/Applications/Dexel.app/Contents/MacOS/Dexel Runtime",
 		"/Applications/Dexel.app/Contents/MacOS/dexel-server",
 		`/Users/A&B/Dexel.app/Contents/MacOS/Dexel Runtime`,
