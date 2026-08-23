@@ -317,12 +317,44 @@ func xmlUnescape(s string) string { return xmlUnescaper.Replace(s) }
 // verdict and what a real signature would cost.
 // ---------------------------------------------------------------------
 
-// bundleServerExecutable is the dexel Go binary's name inside the Tauri
-// bundle (desktop/src-tauri ships it as an external binary/sidecar next
-// to the Tauri shell's own `dexel` executable). It is the SAME program
-// as the bare `dexel` — same subcommands, `runtime` included — so
-// launchd can invoke it exactly as it invokes the bare binary today.
-const bundleServerExecutable = "dexel-server"
+// bundleServerExecutables are the names the dexel Go binary may carry
+// inside the Tauri bundle (desktop/src-tauri ships it as an external
+// binary/sidecar next to the Tauri shell's own `dexel` executable),
+// newest FIRST. Whichever one is found, it is the SAME program as the
+// bare `dexel` — same subcommands, `runtime` included — so launchd can
+// invoke it exactly as it invokes the bare binary today.
+//
+// # Why the current name is "Dexel Runtime", capitalised and spaced
+//
+// This is the ONE dexel artifact whose filename a human reads, which is
+// why it is the one exception to "every artifact is spelled lowercase
+// `dexel`". System Settings names a background item after the executable
+// that is actually exec'd (§3.1.1's finding 3: not the launchd Label,
+// not the enclosing bundle), so this filename IS the pane's display
+// string. Under the old name the owner's pane read, verbatim,
+// "dexel-server" — see PLATFORM_NOTES.md §3.1.2.
+//
+// It cannot be called simply "Dexel". `Contents/MacOS/dexel` is already
+// the Tauri SHELL's own main binary (`mainBinaryName: "dexel"`) — a
+// different program from this one — and macOS's default APFS volume is
+// case-INsensitive, so `Contents/MacOS/Dexel` and `Contents/MacOS/dexel`
+// name one file. That collision is silent rather than loud:
+// tauri-bundler copies external binaries before the main binary, so the
+// Rust GUI shell would simply overwrite the Go daemon and launchd would
+// open a window at every login instead of starting the runtime.
+//
+// # Why the OLD name is still probed
+//
+// A bundle installed before the rename still contains `dexel-server` and
+// nothing else. Dropping the old name would make `enable` silently fall
+// through to the bare-binary plist on those machines — a downgrade the
+// user would never be told about beyond one line of note text. Probing
+// both costs one extra stat per bundle candidate.
+//
+// Note what is deliberately NOT in this list: "dexel". That is the Tauri
+// shell's main binary, and pointing a LaunchAgent at it would launch a
+// GUI window at login rather than the runtime.
+var bundleServerExecutables = []string{"Dexel Runtime", "dexel-server"}
 
 // launchdBundleCandidates is where an installed dexel .app might be, in
 // preference order.
@@ -344,14 +376,14 @@ func launchdBundleCandidates(homeDir string) []string {
 	}
 }
 
-// bundleServerPath is <bundle>/Contents/MacOS/dexel-server.
-func bundleServerPath(bundlePath string) string {
-	return filepath.Join(bundlePath, "Contents", "MacOS", bundleServerExecutable)
+// bundleServerPath is <bundle>/Contents/MacOS/<name>.
+func bundleServerPath(bundlePath, name string) string {
+	return filepath.Join(bundlePath, "Contents", "MacOS", name)
 }
 
 // insideAppBundle reports whether exePath already lives inside a .app —
 // i.e. whether the caller is ALREADY running as the bundle's own
-// executable (`/Applications/Dexel.app/Contents/MacOS/dexel-server
+// executable (`/Applications/Dexel.app/Contents/MacOS/Dexel\ Runtime
 // autostart enable`). In that case the resolved os.Executable() is
 // already bundle-attributed and must be used verbatim: substituting a
 // "candidate" bundle would be a silent, surprising redirect away from
@@ -395,9 +427,10 @@ func insideAppBundle(exePath string) bool {
 // isExecutable is injected so this — the whole decision — is unit
 // testable on any host with no filesystem at all. It must report "this
 // path is a regular, executable file"; a bundle directory that exists
-// but has no dexel-server inside it is NOT a usable target and must fall
-// through to the next candidate, because a plist naming a non-existent
-// program is a login-time failure the user would only ever see in a log.
+// but carries none of bundleServerExecutables inside it is NOT a usable
+// target and must fall through to the next candidate, because a plist
+// naming a non-existent program is a login-time failure the user would
+// only ever see in a log.
 //
 // The fallback is deliberate and total: if nothing is found, the
 // behaviour is byte-identical to before this function existed. A missing
@@ -409,8 +442,16 @@ func launchdProgram(exePath string, candidates []string, isExecutable func(strin
 	if insideAppBundle(exePath) {
 		return exePath, launchdLabel, "this executable already lives inside an .app bundle, so macOS has a bundle to attribute the item to"
 	}
+	// Bundle location is the stronger signal, so it is the OUTER loop:
+	// the most-preferred bundle wins even if it only carries the legacy
+	// executable name, rather than a less-preferred bundle winning by
+	// having the newer name.
 	for _, bundle := range candidates {
-		if server := bundleServerPath(bundle); isExecutable(server) {
+		for _, name := range bundleServerExecutables {
+			server := bundleServerPath(bundle, name)
+			if !isExecutable(server) {
+				continue
+			}
 			return server, launchdLabel, fmt.Sprintf("pointed at %s's own executable and associated with %s, so System Settings can attribute the item to the app (the bare %s is untouched and is still what `dexel update` replaces)", bundle, launchdLabel, exePath)
 		}
 	}

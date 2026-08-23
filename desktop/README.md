@@ -95,8 +95,8 @@ independent of that frozen track.
 ### Build, in order
 
 **Step 1 — build the sidecar. This is not optional.** `bundle.externalBin`
-points at `binaries/dexel-server`, and Tauri resolves that to
-`binaries/dexel-server-<target triple>`. If the file is not there the build
+points at `binaries/Dexel Runtime`, and Tauri resolves that to
+`binaries/Dexel Runtime-<target triple>`. If the file is not there the build
 fails (or, worse, bundles no server), so run this first and after every
 change to `app/`:
 
@@ -149,7 +149,7 @@ frontend/art without a rebuild; a packaged app never sets them.
 setup()
   |
   1. resolve_driver()          `dexel` on PATH  ->  ~/.local/bin/dexel
-  |                            ->  the bundled binaries/dexel-server
+  |                            ->  the bundled binaries/Dexel Runtime
   |                            (an INSTALLED dexel wins: it is what
   |                             `dexel update` keeps current)
   |
@@ -201,7 +201,7 @@ owned, there is nothing to terminate.
 
 ### Verified end to end on macOS (2026-08-23)
 
-1. No runtime running, launch `Dexel.app` -> log: `driving dexel-server
+1. No runtime running, launch `Dexel.app` -> log: `driving Dexel Runtime
    (bundled)`, `no runtime yet`, `started the dexel runtime at
    http://127.0.0.1:52465`. `dexel status` now reports that runtime (pid,
    url, uptime) — the old shell's server was invisible to it.

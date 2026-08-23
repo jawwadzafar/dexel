@@ -219,7 +219,11 @@ three." Mapped against reality (one private-repo Linux x64 runner):
 | Windows x86_64 | `windows/amd64`, CGO off | MSI/NSIS (+WebView2) | needs a Windows runner | 2 |
 | Windows arm64 | `windows/arm64`, CGO off | MSI/NSIS | needs Windows arm64 tooling | 3 |
 
-Target-triple mapping for the sidecar naming (`dexel-server-$TARGET_TRIPLE`):
+Target-triple mapping for the sidecar naming (`Dexel Runtime-$TARGET_TRIPLE`
+since 2026-08-23; this document was written when the base name was
+`dexel-server`, and every `dexel-server-*` below should be read with the new
+base — see ARCHITECTURE.md Decision 17's update for why it changed and why
+`dexel` was not available):
 
 | Rust target triple | GOOS/GOARCH |
 |---|---|

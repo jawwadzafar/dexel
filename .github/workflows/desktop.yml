@@ -85,23 +85,69 @@ jobs:
       - name: Cross-compile every non-darwin sidecar
         run: scripts/build-sidecar.sh --all
 
+      # THREE assertions, because two of them can pass while the rename is
+      # only half done:
+      #
+      #   1. tauri.conf.json's externalBin entry is the string we think it
+      #      is, and capabilities/default.json's shell:allow-execute scope
+      #      entry agrees with it. Without this, the filename list below
+      #      could be "corrected" to match a config nobody checked, and the
+      #      job would go green while the bundler found no sidecar.
+      #   2. Every triple-suffixed artifact Tauri will look for exists.
+      #   3. No artifact under the PREVIOUS name is left lying around, so a
+      #      half-finished rename cannot be masked by a stale build.
+      #
+      # $BASE contains a SPACE ("Dexel Runtime" — see
+      # scripts/build-sidecar.sh's header for why that is load-bearing and
+      # why it cannot just be "Dexel"). That is exactly why the list below
+      # is a quoted bash array and the loop is `for f in "${expected[@]}"`:
+      # the `for f in $expected` word-split loop this replaced would read
+      # one filename as two, find neither, and — because the missing halves
+      # would be reported as separate names — invite someone to "fix" the
+      # list instead of the quoting. Do not un-quote anything here.
       - name: Assert the externalBin names are exactly what Tauri looks for
         run: |
           set -euo pipefail
+          BASE="Dexel Runtime"
+
+          # (1) The config and the ACL must both name $BASE. grep -F, so
+          # nothing in the string is read as a pattern, and no jq/python
+          # dependency on the runner.
+          for cfg in desktop/src-tauri/tauri.conf.json desktop/src-tauri/capabilities/default.json; do
+            if ! grep -qF "\"binaries/$BASE\"" "$cfg"; then
+              echo "::error::$cfg does not contain \"binaries/$BASE\" — this assertion and the config have drifted apart, so the filename check below is asserting the wrong names. Fix whichever one is wrong; do not just edit this workflow." >&2
+              exit 1
+            fi
+            echo "ok  $cfg names binaries/$BASE"
+          done
+
           cd desktop/src-tauri/binaries
-          expected="
-          dexel-server-aarch64-pc-windows-msvc.exe
-          dexel-server-aarch64-unknown-linux-gnu
-          dexel-server-x86_64-pc-windows-msvc.exe
-          dexel-server-x86_64-unknown-linux-gnu
-          "
-          for f in $expected; do
+
+          # (2) Every non-darwin artifact, by the exact name Tauri derives
+          # (<base>-<target triple>[.exe]). The darwin pair is built on the
+          # Mac (see desktop-macos below), not here.
+          expected=(
+            "$BASE-aarch64-pc-windows-msvc.exe"
+            "$BASE-aarch64-unknown-linux-gnu"
+            "$BASE-x86_64-pc-windows-msvc.exe"
+            "$BASE-x86_64-unknown-linux-gnu"
+          )
+          for f in "${expected[@]}"; do
             if [ ! -f "$f" ]; then
-              echo "::error::missing sidecar $f — bundle.externalBin resolves binaries/dexel-server-<target triple>, so a wrong name silently becomes 'no sidecar for this target' at bundle time." >&2
+              echo "::error::missing sidecar '$f' — bundle.externalBin resolves 'binaries/$BASE-<target triple>', so a wrong name silently becomes 'no sidecar for this target' at bundle time." >&2
               exit 1
             fi
             echo "ok  $f  ($(file -b "$f" | cut -c1-60))"
           done
+
+          # (3) Nothing under the pre-rename name. If build-sidecar.sh and
+          # the config disagree this is the assertion that says so out loud
+          # rather than shipping a bundle with two daemons in it.
+          if compgen -G "dexel-server-*" >/dev/null; then
+            echo "::error::found artifact(s) under the pre-rename name dexel-server-*: $(echo dexel-server-*). The sidecar is '$BASE' now (PLATFORM_NOTES.md §3.1.2); a stale artifact means scripts/build-sidecar.sh and tauri.conf.json have drifted." >&2
+            exit 1
+          fi
+          echo "ok  no pre-rename dexel-server-* artifacts"
 
       # The one behaviour the whole desktop shell depends on: the Go server
       # must print `DEXEL_LISTENING http://127.0.0.1:<port>` on stdout once
@@ -121,7 +167,14 @@ jobs:
         run: |
           set -euo pipefail
           tmp=$(mktemp -d)
-          cp desktop/src-tauri/binaries/dexel-server-x86_64-unknown-linux-gnu "$tmp/dexel-server"
+          # The SOURCE name is the renamed artifact; the temp copy is
+          # deliberately still called dexel-server, because that local
+          # filename is the `./dexel-server -addr ...` invocation
+          # app/cli.go's dispatch-table docs and app/cli_test.go cite by
+          # file:line. It is a scratch filename in a temp dir, not the
+          # bundled artifact, so renaming it would only invalidate those
+          # references.
+          cp "desktop/src-tauri/binaries/Dexel Runtime-x86_64-unknown-linux-gnu" "$tmp/dexel-server"
           chmod +x "$tmp/dexel-server"
           log=$(mktemp)
           ( cd "$tmp" && exec ./dexel-server -addr 127.0.0.1:0 -provider fake ) >"$log" 2>/dev/null &

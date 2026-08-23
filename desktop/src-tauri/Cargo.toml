@@ -24,7 +24,7 @@
 # the Cargo package name, and it keeps `Dexel.app/Contents/MacOS/dexel`
 # (CFBundleExecutable `dexel`) correct if this package is ever renamed.
 name = "dexel"
-version = "0.3.0"
+version = "0.1.0"
 description = "dexel — a developer companion that earns Dev Cash from your real activity"
 authors = ["Jawwad Zafar"]
 edition = "2021"

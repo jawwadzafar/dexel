@@ -2,6 +2,7 @@ package autostart
 
 import (
 	"errors"
+	"strings"
 	"testing"
 )
 
@@ -179,7 +180,7 @@ func TestMechanismValues(t *testing.T) {
 // edit to launchdPlistContent has to be typed out here deliberately.
 func TestLaunchdPlistContentExactBundleProgram(t *testing.T) {
 	got := launchdPlistContent(
-		"/Applications/Dexel.app/Contents/MacOS/dexel-server",
+		"/Applications/Dexel.app/Contents/MacOS/Dexel Runtime",
 		"/Users/dev/Library/Application Support/dexel/logs/runtime.log",
 		"com.jawwadzafar.dexel",
 	)
@@ -191,7 +192,7 @@ func TestLaunchdPlistContentExactBundleProgram(t *testing.T) {
   <key>Label</key>              <string>com.jawwadzafar.dexel</string>
   <key>ProgramArguments</key>
   <array>
-    <string>/Applications/Dexel.app/Contents/MacOS/dexel-server</string>
+    <string>/Applications/Dexel.app/Contents/MacOS/Dexel Runtime</string>
     <string>runtime</string>
   </array>
   <key>AssociatedBundleIdentifiers</key>
@@ -225,7 +226,7 @@ func TestLaunchdPlistContentExactBundleProgram(t *testing.T) {
 func TestLaunchdPlistContentBundleDiffersOnlyInAttribution(t *testing.T) {
 	const logPath = "/Users/dev/Library/Application Support/dexel/logs/runtime.log"
 	bare := launchdPlistContent("/Users/dev/.local/bin/dexel", logPath, "")
-	bundled := launchdPlistContent("/Applications/Dexel.app/Contents/MacOS/dexel-server", logPath, "com.jawwadzafar.dexel")
+	bundled := launchdPlistContent("/Applications/Dexel.app/Contents/MacOS/Dexel Runtime", logPath, "com.jawwadzafar.dexel")
 
 	bareLines := splitLines(bare)
 	bundledLines := splitLines(bundled)
@@ -262,7 +263,7 @@ func TestLaunchdPlistContentBundleDiffersOnlyInAttribution(t *testing.T) {
 	if len(diffs) != 1 {
 		t.Fatalf("want exactly 1 differing line (ProgramArguments[0]), got %d at lines %v", len(diffs), diffs)
 	}
-	if want := "    <string>/Applications/Dexel.app/Contents/MacOS/dexel-server</string>"; stripped[diffs[0]] != want {
+	if want := "    <string>/Applications/Dexel.app/Contents/MacOS/Dexel Runtime</string>"; stripped[diffs[0]] != want {
 		t.Fatalf("the differing line is %q, want %q", stripped[diffs[0]], want)
 	}
 }
@@ -329,10 +330,46 @@ func TestLaunchdBundleCandidates(t *testing.T) {
 }
 
 func TestBundleServerPath(t *testing.T) {
-	got := bundleServerPath("/Applications/Dexel.app")
-	want := "/Applications/Dexel.app/Contents/MacOS/dexel-server"
-	if got != want {
-		t.Fatalf("bundleServerPath = %q, want %q", got, want)
+	for name, want := range map[string]string{
+		"Dexel Runtime": "/Applications/Dexel.app/Contents/MacOS/Dexel Runtime",
+		"dexel-server":  "/Applications/Dexel.app/Contents/MacOS/dexel-server",
+	} {
+		if got := bundleServerPath("/Applications/Dexel.app", name); got != want {
+			t.Fatalf("bundleServerPath(_, %q) = %q, want %q", name, got, want)
+		}
+	}
+}
+
+// TestBundleServerExecutablesOrderAndContents pins the probe list itself.
+// All three of its properties are load-bearing and none is observable from
+// any other test in this file:
+//
+//   - "Dexel Runtime" comes FIRST, so a bundle carrying the current name
+//     resolves to it rather than to a leftover legacy copy beside it.
+//   - "dexel-server" is still present, so a bundle installed BEFORE the
+//     rename keeps resolving instead of silently degrading to the
+//     bare-binary plist on an upgrade the user never asked about.
+//   - "dexel" is absent, and must stay absent: inside the bundle that name
+//     belongs to the Tauri GUI shell's own main binary (tauri.conf.json's
+//     mainBinaryName), a DIFFERENT program, and a LaunchAgent pointed at it
+//     would open a window at every login instead of starting the runtime.
+func TestBundleServerExecutablesOrderAndContents(t *testing.T) {
+	want := []string{"Dexel Runtime", "dexel-server"}
+	if len(bundleServerExecutables) != len(want) {
+		t.Fatalf("bundleServerExecutables = %v, want %v", bundleServerExecutables, want)
+	}
+	for i := range want {
+		if bundleServerExecutables[i] != want[i] {
+			t.Fatalf("bundleServerExecutables[%d] = %q, want %q (full list %v)", i, bundleServerExecutables[i], want[i], bundleServerExecutables)
+		}
+	}
+	for _, name := range bundleServerExecutables {
+		// EqualFold, not ==: macOS's default APFS volume is
+		// case-INsensitive, so a name differing from the shell's main
+		// binary only in case is the SAME FILE and just as wrong.
+		if strings.EqualFold(name, "dexel") {
+			t.Fatalf("bundleServerExecutables contains %q, which case-insensitively collides with the Tauri shell's own main binary", name)
+		}
 	}
 }
 
@@ -342,10 +379,12 @@ func TestBundleServerPath(t *testing.T) {
 // negative cases that must NOT be mistaken for a bundle.
 func TestInsideAppBundle(t *testing.T) {
 	cases := map[string]bool{
-		"/Applications/Dexel.app/Contents/MacOS/dexel-server":                                      true,
+		"/Applications/Dexel.app/Contents/MacOS/Dexel Runtime": true,
+		// The legacy name, and the lowercase legacy bundle: both still
+		// count as "inside a bundle", because both can still be on disk.
 		"/Applications/dexel.app/Contents/MacOS/dexel-server":                                      true,
 		"/Applications/OneDrive.app/Contents/StandaloneUpdater.app/Contents/MacOS/OneDriveUpdater": true,
-		"/Users/dev/Applications/Dexel.app/Contents/MacOS/dexel-server":                            true,
+		"/Users/dev/Applications/Dexel.app/Contents/MacOS/Dexel Runtime":                           true,
 		"/Users/dev/.local/bin/dexel":                                                              false,
 		"/usr/local/bin/dexel":                                                                     false,
 		"/Users/dev/apps/dexel":                                                                    false,
@@ -363,10 +402,15 @@ func TestInsideAppBundle(t *testing.T) {
 }
 
 // TestLaunchdProgramPrefersAppBundle is the whole point of the change:
-// given an installed bundle whose dexel-server exists and is executable,
-// the plist must name THAT, so macOS has a bundle to attribute the
-// background item to (System Settings → Login Items & Extensions shows the
-// bundle's icon and CFBundleDisplayName instead of a generic `exec`).
+// given an installed bundle whose server executable exists and is
+// executable, the plist must name THAT, so macOS has a bundle to attribute
+// the background item to (System Settings → Login Items & Extensions).
+//
+// It doubles as the LEGACY-NAME regression test: the only thing on this
+// fake disk is the pre-rename `dexel-server`, in the lowercase legacy
+// bundle. A bundle installed before the rename must keep resolving —
+// dropping the old name from bundleServerExecutables would make this fall
+// all the way through to the bare-binary plist, silently.
 func TestLaunchdProgramPrefersAppBundle(t *testing.T) {
 	const bare = "/Users/dev/.local/bin/dexel"
 	candidates := launchdBundleCandidates("/Users/dev")
@@ -391,12 +435,45 @@ func TestLaunchdProgramPrefersAppBundle(t *testing.T) {
 // case-sensitive one), the properly-capitalised Dexel.app wins.
 func TestLaunchdProgramPrefersCapitalisedBundleFirst(t *testing.T) {
 	exists := onlyThese(
+		"/Applications/Dexel.app/Contents/MacOS/Dexel Runtime",
+		"/Applications/dexel.app/Contents/MacOS/Dexel Runtime",
+	)
+	program, _, _ := launchdProgram("/Users/dev/.local/bin/dexel", launchdBundleCandidates("/Users/dev"), exists, Options{})
+	if want := "/Applications/Dexel.app/Contents/MacOS/Dexel Runtime"; program != want {
+		t.Fatalf("launchdProgram = %q, want the capitalised bundle %q", program, want)
+	}
+}
+
+// TestLaunchdProgramPrefersCurrentNameWithinOneBundle: inside a SINGLE
+// bundle carrying both names (a hand-copied leftover, or a bundle unpacked
+// over an older one on a case-sensitive volume), the current name wins —
+// which is the whole point of the rename, since that filename is what
+// System Settings displays.
+func TestLaunchdProgramPrefersCurrentNameWithinOneBundle(t *testing.T) {
+	exists := onlyThese(
 		"/Applications/Dexel.app/Contents/MacOS/dexel-server",
-		"/Applications/dexel.app/Contents/MacOS/dexel-server",
+		"/Applications/Dexel.app/Contents/MacOS/Dexel Runtime",
+	)
+	program, _, _ := launchdProgram("/Users/dev/.local/bin/dexel", launchdBundleCandidates("/Users/dev"), exists, Options{})
+	if want := "/Applications/Dexel.app/Contents/MacOS/Dexel Runtime"; program != want {
+		t.Fatalf("launchdProgram = %q, want the current name %q", program, want)
+	}
+}
+
+// TestLaunchdProgramPrefersBundleLocationOverName pins which loop is the
+// outer one, a choice that only shows up in this exact shape: the
+// PREFERRED bundle has only the legacy name, a less-preferred bundle has
+// the current one. Bundle location is the stronger signal — it is what the
+// installer controls — so /Applications must beat ~/Applications even
+// though it means writing the legacy filename into the plist.
+func TestLaunchdProgramPrefersBundleLocationOverName(t *testing.T) {
+	exists := onlyThese(
+		"/Applications/Dexel.app/Contents/MacOS/dexel-server",
+		"/Users/dev/Applications/Dexel.app/Contents/MacOS/Dexel Runtime",
 	)
 	program, _, _ := launchdProgram("/Users/dev/.local/bin/dexel", launchdBundleCandidates("/Users/dev"), exists, Options{})
 	if want := "/Applications/Dexel.app/Contents/MacOS/dexel-server"; program != want {
-		t.Fatalf("launchdProgram = %q, want the capitalised bundle %q", program, want)
+		t.Fatalf("launchdProgram = %q, want the more-preferred BUNDLE %q even though its executable carries the legacy name", program, want)
 	}
 }
 
@@ -420,18 +497,18 @@ func TestLaunchdProgramFallsBackToBareBinary(t *testing.T) {
 }
 
 // TestLaunchdProgramSkipsBundleWithoutServer: a bundle directory that
-// exists but has no dexel-server inside it is NOT a usable target. Baking
-// it into the plist anyway would produce a job that fails to spawn at every
-// login — visible only in a log nobody reads — so it must fall through.
-// isExecutable is asked about the EXECUTABLE, never the directory, which is
-// what makes this case fall through for free.
+// exists but carries NONE of bundleServerExecutables inside it is not a
+// usable target. Baking it into the plist anyway would produce a job that
+// fails to spawn at every login — visible only in a log nobody reads — so
+// it must fall through. isExecutable is asked about the EXECUTABLE, never
+// the directory, which is what makes this case fall through for free.
 func TestLaunchdProgramSkipsBundleWithoutServer(t *testing.T) {
 	const bare = "/Users/dev/.local/bin/dexel"
-	// The bundle dirs "exist", but no dexel-server does.
+	// The bundle dirs "exist", but neither name does inside them.
 	exists := onlyThese("/Applications/Dexel.app", "/Applications/dexel.app")
 	program, bundleID, _ := launchdProgram(bare, launchdBundleCandidates("/Users/dev"), exists, Options{})
 	if program != bare {
-		t.Fatalf("launchdProgram = %q, want the bare binary %q (a bundle with no dexel-server is not a target)", program, bare)
+		t.Fatalf("launchdProgram = %q, want the bare binary %q (a bundle with no server executable is not a target)", program, bare)
 	}
 	if bundleID != "" {
 		t.Fatalf("launchdProgram bundleID = %q, want \"\" -- an unusable bundle is not something to associate with", bundleID)
@@ -458,13 +535,13 @@ func TestLaunchdProgramBareOptionOptsOut(t *testing.T) {
 }
 
 // TestLaunchdProgramKeepsExeAlreadyInsideABundle: invoked AS the bundle's
-// own executable (`/Applications/Dexel.app/Contents/MacOS/dexel-server
+// own executable (`/Applications/Dexel.app/Contents/MacOS/Dexel\ Runtime
 // autostart enable`), the resolved exePath is already bundle-attributed and
 // must be used verbatim — including when it is a DIFFERENT bundle from any
 // candidate, which is the case that would otherwise be a silent redirect
 // away from the binary the user actually ran.
 func TestLaunchdProgramKeepsExeAlreadyInsideABundle(t *testing.T) {
-	exe := "/Users/dev/build/Dexel.app/Contents/MacOS/dexel-server"
+	exe := "/Users/dev/build/Dexel.app/Contents/MacOS/Dexel Runtime"
 	everythingExists := func(string) bool { return true }
 	program, bundleID, note := launchdProgram(exe, launchdBundleCandidates("/Users/dev"), everythingExists, Options{})
 	if program != exe {
@@ -480,14 +557,20 @@ func TestLaunchdProgramKeepsExeAlreadyInsideABundle(t *testing.T) {
 
 // TestLaunchdPlistProgramRoundTrip proves `status` can read back exactly
 // what `enable` wrote — the property the whole "status reports the truth"
-// claim rests on — for both the bare and bundled shapes, and for a path
-// containing an XML metacharacter, which is the only way escape/unescape
-// asymmetry would ever show up.
+// claim rests on — for both the bundled names, for the bare shape, and for
+// a path containing an XML metacharacter, which is the only way
+// escape/unescape asymmetry would ever show up.
+//
+// The SPACE in "Dexel Runtime" is pinned here on purpose. Nothing in this
+// package splits on whitespace today, and nothing should start to: the
+// path goes into a plist <string> and comes back out of one, and launchd
+// reads ProgramArguments as an array, never as a command line.
 func TestLaunchdPlistProgramRoundTrip(t *testing.T) {
 	for _, exe := range []string{
 		"/Users/dev/.local/bin/dexel",
+		"/Applications/Dexel.app/Contents/MacOS/Dexel Runtime",
 		"/Applications/Dexel.app/Contents/MacOS/dexel-server",
-		`/Users/A&B/Dexel.app/Contents/MacOS/dexel-server`,
+		`/Users/A&B/Dexel.app/Contents/MacOS/Dexel Runtime`,
 		`/Users/<weird>/'quoted"/dexel`,
 	} {
 		// Both shapes: with and without the association block, since the

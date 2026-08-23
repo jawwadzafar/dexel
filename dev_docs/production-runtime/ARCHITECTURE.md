@@ -572,9 +572,22 @@ shell locates a `dexel` to drive in this order: `PATH` → `paths.BinDir()`'s
 convention (`~/.local/bin/dexel`) → the bundled copy. It then runs
 `<dexel> start` (which detaches) and `<dexel> status --json`. So
 `scripts/build-sidecar.sh` and `desktop.yml`'s `sidecar` job keep working
-verbatim; only the meaning of the file changes. Renaming the bundled binary from
-`dexel-server` to `dexel` is cosmetic and deferred (it touches the triple-named
-filenames `desktop.yml` asserts at lines 93-96).
+verbatim; only the meaning of the file changes.
+
+> **Update (implemented 2026-08-23).** The rename this paragraph called
+> "cosmetic and deferred" was neither. It was done — the bundled artifact is
+> now **`Dexel Runtime`** — because macOS names a Login Items entry after the
+> executable it launches, so the pane read "dexel-server". And the obvious
+> target, `dexel`, is unusable: `Contents/MacOS/dexel` is already the Tauri
+> MAIN binary, the volume is case-insensitive, and `tauri-bundler`'s
+> `copy_binaries` runs BEFORE `copy_binaries_to_bundle` — so naming the
+> daemon `dexel`/`Dexel` would have let the GUI shell silently overwrite it,
+> leaving a login item that opens a window instead of starting a runtime.
+> `Dexel Runtime` matches the product's own word for it (`dexel runtime`,
+> `runtime.json`, `runtime.lock`). It touched `externalBin`, the shell-plugin
+> capability scope, `SIDECAR_NAME`, `build-sidecar.sh`, `desktop.yml`'s
+> assertion, and autostart's bundle probe (which accepts the legacy name too,
+> so an older installed bundle still resolves).
 
 **`dexel open` without the desktop app:** looks for `dexel-desktop` on `PATH`,
 then in `BinDir`, then a platform app location (`/Applications/dexel.app`,

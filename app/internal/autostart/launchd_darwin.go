@@ -19,10 +19,12 @@
 //	| `launchctl bootstrap`/`bootout`/`print` actually invoked            | VERIFIED — enable/disable/enable round-tripped, `launchctl print` shows the job with the expected program and `state = running` |
 //	| enable-twice idempotency (exactly one plist, one job)               | VERIFIED |
 //	| disable removes everything enable created (plist + loaded job)      | VERIFIED — plist gone, `launchctl print` reports "Could not find service", runtime stopped, config.json cleared |
-//	| The bundle-attributed plist runs and resolves the same state dir    | VERIFIED — the runtime started from /Applications/Dexel.app/Contents/MacOS/dexel-server loaded the same state.db under ~/Library/Application Support/dexel |
+//	| The bundle-attributed plist runs and resolves the same state dir    | VERIFIED — the runtime started from /Applications/Dexel.app/Contents/MacOS/"Dexel Runtime" (and, before the rename, .../dexel-server) loaded the same state.db under ~/Library/Application Support/dexel |
 //	| Load at ACTUAL login (as opposed to bootstrap in a live session)    | never observed |
 //	| KeepAlive/ProcessType behaviour under a real crash                  | never observed |
-//	| The icon and name in System Settings                                | NOT VERIFIABLE FROM HERE — needs a human looking at the pane; see launchdProgram's comment and PLATFORM_NOTES.md §3.1.1 |
+//	| The NAME in System Settings follows the exec'd file's name          | VERIFIED BY THE OWNER — the pane read "dexel-server" after the program moved into the bundle, having read "dexel" before; that is what the rename to "Dexel Runtime" acts on (PLATFORM_NOTES.md §3.1.1) |
+//	| That the pane now reads "Dexel Runtime"                             | NOT VERIFIABLE FROM HERE — needs a human looking at the pane, and BTM caches; see PLATFORM_NOTES.md §3.1.1 |
+//	| The ICON and the "unidentified developer" subtitle                  | NOT FIXABLE without a paid Developer ID — settled, see PLATFORM_NOTES.md §3.1.1 |
 package autostart
 
 import (
@@ -116,9 +118,9 @@ func enablePlatform(exePath, logPath string, opts Options) (Result, error) {
 // isExecutableFile is launchdProgram's real-filesystem predicate: a
 // regular file (never a directory or symlink-to-nothing) with at least
 // one execute bit. Both halves matter — an .app directory that exists
-// with no dexel-server inside it, or a zero-permission leftover, must
-// not be baked into a plist as a program launchd will fail to spawn at
-// every login.
+// with none of bundleServerExecutables inside it, or a zero-permission
+// leftover, must not be baked into a plist as a program launchd will
+// fail to spawn at every login.
 func isExecutableFile(path string) bool {
 	info, err := os.Stat(path)
 	if err != nil || !info.Mode().IsRegular() {

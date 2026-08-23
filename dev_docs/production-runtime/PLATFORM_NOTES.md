@@ -159,7 +159,7 @@ finds one):
   <key>Label</key>              <string>com.jawwadzafar.dexel</string>
   <key>ProgramArguments</key>
   <array>
-    <string>/Applications/Dexel.app/Contents/MacOS/dexel-server</string>
+    <string>/Applications/Dexel.app/Contents/MacOS/Dexel Runtime</string>
     <string>runtime</string>
   </array>
   <key>AssociatedBundleIdentifiers</key>
@@ -199,11 +199,14 @@ resolved `os.Executable()`:
   a 1 Hz ticker.
 * launchd owns the log redirection here, so the child's stdio is launchd's
   business and `dexel start` is not involved.
-* `dexel-server` inside the bundle is the SAME Go program as the bare `dexel`
-  (Tauri ships it as a sidecar); it accepts `runtime` and every other
-  subcommand, and it resolves the same state directory, because
-  `app/internal/paths` derives `StateDir` from `$DEXEL_HOME`/`$HOME` and never
-  from the executable's own path.
+* `Dexel Runtime` inside the bundle is the SAME Go program as the bare `dexel`
+  (Tauri ships it as a sidecar; it was called `dexel-server` before §3.1.2);
+  it accepts `runtime` and every other subcommand, and it resolves the same
+  state directory, because `app/internal/paths` derives `StateDir` from
+  `$DEXEL_HOME`/`$HOME` and never from the executable's own path. It is a
+  DIFFERENT file from `Contents/MacOS/dexel`, which is the Tauri shell's own
+  main binary (`mainBinaryName`) — the GUI window, not the daemon. `enable`
+  never points at that one.
 
 Commands: `launchctl bootstrap gui/$(id -u) <plist>` and
 `launchctl bootout gui/$(id -u)/com.jawwadzafar.dexel`, falling back to
@@ -253,9 +256,11 @@ levels. The difference matters, so it is stated per item.**
    `Microsoft Intune Agent.app`, Company Portal's SSO XPC service. Every one
    that shows a generic icon points at a bare Unix executable — FortiClient's
    `.../FortiClient/bin/*`, XQuartz's `/opt/X11/libexec/launchd_startx`. That
-   is why `enable` prefers `/Applications/Dexel.app/Contents/MacOS/dexel-server`
-   over `~/.local/bin/dexel` when the bundle exists. **No Apple document was
-   found stating that path-containment alone triggers bundle attribution.**
+   is why `enable` prefers
+   `/Applications/Dexel.app/Contents/MacOS/Dexel Runtime` over
+   `~/.local/bin/dexel` when the bundle exists. **No Apple document was found
+   stating that path-containment alone triggers bundle attribution — and
+   §3.1.2 now records that on this machine it did NOT produce an icon.**
 3. **The plist's `Label` is irrelevant to the displayed name — confirmed.** The
    standing counter-example is nix-darwin, whose labels are `org.nixos.*` but
    whose `ProgramArguments[0]` is `/bin/sh`: the pane shows entries literally
@@ -348,12 +353,119 @@ VM that has never seen the product. And BTM only refreshes third-party items
 during overnight Service Management maintenance; `sudo sfltool resetbtm` plus a
 reboot forces a rescan, at the cost of clearing *all* third-party login items.
 
-**One consequence of §3.1's change, stated plainly.** With the plist pointing
+**One consequence of §3.1's change, stated plainly** (and see §3.1.2 for what
+the pane then actually showed). With the plist pointing
 into the bundle, the binary that runs at login is the one `Dexel.app` ships, not
 the one `dexel update` replaces in `~/.local/bin`. The two can drift in version.
 `dexel autostart status` prints the registered program path for exactly this
 reason, and `dexel autostart enable --bare` opts back out (macOS-only; a no-op
 on Linux and Windows, which have no bundle concept).
+
+### 3.1.2 What the pane actually showed afterwards, and the one half that was fixable
+
+§3.1.1 was written before anyone had looked at the pane again. The owner then
+looked (2026-08-23, macOS 26.6, Apple Silicon, after `enable` had moved the
+program to `/Applications/Dexel.app/Contents/MacOS/dexel-server` and set
+`AssociatedBundleIdentifiers`). **General → Login Items & Extensions → App
+Background Activity** read, verbatim:
+
+> `[exec]` **dexel-server** — "Item from unidentified developer."
+
+Three things follow, and they are worth more than the whole prediction above
+because they were observed rather than reasoned:
+
+1. **The displayed NAME is the `exec`'d file's filename.** It changed from
+   "dexel" to "dexel-server" at exactly the moment `ProgramArguments[0]` moved
+   from `~/.local/bin/dexel` to the bundle's `dexel-server` — nothing else
+   changed. This is the same conclusion §3.1.1's finding 3 drew from
+   nix-darwin's "sh" entries, now confirmed on our own item.
+2. **The generic `exec` icon persisted, and the subtitle did not change.** So
+   finding 2's field evidence (an executable inside a `.app` gets the app's
+   icon) did NOT reproduce here, and finding 1's `AssociatedBundleIdentifiers`
+   bought nothing visible. The reason was already written down in §3.1.1 and is
+   the reason this is not a bug to chase: without a Developer ID there is no
+   Team Identifier, and Apple DTS states a job whose executable has no Team ID
+   has its `AssociatedBundleIdentifiers` ignored outright. **The icon and the
+   subtitle are therefore closed as NOT FIXABLE at this price point.** Do not
+   reopen them without the $99/yr membership and the steps in §3.1.1.
+3. **The name, however, is entirely ours** — it is just a filename. That is the
+   half that was fixed.
+
+**The fix: the bundled daemon is now named `Dexel Runtime`.**
+
+It is Tauri's `bundle.externalBin` entry, so the name lives in
+`desktop/src-tauri/tauri.conf.json` (plus the matching `shell:allow-execute`
+scope entry in `capabilities/default.json`, `SIDECAR_NAME` in
+`desktop/src-tauri/src/lib.rs`, and `BIN_BASE` in `scripts/build-sidecar.sh`,
+which writes `binaries/<base>-<target triple>[.exe]`). Renaming it moves
+nothing else: the user's CLI stays `~/.local/bin/dexel`, `DEXEL_HOME` and every
+path are untouched, and `app/internal/paths` still derives the state dir from
+`$DEXEL_HOME`/`$HOME` rather than from `argv[0]`.
+
+This is a deliberate exception to "the product is *Dexel* in prose, `dexel` in
+every artifact". It is the one artifact whose *filename* is display text,
+because this pane prints it.
+
+**Why not simply `Dexel` — the trap, which is silent.** `Contents/MacOS/dexel`
+is already taken by the Tauri shell's own main binary
+(`mainBinaryName: "dexel"` — the GUI window, a completely different program
+from the Go daemon), and macOS's default APFS volume is case-**in**sensitive.
+Proof, on the shipped bundle, before the rename:
+
+```
+$ ls /Applications/Dexel.app/Contents/MacOS/Dexel      # note the capital D
+Dexel                                                  # ...resolves to `dexel`
+```
+
+So `Contents/MacOS/Dexel` and `Contents/MacOS/dexel` are one file. And the
+collision does not error: tauri-bundler copies external binaries first
+(`macos/app.rs`'s `copy_binaries`) and the main binary second
+(`copy_binaries_to_bundle`), so the Rust GUI shell would simply overwrite the
+Go daemon, the bundle would ship with the daemon missing, and the LaunchAgent
+would open a window at every login instead of starting the runtime. Renaming
+the MAIN binary to free up the name was rejected: it inverts Apple's own
+convention (`Foo.app/Contents/MacOS/Foo` is the app, not a helper) to relabel
+a helper, and `mainBinaryName: "dexel"` is a contract stated deliberately in
+`desktop/src-tauri/Cargo.toml`.
+
+Shipping a *second*, differently-named copy via `bundle.macOS.files` was also
+rejected: `externalBin` has to stay for the shell's bundled-fallback driver, so
+it would mean ~12 MB of duplicate binary, a per-target hard-coded source path
+in the config (the source name carries the target triple), and two names to
+keep in sync — all to print "Dexel" instead of "Dexel Runtime".
+
+"Runtime" is the product's own word for the thing that starts at login
+(`dexel runtime`, `runtime.json`, `runtime.lock`), so the pane now names what
+the item actually is. **The space is safe** at every layer that handles the
+name, checked in source rather than assumed: `tauri_utils::resources`
+composes the on-disk name with `format!("{curr_path}-{target_triple}{ext}")`;
+`tauri-plugin-shell`'s `relative_command_path` is a `Path::join` handed to
+`std::process::Command`, so there is no shell and no word splitting; NSIS's
+generated directive is the quoted `File /a "/oname={{this}}"`; and launchd
+reads `ProgramArguments` as an array of strings. Only hand-written shell is at
+risk, which is why `scripts/build-sidecar.sh` quotes every expansion and the
+CI assertion in `.github/workflows/desktop.yml` uses a quoted bash array
+instead of the `for f in $expected` word-split loop it replaced.
+
+**Old bundles keep working.** `app/internal/autostart`'s probe is
+`bundleServerExecutables = ["Dexel Runtime", "dexel-server"]`, newest first,
+with the bundle *location* as the outer loop (so `/Applications` still beats
+`~/Applications` even when only the older name is present there). A bundle
+installed before the rename therefore still resolves instead of silently
+degrading to the bare-binary plist. `"dexel"` is deliberately NOT in that list,
+for the reason above.
+
+**What still needs a human's eyes, and why this document cannot claim it.**
+Everything mechanical was verified on the owner's machine: the bundle contains
+both `Contents/MacOS/dexel` and `Contents/MacOS/Dexel Runtime`, the plist names
+the new program, `launchctl print` shows it running, and `dexel status` reports
+a live runtime on the same state dir. **Whether the pane now reads "Dexel
+Runtime" can only be confirmed by looking at it** — and §3.1.1's second testing
+trap applies: BTM refreshes third-party items during overnight Service
+Management maintenance, so the entry may keep showing the old name (or show
+both, briefly) until then. `sudo sfltool resetbtm` plus a reboot forces a
+rescan, at the cost of clearing *all* third-party login items. Nobody should
+promote "the pane reads Dexel Runtime" to VERIFIED without having read it there.
 
 ### 3.2 Linux — **systemd `--user`**, with XDG autostart as the fallback
 

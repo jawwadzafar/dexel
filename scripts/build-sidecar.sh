@@ -9,10 +9,31 @@
 # inside the bundle. So this script's whole job is: build ./app for a set of
 # GOOS/GOARCH pairs and drop each result at
 #
-#     desktop/src-tauri/binaries/dexel-server-<triple>[.exe]
+#     desktop/src-tauri/binaries/Dexel Runtime-<triple>[.exe]
 #
 # Verified against https://v2.tauri.app/develop/sidecar/ ("Tauri requires
 # you to add the target triple to the sidecar binary name").
+#
+# THE BASE NAME HAS A CAPITAL D AND A SPACE, AND THAT IS LOAD-BEARING.
+# It used to be `dexel-server`, in line with the rule that every dexel
+# ARTIFACT is spelled lowercase. It is the one artifact that rule does not
+# fit, because it is the one artifact whose filename a human reads: macOS's
+# System Settings -> General -> Login Items & Extensions -> App Background
+# Activity pane names each background item after the executable that is
+# actually exec'd, and `dexel autostart enable` points its LaunchAgent at
+# this file inside the installed Dexel.app. The pane read "dexel-server".
+# It cannot be called just `Dexel`: `Contents/MacOS/dexel` is already the
+# Tauri shell's own main binary (`mainBinaryName: "dexel"`, a different
+# program), and macOS's default APFS volume is case-INsensitive, so the two
+# would be one file — silently, since tauri-bundler copies external binaries
+# before the main binary and the second copy just wins.
+# dev_docs/production-runtime/PLATFORM_NOTES.md §3.1.2 has the full account.
+#
+# Consequence for anyone editing below: $BIN_BASE CONTAINS A SPACE. Every
+# expansion of it, and of anything derived from it, must be quoted. The
+# matching assertion in .github/workflows/desktop.yml uses a quoted bash
+# array for the same reason -- a `for f in $expected` word-split loop would
+# read one filename as two and "pass" while asserting nothing.
 #
 # Since EMBED-1 (docs/plan/ROADMAP.md) each binary this produces is fully
 # self-contained: app/embed.go compiles app/public/ and app/assets/ into it
@@ -52,7 +73,7 @@ set -euo pipefail
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 APP_DIR="$REPO_ROOT/app"
 OUT_DIR="${OUT_DIR:-$REPO_ROOT/desktop/src-tauri/binaries}"
-BIN_BASE="dexel-server"
+BIN_BASE="Dexel Runtime"
 GO="${GO:-go}"
 
 # PR-2 (MIGRATION_PLAN.md §PR-2): stamp main.version the same way

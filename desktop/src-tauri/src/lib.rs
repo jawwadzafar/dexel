@@ -14,7 +14,8 @@
 //! tab or app window does not stop the runtime — only `dexel stop` does."
 //!
 //! The first version of this shell broke that contract: it spawned its own
-//! private `dexel-server` with `-addr 127.0.0.1:0` and SIGTERM'd it on window
+//! private copy of the bundled Go binary (the `SIDECAR_NAME` artifact, then
+//! named `dexel-server`) with `-addr 127.0.0.1:0` and SIGTERM'd it on window
 //! close. That server took no `runtime.lock` and wrote no `runtime.json`, so
 //! `dexel status` reported "dexel is not running" while it was very much
 //! running — and closing the window silently stopped all activity capture. It
@@ -54,7 +55,9 @@
 //! ## Verified against
 //!
 //! * <https://v2.tauri.app/develop/sidecar/> — `bundle.externalBin`, the
-//!   `<name>-<target-triple>` naming rule, `app.shell().sidecar(..)`,
+//!   `<name>-<target-triple>` naming rule (see `SIDECAR_NAME` below for what
+//!   `<name>` is and why it is the one capitalised artifact in the tree),
+//!   `app.shell().sidecar(..)`,
 //!   `(Receiver<CommandEvent>, CommandChild)`, `CommandEvent::Stdout(Vec<u8>)`.
 //! * <https://docs.rs/tauri/latest/tauri/webview/struct.WebviewWindowBuilder.html>
 //!   and `tauri::{WebviewUrl, RunEvent, Url}` (tauri 2.11.x).
@@ -71,9 +74,46 @@ use tauri_plugin_shell::process::CommandEvent;
 use tauri_plugin_shell::ShellExt;
 
 /// The `bundle.externalBin` base name. Tauri appends the target triple on
-/// disk (`dexel-server-x86_64-unknown-linux-gnu`) and strips it again inside
-/// the bundle, so the name used here is the bare one.
-const SIDECAR_NAME: &str = "dexel-server";
+/// disk (`Dexel Runtime-x86_64-unknown-linux-gnu`) and strips it again inside
+/// the bundle, so the name used here is the bare one — and it must stay in
+/// lockstep with `tauri.conf.json`'s `externalBin` entry and the
+/// `shell:allow-execute` scope entry in `capabilities/default.json`.
+///
+/// ## Why this ONE artifact is capitalised, when every other artifact is not
+///
+/// It is the only artifact whose filename a human reads. macOS's System
+/// Settings -> General -> Login Items & Extensions -> App Background Activity
+/// pane names each background item after the executable that is actually
+/// `exec`'d — not after the launchd `Label`, and not after the enclosing
+/// bundle (PLATFORM_NOTES.md §3.1.1). `dexel autostart enable` points its
+/// LaunchAgent at this file inside the installed `Dexel.app`, so whatever this
+/// is called is the string the owner sees in that pane. It was
+/// `dexel-server`, and the pane read "dexel-server" (PLATFORM_NOTES.md
+/// §3.1.2 records that observation and its date).
+///
+/// ## Why not simply `Dexel`
+///
+/// Because `Contents/MacOS/dexel` is ALREADY taken by this crate's own
+/// binary (`tauri.conf.json`'s `mainBinaryName: "dexel"` — the Tauri shell,
+/// a different program from the Go daemon), and macOS's default APFS volume
+/// is case-INsensitive, so `Contents/MacOS/Dexel` and `Contents/MacOS/dexel`
+/// are the same file. tauri-bundler copies external binaries first
+/// (`macos/app.rs`'s `copy_binaries`) and the main binary second
+/// (`copy_binaries_to_bundle`), so the collision would not even error: the
+/// Rust shell would silently overwrite the Go daemon, and the LaunchAgent
+/// would launch a GUI window at every login instead of the runtime.
+/// "Runtime" is then the product's own word for the thing that starts at
+/// login (`dexel runtime`, `runtime.json`, `runtime.lock`).
+///
+/// The space is deliberate and is safe at every layer: `tauri_utils`
+/// composes the on-disk name with a plain `format!`, `tauri-plugin-shell`
+/// resolves it with `Path::join` and hands it to `std::process::Command`
+/// (no shell, so no word splitting), NSIS's generated `File /a "/oname=.."`
+/// directive is quoted, and launchd's `ProgramArguments` is an array of
+/// strings. Only hand-written shell scripts need care — see
+/// `scripts/build-sidecar.sh` and the CI assertion in
+/// `.github/workflows/desktop.yml`.
+const SIDECAR_NAME: &str = "Dexel Runtime";
 
 /// How long any one short-lived CLI call (`status`, `start`) gets before we
 /// give up and fail loudly. `start` is the slow one and it only has to fork a
@@ -83,10 +123,12 @@ const CLI_TIMEOUT: Duration = Duration::from_secs(20);
 
 const WINDOW_LABEL: &str = "main";
 /// The window's title bar — a DISPLAY string, so it is the capitalised product
-/// name that `tauri.conf.json`'s `productName` also carries. Everything else in
-/// this file stays lowercase `dexel` on purpose: those are artifacts, not
-/// display text (the `dexel-server` sidecar, `~/.local/bin/dexel`, the
-/// `dexel stop` command a log line tells the user to run).
+/// name that `tauri.conf.json`'s `productName` also carries. The rest of this
+/// file stays lowercase `dexel` on purpose: those are artifacts, not display
+/// text (`~/.local/bin/dexel`, the `dexel stop` command a log line tells the
+/// user to run). `SIDECAR_NAME` is the one deliberate exception, and its doc
+/// comment says why: that filename IS display text, because System Settings
+/// names the login item after it.
 const WINDOW_TITLE: &str = "Dexel";
 /// The frontend root is a fixed 640x400 canvas plus its sprint/ticker chrome
 /// (~660x430). 660x460 is both the default AND the minimum, so the

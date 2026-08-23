@@ -11,7 +11,7 @@
       "identifier": "shell:allow-execute",
       "allow": [
         {
-          "name": "binaries/dexel-server",
+          "name": "binaries/Dexel Runtime",
           "sidecar": true,
           "args": true
         }

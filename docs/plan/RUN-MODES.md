@@ -65,7 +65,7 @@ go build -o dexel .
   connected; that was already true of mode A's server, this mode just gives
   it a correct owner instead of a terminal that has to stay open.
 - Any invocation that starts with a flag (`dexel -addr 127.0.0.1:0 -provider
-  fake`, `dexel-server -addr ...`) is untouched: it is byte-for-byte today's
+  fake`, and the bundled `"Dexel Runtime" -addr ...`) is untouched: it is byte-for-byte today's
   foreground server, so every existing sidecar/CI invocation keeps meaning
   exactly what it meant before this mode existed.
 - State (`state.db`, `config.json`) and the runtime's own bookkeeping
@@ -158,7 +158,7 @@ open src-tauri/target/release/bundle/macos/Dexel.app
   runtime also running, two processes held two in-memory economies over one
   `state.db`.
 - **Why step 1 is not optional:** Tauri resolves `bundle.externalBin` to
-  `binaries/dexel-server-<target triple>`. If the script has not run, there is
+  `binaries/Dexel Runtime-<target triple>`. If the script has not run, there is
   no server to spawn.
 - **You do not get a different game.** Same economy, same save file, same
   privacy boundary, same loopback-only posture. Packaging changed; nothing else
@@ -284,9 +284,11 @@ stated limitation, not an oversight:
   (EMBED-1 — no `bundle.resources` to stage any more) and the window loads
   its embedded frontend/assets end to end.
 - That the window opens on the game, always-on-top, at the right size.
-- That closing the window leaves no orphaned `dexel-server` process.
+- ~~That closing the window leaves no orphaned server process.~~ **Inverted.**
+  The runtime MUST survive the window closing (ARCHITECTURE.md Decision 17);
+  an empty `pgrep` after quitting would now be the bug, not the pass.
 
-Those four are the first build's gate. Until someone has seen them,
+Those four were the first build's gate; it has been run (see mode B's status). Until someone has seen them,
 [`desktop/README.md`](../../desktop/README.md) is the authority on what is
 real and what is merely written down.
 
