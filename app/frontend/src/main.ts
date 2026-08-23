@@ -27,6 +27,7 @@ import { renderChrome } from './render/chrome';
 import { renderTerminal } from './render/terminal';
 import { onCelebrate, renderScene } from './render/scene';
 import { hideConnOverlay, showConnOverlay } from './render/overlays';
+import { initViewport } from './render/viewport';
 import { showFlash } from './render/flash';
 import * as storeModal from './features/store-modal';
 import * as activityModal from './features/activity-modal';
@@ -81,6 +82,12 @@ function onSessionComplete(session: SessionView): void {
   sessionsModal.showSummary(session);
   onCelebrate('session');
 }
+
+// BUG-2 — fit the fixed-pixel layout to the real window before anything
+// renders into it, so the first painted frame is already at the right scale
+// (see render/viewport.ts for the scaling contract). Independent of DEV_MODE:
+// a ?dev=1 harness screenshots the same scaled page a player sees.
+initViewport();
 
 keybindings.init();
 

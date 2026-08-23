@@ -3,7 +3,14 @@
 <head>
 <meta charset="utf-8">
 <title>Dexel</title>
-<meta name="viewport" content="width=640, initial-scale=1">
+<!-- BUG-2: the page now fits ITSELF to whatever the window is (a single
+     transform on #root — see game.css "Window fit" and
+     frontend/src/render/viewport.ts), so the viewport must be reported as
+     the real one. The old `width=640` pinned the layout viewport to the
+     layout's own width, which would have made every window look exactly
+     640 CSS px wide and the scale permanently 1x. Desktop webviews ignore
+     this tag either way; it is corrected so it cannot lie if one honours it. -->
+<meta name="viewport" content="width=device-width, initial-scale=1">
 <link rel="stylesheet" href="css/nes.min.css">
 <link rel="stylesheet" href="css/game.css">
 </head>

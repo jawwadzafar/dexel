@@ -16,14 +16,17 @@ slots, prices, persistence).
 
 ## 0. Ground rules
 
-* **Window: 640 x 400 logical px, fixed.** Not responsive. No media queries,
+* **Layout: 640 x 400 logical px, fixed.** Not responsive. No media queries,
   no flex reflow that could move a pixel. The layout below is absolute
   positioning inside a 640x400 root, and that is deliberate: a desktop
   companion at a fixed integer scale is the entire premise (art-direction
-  non-negotiable #7).
+  non-negotiable #7). The *window* is resizable and the whole 640x400 unit is
+  scaled to fit it — see **§0.1**, which is the only place the window's size
+  enters this spec at all.
 * **Every length is an integer px.** No `%`, no `em`, no `rem`, no `vh` in the
   chrome. Fractional layout at this scale produces the half-pixel blur the art
-  direction bans.
+  direction bans. (§0.1's letterbox container is the one `%` in the
+  stylesheet, and it is outside the layout, not in it.)
 * **Font: `Press Start 2P`** (the NES.css companion font), bundled locally —
   **never** from a CDN, because the app must work fully offline (ADR 0001).
   It is an 8x8 cell monospace: at `font-size: 8px` one character is exactly
@@ -37,6 +40,84 @@ slots, prices, persistence).
 * `body { cursor: url(...) }` via NES.css's `.nes-pointer` on `<body>`.
 * No animation longer than 400 ms, no easing curves, no transitions on
   colour. Retro UI snaps.
+
+### 0.1 Window fit — scaling the fixed layout to the real window
+
+The native window (ADR 0015 / F3-design.md §2) opens at an inner size of
+**660x460** and the user can resize it. §0's layout is 640x400 and does not
+reflow, so the two have to be reconciled somewhere. They are reconciled here,
+and only here.
+
+**The contract.** The 640x400 layout is scaled **as one unit** to fit the
+window: aspect ratio preserved exactly, never stretched on one axis, centred,
+with the leftover area letterboxed/pillarboxed in `var(--shadow)` — the same
+colour `#root` already paints as its own ground, so the fill reads as the
+app's bezel continuing outward rather than as a gap behind the layout. The
+layout is never clipped, and no rect in §2 onwards ever moves relative to any
+other.
+
+**The scale factor.** `render/viewport.ts` computes it and publishes it as
+three custom properties on `:root` — `--ui-scale` (unitless), `--ui-ox` /
+`--ui-oy` (integer px) — recomputed on load, on `resize`, and on a
+device-pixel-ratio change:
+
+```
+exact = min(viewportWidth / 640, viewportHeight / 400)
+
+exact < 1   ->  use exact          (window smaller than the layout: shrink to
+                                    fit; clipping would hide controls)
+otherwise   ->  snap DOWN to the nearest CRISP factor if that costs at most
+                1/8 of the size, else use exact
+```
+
+A **crisp** factor is one where one art pixel covers a whole number of *device*
+pixels: an integer at `devicePixelRatio: 1`, and also 1.5x, 2.5x, … on a
+retina display where 1.5 CSS px is exactly 3 device px. Integer/crisp factors
+are strongly preferred because a fractional factor gives nearest-neighbour art
+pixels uneven widths and rasterises the 8px pixel font off its own grid — both
+visibly mushy. **1/8 is where that trade turns**: below it the size difference
+is not noticeable, above it (a 2x-capable window rendered at 1x) the empty
+margin is far worse than slightly soft pixels. Snapping only ever goes *down*;
+snapping up would overflow the window. Measured results:
+
+| window | exact | applied | note |
+| --- | --- | --- | --- |
+| 660x460 (default) | 1.03125 | **1x**, offset (10, 30) | the shipping look, unchanged and centred |
+| 700x900 (tall) | 1.09375 | **1x**, offset (30, 250) | aspect preserved; the tall bands are the window's own shape |
+| 900x600 | 1.40625 | **1.40625x**, offset (0, 19) | 1x would waste 260x200 px — fractional wins |
+| 1320x920 | 2.0625 | **2x**, offset (20, 60) | integer, perfectly crisp |
+
+**The mechanism.** A single `transform: translate(--ui-ox, --ui-oy)
+scale(--ui-scale)` with `transform-origin: 0 0` on `#root`, plus
+`image-rendering: pixelated`. A transform and **not** `zoom`: a transform is
+applied *after* layout, so every box stays exactly integral in CSS px and the
+finished composite is scaled uniformly, whereas `zoom` re-lays-out at the
+scaled size and at a fractional factor rounds every box independently — which
+lets 8px cells drift a pixel apart and breaks the grid this design is built on.
+
+**Modal dialogs carry the same transform themselves.** A `<dialog>` opened
+with `showModal()` is promoted to the **top layer**, and a top-layer element
+is *not* affected by an ancestor's transform (verified in this project's own
+headless Chromium: a dialog inside a `scale(0.5)` parent rendered at 1:1).
+Custom-property inheritance still reaches it, so each of the five dialogs
+declares its authored position as `--dlg-x` / `--dlg-y` instead of
+`left`/`top` and applies
+`translate(--ui-ox, --ui-oy) scale(--ui-scale) translate(--dlg-x, --dlg-y)`
+— the function order matters: the box is placed inside the layout's
+coordinate space *first*, then that space is scaled, then centred. With
+`left`/`top` the offset would be applied once by layout and again by the
+transform, and the modal would drift away from the scene as the window grew.
+
+**Hit targets need nothing extra.** A CSS transform is part of the box the
+browser hit-tests, so a click at a scaled position maps back through it
+natively. Nothing in `app/frontend/src` does *viewport-coordinate* arithmetic
+that a transform could invalidate — no `getBoundingClientRect`, no `clientX`.
+(The store's scrollbar thumb reads `scrollTop`/`scrollHeight`/`clientHeight`
+off `#store-grid`, which are element-local **layout** metrics in unscaled CSS
+px; a transform is applied after layout and does not touch them.) Verified
+with real CDP-dispatched clicks at 1x, 1.40625x and 2x: the hamburger, every
+menu item, a store category row, a card action button, and each modal's X all
+hit the element they are drawn on.
 
 ## 1. DOM contract
 
@@ -1481,11 +1562,13 @@ Every beat is a **sprite swap on the one existing 200 ms frame timer** — no
 CSS transition, no easing curve, no `requestAnimationFrame`. §0's "no
 animation longer than 400 ms" governs *transitions*, and these are frame
 sequences on a fixed-interval timer, exactly like the `type_a`/`type_b` cycle
-that already ships. No second interval was added, and the tick rebuilds the
-dev composite **only when the frame it would paint changed**, so an idle Dexel
-is quiet between beats: measured in the running game, `idle` costs
-**0.47 rebuilds/s** against `coding`'s 5.00/s, and `onBreak` stays at exactly
-0 (ADR 0011's all-day cost promise).
+that already ships. No second interval was added, and the tick touches the dev
+composite **only when the frame it would paint changed**, so an idle Dexel is
+quiet between beats: measured in the running game, `idle` costs **0.47 frame
+swaps/s** against `coding`'s 5.00/s, and `onBreak` stays at exactly 0 (ADR
+0011's all-day cost promise). A "swap" is now literally two `display`/`opacity`
+writes — see §10.5, which replaced the per-tick rebuild those numbers were
+originally measured against.
 
 | beat | sequence | length | cadence |
 | --- | --- | --- | --- |
@@ -1517,6 +1600,59 @@ invents an event):
 
 Nothing else calls it. There is no timed "celebrate occasionally", and no
 client-side inference of a milestone.
+
+### 10.5 The compositing contract — build the scene DOM once, then mutate it
+
+This is a hard rule, not a preference, and it exists because breaking it
+produced a shipped bug (**BUG-1**: "the character blinks on and off for
+milliseconds"). `render/scene.ts` used to `innerHTML = ''` its subtree and
+recreate every layer with a fresh `<img>` on every render — and renders happen
+on each ~1 Hz state broadcast *and* on every 200 ms animation tick.
+
+**Why that flickers.** A brand-new `<img>` has no bitmap to paint until its
+resource is decoded, and Chrome decodes asynchronously even for an image
+already in cache. Worse for a tinted layer: `--form` is a CSS `mask-image`,
+and a mask whose bitmap is not ready masks the fill away *entirely*, so the
+flat tint vanished and only the grayscale `.tint-shade` showed. Captured from
+the running game with `Page.startScreencast` (which emits every composited
+frame), a 60 s activity cycle of the old build produced **17 distinct
+character images where only 8 poses exist**: three frames with the character
+completely absent, one rendered pure white, one with the hoodie but no hands.
+
+**The rules.**
+
+1. **Identity.** Every element the scene can show is created once, in
+   `buildSceneSkeleton()`, and lives for the page's lifetime — one `<img>` per
+   slot, one chair layer pair, one hoodie overlay. No render path creates,
+   removes or `innerHTML`-clears anything. `src`, `--form` and `--tint` are
+   written **only when the value changed** (`render/tint.ts`'s `setSrc` /
+   `updateTintLayer`), so a render where nothing changed writes nothing.
+2. **Decode-free frame swaps.** The nine developer frames of §10.1 are
+   **stacked**: nine form layers and nine base images, each permanently
+   pointed at its own file, exactly one of each shown. A frame swap is two
+   style writes, never an image load and never a mask change.
+3. **The form stack hides with `opacity: 0`, not `display: none`.** A
+   `display: none` layer is never painted and therefore its mask is never
+   decoded, so the *first* appearance of each pose still flashed white.
+   `opacity: 0` keeps all nine masks in the paint tree and decoded while
+   contributing no pixels.
+4. **Pre-warm everything.** `render/preload.ts` fetches *and* `decode()`s every
+   sprite the scene can show — all nine `dev_form_*`/`dev_base_*` frames plus
+   every catalog item's `sprite`/`detail` — once, at startup. 368 KB total off
+   localhost, held for the page's lifetime so the decodes are not collected.
+5. **What the teardown used to do implicitly, say explicitly.** A slot with no
+   sprite (an `*_none` item) stays hidden because its `<img>` is hidden, not
+   because a holder was left empty; a chair with no catalog item at all hides
+   its holder; "one child per holder" holds because nothing ever appends a
+   second one.
+
+**Exit criterion, and how it is checked.** Over a screencast of a full 60 s
+activity cycle (typing at 5 fps, idle with breath/stretch, `onBreak` sleep,
+the mouse pose), *every* composited frame must show a complete character. The
+current build: **261 frames, 7 distinct character images, all of them real
+poses, zero absent/white/partial composites**, and a `MutationObserver` on
+`#scene-sprites` counts **0 added and 0 removed nodes** across 14 s of
+animation (the old build: 132 and 132).
 
 ### 10.5 The hoodie overlay rides the lift
 
