@@ -76,7 +76,22 @@ type StatCountersSave struct {
 	// is exactly the "a counter added to it later (e.g. PR-5's
 	// pausedSeconds...) joins the session with no edit here" property
 	// ActiveSessionSave's own doc comment predicted.
-	PausedSeconds uint64 `json:"pausedSeconds"`
+	//
+	// `omitempty` IS LOAD-BEARING, and not for file size. The JSON side of
+	// the MAC verifies a save against canonicalBody(d) — a
+	// re-serialization of the parsed struct (integrity.go) — so importJSON
+	// only holds its documented invariant ("canonicalBody(d) ... reproduces
+	// byte-identical preimage bytes") while every field added AFTER a file
+	// was written stays absent from that re-encoding. Without omitempty
+	// this field injected `"pausedSeconds":0` into four buckets of every
+	// pre-PR-5 state.json, changing the preimage and failing the MAC: a
+	// real v1.0.0 save was refused as tampered and the player silently
+	// started a fresh economy. Every other field this wave added
+	// (Session/SessionLogHead/Paused) already carries omitempty/omitzero
+	// for exactly this reason; this one did not, and that was the bug.
+	// Same rule for every future field. See
+	// TestPrePR5StateJSONImportsUnderItsOriginalMac.
+	PausedSeconds uint64 `json:"pausedSeconds,omitempty"`
 }
 
 // CoinBreakdownSave is the persisted analogue of game.CoinBreakdown — the

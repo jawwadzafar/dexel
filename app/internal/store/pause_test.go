@@ -28,10 +28,15 @@ func TestSchema6GrandfatherLoadsAsNotPausedWithNoPausedSeconds(t *testing.T) {
 	path := filepath.Join(dir, "state.db")
 
 	// The fixture is a HAND-BUILT, byte-exact pre-PR-5 payload rather than
-	// `Save(SaveData{Schema: 6, ...})`, because this build's own
-	// StatCountersSave always emits `"pausedSeconds":0` — so a
-	// Save-produced "schema 6" file would still carry the new keys and
-	// would prove nothing about what a real pre-PR-5 file looks like.
+	// `Save(SaveData{Schema: 6, ...})`, so that what a real pre-PR-5 file
+	// looked like is pinned HERE and cannot drift with the structs. (When
+	// this test was written PausedSeconds lacked `omitempty` and a
+	// Save-produced "schema 6" file still carried `"pausedSeconds":0`,
+	// which would have proven nothing; that missing tag turned out to be
+	// a save-losing upgrade bug on the JSON path — see
+	// TestPrePR5StateJSONImportsUnderItsOriginalMac in
+	// json_upgrade_mac_test.go. Hand-building the fixture stays correct
+	// either way.)
 	// Real, non-zero counters throughout, so "the new fields are zero" is
 	// a claim about the NEW fields only while every pre-existing one is
 	// proven intact alongside them.
