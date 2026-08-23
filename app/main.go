@@ -497,14 +497,30 @@ func runServe(mode serveMode, args []string) {
 	// payload. cfgPath == "" means the home directory could not be
 	// resolved at boot (already logged there); the game still runs, the
 	// name(s) just cannot outlive the process.
+	//
+	// READ-MODIFY-WRITE, not construct-and-overwrite. config.json also
+	// carries `autostart` — the mechanism `dexel autostart enable` last
+	// installed — whose own doc comment in store/config.go says it is
+	// "written ONLY by `dexel autostart enable`/`disable` ... nothing else
+	// in this codebase may set it". Building a fresh ConfigData here broke
+	// exactly that: SaveConfig marshals the whole struct, so the zero-value
+	// Autostart was written over the real one on every SET_NAME and every
+	// SESSION_START, silently erasing which mechanism was installed. Load
+	// first, overwrite only the two halves this function owns, and the
+	// promise in the comment two lines above ("writing either half never
+	// clobbers the other") becomes true of the third field as well.
+	//
+	// A load failure is NOT swallowed into a default: continuing with a
+	// zero ConfigData would reintroduce the clobber under a different name,
+	// which is the trade docs/upgrade-design.md's "log once, start fresh"
+	// posture explicitly does not extend to a file we are about to
+	// overwrite. (LoadConfig already degrades a hand-edited syntax error to
+	// defaults on its own — that path is its call to make, not ours.)
 	persistConfig := func() error {
 		if cfgPath == "" {
 			return errors.New("no config path (home directory unresolved at startup)")
 		}
-		return store.SaveConfig(cfgPath, store.ConfigData{
-			Name:         g.ConfigName(),
-			SessionNames: store.SessionNamesToConfig(g.SessionNames()),
-		})
+		return writeConfigThrough(cfgPath, g.ConfigName(), store.SessionNamesToConfig(g.SessionNames()))
 	}
 
 	// Single-owner loop: every mutation of g happens on this goroutine
@@ -1237,6 +1253,21 @@ type healthResponse struct {
 // healthHandler serves the fixed healthResponse computed once at startup
 // (every field is decided during startup and never changes for the life of
 // the process) as JSON.
+// writeConfigThrough is persistConfig's pure core: the read-modify-write
+// that keeps the two halves main.go owns from disturbing the rest of
+// config.json. Lifted to package scope for the same reason
+// browserOpenCommand and paths.binDirFor are — so it is directly testable
+// with a temp file instead of only through a running action loop.
+func writeConfigThrough(cfgPath, name string, sessionNames map[string]string) error {
+	cfg, err := store.LoadConfig(cfgPath)
+	if err != nil {
+		return fmt.Errorf("read config before write-through: %w", err)
+	}
+	cfg.Name = name
+	cfg.SessionNames = sessionNames
+	return store.SaveConfig(cfgPath, cfg)
+}
+
 func healthHandler(assetsDir *string, publicOk bool, version, commit, publicSource, assetsSource string) http.HandlerFunc {
 	body, err := json.Marshal(healthResponse{
 		AssetsDir:    assetsDir,
