@@ -1,4 +1,4 @@
-# dexel roadmap
+# Dexel roadmap
 
 The overseer executes this autonomously, phase by phase, without asking the
 user what to build. The user supplies roadmaps; the overseer plans, delegates
@@ -171,11 +171,11 @@ Repo stays PRIVATE until the user says otherwise.
   Exit: hamburger opens menu, each item opens its box, coin top-left, keyboard
   shortcuts still work, gated in-game. *(in progress)*
 - **UI-2 — README screenshots + cross-platform build docs.** Re-capture hero +
-  store + history showing the dexel titlebar, the fixed seated chair, and the new
+  store + history showing the Dexel titlebar, the fixed seated chair, and the new
   hamburger UI; drop into docs/images/. Add build/run instructions for macOS,
   Linux, Windows (build-from-source now; packaged-app once Tauri lands).
 - **SEC-1 — Save integrity / anti-cheat.** Design pass (ADR) first: split a
-  user-editable CONFIG (e.g. the dexel's name) from PROTECTED game state; sign
+  user-editable CONFIG (e.g. the Dexel's name) from PROTECTED game state; sign
   the economy-critical fields (Dev Cash, owned items, XP, sprint, history) with
   an HMAC/checksum so hand-editing the JSON to mint money is detected/rejected.
   Honest about limits (a fully local single-player save can't be perfectly
@@ -244,7 +244,7 @@ PRIVATE. In-flight: proportion art pass; release-pipeline modernization.
   release script ships single-binary archives; Tauri scaffold updated.
 
 ### RUST-PARALLEL track (2026-08-22, user)
-A parallel Rust implementation of the dexel backend lives IN THIS REPO
+A parallel Rust implementation of the Dexel backend lives IN THIS REPO
 (top-level Rust workspace) built to feature parity with the Go app, so the two
 can be COMPARED head-to-head and the better one chosen. Rules:
 - NO migration burden: the Rust app uses its own save (nothing shipped broadly

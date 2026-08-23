@@ -90,7 +90,7 @@ corrupt DB, or a `schema`/`user_version` disagreement with the signed payload �
 the DB (and its `-journal` sibling) is **renamed** aside to
 `.invalid`/`.corrupt`/`.future`, never deleted; `Load` returns `ErrTampered` or
 `ErrFutureSchema`; the economy resets from `game.New()`; the legacy Rust import
-stays **unreachable**; `config.json` and the dexel's name are untouched. The
+stays **unreachable**; `config.json` and the Dexel's name are untouched. The
 improvement: **an existing DB with the `state` row deleted is `ErrTampered`, not
 "no save"** — so `DELETE FROM state` cannot reach the legacy re-grant path.
 Under JSON, deleting the file was indistinguishable from never having one.
@@ -115,7 +115,7 @@ create the DB on first save; the legacy Rust chain is untouched and now writes
 `state.db`.
 
 **7. Journal mode: `DELETE` (+ `synchronous=FULL`, `busy_timeout=5000`, one
-connection), not WAL.** WAL's benefit is concurrent readers, which dexel does
+connection), not WAL.** WAL's benefit is concurrent readers, which Dexel does
 not have. WAL would leave `-wal`/`-shm` files at rest — making "move the file
 aside" no longer obviously correct, which is precisely the kind of subtlety that
 turns an anti-cheat path into a bug — needs shared memory (the least-exercised

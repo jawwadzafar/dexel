@@ -1,4 +1,4 @@
-/* dexel — game.css (W2-β, frontend)
+/* Dexel — game.css (W2-β, frontend)
  * Built against docs/ui-spec.md + docs/art-direction.md + docs/upgrade-design.md.
  * Every length below is an integer px. No %, em, rem, vh in the chrome.
  *
@@ -1605,7 +1605,7 @@ img, .sprite {
    instead — and the real running game (feature-build-and-verify's gate)
    said it read as a purple dome, not a garment: a store card gets away
    with that thumbnail because it sits next to the item's name in a list
-   of garments, and this modal has no such context. Showing the dexel
+   of garments, and this modal has no such context. Showing the Dexel
    wearing it is both legible and the actual point of the screen.
    overflow:hidden does the cropping; isolation:isolate is MANDATORY on
    any box holding a .tint-shade, or the multiply blend reaches through to
@@ -1766,7 +1766,7 @@ img, .sprite {
    the 12px of previously-EMPTY space at the bottom of #panel-status
    (padding-box 66px tall; #ticker ends at 54), specifically so the
    titlebar's top-left cluster stays coin-then-level and nothing else.
-   Empty text until the dexel is named, so a fresh install shows nothing
+   Empty text until the Dexel is named, so a fresh install shows nothing
    at all rather than a placeholder. */
 #status-name {
   position: absolute;

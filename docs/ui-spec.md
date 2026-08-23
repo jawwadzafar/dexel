@@ -1,4 +1,4 @@
-# UI spec — dexel v2 (HTML / NES.css frontend)
+# UI spec — Dexel v2 (HTML / NES.css frontend)
 
 Target stack per **ADR 0011**: Go backend, HTML/JS/NES.css frontend served
 over `localhost:8080`, later wrapped by Wails v3 as a floating frameless
@@ -150,7 +150,7 @@ after) is zero titlebar layout work.
 | `#hud-level` | 80, 8, 40, 8 | `LV 5`, 8px, `var(--cream)` |
 | `#menu-open` | 600, 4, 32, 16 | hamburger button, `padding: 0`. Icon is three plain 1px-tall `.bar` divs inside `.menu-icon` (16x7), **not** a `☰` glyph — a fancy character renders blurry/inconsistent at this app's 1x DPI in the pixel font, the same lesson A2 already recorded for `→` |
 | `#menu-panel` | 496, 26, 136, auto | dropdown opened by `#menu-open`, closed by default (`display:none`, shown via `.visible`); right edge (632) lines up with `#menu-open`'s right edge (632) so it never overflows the 640px titlebar |
-| `#menu-panel-title` | inside `#menu-panel`, 128 x 16 | static `MENU`, replaced by the dexel's name once set (§7.4), 8px `var(--screen-dim)`, bottom rule separating it from the items |
+| `#menu-panel-title` | inside `#menu-panel`, 128 x 16 | static `MENU`, replaced by the Dexel's name once set (§7.4), 8px `var(--screen-dim)`, bottom rule separating it from the items |
 | `.menu-item` (×N) | inside `#menu-panel`, 128 x 20 each, 4px gap | one `nes-btn` per launcher, in menu order: `#store-open` (`[S] STORE`), `#activity-open` (`[A] ACTIVITY`), `#history-open` (`[H] HISTORY`), `#sessions-open` (`[W] SESSIONS`, P2, §9.1), and (PR-5, §2.4) `#pause-toggle` — label and action both flip live between `[P] PAUSE` (sends `PAUSE`) and `[P] RESUME` (sends `RESUME`), decided by `state.paused` read fresh from the store at click time, never assumed from the label |
 | `#paused-badge` | 380, 8, 96, 8 | (PR-5, §2.4) the always-visible paused indicator — an 8px dim solid square (`#paused-badge-dot`) + `PAUSED`, 8px `var(--screen-dim)`. Empty/hidden (`display:none` / `.visible`, same idiom as `#session-pill`) unless `state.paused` is true. Sits clear of both `#hud-level` (ends 120) and `#session-pill`'s box (132..372, §9.5) — a session can be active *and* paused at the same time, so both must stay visible together |
 
@@ -859,7 +859,7 @@ Field notes the implementers must not improvise on:
   server-side.
 * `config` — Phase P1 (Identity & first minutes,
   `docs/plan/PRODUCT-EVOLUTION.md` §5). Exactly one field today,
-  `config.name`: the dexel's name, **user-authored**, `""` when unset. The
+  `config.name`: the Dexel's name, **user-authored**, `""` when unset. The
   server always sends the block; it is optional client-side
   (`wire.ts: config?`) only so a pre-P1 server degrades to "unnamed".
 
@@ -928,7 +928,7 @@ Field notes the implementers must not improvise on:
   decided **once, by the server, at boot**, as *(no save of any kind existed)*
   `&&` *(`config.name` is empty)*. Both halves matter: an existing
   `state.db`/`state.json`/legacy Rust save means somebody has played here even
-  if they never named the dexel, and a named `config.json` means the one
+  if they never named the Dexel, and a named `config.json` means the one
   question onboarding asks is already answered even on a machine whose save was
   wiped. A tampered, future-schema or unreadable save all count as "a save
   existed" — the failure worth avoiding is nagging a returning user, not
@@ -1038,7 +1038,7 @@ replaces the old.
   a panic and never a partial write.
 * `EQUIP_ITEM` with a `tintId` the player does not own is rejected — equipping
   is not a back door around `BUY_TINT`.
-* `SET_NAME` (Phase P1, §7) sets the dexel's name. `name` is **raw user
+* `SET_NAME` (Phase P1, §7) sets the Dexel's name. `name` is **raw user
   text** and passes through exactly one door, `game.NormalizeName` (see
   `config` in §6.1 for the rules). A rejected name — empty, whitespace-only,
   control-characters-only, or the `name` key missing entirely — is a
@@ -1090,7 +1090,7 @@ replaces the old.
 ## 7. The onboarding modal
 
 Phase P1 — Identity & first minutes (`docs/plan/PRODUCT-EVOLUTION.md` §5,
-§2.9). Shown **once, ever**, on a genuine fresh install: name your dexel,
+§2.9). Shown **once, ever**, on a genuine fresh install: name your Dexel,
 pick a starter colour, get a warm hello. Built to the §4 store modal's
 mechanics (native `<dialog>` + `showModal()`, the shared `#scrim`, one
 `'close'` event every dismissal path funnels through) — not a second modal
@@ -1159,7 +1159,7 @@ portrait changing pose mid-decision is noise). The box needs
 > the 40x40 tintable hoodie *thumbnail* at 2x here. Rendered in the real
 > running game it read as a purple dome, not a garment: a store card gets
 > away with that thumbnail because it sits next to the item's name in a list
-> of garments, and this modal has no such context. Showing the dexel
+> of garments, and this modal has no such context. Showing the Dexel
 > *wearing* the colour is both legible and the actual point of the screen.
 
 ### 7.2 The swatch row, and what a fresh install actually owns
@@ -1206,7 +1206,7 @@ the behaviour rather than needing its own wiring.
 > flag up.** The alternatives are both worse. Leaving `onboarding: true`
 > re-opens the modal on the very next 1 Hz broadcast — a nag loop. Letting
 > the client suppress it locally forever is the client asserting state the
-> server never sent, which §6.1's whole contract forbids. Naming the dexel
+> server never sent, which §6.1's whole contract forbids. Naming the Dexel
 > `"dexel"` is the only option that is both honest and quiet: the user opted
 > out of *choosing* a name, not into being asked again — and `SET_NAME`
 > already exists for renaming later. `"dexel"` is pinned on both sides
@@ -1231,7 +1231,7 @@ welcome toast, is composed by the server).
 | Where | id | Behaviour |
 |---|---|---|
 | Status panel, bottom-right | `#status-name` | `left:6 top:55 288x10`, `var(--gold)`, right-aligned, truncated to 24. Sits in the 12px of previously-**empty** space below `#ticker` (the panel's padding box is 66px tall; the ticker ends at 54). Empty — and therefore invisible — until named. |
-| Hamburger panel heading | `#menu-panel-title` | The static text `MENU` becomes the dexel's name once set, truncated to 16, falling back to `MENU` when unset. |
+| Hamburger panel heading | `#menu-panel-title` | The static text `MENU` becomes the Dexel's name once set, truncated to 16, falling back to `MENU` when unset. |
 
 > **[DESIGN CALL] / FLAGGED FOR THE OWNER: not the titlebar cluster.**
 > P1's exit criterion says the name is "echoed in the HUD/titlebar", but the
@@ -1289,7 +1289,7 @@ Named explicitly so nobody re-derives them as missing features.
 Phase P2 — Sessions & the session-complete moment
 (`docs/plan/PRODUCT-EVOLUTION.md` §3 Bet 1 / §5 Phase P2, ADR 0017,
 `docs/plan/P2-design.md`). A session is a user-declared work interval:
-start it (optionally named), work, stop it, and dexel hands back a cozy
+start it (optionally named), work, stop it, and Dexel hands back a cozy
 summary card — *"here's what we did together."* It grants nothing economic
 and gates nothing: it is a **lens** over tracking that already happens
 (P2-design §1), never a second earning path, and never a hold on the
@@ -1431,7 +1431,7 @@ sentence (§3).
 Everything below is **presentation only**. `render/scene.ts` owns it, it sends
 no `ClientAction`, it reads nothing but `activeState` and
 `stats.today.mouseActiveSeconds` off the state the server already sent, and it
-adds **no wire field**. Per PRODUCT-EVOLUTION.md §2.6 dexel is alive *without
+adds **no wire field**. Per PRODUCT-EVOLUTION.md §2.6 Dexel is alive *without
 simulation mechanics*: there is no meter, no need, no decay, nothing that
 accumulates while you are away and nothing that asks anything of you. The
 timers here are a display loop and mean nothing.
@@ -1467,7 +1467,7 @@ each end of it, clear of the mouse slot.
    not a claim about what you are doing.
 2. **sleep** — `onBreak` owns its pose outright, and it also **suppresses the
    celebration**: the sleep pose means 30 s+ of genuine idleness, so an
-   auto-ended session would otherwise have a sleeping dexel cheer at an empty
+   auto-ended session would otherwise have a sleeping Dexel cheer at an empty
    chair.
 3. **mouse** — the signal-driven pose.
 4. **typing** — the 5 fps `type_a`/`type_b` cycle.
@@ -1482,7 +1482,7 @@ CSS transition, no easing curve, no `requestAnimationFrame`. §0's "no
 animation longer than 400 ms" governs *transitions*, and these are frame
 sequences on a fixed-interval timer, exactly like the `type_a`/`type_b` cycle
 that already ships. No second interval was added, and the tick rebuilds the
-dev composite **only when the frame it would paint changed**, so an idle dexel
+dev composite **only when the frame it would paint changed**, so an idle Dexel
 is quiet between beats: measured in the running game, `idle` costs
 **0.47 rebuilds/s** against `coding`'s 5.00/s, and `onBreak` stays at exactly
 0 (ADR 0011's all-day cost promise).

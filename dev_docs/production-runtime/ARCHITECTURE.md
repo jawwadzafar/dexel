@@ -1,10 +1,10 @@
-# dexel — Production Distribution, CLI & Background Runtime (architecture)
+# Dexel — Production Distribution, CLI & Background Runtime (architecture)
 
 Status: **design / decision record**, 2026-08-22. No code was written for this
 document. It is the record implementation agents build from; where it says
 "decided", do not re-derive.
 
-Scope: how dexel becomes an installable, developer-native product — a CLI
+Scope: how Dexel becomes an installable, developer-native product — a CLI
 control plane, a background runtime that outlives every window, and a hosted
 release channel — starting from the repo exactly as it stands today.
 
@@ -182,7 +182,7 @@ reports and the version the runtime runs **cannot disagree**, which is the
 single most common failure mode of split CLI/daemon products.
 
 `dexel-desktop` (the Tauri app) is a **second, optional artifact**. It is not
-required to run dexel and it is not required to see the UI (`dexel open` falls
+required to run Dexel and it is not required to see the UI (`dexel open` falls
 back to the default browser).
 
 ### Decision 2 — Keep `package main`; add files. Do not restructure.
@@ -447,7 +447,7 @@ simply no longer the readiness contract.
 
 While paused:
 
-* **`provider.Stop()` is called.** dexel does not observe input while the user
+* **`provider.Stop()` is called.** Dexel does not observe input while the user
   has said stop. This is the strongest honest reading of "pause tracking", and
   it is cheap: `activity.Provider` already documents `Start`/`Stop` as the
   lifecycle pair, and every provider "degrades to reporting blind zero-signal
@@ -522,7 +522,7 @@ idle | onBreak`. **Do not add a fourth.** Instead:
 * On resume the runtime writes an immediate save, so a crash right after resume
   cannot come back paused.
 * A paused runtime that starts up logs one line and `dexel status` reports
-  `paused: true` — a paused-and-forgotten dexel must be obvious, never mute.
+  `paused: true` — a paused-and-forgotten Dexel must be obvious, never mute.
 
 ---
 

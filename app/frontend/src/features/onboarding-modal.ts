@@ -38,7 +38,7 @@ import { buildTintLayer, plainImg, positionEl, swatchColor } from '../render/tin
 import type { CatalogItem, CatalogTint } from '../wire';
 
 // The slot the starter colour applies to. Phase P1 offers exactly one
-// choice on exactly one slot — the hoodie the dexel is already wearing —
+// choice on exactly one slot — the hoodie the Dexel is already wearing —
 // because "keep it to ~30 seconds... not a wizard"
 // (PRODUCT-EVOLUTION.md §2.9's own risk guard).
 const STARTER_SLOT = 'hoodie';
@@ -52,7 +52,7 @@ const STARTER_SLOT = 'hoodie';
 // state that says true. A skip that left the flag up would therefore
 // re-open the modal on the very next 1 Hz broadcast — a nag loop — and a
 // skip that suppressed the modal locally forever would be the client
-// asserting state the server never sent. Naming the dexel "dexel" is the
+// asserting state the server never sent. Naming the Dexel "dexel" is the
 // only option that is both honest and quiet: the user opted out of
 // CHOOSING a name, not into being asked again.
 const SKIP_NAME = 'dexel';
@@ -102,7 +102,7 @@ function hoodieItem(): CatalogItem | undefined {
   return equippedItem || store.freeDefaultItem(STARTER_SLOT);
 }
 
-// The tint currently selected, defaulting to whatever the dexel is
+// The tint currently selected, defaulting to whatever the Dexel is
 // already wearing (server truth), then to the item's own default tint.
 function effectiveTint(item: CatalogItem | undefined): string | null {
   if (selectedTint) return selectedTint;
@@ -116,7 +116,7 @@ function effectiveTint(item: CatalogItem | undefined): string | null {
 // three layers, the same z-order and the same 2x scale render/scene.ts
 // uses (#scene-sprites is scale(2)) — then lets #onboarding-preview's
 // overflow:hidden crop it to the hood and shoulders. So the colour the
-// chip promises is literally the colour the dexel is wearing, at the
+// chip promises is literally the colour the Dexel is wearing, at the
 // exact pixel size the game will show it at.
 //
 // PORTRAIT_CROP is in sprite-local (1x) coordinates, chosen from the
@@ -130,7 +130,7 @@ function effectiveTint(item: CatalogItem | undefined): string | null {
 // PORTRAIT_FRAME is fixed to 'idle' rather than following
 // currentDevFrame(): the 'mouse' pose reaches out to x190 and would clip
 // against the right edge of this crop, and a portrait that changes pose
-// under the user mid-decision is noise, not life. The LIVE dexel is the
+// under the user mid-decision is noise, not life. The LIVE Dexel is the
 // one in the scene; this is a still.
 const PORTRAIT_CROP = { left: 44, top: 5, w: 104, h: 52 };
 const PORTRAIT_SCALE = 2;
@@ -312,7 +312,7 @@ el.nameInput.addEventListener('keydown', function (e: KeyboardEvent) {
 // "hang your cleanup on the dialog's own 'close' event"). A close that was
 // NOT a deliberate confirm/skip is a bare Esc — treat it as a skip so the
 // server gets a name and this modal never asks twice. Never closes into a
-// broken state: there is no path out of here that leaves the dexel
+// broken state: there is no path out of here that leaves the Dexel
 // nameless.
 el.dialog.addEventListener('close', function () {
   el.scrim.classList.remove('visible');

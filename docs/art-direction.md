@@ -1,4 +1,4 @@
-# Art direction — dexel v2 (behind-the-shoulder)
+# Art direction — Dexel v2 (behind-the-shoulder)
 
 **This is a v2 rewrite. The v0.2 side-view composition is superseded.** The
 camera has moved: we now sit in a mixed behind + slightly-elevated, 3/4

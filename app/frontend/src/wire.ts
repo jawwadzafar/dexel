@@ -162,8 +162,8 @@ export interface Stats {
 }
 
 // Phase P1 — Identity & first minutes (docs/plan/PRODUCT-EVOLUTION.md §5,
-// docs/ui-spec.md §7). The USER-AUTHORED half of dexel's persistence: the
-// dexel's name, which lives in ~/.config/dexel/config.json, never in the
+// docs/ui-spec.md §7). The USER-AUTHORED half of Dexel's persistence: the
+// Dexel's name, which lives in ~/.config/dexel/config.json, never in the
 // protected save (SEC-1 / ADR 0014's config/state split). Empty string
 // means "not named yet" — the server always SENDS the block, it just may
 // be empty.

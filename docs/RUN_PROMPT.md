@@ -1,4 +1,4 @@
-# Standing run brief for the dexel fleet
+# Standing run brief for the Dexel fleet
 
 This file exists so invoking the fleet doesn't require re-pasting the full
 brief every time — just point the orchestrator at this file:

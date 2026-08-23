@@ -1,11 +1,11 @@
-# How to run dexel — the run-mode matrix
+# How to run Dexel — the run-mode matrix
 
-dexel is **one program with two front doors**. The game itself is always the
+Dexel is **one program with two front doors**. The game itself is always the
 same Go server (`app/`) serving the same HTML/NES.css frontend over loopback;
 what changes is whether you look at it through your browser or through a
 native window. Orthogonal to that is *who manages the process*: a terminal
 you keep open (modes A/B below), or the CLI's own detached background
-runtime — mode P, the primary way dexel is meant to run day to day. See
+runtime — mode P, the primary way Dexel is meant to run day to day. See
 [ADR 0018](../adr/0018-dexel-cli-and-background-runtime.md) for the CLI's
 design.
 
@@ -18,9 +18,9 @@ without saying so.
 
 | | Mode | What you get | Needs | Status |
 |---|---|---|---|---|
-| **P** | **CLI-managed (production)** | `dexel` / `dexel start` + `open` — a background runtime, browser or app window | a built/installed `dexel` binary | **Works today — the primary way to run dexel** |
+| **P** | **CLI-managed (production)** | `dexel` / `dexel start` + `open` — a background runtime, browser or app window | a built/installed `dexel` binary | **Works today — the primary way to run Dexel** |
 | **A** | **Browser (dev)** | `go run . serve`, open a tab | Go 1.27+ | **Works today** |
-| **B** | **App** | `dexel.app` / `cargo tauri dev` — a native window that ATTACHES to the runtime | Go + Rust + webview deps to build | **Works on macOS arm64** (built 2026-08-23); Linux/Windows unbuilt |
+| **B** | **App** | `Dexel.app` / `cargo tauri dev` — a native window that ATTACHES to the runtime | Go + Rust + webview deps to build | **Works on macOS arm64** (built 2026-08-23); Linux/Windows unbuilt |
 | **C** | **Installer** | `.AppImage` / `.deb` / `.dmg` / `.msi` | nothing (that's the point) | **Not shipped** — needs CI runners |
 | **D** | **Build from source** | either of the above, from a clean clone | see below | A: works · B: unbuilt |
 
@@ -38,7 +38,7 @@ nothing when it closes. So B and P are not alternatives: B is a view onto P.
 ## Mode P — CLI-managed (works today, the primary production mode)
 
 The same Go binary as mode A, run as a detached background process instead
-of a foreground terminal session. This is how dexel is meant to be used day
+of a foreground terminal session. This is how Dexel is meant to be used day
 to day: build or install it once, then forget the terminal — `dexel open`
 (or the button on the desktop app, once mode B/C ship) whenever you want the
 window back.
@@ -135,7 +135,7 @@ cd desktop && cargo tauri dev
 
 # 2b. or build the app bundle and launch it
 cd desktop && cargo tauri build --bundles app
-open src-tauri/target/release/bundle/macos/dexel.app
+open src-tauri/target/release/bundle/macos/Dexel.app
 ```
 
 - **Needs:** everything mode A needs, **plus** Rust >= 1.77.2, the Tauri CLI
@@ -294,18 +294,18 @@ real and what is merely written down.
 
 ## Which mode should I use?
 
-- **Just want to use dexel day to day?** Mode P — build (or install) once,
+- **Just want to use Dexel day to day?** Mode P — build (or install) once,
   then `dexel start`/`open`/`stop` from a terminal you don't have to keep
   open.
 - **Developing the Go source or the frontend?** Mode A. It works, it is one
   command, and it is what the whole repo is tested against.
 - **Working on the desktop shell itself?** Mode B, on a machine with Rust.
-- **Want to hand dexel to someone who does not have Go?** Mode C — which
+- **Want to hand Dexel to someone who does not have Go?** Mode C — which
   means registering a runner first.
 
 ## See also
 
-- [ADR 0018 — dexel CLI and background runtime](../adr/0018-dexel-cli-and-background-runtime.md) —
+- [ADR 0018 — Dexel CLI and background runtime](../adr/0018-dexel-cli-and-background-runtime.md) —
   mode P's design: the argv dispatch, the detached runtime, discovery and
   single-instance locking.
 - [ADR 0015 — Tauri desktop shell](../adr/0015-tauri-desktop-shell.md) — the

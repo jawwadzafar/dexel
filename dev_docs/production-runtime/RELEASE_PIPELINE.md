@@ -1,4 +1,4 @@
-# dexel — release pipeline, hosting and the install script
+# Dexel — release pipeline, hosting and the install script
 
 Companion to `ARCHITECTURE.md`. How a git tag becomes
 `curl -fsSL https://get.dexel.jwdlab.com/install.sh | sh`.

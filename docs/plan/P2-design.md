@@ -14,7 +14,7 @@ surface, the test matrix, and the fan-out. An implementing agent should not have
 to re-derive any of it.
 
 > **The one-sentence product intent, from the thesis:** the user supplies the
-> **intention**, dexel supplies the companionship and the **honest reflection**,
+> **intention**, Dexel supplies the companionship and the **honest reflection**,
 > and together they build a **memory**. A session is the container for the first
 > verb. Everything below exists to make that container feel warm without ever
 > making it a quota.
@@ -134,7 +134,7 @@ nothing.
    monotonic counter is needed, and a discarded short session simply leaves its
    id to be reused.
 3. `name` is normalized server-side (`game.NormalizeSessionName`, §2.7). An empty
-   result is **legal** — unnamed is a first-class state, unlike a dexel's name.
+   result is **legal** — unnamed is a first-class state, unlike a Dexel's name.
 4. `baseline = lifetime StatCounters` (a struct copy — see §2.3), `startedAt =
    now`, `lastActivityAt = now`, `watermark = baseline`, `coinsEarned = 0`,
    `focusBlockMax = 0`.
@@ -245,12 +245,12 @@ backdated to `lastActivityAt`.** Evaluated at the top of `Game.Tick`, before
 anything else, so it fires on the very first tick after a load. `lastActivityAt`
 advances on any tick with `KeystrokeDelta > 0 || MouseActive` — *real observed
 input*, not the keystroke-recency-derived mood — and the **watermark advances at
-the same moment**, so the record's counters are taken as of the last time dexel
+the same moment**, so the record's counters are taken as of the last time Dexel
 actually saw the user. This is what keeps every number on the card mutually
 consistent: without the watermark, a backdated end would report two hours of
 `idleSeconds` inside a fifteen-minute duration.
 
-Backdating *is* the honest choice: dexel knows when it last saw input; it does
+Backdating *is* the honest choice: Dexel knows when it last saw input; it does
 **not** know the user was still "in session" through the silence, so it declines
 to claim it. It also makes the reopen-after-a-long-close case self-heal — reopen
 the app after a ten-hour night with a session open, and the first tick ends it at
@@ -269,7 +269,7 @@ guarantees no session can ever claim a multi-day container.
 
 **(5) Every automatic end is labelled.** `endReason ∈ {user, idle, maxDuration}`
 — a closed three-value set, the same shape as `activeState`'s three wire strings.
-The card and the future scrapbook say "dexel closed this one for you" rather than
+The card and the future scrapbook say "Dexel closed this one for you" rather than
 pretending the user did.
 
 ### 2.6 Pinned constants (`app/internal/game/session.go`)
@@ -299,7 +299,7 @@ config.json               →  "sessionNames": { "42": "auth refactor" }
 object keys must be strings; the id is decimal). `game` holds
 `sessionNames map[int]string`, seeded at boot by `main.go` from
 `store.LoadConfig` and written back through `store.SaveConfig` after
-`SESSION_START` — **exactly** the P1 pattern for the dexel's name, including the
+`SESSION_START` — **exactly** the P1 pattern for the Dexel's name, including the
 "game stays pure, the server owns the I/O" split.
 
 Why not **(a) the name in the MAC'd log row**, even though ADR 0014 already
@@ -307,7 +307,7 @@ established a "user-authored config category" that P1 used to allow-list a strin
 onto the wire:
 
 1. **A project name is closer to work content than a pet name is.** ADR 0014's
-   category argument is that the dexel's name is "data the user deliberately
+   category argument is that the Dexel's name is "data the user deliberately
    writes about their own pet, not surveillance of their work". A *timestamped
    series* of project names is data about the work: it answers *what you were
    doing, and when*. That is the same artifact ADR 0013 refused when it dropped
@@ -362,7 +362,7 @@ literal name string appears in neither, plus that no key in either shape contain
 
 ## 3. The session-complete moment
 
-This is why P2 is the keystone: it is the first time dexel says *"here's what we
+This is why P2 is the keystone: it is the first time Dexel says *"here's what we
 did together."* PRODUCT-EVOLUTION's guard is explicit — "a cozy card…, not a
 stats readout" — and ui-spec §0's is too: **no animation longer than 400 ms, no
 easing, no colour transitions. Retro UI snaps.** So the beat is short, composed
@@ -985,7 +985,7 @@ with the fake provider, and judge with your own eyes:
    → the project name appears in **neither**. `cat config.json` → it is there.
 6. **Tamper.** `sqlite3 state.db "UPDATE sessions SET payload = replace(cast(payload as text),'\"keystrokes\":<n>','\"keystrokes\":999999')"`
    → restart shows the reset baseline, one integrity log line, `state.db.invalid`
-   exists, `config.json` (the dexel's name **and** the project names) survives,
+   exists, `config.json` (the Dexel's name **and** the project names) survives,
    and the freshly written `state.db` re-verifies on a third start.
 7. **Delete the last row.** `sqlite3 state.db 'DELETE FROM sessions WHERE id=(SELECT max(id) FROM sessions)'`
    → the integrity line again (**not** "no save", **not** a silently shorter
@@ -1158,7 +1158,7 @@ regardless.
   the session's own numbers are clean by construction. A general "freeze earning
   while a text input has focus" rule is a possible follow-up, named not built.
 - **A wall-clock duration can exceed observed time** when the process was closed
-  mid-session. Honest by design (ticks are the only thing dexel can count), and
+  mid-session. Honest by design (ticks are the only thing Dexel can count), and
   bounded by the 2 h idle rule and the 16 h cap. `observedSeconds` is
   client-derivable from two fields already sent if it is ever wanted.
 - **The chain is verified in full at every boot**, O(n) HMACs. Trivial today;

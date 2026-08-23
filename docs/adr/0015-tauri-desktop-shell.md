@@ -5,7 +5,7 @@ Status: accepted (2026-08-22) · Realizes ROADMAP F3 · Builds on ADR 0011
 
 ## Context
 
-F3 (docs/plan/ROADMAP.md) ships dexel as a native desktop app — no browser,
+F3 (docs/plan/ROADMAP.md) ships Dexel as a native desktop app — no browser,
 no terminal — for macOS, Windows and Linux on x86_64 and arm64, "with least
 effort." ADR 0011 deliberately made the product a **Go backend + HTML/JS/
 NES.css frontend** served over loopback, and froze the Rust path as legacy.

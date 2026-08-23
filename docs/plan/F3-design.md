@@ -2,11 +2,11 @@
 
 **Status:** design only (no implementation). Realizes ROADMAP F3.
 **Decision record:** ADR 0015. **Scope owned by this doc:** the packaging of
-dexel as a native desktop app. Backend behaviour, economy, privacy and the
+Dexel as a native desktop app. Backend behaviour, economy, privacy and the
 frontend are unchanged except for the two small, explicitly-scoped server
 changes in §2 and §8.
 
-Goal (owner): ship dexel as a native desktop app — no browser, no terminal —
+Goal (owner): ship Dexel as a native desktop app — no browser, no terminal —
 for macOS, Windows and Linux on x86_64 **and** arm64, with least effort.
 Wrap the EXISTING Go backend + web frontend; do **not** rewrite in Rust
 (ADR 0011 deliberately pivoted away from Rust).
@@ -255,7 +255,7 @@ once a Mac runner exists.
 - **Icon:** app icons are required per platform (`.icns` for macOS, `.ico`
   for Windows, a PNG set for Linux + the Tauri icon pipeline). None exist in
   the repo yet (only screenshot PNGs in `docs/images/`). **Asset task for
-  game-artist** (see §8) — derive from the dexel wordmark / dev sprite via
+  game-artist** (see §8) — derive from the Dexel wordmark / dev sprite via
   `tools/gen_assets.py` so it stays reproducible per ADR 0004.
 
 ---
@@ -343,7 +343,7 @@ run on the mac), and emit `desktop/src-tauri/binaries/dexel-server-$TRIPLE`
 
 **T4 — Icons (owner: game-artist; owns `tools/gen_assets.py` +
 `desktop/src-tauri/icons/`).** Generate the platform icon set (.icns/.ico/PNG)
-procedurally from the dexel identity, per ADR 0004; wire into Tauri's icon
+procedurally from the Dexel identity, per ADR 0004; wire into Tauri's icon
 config.
 
 **T5 — CI (owner: CI engineer; owns `.github/workflows/desktop.yml`).** A

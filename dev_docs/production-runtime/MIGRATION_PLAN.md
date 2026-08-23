@@ -1,4 +1,4 @@
-# dexel — migration plan: today's repo → first production release
+# Dexel — migration plan: today's repo → first production release
 
 Companion to `ARCHITECTURE.md`, `PLATFORM_NOTES.md`, `RELEASE_PIPELINE.md`.
 ROADMAP style: ordered, each step independently landable, each with an exit

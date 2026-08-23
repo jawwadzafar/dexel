@@ -1,8 +1,8 @@
-# dexel
+# Dexel
 
 A cozy pixel-art desktop companion whose workday runs on *your* real typing.
 
-![dexel running with a live sprint, terminal, and status line](docs/images/hero.png)
+![Dexel running with a live sprint, terminal, and status line](docs/images/hero.png)
 
 ## What is this
 
@@ -57,7 +57,7 @@ go build -o dexel .
 ./dexel
 ```
 
-`./dexel` with no arguments starts dexel's background runtime if one isn't
+`./dexel` with no arguments starts Dexel's background runtime if one isn't
 already running, then opens the game in your browser — no port to
 remember, no terminal to leave open. Run it again any time to reopen the
 window. `./dexel status` reports whether it's running (pid, url, uptime);
@@ -150,7 +150,7 @@ Without that group membership the server still runs; it just can't see
 global input, so activity only counts while the browser tab itself has
 focus, and the honesty rules above freeze rather than guess at idle time.
 
-**Windows — be aware of this before you rely on it:** dexel builds and
+**Windows — be aware of this before you rely on it:** Dexel builds and
 runs on Windows and the web UI works fully, but there is currently **no
 native global activity provider** for Windows. It falls back to a
 permanently-blind, zero-signal provider by deliberate design (ADR 0010's
@@ -187,10 +187,10 @@ it now:
 ```bash
 scripts/build-sidecar.sh                      # the Go server, for this host
 cd desktop && cargo tauri build --bundles app # needs Rust + Xcode CLT
-open src-tauri/target/release/bundle/macos/dexel.app
+open src-tauri/target/release/bundle/macos/Dexel.app
 ```
 
-The window is a **view**: it attaches to dexel's background runtime, and
+The window is a **view**: it attaches to Dexel's background runtime, and
 closing it does not stop anything — the runtime keeps counting your activity
 until `dexel stop`. Signed/notarized installers (`.dmg`, `.msi`,
 `.AppImage`/`.deb`) are **not shipped**; those need CI runners and paid
@@ -411,10 +411,10 @@ Tracked in [`docs/plan/ROADMAP.md`](docs/plan/ROADMAP.md). Current state:
 
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
 
-dexel is licensed under the [Apache License 2.0](LICENSE). Code is
+Dexel is licensed under the [Apache License 2.0](LICENSE). Code is
 Copyright 2026 Jawwad Zafar.
 
-Third-party components bundled with or used to build dexel (fonts,
+Third-party components bundled with or used to build Dexel (fonts,
 CSS frameworks, and build/runtime dependencies) are listed with their own
 licenses in [`THIRD-PARTY-LICENSES.md`](THIRD-PARTY-LICENSES.md); see also
 [`NOTICE`](NOTICE).

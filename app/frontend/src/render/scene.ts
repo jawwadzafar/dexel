@@ -34,7 +34,7 @@ const MOUSE_HOLD_TICKS = 8;    // ~1.6s at the 200ms tick below
 //
 // Two things, and deliberately only two:
 //
-//   AMBIENT LIFE   dexel breathes while it sits there, and occasionally
+//   AMBIENT LIFE   Dexel breathes while it sits there, and occasionally
 //                  stretches. Pure presentation on top of the pose the
 //                  server already reported - it never claims activity.
 //   CELEBRATION    a short two-frame bounce fired by onCelebrate(), which
@@ -53,7 +53,7 @@ const MOUSE_HOLD_TICKS = 8;    // ~1.6s at the 200ms tick below
 //                     an event rather than a claim about what you are doing
 //   2. sleep        - `onBreak` owns its pose outright, exactly as before;
 //                     P3 adds nothing to it, and suppresses the celebration
-//                     bounce entirely while dexel is asleep (below)
+//                     bounce entirely while Dexel is asleep (below)
 //   3. mouse        - the signal-driven pose above
 //   4. typing       - the 5fps type_a/type_b cycle above
 //   5. ambient      - only in `idle`, i.e. the honest "sitting here, hands
@@ -64,7 +64,7 @@ const MOUSE_HOLD_TICKS = 8;    // ~1.6s at the 200ms tick below
 // Every beat is a SPRITE SWAP on the existing 200ms frame timer - no CSS
 // transition, no requestAnimationFrame, no per-frame layout (ui-spec.md's
 // no-transitions/400ms spirit, and ADR 0011's all-day cost promise: an idle
-// dexel repaints the 3-image dev composite for ~3 of every 25 ticks and
+// Dexel repaints the 3-image dev composite for ~3 of every 25 ticks and
 // nothing at all in between, because the tick only calls renderDev() when
 // the frame it would paint actually changed).
 
@@ -116,7 +116,7 @@ function ticksUntil(band: [number, number]): number {
   return Math.max(1, Math.round((secs * 1000) / TICK_MS));
 }
 // Ticks until each beat is next due. Seeded with a full jittered interval so
-// dexel does not breathe the instant the page loads.
+// Dexel does not breathe the instant the page loads.
 let breathIn = ticksUntil(BREATH_BAND_S);
 let stretchIn = ticksUntil(STRETCH_BAND_S);
 
@@ -156,7 +156,7 @@ function advanceAmbient(eligible: boolean): void {
 // Both play the same beat today; `reason` is required anyway so that every
 // call site has to name the real event it came from, and so P4's Moments can
 // give themselves their own beat without changing this signature.
-// Suppressed while `onBreak`: the sleep pose means dexel is genuinely away
+// Suppressed while `onBreak`: the sleep pose means Dexel is genuinely away
 // from the keys (30s+ of real idleness), so an auto-ended session would
 // otherwise make a sleeping character cheer at an empty chair.
 export function onCelebrate(reason: 'session' | 'sprint'): void {
@@ -342,7 +342,7 @@ export function renderScene(): void {
 // requestAnimationFrame, per art-direction.md "Visual states". P3 hangs the
 // ambient/celebration scheduler off this same one timer rather than adding a
 // second: one 200ms interval that repaints ONLY when the frame it would paint
-// changed (renderedDevFrame), which is how an all-day idle dexel stays cheap.
+// changed (renderedDevFrame), which is how an all-day idle Dexel stays cheap.
 setInterval(function () {
   const state = store.getState();
   if (!state) return;

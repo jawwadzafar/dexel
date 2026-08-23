@@ -1,4 +1,4 @@
-# Upgrade system design — dexel v2 (own-many / equip-one)
+# Upgrade system design — Dexel v2 (own-many / equip-one)
 
 The product loop in one line, unchanged: **real activity earns Dev Cash; Dev
 Cash buys visible customisation of the character, the desk and the room; every
