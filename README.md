@@ -177,14 +177,25 @@ cross-built binary only ever gets the provider its *target* OS has — a
 Windows binary cross-built from a Mac still has no native activity
 provider, because none exists yet for Windows.
 
-### Packaged desktop app (planned, not shipped)
+### Packaged desktop app (macOS builds today; installers not shipped)
 
 A native desktop build via [Tauri](https://tauri.app/) — targeting macOS,
-Windows, and Linux, x86_64 + arm64 — is planned so users won't need a
-terminal or a browser tab at all. It's tracked as F3 in
-[`docs/plan/ROADMAP.md`](docs/plan/ROADMAP.md) and is **not shipped yet**;
-today, running from source (`go run .`) or a `go build` binary as above is
-the only way to run dexel.
+Windows, and Linux, x86_64 + arm64 — is tracked as F3 in
+[`docs/plan/ROADMAP.md`](docs/plan/ROADMAP.md). On macOS you can build and run
+it now:
+
+```bash
+scripts/build-sidecar.sh                      # the Go server, for this host
+cd desktop && cargo tauri build --bundles app # needs Rust + Xcode CLT
+open src-tauri/target/release/bundle/macos/dexel.app
+```
+
+The window is a **view**: it attaches to dexel's background runtime, and
+closing it does not stop anything — the runtime keeps counting your activity
+until `dexel stop`. Signed/notarized installers (`.dmg`, `.msi`,
+`.AppImage`/`.deb`) are **not shipped**; those need CI runners and paid
+certificates. See [`docs/plan/RUN-MODES.md`](docs/plan/RUN-MODES.md) for the
+full matrix.
 
 ## Controls
 

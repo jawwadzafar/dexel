@@ -20,15 +20,18 @@ without saying so.
 |---|---|---|---|---|
 | **P** | **CLI-managed (production)** | `dexel` / `dexel start` + `open` — a background runtime, browser or app window | a built/installed `dexel` binary | **Works today — the primary way to run dexel** |
 | **A** | **Browser (dev)** | `go run . serve`, open a tab | Go 1.27+ | **Works today** |
-| **B** | **App (dev)** | `cargo tauri dev` — a native window | Go + Rust + webview deps | **Authored, never built** |
+| **B** | **App** | `dexel.app` / `cargo tauri dev` — a native window that ATTACHES to the runtime | Go + Rust + webview deps to build | **Works on macOS arm64** (built 2026-08-23); Linux/Windows unbuilt |
 | **C** | **Installer** | `.AppImage` / `.deb` / `.dmg` / `.msi` | nothing (that's the point) | **Not shipped** — needs CI runners |
 | **D** | **Build from source** | either of the above, from a clean clone | see below | A: works · B: unbuilt |
 
 Modes B and C are the same code (`desktop/`, ADR 0015); C is just B packaged.
-Neither has ever been compiled — see [Why B and C are not
-verified](#why-b-and-c-are-not-verified). Mode P wraps mode A's own binary —
-it is not a different server, just a different way of starting and stopping
-it.
+B is now compiled and running on macOS arm64; the other platforms' bundles are
+still blocked on runners. Mode P wraps mode A's own binary — it is not a
+different server, just a different way of starting and stopping it.
+
+**Mode B does not own a server.** Since ARCHITECTURE.md Decision 17 the window
+attaches to mode P's runtime (starting one if there is none) and terminates
+nothing when it closes. So B and P are not alternatives: B is a view onto P.
 
 ---
 
@@ -117,18 +120,22 @@ verification in this repo was produced with.
 
 ---
 
-## Mode B — App, dev (authored, never built)
+## Mode B — App (works on macOS arm64)
 
 A real native window instead of a browser tab. Same game, same server; the
-window is just a frame around it.
+window is just a frame around it — and since Decision 17, a frame that owns
+nothing.
 
 ```bash
 # 1. build the Go server into the Tauri sidecar slot  — NOT optional
 scripts/build-sidecar.sh
 
-# 2. run the shell
-cd desktop
-cargo tauri dev
+# 2a. run the shell in dev
+cd desktop && cargo tauri dev
+
+# 2b. or build the app bundle and launch it
+cd desktop && cargo tauri build --bundles app
+open src-tauri/target/release/bundle/macos/dexel.app
 ```
 
 - **Needs:** everything mode A needs, **plus** Rust >= 1.77.2, the Tauri CLI
@@ -136,10 +143,20 @@ cargo tauri dev
   webview development packages (`libwebkit2gtk-4.1-dev` and friends on Linux;
   Xcode Command Line Tools on macOS; MSVC build tools + WebView2 on Windows).
   The full lists are in [`desktop/README.md`](../../desktop/README.md).
-- **What actually happens:** the shell spawns the *same* Go binary as a
-  sidecar with `-addr 127.0.0.1:0`, reads its stdout until the
-  `DEXEL_LISTENING http://127.0.0.1:<port>` line, and opens the window on that
-  URL. Closing the window SIGTERMs the server so it saves on the way out.
+- **What actually happens:** the shell resolves a `dexel` binary (`PATH` ->
+  `~/.local/bin/dexel` -> the bundled copy), runs `status --json`, and opens
+  the window on the runtime's URL. If no runtime is running it runs `start`
+  first — the same detached, lock-taking runtime mode P starts — and then
+  attaches.
+- **Closing the window stops NOTHING.** The runtime keeps observing activity,
+  keeps ticking and keeps autosaving; `dexel stop` is the only thing that
+  stops it. This is the whole point: a companion that measures your workday
+  cannot depend on a window nobody keeps open. Verified end to end on macOS —
+  see [`desktop/README.md`](../../desktop/README.md).
+- **Do not run an old build alongside a runtime.** Before Decision 17 the
+  shell spawned a *private* server that took no `runtime.lock`; with a
+  runtime also running, two processes held two in-memory economies over one
+  `state.db`.
 - **Why step 1 is not optional:** Tauri resolves `bundle.externalBin` to
   `binaries/dexel-server-<target triple>`. If the script has not run, there is
   no server to spawn.
@@ -147,9 +164,10 @@ cargo tauri dev
   privacy boundary, same loopback-only posture. Packaging changed; nothing else
   did.
 
-**Status: authored, pending a build environment.** The Rust was written against
-the current official Tauri v2 docs and every config file validates, but
-`cargo` has never run on it.
+**Status: built and verified on macOS arm64** (2026-08-23) — release build
+clean, `cargo fmt`/`clippy -D warnings` clean, window seen, attach/start/
+survive-close verified. Unsigned. Linux and Windows still need their own build
+hosts (mode C).
 
 ---
 
@@ -161,7 +179,7 @@ toolchain.
 | Platform | Format | Blocked on |
 |---|---|---|
 | Linux x86_64 | `.AppImage`, `.deb` | a runner labelled `desktop-linux` (needs `webkit2gtk-4.1-dev`) |
-| macOS arm64 / universal | `.app`, `.dmg` | a runner labelled `mac` |
+| macOS arm64 / universal | `.app`, `.dmg` | `.app` BUILDS LOCALLY today (`cargo tauri build --bundles app`); CI + `.dmg` + signing still need a runner labelled `mac` |
 | Windows x86_64 | `.msi` / NSIS | any Windows machine at all |
 | Linux arm64, Windows arm64 | — | Phase 3 (arm64 host or a cross sysroot) |
 

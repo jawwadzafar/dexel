@@ -1,10 +1,9 @@
 # dexel desktop shell — the Tauri v2 native window around the existing Go
 # server (ADR 0015 / docs/plan/F3-design.md task T1).
 #
-# STATUS: AUTHORED, NOT YET BUILT. No Rust toolchain existed on the machine
-# that wrote this file, so the dependency versions below are the current
-# published v2 lines and every API used in src/ was checked against the
-# official v2 docs — but `cargo build` has never run. See ../README.md.
+# STATUS: BUILT. First compiled and bundled on macOS arm64 (2026-08-23);
+# `cargo tauri build --bundles app` produces a launchable dexel.app. See
+# ../README.md for what that first build confirmed.
 
 [package]
 # The package name is deliberately "dexel", matching tauri.conf.json's
@@ -48,9 +47,11 @@ tauri-plugin-shell = "2"
 # sidecar stdout/stderr is forwarded into it (F3-design.md §1).
 tauri-plugin-log = "2"
 log = "0.4"
+# For reading `dexel-server status --json`, the shell's only way of finding
+# the runtime it attaches to (src/lib.rs). Already in the tree via tauri.
+serde_json = "1"
 
-# Only used to send a graceful SIGTERM to the sidecar on shutdown, so
-# main.go's signal handler runs its final save. CommandChild::kill() maps to
-# std::process::Child::kill(), i.e. SIGKILL, which would skip that.
-[target.'cfg(unix)'.dependencies]
-libc = "0.2"
+# NOTE: there is deliberately no libc dependency any more. It existed solely
+# to SIGTERM a sidecar this shell owned; the shell no longer owns or
+# terminates any server process (see src/lib.rs's "The window is a VIEW"
+# section), so there is nothing left to signal.

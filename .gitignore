@@ -35,3 +35,11 @@ __pycache__/
 # — app/frontend/src/*.ts is the source of truth; the compiled bundle it
 # produces is committed at app/public/js/dexel.js (see app/frontend/README.md).
 app/frontend/node_modules/
+
+# The README quick start's `go build -o dexel .` output — a build artifact.
+# Released binaries come from scripts/build-release.sh into /dist.
+/app/dexel
+/app/dexel.exe
+
+# macOS Finder metadata
+.DS_Store
