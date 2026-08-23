@@ -280,6 +280,18 @@ not decoration.
   user's machine (`activityLine`, from ADR 0009's app-identity mapping —
   `"Coding in VS Code"`, `"In the terminal"`, `"Working..."`). It is `cream`,
   has no prefix, and carries the mood dot.
+* **It is now drawn from a POOL per app type, not one string per state.** The
+  examples above are a subset. The server classifies the frontmost app
+  (`activity.AppTypeOf`) and only offers phrasings that type licenses: a work
+  verb ("Coding in X", "Typing in X") exists ONLY for coding-class apps, and
+  the non-coding pools are presence-only ("In X", "Frontmost: X") — which is
+  why `"Coding in Brave"` is now unrepresentable rather than merely unlikely.
+  The choice is a deterministic hash of (app id, 45s clock bucket), so the
+  line re-rolls at most once per 45s while the frontmost app is unchanged;
+  a per-tick random pick at 1Hz would read as a broken UI. The 34-char cap on
+  this row is enforced SERVER-side now: a candidate that would clip is not
+  offered, and if nothing fits, the shortest true rendering wins rather than a
+  shorter, less true claim.
 * The three rows below it are the character's own chatter. They are dimmer, are
   prefixed `>`, and are separated by the rule. **Never merge the two zones,
   never let a ticker line borrow a word from the real one.**
