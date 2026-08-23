@@ -38,6 +38,28 @@ func SanitizeAppID(raw string) string {
 	return string(b)
 }
 
+// SelfAppID is dexel's OWN sanitized app id — what SanitizeAppID returns
+// when the frontmost application is dexel's own window (the Tauri bundle's
+// localizedName is its productName, "dexel").
+//
+// It exists because dexel must never narrate itself as the app you were
+// working in. The keystroke signal is GLOBAL and instantaneous ("a key went
+// down somewhere in the last 10s", ADR 0011's CGEventSource timer); the app
+// identity is the frontmost app RIGHT NOW. Joining them into "Coding in X"
+// is an inference, and for X = dexel it is a provably false one: dexel has
+// no text input, so nobody has ever typed a character into it. Clicking your
+// companion's window right after typing in your editor produced "Coding in
+// dexel" — the ADR 0010 class of lie ("On break because you minimized me"),
+// wearing a different hat.
+//
+// Deliberately NOT extended to browsers or chat apps: you really can type in
+// those, so "Coding in Chrome" is an honest reading of the same two signals.
+// This is only about dexel's claims about ITSELF.
+const SelfAppID = "dexel"
+
+// IsSelf reports whether a sanitized app id is dexel's own window.
+func IsSelf(sanitizedID string) bool { return sanitizedID == SelfAppID }
+
 // friendlyNames maps a sanitized app id to a human-friendly display name.
 // Deliberately small and coarse (ADR 0009: "mapped to a small friendly-name
 // table"); an id with no entry falls back to itself via FriendlyName.

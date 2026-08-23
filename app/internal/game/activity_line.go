@@ -3,6 +3,7 @@ package game
 import (
 	"strings"
 
+	"github.com/jawwadzafar/dexel/app/internal/activity"
 	"github.com/jawwadzafar/dexel/app/internal/engine"
 )
 
@@ -13,7 +14,12 @@ import (
 // non-negotiable #5: the ticker is fiction, this line is not).
 func ActivityLine(mood engine.Mood, appID, appDisplay string) string {
 	switch {
-	case appID == "":
+	// dexel's own window is treated exactly like "no app identity at all"
+	// (activity.SelfAppID's doc comment has the reasoning): the mood is
+	// still reported, but no claim is made about WHERE the typing happened,
+	// because a keystroke can never have landed in dexel. "Coding in dexel"
+	// was the observed bug this guards.
+	case appID == "" || activity.IsSelf(appID):
 		if mood == engine.MoodCoding {
 			return "Coding"
 		}
