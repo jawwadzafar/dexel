@@ -530,6 +530,18 @@ idle | onBreak`. **Do not add a fourth.** Instead:
 
 ### Decision 17 — `dexel open` owns the window; the runtime owns itself
 
+> **STATUS: IMPLEMENTED 2026-08-23** (macOS arm64). Every row of the table
+> below has landed in `desktop/src-tauri/src/lib.rs`, including the
+> `PATH → BinDir → bundled` driver lookup, and was verified end to end:
+> launch with no runtime starts one and `dexel status` sees it; closing the
+> window leaves the runtime observing and autosaving; relaunching attaches to
+> the same runtime instead of spawning a second server. One fix outside this
+> table was needed to make the window reachable at all: `dexel open` handed
+> `/Applications/dexel.app` — a DIRECTORY — to `exec.Command`, which fails
+> with "permission denied", so a bundle now launches via `open -a` and a
+> failed launch falls through to the browser instead of erroring out.
+> The "today" column is kept as the record of what was replaced.
+
 Current flow (`desktop/src-tauri/src/lib.rs`): *shell spawns server → parses
 stdout → builds window → kills server on exit.*
 

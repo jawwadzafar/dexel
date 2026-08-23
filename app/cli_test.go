@@ -3,6 +3,9 @@ package main
 import (
 	"encoding/json"
 	"flag"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
@@ -529,5 +532,82 @@ func TestLegacyAndServeFlagSetsAreIdentical(t *testing.T) {
 	}
 	if !reflect.DeepEqual(collect(legacyFS), collect(serveFS)) {
 		t.Fatal("modeLegacy and modeServe expose different flags/defaults/help — `dexel serve` must be an exact rename of the legacy shape")
+	}
+}
+
+// TestDesktopAppLaunchCommandPerOS pins how a resolved desktop app is
+// actually started, and exists because the obvious implementation was
+// broken: `dexel open` handed a macOS .app path straight to exec.Command,
+// and a .app is a DIRECTORY, so the only darwin candidate
+// desktopAppCandidates produces (/Applications/dexel.app) could never
+// launch. It failed with "permission denied" the moment a user installed
+// the bundle — the exact scenario the desktop app ships into.
+func TestDesktopAppLaunchCommandPerOS(t *testing.T) {
+	const url = "http://127.0.0.1:51637"
+	cases := []struct {
+		name     string
+		goos     string
+		app      string
+		wantName string
+		wantArgs []string
+	}{
+		{
+			// A bundle must go through `open -a`, and gets no URL: the
+			// shell discovers the runtime itself, and `open -a` raises an
+			// already-running window rather than starting a second copy.
+			name: "darwin bundle", goos: "darwin", app: "/Applications/dexel.app",
+			wantName: "open", wantArgs: []string{"-a", "/Applications/dexel.app"},
+		},
+		{
+			// A bare executable on darwin (the BinDir candidate) is still
+			// exec'd directly with the URL — it is a real binary.
+			name: "darwin bare executable", goos: "darwin", app: "/Users/u/.local/bin/dexel-desktop",
+			wantName: "/Users/u/.local/bin/dexel-desktop", wantArgs: []string{url},
+		},
+		{
+			name: "linux", goos: "linux", app: "/home/u/.local/bin/dexel-desktop",
+			wantName: "/home/u/.local/bin/dexel-desktop", wantArgs: []string{url},
+		},
+		{
+			name: "windows", goos: "windows", app: `C:\Users\u\AppData\Local\dexel\bin\dexel-desktop.exe`,
+			wantName: `C:\Users\u\AppData\Local\dexel\bin\dexel-desktop.exe`, wantArgs: []string{url},
+		},
+		{
+			// Only darwin treats a .app specially; nothing else has bundles,
+			// and a directory named ".app" elsewhere is not one.
+			name: "linux path that merely ends in .app", goos: "linux", app: "/opt/weird.app",
+			wantName: "/opt/weird.app", wantArgs: []string{url},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			name, args := desktopAppLaunchCommand(tc.goos, tc.app, url)
+			if name != tc.wantName {
+				t.Fatalf("command = %q, want %q", name, tc.wantName)
+			}
+			if !reflect.DeepEqual(args, tc.wantArgs) {
+				t.Fatalf("args = %q, want %q", args, tc.wantArgs)
+			}
+		})
+	}
+}
+
+// TestExecOfAnAppBundleFailsWhichIsWhyOpenIsUsed records the reason the
+// darwin branch above exists, rather than leaving it as a claim in a
+// comment. It builds a directory shaped like a bundle and shows that
+// exec'ing it cannot work — so if someone ever "simplifies"
+// desktopAppLaunchCommand back to exec.Command(app), this test says why
+// that regressed. Host-independent: exec'ing a DIRECTORY fails everywhere.
+func TestExecOfAnAppBundleFailsWhichIsWhyOpenIsUsed(t *testing.T) {
+	bundle := filepath.Join(t.TempDir(), "dexel.app")
+	if err := os.MkdirAll(filepath.Join(bundle, "Contents", "MacOS"), 0o755); err != nil {
+		t.Fatalf("build a bundle-shaped directory: %v", err)
+	}
+	if err := exec.Command(bundle, "http://127.0.0.1:1").Start(); err == nil {
+		t.Fatal("exec of a .app directory succeeded — if bundles became executable, the `open -a` branch can be revisited")
+	}
+	// ...and the launcher does not do that.
+	if name, _ := desktopAppLaunchCommand("darwin", bundle, "http://127.0.0.1:1"); name != "open" {
+		t.Fatalf("darwin bundle launch command = %q, want the `open` tool", name)
 	}
 }

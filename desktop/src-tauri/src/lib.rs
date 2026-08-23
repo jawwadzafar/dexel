@@ -1,37 +1,55 @@
-//! dexel desktop shell — a native window around dexel's existing Go server.
+//! dexel desktop shell — a native window around dexel's own background runtime.
 //!
 //! Implements ADR 0015 / docs/plan/F3-design.md task T1. dexel is NOT a Rust
 //! app: the product is a Go backend serving an HTML/NES.css frontend over
-//! loopback (ADR 0011). This crate is packaging only — it runs that same
-//! compiled binary as a Tauri **sidecar** and points a webview at the URL the
-//! server reports.
+//! loopback (ADR 0011). This crate is packaging only — it finds the runtime
+//! that Go binary manages and points a webview at the URL it reports.
 //!
-//! Lifecycle, in the order it happens:
+//! ## The window is a VIEW. It does not own the game.
 //!
-//! 1. `setup` spawns the `dexel-server` sidecar with `-addr 127.0.0.1:0`
-//!    (loopback only, OS-assigned port) and nothing else. Since EMBED-1
-//!    (docs/plan/ROADMAP.md) the sidecar is a SELF-CONTAINED binary: it
-//!    carries the frontend (`app/public`) and the sprites (`app/assets`)
-//!    inside itself via `go:embed`, so there is nothing for this shell to
-//!    locate, bundle as a Tauri resource, or point it at. The `-public` /
-//!    `DEXEL_ASSETS_DIR` arguments this file used to pass — and the
-//!    `bundle.resources` map in tauri.conf.json that fed them — are gone;
-//!    both survive in the Go server only as explicit dev overrides.
-//! 2. A dedicated reader thread drains the sidecar's stdout/stderr into the
-//!    log and watches for the one machine-readable handshake line
-//!    `DEXEL_LISTENING http://127.0.0.1:<port>` (printed by app/main.go the
-//!    moment its listener binds), then hands that URL back to `setup`.
-//! 3. `setup` builds the single window on that URL via
-//!    [`tauri::WebviewUrl::External`]. Because the page's origin IS the
-//!    server's origin, the frontend's `location.host`-derived WebSocket URL
-//!    is already correct and the server's same-origin check accepts it with
-//!    no `-insecure-origin` and no wildcard (ADR 0015 §Security).
-//! 4. On exit the sidecar is SIGTERM'd (so main.go's handler runs its final
-//!    save) and hard-killed only if it outstays the grace period.
+//! This is the one load-bearing rule in this file. dexel's whole product is
+//! that it watches your real activity all day; a user closes a window and
+//! forgets about it, so **capture must never depend on a window being open**.
+//! `docs/plan/RUN-MODES.md` mode P states the contract: "Closing the browser
+//! tab or app window does not stop the runtime — only `dexel stop` does."
+//!
+//! The first version of this shell broke that contract: it spawned its own
+//! private `dexel-server` with `-addr 127.0.0.1:0` and SIGTERM'd it on window
+//! close. That server took no `runtime.lock` and wrote no `runtime.json`, so
+//! `dexel status` reported "dexel is not running" while it was very much
+//! running — and closing the window silently stopped all activity capture. It
+//! could also run *alongside* a real runtime, giving two processes two
+//! in-memory economies saving over one `state.db`.
+//!
+//! So this shell now attaches instead of spawning:
+//!
+//! 1. `setup` resolves a `dexel` binary to drive — `dexel` on `PATH`, then
+//!    the `BinDir` convention (`~/.local/bin/dexel`, `%LOCALAPPDATA%\dexel\bin`
+//!    on Windows), then the bundled copy — and runs `status --json` to read
+//!    the runtime's URL. Preferring an INSTALLED dexel is deliberate
+//!    (ARCHITECTURE.md Decision 17): it is the binary `dexel update` keeps
+//!    current, so the window never drives a stale server the user has
+//!    already upgraded past. The bundled `bundle.externalBin` copy is the
+//!    fallback for someone who installed only the app.
+//! 2. If nothing is running, it runs `start` — the SAME detached,
+//!    lock-taking, `runtime.json`-writing runtime the CLI starts, not a
+//!    private child — and asks again for the URL.
+//! 3. It builds the single window on that URL via [`tauri::WebviewUrl::External`].
+//!    Because the page's origin IS the server's origin, the frontend's
+//!    `location.host`-derived WebSocket URL is already correct and the
+//!    server's same-origin check accepts it with no `-insecure-origin` and no
+//!    wildcard (ADR 0015 §Security).
+//! 4. On window close this shell terminates NOTHING. The runtime keeps
+//!    ticking, keeps counting keystrokes and keeps autosaving. `dexel stop`
+//!    is the only thing that stops it — that is the whole point.
+//!
+//! Since EMBED-1 (docs/plan/ROADMAP.md) the sidecar is a SELF-CONTAINED
+//! binary: it carries the frontend (`app/public`) and the sprites
+//! (`app/assets`) inside itself via `go:embed`, so there is nothing for this
+//! shell to locate, bundle as a Tauri resource, or point it at.
 //!
 //! Why the shell — not the JS — learns the port: the window cannot be created
-//! until the URL is known, so the port has to arrive on a channel Rust owns.
-//! stdout is the one it already owns from `spawn()`.
+//! until the URL is known, so the URL has to arrive before any page loads.
 //!
 //! ## Verified against
 //!
@@ -40,24 +58,16 @@
 //!   `(Receiver<CommandEvent>, CommandChild)`, `CommandEvent::Stdout(Vec<u8>)`.
 //! * <https://docs.rs/tauri/latest/tauri/webview/struct.WebviewWindowBuilder.html>
 //!   and `tauri::{WebviewUrl, RunEvent, Url}` (tauri 2.11.x).
-//! * <https://docs.rs/tauri-plugin-shell/latest/tauri_plugin_shell/process/>
-//!   — `Command::arg`, `CommandChild::{pid, kill}` (note `kill`
-//!   consumes `self`, which is why the child lives in an `Option`).
-//!
-//! ## NOT verified
-//!
-//! This file has never been compiled: the machine that authored it had no
-//! Rust toolchain and no webkit2gtk. Everything above is doc-checked, not
-//! build-checked. See `../README.md` for what the first real build must
-//! confirm.
+//! * The `dexel status --json` / `dexel start` contract in
+//!   `app/cmd_lifecycle.go` (ADR 0018), including the exit-code note on
+//!   [`discover_runtime`].
 
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::path::PathBuf;
 use std::sync::mpsc::{self, RecvTimeoutError};
-use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
-use tauri::{Manager, RunEvent, WebviewUrl, WebviewWindowBuilder};
-use tauri_plugin_shell::process::{CommandChild, CommandEvent};
+use tauri::{RunEvent, WebviewUrl, WebviewWindowBuilder};
+use tauri_plugin_shell::process::CommandEvent;
 use tauri_plugin_shell::ShellExt;
 
 /// The `bundle.externalBin` base name. Tauri appends the target triple on
@@ -65,21 +75,11 @@ use tauri_plugin_shell::ShellExt;
 /// the bundle, so the name used here is the bare one.
 const SIDECAR_NAME: &str = "dexel-server";
 
-/// The exact prefix app/main.go prints to stdout once bound. Keep in sync
-/// with `handshakeLine` there — it is a two-process wire contract, and
-/// main.go has a unit test pinning its shape.
-const HANDSHAKE_PREFIX: &str = "DEXEL_LISTENING ";
-
-/// How long to wait for that line before giving up. Binding a loopback
-/// socket is effectively instantaneous, so this is a "something is badly
-/// wrong" bound, not a tuning knob. Failing loudly beats a window that never
-/// appears.
-const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(20);
-
-/// How long the sidecar gets to honour SIGTERM (persist state, stop the
-/// provider, shut the HTTP server down) before we escalate to SIGKILL.
-const SHUTDOWN_GRACE: Duration = Duration::from_secs(3);
-const SHUTDOWN_POLL: Duration = Duration::from_millis(25);
+/// How long any one short-lived CLI call (`status`, `start`) gets before we
+/// give up and fail loudly. `start` is the slow one and it only has to fork a
+/// child and wait for its readiness probe, so this is a "something is badly
+/// wrong" bound, not a tuning knob.
+const CLI_TIMEOUT: Duration = Duration::from_secs(20);
 
 const WINDOW_LABEL: &str = "main";
 const WINDOW_TITLE: &str = "dexel";
@@ -89,181 +89,287 @@ const WINDOW_TITLE: &str = "dexel";
 const WINDOW_W: f64 = 660.0;
 const WINDOW_H: f64 = 460.0;
 
-/// Owns the spawned sidecar so it can be terminated exactly once.
+/// Which `dexel` binary this shell drives (ARCHITECTURE.md Decision 17).
 ///
-/// Held in Tauri's managed state, which is why the child sits behind a
-/// `Mutex<Option<..>>` rather than being owned directly: `CommandChild::kill`
-/// takes `self` by value, so terminating requires *moving* the child out,
-/// and `Option::take` makes that idempotent — `RunEvent::ExitRequested`
-/// followed by `RunEvent::Exit` calls [`Self::shutdown`] twice and the second
-/// call is a no-op.
-struct SidecarGuard {
-    child: Mutex<Option<CommandChild>>,
-    /// Set by the reader thread when the sidecar's event stream reports
-    /// termination (or simply ends). Read only on unix, where it is how we
-    /// learn that SIGTERM was honoured without having to reap the pid
-    /// ourselves — the reader thread owns the event stream, not us.
-    #[cfg_attr(not(unix), allow(dead_code))]
-    exited: Arc<AtomicBool>,
+/// `bundle.externalBin` is no longer "a sidecar the shell owns"; it is the
+/// FALLBACK dexel for someone who installed only the app bundle and never ran
+/// the install script. An installed dexel wins because it is the one
+/// `dexel update` replaces.
+#[derive(Debug, Clone)]
+enum Driver {
+    /// A dexel found on `PATH` or at the `BinDir` convention.
+    Installed(PathBuf),
+    /// The copy shipped inside this bundle.
+    Bundled,
 }
 
-impl SidecarGuard {
-    /// Terminate the sidecar, preferring the graceful path.
-    ///
-    /// On unix: SIGTERM by pid first, because `CommandChild::kill` maps to
-    /// `std::process::Child::kill` (SIGKILL), which would bypass main.go's
-    /// `signal.Notify(SIGINT, SIGTERM)` handler and therefore its final
-    /// save. Escalate to the hard kill only if the process outstays
-    /// [`SHUTDOWN_GRACE`]. Elsewhere (Windows) the hard kill is accepted:
-    /// autosave already bounds loss to ~30s (ADR 0015 §Lifecycle).
-    fn shutdown(&self) {
-        let Ok(mut slot) = self.child.lock() else {
-            log::error!("sidecar mutex poisoned; refusing to guess at termination");
-            return;
-        };
-        let Some(child) = slot.take() else {
-            // Already terminated — the ExitRequested/Exit double-call path.
-            return;
-        };
-        let pid = child.pid();
-
-        #[cfg(unix)]
-        {
-            log::info!("sidecar pid {pid}: SIGTERM (graceful — lets it save on the way out)");
-            // SAFETY: a plain libc call. `pid` came from the CommandChild we
-            // are holding right now, so it names our own child and cannot
-            // have been reaped-and-recycled behind our back.
-            let sent = unsafe { libc::kill(pid as libc::pid_t, libc::SIGTERM) } == 0;
-            if sent {
-                let deadline = Instant::now() + SHUTDOWN_GRACE;
-                while Instant::now() < deadline {
-                    if self.exited.load(Ordering::SeqCst) {
-                        log::info!("sidecar pid {pid}: exited cleanly after SIGTERM");
-                        // Deliberately no kill(): the process is gone, and
-                        // dropping CommandChild does not signal anything.
-                        return;
-                    }
-                    std::thread::sleep(SHUTDOWN_POLL);
-                }
-                log::warn!(
-                    "sidecar pid {pid}: still alive {SHUTDOWN_GRACE:?} after SIGTERM; escalating"
-                );
-            } else {
-                log::warn!("sidecar pid {pid}: SIGTERM failed; escalating");
-            }
-        }
-
-        match child.kill() {
-            Ok(()) => log::info!("sidecar pid {pid}: hard-killed"),
-            Err(e) => log::error!("sidecar pid {pid}: hard kill failed: {e}"),
+impl Driver {
+    fn describe(&self) -> String {
+        match self {
+            Driver::Installed(p) => p.display().to_string(),
+            Driver::Bundled => format!("{SIDECAR_NAME} (bundled)"),
         }
     }
 }
 
-/// Spawn the sidecar and block until it reports its URL.
+/// The BinDir convention, mirroring `app/internal/paths`' `binDirFor`:
+/// `~/.local/bin` on Linux AND macOS (never `/usr/local/bin` — the installer
+/// must work without sudo), `%LOCALAPPDATA%\dexel\bin` on Windows.
+fn bin_dir_candidate() -> Option<PathBuf> {
+    if cfg!(windows) {
+        let base = std::env::var_os("LOCALAPPDATA")
+            .map(PathBuf::from)
+            .or_else(|| {
+                std::env::var_os("USERPROFILE")
+                    .map(|h| PathBuf::from(h).join("AppData").join("Local"))
+            })?;
+        return Some(base.join("dexel").join("bin").join("dexel.exe"));
+    }
+    let home = std::env::var_os("HOME")?;
+    Some(PathBuf::from(home).join(".local").join("bin").join("dexel"))
+}
+
+/// The first `dexel` on `PATH`, if any. A hand-rolled `which`: one env var
+/// and a stat per entry is not worth a dependency.
+fn dexel_on_path() -> Option<PathBuf> {
+    let exe = if cfg!(windows) { "dexel.exe" } else { "dexel" };
+    let path = std::env::var_os("PATH")?;
+    std::env::split_paths(&path)
+        .map(|dir| dir.join(exe))
+        .find(|cand| cand.is_file())
+}
+
+/// Decision 17's lookup order: `PATH` -> `BinDir` -> the bundled copy.
+fn resolve_driver() -> Driver {
+    if let Some(p) = dexel_on_path() {
+        return Driver::Installed(p);
+    }
+    if let Some(p) = bin_dir_candidate() {
+        if p.is_file() {
+            return Driver::Installed(p);
+        }
+    }
+    Driver::Bundled
+}
+
+/// What one short-lived `dexel <args>` run said.
 ///
-/// On any failure the child is terminated before returning, so a shell that
-/// cannot come up never leaves a headless Go server (and its loopback
-/// socket) behind.
-fn spawn_sidecar(app: &tauri::AppHandle) -> Result<(String, SidecarGuard), String> {
-    // No -public, no DEXEL_ASSETS_DIR, no resource-directory resolution:
-    // EMBED-1 made the sidecar self-contained (see the module docs), so the
-    // only thing this shell tells it is which address to bind.
-    let command = app
+/// `code` is deliberately kept and reported rather than turned into an error
+/// here: `status --json` exits 1 when no runtime is running, which is a
+/// perfectly normal answer and not a failure (see [`discover_runtime`]).
+struct CliOutput {
+    stdout: String,
+    code: Option<i32>,
+}
+
+/// Run the resolved dexel binary as a one-shot CLI command and collect its
+/// stdout.
+///
+/// Nothing long-lived comes out of this: every call is a command that runs,
+/// prints and exits. The one process that outlives it — the runtime `start`
+/// detaches — is deliberately not our child (see the module docs).
+fn run_cli(app: &tauri::AppHandle, driver: &Driver, args: &[&str]) -> Result<CliOutput, String> {
+    match driver {
+        Driver::Installed(path) => run_installed(path, args),
+        Driver::Bundled => run_bundled(app, args),
+    }
+}
+
+/// Run an installed `dexel` directly. A plain `std::process::Command` in a
+/// thread, so the [`CLI_TIMEOUT`] bound applies here exactly as it does to the
+/// bundled path — `output()` on its own would wait forever on a wedged child.
+fn run_installed(path: &std::path::Path, args: &[&str]) -> Result<CliOutput, String> {
+    let (tx, rx) = mpsc::channel::<Result<CliOutput, String>>();
+    let owned_path = path.to_path_buf();
+    let owned_args: Vec<String> = args.iter().map(|a| (*a).to_string()).collect();
+    let label = args.join(" ");
+    std::thread::Builder::new()
+        .name("dexel-cli".into())
+        .spawn(move || {
+            let result = std::process::Command::new(&owned_path)
+                .args(&owned_args)
+                .output()
+                .map_err(|e| {
+                    format!(
+                        "run `{} {}`: {e}",
+                        owned_path.display(),
+                        owned_args.join(" ")
+                    )
+                })
+                .map(|out| {
+                    let stderr = String::from_utf8_lossy(&out.stderr);
+                    for line in stderr.lines() {
+                        log::info!("[{label}] {line}");
+                    }
+                    CliOutput {
+                        stdout: String::from_utf8_lossy(&out.stdout).into_owned(),
+                        code: out.status.code(),
+                    }
+                });
+            let _ = tx.send(result);
+        })
+        .map_err(|e| format!("spawn thread for `dexel {}`: {e}", args.join(" ")))?;
+
+    match rx.recv_timeout(CLI_TIMEOUT) {
+        Ok(result) => result,
+        Err(RecvTimeoutError::Timeout) => Err(format!(
+            "`dexel {}` did not finish within {CLI_TIMEOUT:?}",
+            args.join(" ")
+        )),
+        Err(RecvTimeoutError::Disconnected) => Err(format!(
+            "`dexel {}` thread died before reporting",
+            args.join(" ")
+        )),
+    }
+}
+
+/// Run the bundled copy through the sidecar mechanism, which is what it is
+/// good at: locating the binary built for this exact target triple.
+///
+/// The reader thread drains the event stream to completion rather than
+/// stopping at the first interesting line — it is the only reader of the
+/// child's stdout/stderr pipes, and abandoning them could block the Go
+/// process on a full pipe buffer.
+fn run_bundled(app: &tauri::AppHandle, args: &[&str]) -> Result<CliOutput, String> {
+    let mut command = app
         .shell()
         .sidecar(SIDECAR_NAME)
-        .map_err(|e| format!("locate sidecar {SIDECAR_NAME:?}: {e}"))?
-        // 127.0.0.1:0 — loopback only (never a wildcard), OS-assigned port
-        // so a busy 8080 or a second instance can never collide. The real
-        // port comes back over the handshake below.
-        .arg("-addr")
-        .arg("127.0.0.1:0");
+        .map_err(|e| format!("locate sidecar {SIDECAR_NAME:?}: {e}"))?;
+    for arg in args {
+        command = command.arg(arg);
+    }
 
-    let (mut rx, child) = command.spawn().map_err(|e| format!("spawn sidecar: {e}"))?;
+    // The child handle is held (not dropped) until the stream ends, so the
+    // process is never disturbed mid-run.
+    let (mut rx, _child) = command
+        .spawn()
+        .map_err(|e| format!("spawn `{SIDECAR_NAME} {}`: {e}", args.join(" ")))?;
 
-    let exited = Arc::new(AtomicBool::new(false));
-    let guard = SidecarGuard {
-        child: Mutex::new(Some(child)),
-        exited: Arc::clone(&exited),
-    };
-
-    let (url_tx, url_rx) = mpsc::channel::<String>();
-    let reader = std::thread::Builder::new()
-        .name("dexel-sidecar-reader".into())
+    let (tx, out_rx) = mpsc::channel::<CliOutput>();
+    let label = args.join(" ");
+    std::thread::Builder::new()
+        .name("dexel-cli-reader".into())
         .spawn(move || {
-            let mut announced = false;
+            let mut stdout = String::new();
+            let mut code = None;
             // blocking_recv() is correct here and cannot panic: this is a
             // plain OS thread with no tokio runtime entered (blocking_recv
             // only panics when called from inside an async context).
-            //
-            // This loop must keep running for the life of the sidecar, not
-            // just until the handshake: it is the only reader of the child's
-            // stdout/stderr pipes, and abandoning them would eventually
-            // block the Go process on a full pipe buffer.
             while let Some(event) = rx.blocking_recv() {
                 match event {
                     CommandEvent::Stdout(bytes) => {
-                        let line = String::from_utf8_lossy(&bytes);
-                        let line = line.trim_end();
-                        log::info!("[dexel-server] {line}");
-                        if !announced {
-                            if let Some(url) = line.strip_prefix(HANDSHAKE_PREFIX) {
-                                let url = url.trim().to_string();
-                                log::info!("handshake: sidecar is serving {url}");
-                                // Only stop looking once the value is
-                                // actually delivered; a send error means
-                                // setup gave up, and there is nothing to do
-                                // but keep draining the pipes.
-                                announced = url_tx.send(url).is_ok();
-                            }
-                        }
+                        stdout.push_str(&String::from_utf8_lossy(&bytes));
                     }
-                    // main.go's human-readable log goes to stderr; forward it
-                    // at info too, so a packaged crash is diagnosable from
+                    // The Go CLI's human-readable output goes to stderr;
+                    // forward it so a packaged failure is diagnosable from
                     // the log file alone.
                     CommandEvent::Stderr(bytes) => {
-                        log::info!("[dexel-server] {}", String::from_utf8_lossy(&bytes).trim_end());
+                        log::info!("[{label}] {}", String::from_utf8_lossy(&bytes).trim_end());
                     }
                     CommandEvent::Error(err) => {
-                        log::error!("[dexel-server] pipe error: {err}");
+                        log::error!("[{label}] pipe error: {err}");
                     }
                     CommandEvent::Terminated(payload) => {
-                        log::warn!("[dexel-server] terminated: {payload:?}");
-                        exited.store(true, Ordering::SeqCst);
+                        code = payload.code;
                     }
                     // CommandEvent is #[non_exhaustive]; ignore anything a
                     // future plugin release adds rather than failing to build.
                     _ => {}
                 }
             }
-            // Stream closed: the child is gone whether or not we saw an
-            // explicit Terminated event.
-            exited.store(true, Ordering::SeqCst);
-            log::info!("sidecar event stream closed");
-        });
+            // A send error just means setup gave up waiting; nothing to do.
+            let _ = tx.send(CliOutput { stdout, code });
+        })
+        .map_err(|e| {
+            format!(
+                "spawn reader thread for `{SIDECAR_NAME} {}`: {e}",
+                args.join(" ")
+            )
+        })?;
 
-    if let Err(e) = reader {
-        guard.shutdown();
-        return Err(format!("spawn sidecar reader thread: {e}"));
+    match out_rx.recv_timeout(CLI_TIMEOUT) {
+        Ok(out) => Ok(out),
+        Err(RecvTimeoutError::Timeout) => Err(format!(
+            "`{SIDECAR_NAME} {}` did not finish within {CLI_TIMEOUT:?}",
+            args.join(" ")
+        )),
+        Err(RecvTimeoutError::Disconnected) => Err(format!(
+            "`{SIDECAR_NAME} {}` reader thread died before reporting",
+            args.join(" ")
+        )),
+    }
+}
+
+/// Ask the Go CLI whether a runtime is already running, and where.
+///
+/// `Ok(None)` means "nothing running" — a normal answer, not a failure. Note
+/// that `status --json` EXITS 1 in that case, so the exit code must not be
+/// treated as an error here; the authority is the `running` field in the JSON
+/// it prints (app/cmd_lifecycle.go). `status` also verifies liveness by
+/// round-tripping an HTTP call to the runtime it found, so a `true` here means
+/// a server that actually answers, not just a pid file.
+fn discover_runtime(app: &tauri::AppHandle, driver: &Driver) -> Result<Option<String>, String> {
+    let out = run_cli(app, driver, &["status", "--json"])?;
+    let parsed: serde_json::Value = serde_json::from_str(out.stdout.trim()).map_err(|e| {
+        format!(
+            "`status --json` printed unparseable JSON ({e}): {}",
+            out.stdout
+        )
+    })?;
+
+    if parsed.get("running").and_then(|v| v.as_bool()) != Some(true) {
+        if let Some(reason) = parsed.get("reason").and_then(|v| v.as_str()) {
+            log::info!("no runtime yet: {reason}");
+        }
+        return Ok(None);
+    }
+    let url = parsed.get("url").and_then(|v| v.as_str()).ok_or_else(|| {
+        format!(
+            "`status --json` reported running with no url: {}",
+            out.stdout
+        )
+    })?;
+    Ok(Some(url.to_string()))
+}
+
+/// The URL to open the window on: an already-running runtime if there is one,
+/// otherwise a freshly started one.
+///
+/// `start` is the CLI's own detached-runtime path — it takes the lock, writes
+/// `runtime.json` and waits for readiness — so a runtime started here is
+/// indistinguishable from one started by `dexel start` in a terminal, and
+/// outlives this window exactly the same way.
+fn runtime_url(app: &tauri::AppHandle) -> Result<String, String> {
+    let driver = resolve_driver();
+    log::info!("driving {}", driver.describe());
+    if let Some(url) = discover_runtime(app, &driver)? {
+        log::info!("attaching to the running dexel runtime at {url} (this window owns nothing)");
+        return Ok(url);
     }
 
-    match url_rx.recv_timeout(HANDSHAKE_TIMEOUT) {
-        Ok(url) => Ok((url, guard)),
-        Err(RecvTimeoutError::Timeout) => {
-            guard.shutdown();
-            Err(format!(
-                "sidecar never printed {HANDSHAKE_PREFIX:?} within {HANDSHAKE_TIMEOUT:?} \
-                 (see the [dexel-server] lines in the log for what it did say)"
-            ))
+    log::info!("no runtime running; starting the detached runtime via `start`");
+    let out = run_cli(app, &driver, &["start"])?;
+    if out.code != Some(0) {
+        return Err(format!(
+            "`{} start` failed (exit {:?}); see the [start] lines above for why",
+            driver.describe(),
+            out.code
+        ));
+    }
+
+    match discover_runtime(app, &driver)? {
+        Some(url) => {
+            log::info!("started the dexel runtime at {url}");
+            log::info!("it keeps running after this window closes — `dexel stop` is what stops it");
+            Ok(url)
         }
-        Err(RecvTimeoutError::Disconnected) => {
-            guard.shutdown();
-            Err("sidecar exited before printing its handshake line".to_string())
+        None => {
+            Err("`start` reported success but no runtime was discoverable afterwards".to_string())
         }
     }
 }
 
-/// Build dexel's one window, pointed at the sidecar's loopback URL.
+/// Build dexel's one window, pointed at the runtime's loopback URL.
 fn build_window(app: &tauri::App, url: tauri::Url) -> tauri::Result<()> {
     WebviewWindowBuilder::new(app, WINDOW_LABEL, WebviewUrl::External(url))
         .title(WINDOW_TITLE)
@@ -287,7 +393,7 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
         // Default targets are exactly [Stdout, LogDir { file_name: None }],
-        // so sidecar output reaches both a terminal (dev) and a log file
+        // so CLI output reaches both a terminal (dev) and a log file
         // (packaged) with no further configuration.
         .plugin(
             tauri_plugin_log::Builder::new()
@@ -298,33 +404,28 @@ pub fn run() {
             let handle = app.handle().clone();
             // `?` converts String into Box<dyn Error> for us. A failure here
             // aborts startup loudly instead of showing an empty window.
-            let (url, guard) = spawn_sidecar(&handle)?;
+            let url = runtime_url(&handle)?;
             let url = tauri::Url::parse(&url)
-                .map_err(|e| format!("sidecar reported an unparseable URL {url:?}: {e}"))?;
+                .map_err(|e| format!("runtime reported an unparseable URL {url:?}: {e}"))?;
 
-            // Manage BEFORE building the window, so the window-build failure
-            // path below (and the run-loop handler) can still reach the child.
-            app.manage(guard);
-
-            if let Err(e) = build_window(app, url) {
-                // Never leave a headless server running for a window that
-                // does not exist.
-                app.state::<SidecarGuard>().shutdown();
-                return Err(Box::new(e));
-            }
+            // No managed child, no guard: there is nothing for this shell to
+            // own or terminate. If the window fails to build we simply fail —
+            // the runtime is not ours to clean up, and killing it would be
+            // exactly the bug this shell was rewritten to remove.
+            build_window(app, url)?;
             Ok(())
         })
         .build(tauri::generate_context!())
         .expect("error while building the dexel desktop shell")
-        .run(|handle, event| {
-            // With a single window, closing it raises ExitRequested; handling
-            // Exit as well covers a programmatic quit. shutdown() is
-            // idempotent, so being called for both is fine. We deliberately
-            // do NOT call api.prevent_exit() — quitting means quitting.
-            if matches!(event, RunEvent::ExitRequested { .. } | RunEvent::Exit) {
-                if let Some(guard) = handle.try_state::<SidecarGuard>() {
-                    guard.shutdown();
-                }
+        .run(|_handle, event| {
+            // Deliberately empty of termination logic. Closing the window
+            // quits this shell and NOTHING else: the runtime keeps observing
+            // activity, keeps its sprint ticking and keeps autosaving. See
+            // the module docs — this is the contract, not an oversight.
+            if matches!(event, RunEvent::Exit) {
+                log::info!(
+                    "window closed; the dexel runtime keeps running (use `dexel stop` to stop it)"
+                );
             }
         });
 }

@@ -11,25 +11,20 @@ For which way to *run* dexel (browser, app, installer), see
 
 ---
 
-## Status: AUTHORED, NOT YET BUILT
+## Status: BUILT AND RUNNING (macOS arm64)
 
-**This code has never been compiled.** It was written on a machine with no
-Rust toolchain and no webkit2gtk, so:
+First compiled on 2026-08-23 on macOS arm64. `cargo tauri build --bundles app`
+produces `src-tauri/target/release/bundle/macos/dexel.app`, and it launches:
+native window titled "dexel", 660x460, always-on-top, showing the real game.
 
 | | |
 |---|---|
-| Every Tauri API and config key used | **doc-verified** against the current official v2 docs (sources listed below) |
-| `scripts/build-sidecar.sh` + the `DEXEL_LISTENING` handshake | **actually tested** (see [What *is* verified](#what-is-verified)) |
-| `cargo build` / `cargo tauri build` / `cargo tauri dev` | **never run** |
-| The app window opening on the game | **never seen** |
-
-The first real build is the gate. Do not treat this as working software until
-someone has run it on a machine with Rust — either a dev machine, or the
-`desktop-linux`/`mac` CI runners once they exist (see
-[`.github/workflows/desktop.yml`](../.github/workflows/desktop.yml), where both
-bundle jobs are currently dormant by design).
-
----
+| `cargo build` / `cargo tauri build --bundles app` | **run, clean** — release build, no errors, `cargo fmt --check` and `cargo clippy -D warnings` clean |
+| The app window opening on the game | **seen** — the running page renders the full pixel-art scene, sprint bar, mood pill and store button |
+| Attach / start / survive-window-close | **verified end to end** — see [Lifecycle](#how-the-shell-works) below |
+| `scripts/build-sidecar.sh` + the `DEXEL_LISTENING` handshake | **tested** (the handshake is no longer used by this shell — see below) |
+| Bundling as `.dmg`, signing, notarization | **not done.** `--bundles app` only; unsigned |
+| Linux / Windows bundles | **never built** — still blocked on runners (`docs/plan/RUN-MODES.md` mode C) |
 
 ## Layout
 
@@ -153,41 +148,70 @@ frontend/art without a rebuild; a packaged app never sets them.
 ```
 setup()
   |
-  1. app.shell().sidecar("dexel-server")
-  |      .arg("-addr").arg("127.0.0.1:0")     loopback only, ephemeral port
-  |      .spawn()  ->  (Receiver<CommandEvent>, CommandChild)
+  1. resolve_driver()          `dexel` on PATH  ->  ~/.local/bin/dexel
+  |                            ->  the bundled binaries/dexel-server
+  |                            (an INSTALLED dexel wins: it is what
+  |                             `dexel update` keeps current)
   |
-  2. reader thread: drain stdout/stderr into the log forever; on the line
-  |      "DEXEL_LISTENING http://127.0.0.1:<port>"  send the URL back
-  |      (bounded wait: HANDSHAKE_TIMEOUT = 20s, then fail loudly)
+  2. <dexel> status --json     running?  -> take its `url`
+  |                            not running?  -> <dexel> start (detaches a
+  |                            real runtime: takes runtime.lock, writes
+  |                            runtime.json), then ask again
+  |                            (each call bounded by CLI_TIMEOUT = 20s)
   |
   3. WebviewWindowBuilder::new(app, "main", WebviewUrl::External(url))
   |      .title("dexel").inner_size(660,460).min_inner_size(660,460)
   |      .always_on_top(true).decorations(true).center().build()
   |
   v
-run(|handle, event|)
-     RunEvent::ExitRequested | Exit  ->  SidecarGuard::shutdown()
-        unix : SIGTERM by pid, wait <=3s for the reader thread to observe
-               termination, then escalate to CommandChild::kill()
-        other: CommandChild::kill() straight away
+run(|_handle, event|)
+     RunEvent::Exit  ->  log one line and exit.
+                         NOTHING is terminated. The runtime keeps observing
+                         activity, keeps ticking and keeps autosaving.
 ```
 
-Four things about that are load-bearing:
+Three things about that are load-bearing:
 
-- **The shell, not the JS, needs the port** — it cannot create the webview
-  until it knows the URL. So the port arrives on stdout, the one channel Rust
-  already owns from `spawn()`.
-- **The reader thread outlives the handshake.** It is the only reader of the
-  child's pipes; abandoning them would eventually block the Go process on a
-  full pipe buffer.
-- **SIGTERM before SIGKILL.** `CommandChild::kill()` maps to
-  `std::process::Child::kill()`, i.e. SIGKILL, which would skip main.go's
-  `signal.Notify(SIGINT, SIGTERM)` handler and therefore its **final save**.
-  Hence the `libc::kill(pid, SIGTERM)` first step on unix. On Windows the
-  hard kill is accepted: autosave already bounds loss to ~30s.
-- **`shutdown()` is idempotent** (the child is `Option::take`n), because
-  `ExitRequested` and `Exit` both fire on a normal quit.
+- **The window is a VIEW; it does not own the game.** dexel's whole product is
+  watching your real activity all day, and users close windows and forget
+  them, so capture must never depend on a window being open. This is
+  ARCHITECTURE.md Decision 17 ("`dexel open` owns the window; the runtime owns
+  itself") and the contract `docs/plan/RUN-MODES.md` mode P already stated:
+  "Closing the browser tab or app window does not stop the runtime — only
+  `dexel stop` does."
+
+  The first version of this shell broke that: it spawned its own private
+  `dexel-server -addr 127.0.0.1:0` and SIGTERM'd it on window close. That
+  server took no `runtime.lock` and wrote no `runtime.json`, so `dexel status`
+  said "dexel is not running" while it was running — and closing the window
+  silently stopped all activity capture. It could also run *alongside* a real
+  runtime: two processes, two in-memory economies, one `state.db`.
+- **`bundle.externalBin` still ships, reinterpreted.** It is no longer a
+  sidecar this shell owns; it is the fallback `dexel` for someone who
+  installed only the app and never ran an install script. So
+  `scripts/build-sidecar.sh` and `desktop.yml`'s `sidecar` job keep working
+  verbatim — only the meaning of the file changed.
+- **`status --json` exits 1 when nothing is running.** That is a normal
+  answer, not a failure, so the shell reads the `running` field in the JSON
+  and never the exit code. (`start`'s exit code *is* checked.)
+
+There is deliberately no `SidecarGuard`, no `CommandChild` in managed state,
+no SIGTERM/SIGKILL escalation and no `libc` dependency any more: with nothing
+owned, there is nothing to terminate.
+
+### Verified end to end on macOS (2026-08-23)
+
+1. No runtime running, launch `dexel.app` -> log: `driving dexel-server
+   (bundled)`, `no runtime yet`, `started the dexel runtime at
+   http://127.0.0.1:52465`. `dexel status` now reports that runtime (pid,
+   url, uptime) — the old shell's server was invisible to it.
+2. Quit the app (window close) -> the shell process is gone, the runtime
+   process is **still alive**, and `state.db`'s lifetime counters kept moving
+   across the next autosave (idle 1125 -> 1169s, active 467 -> 483s) with no
+   window open at all.
+3. Launch again -> log: `attaching to the running dexel runtime at
+   http://127.0.0.1:52465 (this window owns nothing)`, same runtime pid. No
+   second server.
 
 ### Security posture
 

@@ -102,12 +102,15 @@ alternative open.
   `DEXEL_LISTENING` line; parse the URL; then build the window. (Also
   forward sidecar stdout/stderr to the Tauri log so a packaged crash is
   diagnosable — mirrors the loud-failure ethos already in main.go.)
-- *Terminate:* store the `CommandChild` in Tauri managed state; on
-  `RunEvent::ExitRequested`/`Exit` and on main-window close, kill it. Prefer
-  `SIGTERM` on Unix so the server's existing signal handler runs its final
-  save (main.go already traps SIGINT/SIGTERM → persist → provider.Stop →
-  http.Shutdown). A hard kill elsewhere (Windows) is acceptable: autosave
-  already bounds loss to ~30s.
+- *Terminate:* **SUPERSEDED by ARCHITECTURE.md Decision 17 (implemented
+  2026-08-23).** This section described the shell owning the server and
+  killing it on window close. It no longer does: the shell attaches to the
+  detached runtime (`status --json`, `start` if absent) and terminates
+  nothing, because closing a window must never stop activity capture. The
+  `CommandChild`, the SIGTERM/SIGKILL escalation and the `libc` dependency
+  are gone. Everything else in this section (spawn mechanics, readiness,
+  forwarding output to the Tauri log) still describes the code, now applied
+  to short-lived CLI calls rather than a long-lived child.
 
 **Port strategy — ephemeral loopback.** Launch with `-addr 127.0.0.1:0`.
 The OS assigns a free port, so a stray port-8080 process or a second
@@ -314,7 +317,9 @@ note; superseded by EMBED-1's self-contained sidecar,
 `externalBin: ["binaries/dexel-server"]`, icons), a tight shell-plugin
 capability allowing only the sidecar, and `src/main.rs`: spawn sidecar with
 the §1 args/env, parse the `DEXEL_LISTENING` line, open the window on that
-URL, store the `CommandChild`, kill on exit (SIGTERM on Unix).
+URL, store the `CommandChild`, kill on exit (SIGTERM on Unix). *(The last two
+clauses are superseded by Decision 17 — the shell attaches to the runtime and
+kills nothing; see §1's Terminate note.)*
 
 **T2 — Go changes (owner: backend engineer; owns `app/main.go`).** Small and
 surgical:
