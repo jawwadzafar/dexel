@@ -29,6 +29,11 @@ game — build the Go binary, run it with the fake provider, screenshot it, judg
 with your own eyes. Isolated mockups have lied twice. See the
 `feature-build-and-verify` skill.
 
+**Commit authorship (owner mandate):** commits carry the repo's main author
+ONLY. NEVER add Claude as a co-author — no `Co-Authored-By: Claude ...` trailer,
+ever, in any commit made by the main session or any subagent. (A session link
+trailer is acceptable; co-authorship is not.)
+
 **Before shipping:** `cd app && go vet ./...`, `bash scripts/test-race.sh`, and
 `cd app/frontend && npm run typecheck && npm run build` with no bundle drift.
 GitHub Actions is currently blocked at the account level — run the gates locally.
