@@ -278,3 +278,11 @@ Plan + scorecard: dev_docs/rust-port-evaluation.md (in flight).
   runs by hand until billing is fixed), (5) install to ~/.local/bin on this box
   + autostart, (6) Tauri first-compile + window gate — UNBLOCKED BY OWNER
   installing the webkit dev packages (exact apt command in the session log).
+
+### RUST-PARALLEL track: CONCLUDED (2026-08-24) — Go stays
+Experiment stopped at P0 by decision (see app-rs/VERDICT.md): the Tauri
+in-process prize became an anti-goal under the background-runtime product
+model; remaining gains are cosmetic; the one real win (recursive compile-time
+content-free guarantees) is back-ported to the Go tests instead. app-rs/ and
+the goldens stay frozen as the record; the goldens double as Go wire-contract
+fixtures. Revisit triggers recorded in the verdict file.
