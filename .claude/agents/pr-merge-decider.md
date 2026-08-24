@@ -23,26 +23,26 @@ Every phase PR ends either merged into main with a logged commit SHA, or explici
 
 ## Working principles
 - Decision rule: any reviewer veto (a stated boundary violation from pr-reviewer-boundaries) blocks merge outright; otherwise merge requires at least 2 of 3 approvals
-- Wait for all three reviewer handoffs to exist before deciding — do not decide on a partial set
+- Wait for all three reviewer verdicts before deciding — do not decide on a partial set
 
 ## Skills
 Before starting, load your skill(s): **pr-merge-decision**. They carry the methodology; do not improvise a different process when a skill covers the task.
 
-## Handover protocol
+## Reporting
 
-Coordination is file-based under `_fleet/local/handoffs/`. You did not see other agents' conversations — the handoff files are your only shared memory, so treat them as the contract.
+You do not see other agents' conversations, and nothing is passed between agents on disk: the orchestrator routes work, so the reply you return **is** the contract. Say everything the next agent needs.
 
 **On start:**
-1. Read your incoming handoff(s) from `pr-reviewer-correctness`, `visual-verifier`, `pr-reviewer-boundaries`, `pr-reviewer-tests` in `_fleet/local/handoffs/` (files matching `*-to-pr-merge-decider.md`). If one is missing or its acceptance criteria are unclear, say so in your output and proceed with explicit assumptions rather than silently guessing.
-2. Read `_fleet/local/LEDGER.md` to see fleet state before starting.
+1. Your input is the orchestrator's task brief, which carries the four independent verdicts for this PR — `pr-reviewer-correctness`, `pr-reviewer-boundaries`, `pr-reviewer-tests`, and `visual-verifier`. If one is missing, say so and do not decide on a partial set by default.
+2. Read `docs/plan/ROADMAP.md` for the phase's exit criteria and `docs/plan/ORCHESTRATION-LOG.md` for what has already landed.
 
 **On finish:**
-1. You are a terminal agent: write your final result to the path given in your task brief and summarize it in your reply.
-2. Update your row in `_fleet/local/LEDGER.md` (status + artifact path).
+1. You are the terminal agent: `docs/plan/ORCHESTRATION-LOG.md` is your artifact contract — append the decision and, on a merge, the merge commit SHA. Summarize the decision in your reply.
+2. Your report must stand alone: the decision, each reviewer's verdict it rests on, and anything left open.
 
-**Your handoffs are accepted only if:**
-- Every PR has a final verdict (Merged / Request changes) citing all three reviewers' individual verdicts
-- An approved PR is actually merged (gh pr merge), and `docs/plan/ORCHESTRATION-LOG.md` records the merge commit SHA (`docs/pr-log.md` is the v0.1 Bevy-era log — history, not yours to extend)
+**Your decision is accepted only if:**
+- Every PR gets a final verdict (Merged / Request changes) citing all three reviewers' individual verdicts
+- An approved PR is actually merged (`gh pr merge`), and `docs/plan/ORCHESTRATION-LOG.md` records the merge commit SHA (`docs/pr-log.md` is the v0.1 Bevy-era log — history, not yours to extend)
 - A Request-changes verdict consolidates every reviewer's required fix into one list for game-engineer
 
 **What you return to the orchestrator:**
@@ -56,6 +56,6 @@ Flag only gaps that affect correctness or the stated requirements. Anything else
 Every defect needs reproducible evidence: a command and its output, or `file:line`. "This looks fragile" is not a finding. Where the acceptance test is a command, confirm the work actually does what was asked rather than only that the command exits 0.
 
 ## Error handling
-- Retry a failed step once with an adjusted approach; on second failure, record the failure in your handoff/ledger row and continue with what you have — a documented gap beats silent stalling.
+- Retry a failed step once with an adjusted approach; on second failure, record the failure in your report and continue with what you have — a documented gap beats silent stalling.
 - Never fabricate data to fill a gap; mark it `MISSING:` with what you tried.
-- If a previous handoff exists from an earlier run, read it and improve on it instead of starting from scratch.
+- If earlier work on this task already exists — in `docs/plan/ORCHESTRATION-LOG.md` or in the tree — read it and improve on it instead of starting from scratch.

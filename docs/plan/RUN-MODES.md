@@ -21,7 +21,7 @@ without saying so.
 | **P** | **CLI-managed (production)** | `dexel` / `dexel start` + `open` — a background runtime, browser or app window | a built/installed `dexel` binary | **Works today — the primary way to run Dexel** |
 | **A** | **Browser (dev)** | `go run . serve`, open a tab | Go 1.27+ | **Works today** |
 | **B** | **App** | `Dexel.app` / `cargo tauri dev` — a native window that ATTACHES to the runtime | Go + Rust + webview deps to build | **Works on macOS arm64** (built 2026-08-23); Linux/Windows unbuilt |
-| **C** | **Installer** | `.AppImage` / `.deb` / `.dmg` / `.msi` | nothing (that's the point) | **Not shipped** — needs CI runners |
+| **C** | **Installer** | `.AppImage` / `.deb` / `.dmg` / `.msi` | nothing (that's the point) | **Unsigned Linux bundles (.deb, AppImage) ship on the release; signed macOS/Windows installers need runners. |
 | **D** | **Build from source** | either of the above, from a clean clone | see below | A: works · B: unbuilt |
 
 Modes B and C are the same code (`desktop/`, ADR 0015); C is just B packaged.

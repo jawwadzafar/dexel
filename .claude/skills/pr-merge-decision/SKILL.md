@@ -9,13 +9,13 @@ x-fleetsmith-origin: human
 
 ## Before deciding
 
-Confirm all four handoffs exist for this PR:
-`_fleet/local/handoffs/*-pr-reviewer-correctness-to-pr-merge-decider.md`,
-`*-pr-reviewer-boundaries-to-pr-merge-decider.md`,
-`*-pr-reviewer-tests-to-pr-merge-decider.md`, and
-`*-visual-verifier-to-pr-merge-decider.md`. If any is missing, do not
-decide — that reviewer hasn't finished; wait or flag it as blocked in
-`docs/pr-log.md` rather than deciding on a partial set by default.
+Confirm your brief carries all four verdicts for this PR — from
+`pr-reviewer-correctness`, `pr-reviewer-boundaries`, `pr-reviewer-tests`,
+and `visual-verifier` — and that each names the PR number you were asked
+to decide. If any is missing, do not decide: that reviewer hasn't
+finished. Say so and let the orchestrator wait, or flag it as blocked in
+`docs/plan/ORCHESTRATION-LOG.md`, rather than deciding on a partial set
+by default.
 
 ## Decision rule
 
@@ -57,7 +57,7 @@ decide — that reviewer hasn't finished; wait or flag it as blocked in
 
 1. `gh pr review <n> --request-changes --body "..."` consolidating
    every reviewer's required fix into one list — game-engineer reads
-   only this, not each reviewer's individual handoff, so nothing you
+   only this, not each reviewer's individual verdict, so nothing you
    omit here reaches them.
 2. Do not merge. Append a row to `docs/pr-log.md` recording the
    decision and the consolidated fix list.

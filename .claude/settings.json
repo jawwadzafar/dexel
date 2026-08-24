@@ -5,28 +5,11 @@
       "Read",
       "Grep",
       "Glob",
-      "Edit(_fleet/**)",
       "Write",
       "Edit",
       "Bash",
       "WebSearch",
-      "WebFetch",
-      "Bash(sh _fleet/shared/scripts/validate-handoff.sh:*)",
-      "Bash(sh _fleet/shared/scripts/log-event.sh:*)"
-    ]
-  },
-  "hooks": {
-    "SubagentStop": [
-      {
-        "matcher": "game-architect|game-engineer|pr-reviewer-correctness|visual-verifier|game-artist|pr-reviewer-boundaries|pr-reviewer-tests|pr-merge-decider",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "sh \"$CLAUDE_PROJECT_DIR/_fleet/shared/scripts/validate-handoff.sh\"",
-            "timeout": 15
-          }
-        ]
-      }
+      "WebFetch"
     ]
   }
 }

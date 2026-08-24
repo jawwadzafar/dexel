@@ -19,8 +19,8 @@ x-fleetsmith-origin: human
 # Orchestration playbook
 
 This project has run two different orchestration substrates: an opencode
-fleet of named agents (`fleetsmith`, model-pinned, `_fleet/` workspace — v0.1
-through the start of v0.4) and, since ADR 0011's engine pivot, **Claude
+fleet of named agents (`fleetsmith`, model-pinned, with its own on-disk
+coordination workspace — v0.1 through the start of v0.4) and, since ADR 0011's engine pivot, **Claude
 subagent orchestration**, which "has outperformed it throughout" (ADR 0011).
 Everything below is the standing operating rule regardless of substrate;
 the model-specific notes at the end are opencode-era history, kept because
@@ -50,12 +50,15 @@ Two different collision bugs already cost this project real time:
   after a diff conflict shows it was ambiguous.
 - **A naming collision in review artifacts made one milestone's backfilled
   review accidentally re-review the wrong milestone** (an M1 backfill review
-  silently re-reviewed M0 because of a handoff-file naming collision;
-  the archived v0.1 run prompt). The fix that stuck: handoff/log filenames encode
-  enough identifying detail (milestone number, PR number, from/to agent) that
-  two different pieces of work can never collide under the same name, and a
-  stale file gets an explicit `.stale-was-actually-<x>` suffix rather than
-  being silently overwritten or mistaken for current.
+  silently re-reviewed M0 because two coordination files shared a name; the
+  archived v0.1 run prompt). The fleet-era fix was to encode the milestone
+  and PR number into every filename. The **file-based coordination layer is
+  now retired** — Claude subagents report their results straight back to the
+  orchestrator, and the durable record is `docs/plan/ORCHESTRATION-LOG.md`
+  — but the lesson survives the substrate: every verdict, log row, and brief
+  must name the PR/phase it is about, explicitly, so two pieces of work can
+  never be confused for each other. A reviewer's verdict without a PR number
+  is unusable.
 
 When briefing parallel agents: write down who owns which paths, in the brief,
 before launching them in the same message. If two agents' scopes might

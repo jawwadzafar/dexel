@@ -24,7 +24,6 @@ target-*/
 # above are still needed for the two live ones.
 
 # fleetsmith — per-developer runtime tier, never committed
-_fleet/local/
 
 # local save data, if ever written into the repo during dev testing
 saves/

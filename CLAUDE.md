@@ -38,13 +38,6 @@ trailer is acceptable; co-authorship is not.)
 `cd app/frontend && npm run typecheck && npm run build` with no bundle drift.
 GitHub Actions is currently blocked at the account level — run the gates locally.
 
-**Handover gate:** `.claude/settings.json` registers a `SubagentStop` hook running
-`_fleet/shared/scripts/validate-handoff.sh` (tracked), which blocks a subagent
-from finishing until its handoff file in `_fleet/local/handoffs/` carries every
-required section. Project hooks do not run until this workspace is trusted — until
-you accept that dialog the gate is silently skipped and the handoff discipline is
-advisory only.
-
 **Legacy:** the Rust/Bevy implementation and the opencode fleet harness are
 archived on branch `attic/legacy-rust-and-fleet` (ADR 0011, ADR 0020). Two things
 named `activity` used to exist; now only `app/internal/activity/` does.
