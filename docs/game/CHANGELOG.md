@@ -15,9 +15,12 @@ Two deliberate narrowings from the standard format:
   [`README.md`](README.md#how-to-keep-this-true).
 
 Versions track the release the change shipped in. Dexel's version is injected
-at build time (`-X main.version=…`), defaulting to `dev`, and this clone has no
-tags, so the section below is anchored to the branch and commit it describes
-rather than to a version number that could not be verified.
+at build time (`-X main.version=…`), defaulting to `dev`, and this repo has no
+tags at all — every tag and GitHub release was deleted on 2026-08-23 because
+v1.0.0/v1.1.0 had been cut far too early. **The working version is 0.1.0**
+(`desktop/src-tauri/tauri.conf.json`, `desktop/src-tauri/Cargo.toml`) and
+nothing is shipped yet, so `[Unreleased]` below is anchored to the commits it
+describes rather than to a version number a build could not report.
 
 ---
 
@@ -38,6 +41,36 @@ rather than to a version number that could not be verified.
 
 ### Changed
 
+- **App identity works at all.** Previously `Snapshot.ActiveApp` froze at the
+  first sample for the life of the process, in EVERY mode: `NSWorkspace`'s
+  running-app cache refreshes from notifications delivered on the main run
+  loop, and a Go server never runs one. Foreground runs froze on whatever app
+  launched them (so "In the terminal" looked correct by coincidence); the
+  login-time daemon froze on nil and reported no app forever, which is why the
+  app-switch counter read 0 all day. Now read fresh per call from
+  `CGWindowListCopyWindowInfo` (owner name only, never the window title), with
+  a new `AppIdentityAvailable` bit so "cannot see apps from here" is
+  distinguishable from "nothing is frontmost". Pages: `activity-signal.md`,
+  `moods.md`. ADR 0019.
+- **The window is a view, not the owner of the game.** The desktop shell used
+  to spawn its own private server and SIGTERM it on window close — so closing
+  the window silently stopped all activity capture, and that server was
+  invisible to `dexel status`. It now attaches to the detached runtime
+  (starting one only if none exists) and terminates nothing. Page:
+  `surfaces.md`.
+- **The character no longer flickers.** The scene subtree was rebuilt on every
+  render, and a fresh `<img>` paints nothing until its bitmap decodes — worse,
+  an undecoded CSS `mask-image` masks its fill away entirely, so the character
+  flashed pure WHITE. Over one 60s cycle the old build produced 17 distinct
+  character images where only 8 poses exist. The scene is now built once and
+  mutated, with every sprite pre-decoded. Page: `surfaces.md`.
+- **The window scales proportionally instead of sitting 1:1 in dead space.**
+  The whole fixed-pixel layout scales as one unit, aspect preserved, centred,
+  letterboxed in the scene's own colour, preferring a crisp scale factor.
+  Page: `surfaces.md`.
+- **Dexel never claims you were typing in Dexel itself,** and its own window is
+  transparent to app-switch counting — that counter was measuring how often
+  you glanced at your companion. Page: `moods.md`.
 - **The activity line no longer offers a work verb for non-coding apps**
   (commit `12accf0`, landed while this directory was being written and folded
   into it). `game.ActivityLine`'s two substring predicates
@@ -50,6 +83,16 @@ rather than to a version number that could not be verified.
   flicker at the 1 Hz broadcast rate.
   Documented in [`moods.md`](moods.md) §3; `activity-signal.md` §2 updated for
   the table's new size and the `AppTypeSelf` short-circuit.
+
+### Fixed
+
+- **A v1.0.0 save is no longer destroyed by upgrading.** The JSON side of the
+  save MAC verifies against a re-serialization of the parsed struct, so a field
+  added later without `omitempty` changed the preimage and every existing
+  `state.json` failed its own MAC — the player was silently reset to a fresh
+  economy with their save quarantined. Page: `persistence.md`.
+- **The runtime no longer erases `config.json`'s `autostart` field** on every
+  SET_NAME and SESSION_START. Page: `persistence.md`.
 
 ### Notes — where the code disagreed with an existing doc
 
