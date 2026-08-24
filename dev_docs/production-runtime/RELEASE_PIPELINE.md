@@ -241,7 +241,82 @@ Recommendation stands as the owner framed it: **R2 canonical for the installer.*
 
 ---
 
+## 6-STAGE-1. `install.sh` + `install.ps1` at the repo root — SHIPPED
+
+**Amendment, superseding § 6's hosting and version-resolution assumptions
+for as long as R2 does not exist.** Everything else in § 6 — the ten steps,
+the consent rule, the exit-code discipline, the "no jq, no python, no sudo,
+ever" rule — is unchanged and is what shipped.
+
+The problem with implementing § 6 as written: it resolves a version from
+`https://downloads.dexel.jwdlab.com/latest/VERSION` and a hash from
+`checksums.txt` beside it, and **neither object exists**. R2 is not
+provisioned, `publish` and `manifest` (C2/C3) are not written, and the
+domains are not mapped. An installer written against that contract could not
+be run, let alone tested. So stage 1 resolves the release from the thing
+that does exist and is already the pipeline's output: **GitHub Releases, via
+the GitHub API.**
+
+### What changed from § 6
+
+| § 6 as written (stage 2) | stage 1, shipped |
+|---|---|
+| `scripts/install.sh` | **`install.sh` and `install.ps1` at the repo ROOT** — the `curl \| bash` one-liner is a URL a human reads, and `raw.githubusercontent.com/.../main/install.sh` is shorter and more obviously the real thing than `.../main/scripts/install.sh`. It is also where every installer a developer has ever piped lives |
+| version from `latest/VERSION` | `GET /repos/jawwadzafar/dexel/releases/latest` → `tag_name`, still validated against `^v[0-9]+\.[0-9]+\.[0-9]+`. `DEXEL_VERSION` pins a tag and switches to `/releases/tags/<tag>` |
+| hash from `checksums.txt` | the release's own `sha256sums.txt` asset, which `build-release.sh` already emits, parsed with the same `awk '$2 == f \|\| $2 == "*" f'` rule. Plus a **cross-check against the `digest` GitHub reports for the same asset**: two independent producers, and a disagreement is a hard failure |
+| artifact URL by convention | resolved from the release's asset list, so "no build for this platform in this release" is a *fact about the release* rather than a 404 guess. `install.sh` parses that list with `sed`/`awk` only (§ 6's no-jq rule); `install.ps1` uses `ConvertFrom-Json`, which is built into PowerShell |
+| §§ 3-5 R2 buckets, `manifest`, `deploy-installer.yml` | untouched and still the plan. When they land, `resolve_release` and `asset_url` are the only two functions that change |
+| `install.ps1` is "phase 2" | shipped in the same pass. Windows is half of the published artifacts, and a Windows user with no installer has no story at all |
+| step 9 appends to the detected rc inside `# >>> dexel >>>` markers | **prints** the export line for the detected shell (`$SHELL` → bashrc/zshrc/fish) instead. A `curl \| sh` reader has no diff to review, and an installer that silently rewrites `~/.zshrc` is exactly the surprise the consent rule exists to prevent. Windows still writes the **user** PATH (HKCU, via `SetEnvironmentVariable(..., 'User')`), because there is no "paste this line" equivalent there and the write is a single reversible registry value |
+
+### Private-repo reality, and why it is in the shipped script
+
+The repository is private today and public later, and the installer has to
+work in both worlds without a second version of itself:
+
+* `GITHUB_TOKEN` / `GH_TOKEN`, when set, is sent as a bearer token. That is
+  what makes a private-repo install (and the end-to-end test of it) possible
+  at all. It goes into a `0600` curl config file inside the temp dir, never
+  onto a command line where `ps` would show it.
+* **`https://github.com/<o>/<r>/releases/download/<tag>/<name>` answers 404
+  to a bearer token on a private repo** — verified against this repository,
+  not assumed. So the token path must use the assets API URL
+  (`/releases/assets/<id>`) with `Accept: application/octet-stream`, which
+  is why the scripts resolve asset *ids* rather than constructing download
+  URLs. Anonymous requests use `browser_download_url` instead: CDN-backed,
+  no API rate limit, and the path every public install will take.
+
+### macOS
+
+`build-release.sh` adds `darwin/arm64` only on a darwin host and
+`release-macos` is a gated no-op, so no release contains a darwin archive
+today. Rather than hardcode "no mac", both installers **ask the release**:
+absent a `dexel-<tag>-darwin-<arch>.tar.gz` asset they print the honest
+message and the two build-from-source commands, and exit 5. The day a mac
+runner publishes that asset, the normal install path takes over with no edit
+to either script — which is the same "omit the key, derive the truth"
+property § 7 wants from the manifest.
+
+### Testing
+
+Both scripts were run end to end against the live private `v0.1.0` release
+(`GH_TOKEN="$(gh auth token)"`, `DEXEL_INSTALL_DIR` pointed at a temp dir):
+resolve → download → verify → install → `dexel version`. The
+checksum-mismatch path was exercised with a byte appended to a real archive
+and hard-fails with exit 6 before unpacking anything. `install.sh` is
+`shellcheck -s sh` clean and runs under `dash`, `bash` and busybox `ash`,
+including piped-on-stdin with no script file. `install.ps1` parses clean and
+is PSScriptAnalyzer-error-free, and every one of its functions was exercised
+on PowerShell 7 against the real release. `--dry-run` /
+`$env:DEXEL_DRY_RUN=1` stops after verification and is the mode a future
+`deploy-installer.yml` should run in CI.
+
+---
+
 ## 6. `scripts/install.sh`
+
+> **Superseded for stage 1 by § 6-STAGE-1 above** on hosting and version
+> resolution; the ten steps below are otherwise what shipped.
 
 **Source of truth: `scripts/install.sh` in this repo** (the repo already keeps
 `build-release.sh`, `build-sidecar.sh`, `build.sh`, `visual-check.py` there — one

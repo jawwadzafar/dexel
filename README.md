@@ -44,7 +44,91 @@ frontend over a WebSocket at `http://127.0.0.1:8080`.
 |---|---|
 | ![Store modal: categories, catalog grid, buy/equip, live preview](docs/images/store.png) | ![History modal: 7-day bar chart, 30-day streak strip, insights](docs/images/history.png) |
 
+## Install
+
+One line. It downloads the release build for your platform, verifies its
+sha256, and puts a single `dexel` binary in your user bin directory.
+
+**Linux** (amd64 or arm64):
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/jawwadzafar/dexel/main/install.sh | bash
+```
+
+**Windows** (amd64 or arm64), in PowerShell:
+
+```powershell
+irm https://raw.githubusercontent.com/jawwadzafar/dexel/main/install.ps1 | iex
+```
+
+> **These two URLs go live the moment this repository becomes public.**
+> While it is still private, `raw.githubusercontent.com` answers 404 to an
+> anonymous request, so run the script from a checkout with a token that can
+> read the repo instead:
+>
+> ```bash
+> GH_TOKEN="$(gh auth token)" bash ./install.sh          # Linux
+> $env:GH_TOKEN = (gh auth token); ./install.ps1         # Windows
+> ```
+>
+> The same two files will later be served from
+> `https://get.dexel.jwdlab.com/install.sh` and `/install.ps1` — the same
+> bytes at a shorter address, not a different installer
+> ([release pipeline](dev_docs/production-runtime/RELEASE_PIPELINE.md)).
+
+**macOS is not published yet.** There is no macOS release artifact, so the
+installer says so and stops rather than pretending — build from source with
+the two commands under [Quick start](#quick-start) below. Nothing needs to
+change in the installer when a macOS build appears: it checks the release
+for a `darwin` archive on every run, so the day one is published the normal
+install path takes over.
+
+### What it does, and what it will not do
+
+| | |
+|---|---|
+| resolves | the latest GitHub release, or `DEXEL_VERSION` if you pin one |
+| verifies | sha256 against the release's `sha256sums.txt`, cross-checked against the digest GitHub reports for the same asset. A mismatch is a hard failure and nothing is unpacked |
+| installs | one binary: `~/.local/bin/dexel`, or `%LOCALAPPDATA%\dexel\bin\dexel.exe` |
+| creates | your state directory and its `logs/` subdirectory, so the first run cannot trip over a missing folder |
+| **never** | uses `sudo`, elevates, or writes outside `$HOME` / `%LOCALAPPDATA%` + `HKCU` |
+| **never** | enables autostart. `dexel autostart enable` is a separate, explicit choice |
+| **never** | starts the runtime for you. The installer exits having started no processes |
+| PATH | on Linux it *prints* the export line for your shell and lets you paste it — it does not edit your dotfiles. On Windows it appends to your **user** PATH (never the machine PATH), only if the directory is not already there |
+
+Re-running is an upgrade in place: if a runtime is live it is stopped first,
+the binary is replaced, and your save data is untouched.
+
+Both scripts are POSIX-`sh` / PowerShell-5.1 clean, take no arguments they
+do not document, and use distinct exit codes so a piped run is diagnosable
+from `$?` alone — `3` unsupported platform, `4` missing tool, `5` no build
+for this platform in this release, `6` checksum mismatch, `7` network, `8`
+the installed binary failed its own `dexel version` check.
+
+Knobs, on either platform: `DEXEL_INSTALL_DIR`, `DEXEL_VERSION`,
+`DEXEL_HOME`, `DEXEL_ARCHIVE` (install a `.tar.gz`/`.zip` you already have —
+the checksum is still verified), `GH_TOKEN` / `GITHUB_TOKEN`, and a dry run
+(`--dry-run` on Linux, `$env:DEXEL_DRY_RUN = '1'` on Windows) that resolves,
+downloads and verifies without installing anything.
+
+**On Windows, read this first:** activity tracking is not wired up yet.
+Dexel has no native capture provider for Windows, so it runs a deliberately
+*blind*, zero-signal provider — the game, the UI and every command work, but
+your typing does not accrue and the companion will not claim a workday it
+cannot see. That is the honest failure mode rather than a fabricated one;
+Linux and macOS have real providers.
+
+### Uninstall
+
+```bash
+dexel stop; dexel autostart disable; rm ~/.local/bin/dexel   # and rm -rf ~/.config/dexel to drop your save
+```
+
 ## Quick start
+
+Building from source — the path to use on macOS, or when you want the tip of
+`main` rather than a release. For a released binary, see
+[Install](#install) above.
 
 Requires [Go 1.27](https://go.dev/dl/) or newer. Node/npm are **not**
 needed to run the game — only if you're changing the frontend (see
