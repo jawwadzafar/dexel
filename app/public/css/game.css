@@ -1,6 +1,13 @@
-/* dexel — game.css (W2-β, frontend)
+/* Dexel — game.css (W2-β, frontend)
  * Built against docs/ui-spec.md + docs/art-direction.md + docs/upgrade-design.md.
  * Every length below is an integer px. No %, em, rem, vh in the chrome.
+ *
+ * The ONE exception, and it is not chrome: html/body are sized 100% so they
+ * can letterbox the window around the layout, and the layout is fitted to
+ * the window by a single `transform: scale()` (ui-spec.md §0.1, BUG-2). Every
+ * length INSIDE the 640x400 root is still an authored integer px — the scale
+ * is applied after layout, so nothing here reflows and no rect below moves
+ * relative to any other.
  *
  * NES.css overrides live in ONE block, marked "NES.CSS OVERRIDES" below,
  * per ui-spec.md §1's instruction to not scatter them.
@@ -34,6 +41,18 @@
   --lamp: #ffd98a;
   --cream: #f2e0c9;
   --shadow: #241f2e;
+
+  /* ---------- Window fit (BUG-2, ui-spec.md §0.1) ----------
+     Written by render/viewport.ts on load, on resize and on a
+     device-pixel-ratio change; the defaults below are the 1x identity so the
+     page is correct for the frame before the first script runs. --ui-scale is
+     a unitless number, --ui-ox/--ui-oy the integer px that centre the scaled
+     layout in the window. Consumed by #root AND by every modal dialog (see
+     the shared rule under "Window fit" further down), which is what keeps a
+     modal locked to the scene it floats over. */
+  --ui-scale: 1;
+  --ui-ox: 0px;
+  --ui-oy: 0px;
 }
 
 * { box-sizing: border-box; }
@@ -41,13 +60,22 @@
 html, body {
   margin: 0;
   padding: 0;
+  /* The letterbox/pillarbox fill. Deliberately the SAME --shadow #root
+     paints as its own ground, so the leftover area around a scaled layout
+     reads as the app's own bezel continuing outward rather than as a gap
+     behind it. html's background paints the whole canvas, so this covers the
+     viewport however much bigger than the layout it is. */
   background: var(--shadow);
   overflow: hidden;
+  /* Full-viewport, where it used to be exactly 640x400. Required, not
+     cosmetic: `overflow: hidden` clips to the padding box, so a body still
+     sized to the layout would CLIP the scaled #root at 640x400 and throw
+     away everything past 1x. */
+  width: 100%;
+  height: 100%;
 }
 
 body {
-  width: 640px;
-  height: 400px;
   font-family: 'Press Start 2P', monospace;
   -webkit-font-smoothing: none;
   font-smooth: never;
@@ -65,13 +93,53 @@ img, .sprite {
    not CSS transitions, so this rule holds globally.) */
 * { transition: none !important; }
 
+/* The layout root stays EXACTLY 640x400 in authored, integer CSS px — every
+   rect in this file is positioned against it and nothing here reflows. The
+   only concession to a resizable window is the transform below, which scales
+   the finished composite as one unit. */
 #root {
-  position: relative;
+  position: absolute;
+  left: 0;
+  top: 0;
   width: 640px;
   height: 400px;
   background: var(--shadow);
   overflow: hidden;
+  /* Window fit (BUG-2). transform-origin at the top-left so the offsets are
+     plain "move the scaled box here" values rather than being folded through
+     a centre point. */
+  transform-origin: 0 0;
+  transform: translate(var(--ui-ox), var(--ui-oy)) scale(var(--ui-scale));
   cursor: url(data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAYAAABzenr0AAAAzElEQVRYR+2X0Q6AIAhF5f8/2jYXZkwEjNSVvVUjDpcrGgT7FUkI2D9xRfQETwNIiWO85wfINfQUEyxBG2ArsLwC0jioGt5zFcwF4OYDPi/mBYKm4t0U8ATgRm3ThFoAqkhNgWkA0jJLvaOVSs7j3qMnSgXWBMiWPXe94QqMBMBc1VZIvaTu5u5pQewq0EqNZvIEMCmxAawK0DNkay9QmfFNAJUXfgGgUkLaE7j/h8fnASkxHTz0DGIBMCnBeeM7AArpUd3mz2x3C7wADglA8BcWMZhZAAAAAElFTkSuQmCC) 14 0, pointer;
+}
+
+/* ---------- Window fit: the modal dialogs (BUG-2) ----------
+   A <dialog> opened with showModal() is promoted to the TOP LAYER, and a
+   top-layer element is NOT affected by an ancestor's transform — verified in
+   this project's own headless Chromium, where a dialog inside a scale(0.5)
+   parent rendered at 1:1 in its unscaled position while its siblings scaled.
+   So #root's transform does not reach these five, and each one carries the
+   same transform itself. They still INHERIT --ui-* from :root: the top layer
+   changes where an element paints, not where it sits in the DOM.
+
+   Each dialog declares its own position as --dlg-x/--dlg-y instead of
+   left/top, because the order of the three functions is what makes the maths
+   come out right: read right to left, the box is first moved to its authored
+   position INSIDE the layout's coordinate space, then that whole space is
+   scaled, then the scaled space is centred in the window — exactly the
+   mapping #root gets. With left/top instead, the browser would place the box
+   before the transform ran and the offset would be applied a second time,
+   scaled, and the dialog would drift away from the scene as the window grew.
+
+   Hit testing needs nothing extra: a transform is part of the box the browser
+   hit-tests, so a click on a scaled button maps back through it natively. */
+#store, #activity, #history, #sessions, #onboarding {
+  left: 0;
+  top: 0;
+  transform-origin: 0 0;
+  transform: translate(var(--ui-ox), var(--ui-oy))
+             scale(var(--ui-scale))
+             translate(var(--dlg-x), var(--dlg-y));
 }
 
 /* ================= Scene ================= */
@@ -602,8 +670,10 @@ img, .sprite {
 
 #store {
   position: fixed;
-  left: 40px;
-  top: 28px;
+  /* Authored position inside the 640x400 layout. Consumed by the
+     shared window-fit transform above, NOT by left/top. */
+  --dlg-x: 40px;
+  --dlg-y: 28px;
   width: 560px;
   height: 288px;
   margin: 0;
@@ -917,8 +987,10 @@ img, .sprite {
 
 #activity {
   position: fixed;
-  left: 140px;
-  top: 27px;
+  /* Authored position inside the 640x400 layout. Consumed by the
+     shared window-fit transform above, NOT by left/top. */
+  --dlg-x: 140px;
+  --dlg-y: 27px;
   width: 360px;
   height: 346px;
   margin: 0;
@@ -1094,8 +1166,10 @@ img, .sprite {
 
 #history {
   position: fixed;
-  left: 40px;
-  top: 44px;
+  /* Authored position inside the 640x400 layout. Consumed by the
+     shared window-fit transform above, NOT by left/top. */
+  --dlg-x: 40px;
+  --dlg-y: 44px;
   width: 560px;
   height: 312px;
   margin: 0;
@@ -1272,8 +1346,10 @@ img, .sprite {
    uses for its own rows). */
 #sessions {
   position: fixed;
-  left: 80px;
-  top: 50px;
+  /* Authored position inside the 640x400 layout. Consumed by the
+     shared window-fit transform above, NOT by left/top. */
+  --dlg-x: 80px;
+  --dlg-y: 50px;
   width: 480px;
   height: 300px;
   margin: 0;
@@ -1554,8 +1630,10 @@ img, .sprite {
 
 #onboarding {
   position: fixed;
-  left: 84px;
-  top: 80px;
+  /* Authored position inside the 640x400 layout. Consumed by the
+     shared window-fit transform above, NOT by left/top. */
+  --dlg-x: 84px;
+  --dlg-y: 80px;
   width: 472px;
   height: 240px;
   margin: 0;
@@ -1605,7 +1683,7 @@ img, .sprite {
    instead — and the real running game (feature-build-and-verify's gate)
    said it read as a purple dome, not a garment: a store card gets away
    with that thumbnail because it sits next to the item's name in a list
-   of garments, and this modal has no such context. Showing the dexel
+   of garments, and this modal has no such context. Showing the Dexel
    wearing it is both legible and the actual point of the screen.
    overflow:hidden does the cropping; isolation:isolate is MANDATORY on
    any box holding a .tint-shade, or the multiply blend reaches through to
@@ -1766,7 +1844,7 @@ img, .sprite {
    the 12px of previously-EMPTY space at the bottom of #panel-status
    (padding-box 66px tall; #ticker ends at 54), specifically so the
    titlebar's top-left cluster stays coin-then-level and nothing else.
-   Empty text until the dexel is named, so a fresh install shows nothing
+   Empty text until the Dexel is named, so a fresh install shows nothing
    at all rather than a placeholder. */
 #status-name {
   position: absolute;

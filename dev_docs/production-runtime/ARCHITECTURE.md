@@ -1,10 +1,10 @@
-# dexel — Production Distribution, CLI & Background Runtime (architecture)
+# Dexel — Production Distribution, CLI & Background Runtime (architecture)
 
 Status: **design / decision record**, 2026-08-22. No code was written for this
 document. It is the record implementation agents build from; where it says
 "decided", do not re-derive.
 
-Scope: how dexel becomes an installable, developer-native product — a CLI
+Scope: how Dexel becomes an installable, developer-native product — a CLI
 control plane, a background runtime that outlives every window, and a hosted
 release channel — starting from the repo exactly as it stands today.
 
@@ -182,7 +182,7 @@ reports and the version the runtime runs **cannot disagree**, which is the
 single most common failure mode of split CLI/daemon products.
 
 `dexel-desktop` (the Tauri app) is a **second, optional artifact**. It is not
-required to run dexel and it is not required to see the UI (`dexel open` falls
+required to run Dexel and it is not required to see the UI (`dexel open` falls
 back to the default browser).
 
 ### Decision 2 — Keep `package main`; add files. Do not restructure.
@@ -447,7 +447,7 @@ simply no longer the readiness contract.
 
 While paused:
 
-* **`provider.Stop()` is called.** dexel does not observe input while the user
+* **`provider.Stop()` is called.** Dexel does not observe input while the user
   has said stop. This is the strongest honest reading of "pause tracking", and
   it is cheap: `activity.Provider` already documents `Start`/`Stop` as the
   lifecycle pair, and every provider "degrades to reporting blind zero-signal
@@ -522,13 +522,25 @@ idle | onBreak`. **Do not add a fourth.** Instead:
 * On resume the runtime writes an immediate save, so a crash right after resume
   cannot come back paused.
 * A paused runtime that starts up logs one line and `dexel status` reports
-  `paused: true` — a paused-and-forgotten dexel must be obvious, never mute.
+  `paused: true` — a paused-and-forgotten Dexel must be obvious, never mute.
 
 ---
 
 ## 7. The desktop inversion
 
 ### Decision 17 — `dexel open` owns the window; the runtime owns itself
+
+> **STATUS: IMPLEMENTED 2026-08-23** (macOS arm64). Every row of the table
+> below has landed in `desktop/src-tauri/src/lib.rs`, including the
+> `PATH → BinDir → bundled` driver lookup, and was verified end to end:
+> launch with no runtime starts one and `dexel status` sees it; closing the
+> window leaves the runtime observing and autosaving; relaunching attaches to
+> the same runtime instead of spawning a second server. One fix outside this
+> table was needed to make the window reachable at all: `dexel open` handed
+> `/Applications/dexel.app` — a DIRECTORY — to `exec.Command`, which fails
+> with "permission denied", so a bundle now launches via `open -a` and a
+> failed launch falls through to the browser instead of erroring out.
+> The "today" column is kept as the record of what was replaced.
 
 Current flow (`desktop/src-tauri/src/lib.rs`): *shell spawns server → parses
 stdout → builds window → kills server on exit.*
@@ -560,9 +572,22 @@ shell locates a `dexel` to drive in this order: `PATH` → `paths.BinDir()`'s
 convention (`~/.local/bin/dexel`) → the bundled copy. It then runs
 `<dexel> start` (which detaches) and `<dexel> status --json`. So
 `scripts/build-sidecar.sh` and `desktop.yml`'s `sidecar` job keep working
-verbatim; only the meaning of the file changes. Renaming the bundled binary from
-`dexel-server` to `dexel` is cosmetic and deferred (it touches the triple-named
-filenames `desktop.yml` asserts at lines 93-96).
+verbatim; only the meaning of the file changes.
+
+> **Update (implemented 2026-08-23).** The rename this paragraph called
+> "cosmetic and deferred" was neither. It was done — the bundled artifact is
+> now **`Dexel Runtime`** — because macOS names a Login Items entry after the
+> executable it launches, so the pane read "dexel-server". And the obvious
+> target, `dexel`, is unusable: `Contents/MacOS/dexel` is already the Tauri
+> MAIN binary, the volume is case-insensitive, and `tauri-bundler`'s
+> `copy_binaries` runs BEFORE `copy_binaries_to_bundle` — so naming the
+> daemon `dexel`/`Dexel` would have let the GUI shell silently overwrite it,
+> leaving a login item that opens a window instead of starting a runtime.
+> `Dexel Runtime` matches the product's own word for it (`dexel runtime`,
+> `runtime.json`, `runtime.lock`). It touched `externalBin`, the shell-plugin
+> capability scope, `SIDECAR_NAME`, `build-sidecar.sh`, `desktop.yml`'s
+> assertion, and autostart's bundle probe (which accepts the legacy name too,
+> so an older installed bundle still resolves).
 
 **`dexel open` without the desktop app:** looks for `dexel-desktop` on `PATH`,
 then in `BinDir`, then a platform app location (`/Applications/dexel.app`,

@@ -5,8 +5,11 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/jawwadzafar/dexel/app/internal/store"
 )
 
 // TestEphemeralPortHandshake exercises the actual ADR 0015 / F3-design.md
@@ -211,5 +214,73 @@ func TestVersionLineReflectsTheVersionVar(t *testing.T) {
 	}
 	if !strings.Contains(line, buildVersion()) {
 		t.Fatalf("versionLine() = %q, want it to also contain buildVersion()'s output %q", line, buildVersion())
+	}
+}
+
+// TestConfigWriteThroughPreservesAutostart is the regression test for a
+// silent clobber: the runtime's config write-through built a fresh
+// store.ConfigData with only the two halves it owns, and SaveConfig
+// marshals the WHOLE struct — so the zero-value `autostart` field was
+// written over the real one on every SET_NAME and every SESSION_START.
+//
+// store/config.go's own doc comment on that field says it is "written ONLY
+// by `dexel autostart enable`/`disable` ... nothing else in this codebase
+// may set it", which is the ADR-level explicit-consent posture for
+// autostart. The runtime was setting it, to "".
+//
+// It was low-severity by luck rather than design — the field is advisory
+// and `dexel autostart status` always asks the OS directly — but it lost
+// which mechanism was installed, and a comment two lines above the bug
+// promised that "writing either half never clobbers the other".
+func TestConfigWriteThroughPreservesAutostart(t *testing.T) {
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "config.json")
+
+	// A config as `dexel autostart enable` leaves it.
+	if err := store.SaveConfig(cfgPath, store.ConfigData{
+		Name:      "Marvin",
+		Autostart: "launchd",
+	}); err != nil {
+		t.Fatalf("seed config: %v", err)
+	}
+
+	// The runtime names a session (the SESSION_START path) and renames the
+	// dexel (the SET_NAME path).
+	if err := writeConfigThrough(cfgPath, "Zaphod", map[string]string{"7": "Fix Bug #404"}); err != nil {
+		t.Fatalf("writeConfigThrough: %v", err)
+	}
+
+	got, err := store.LoadConfig(cfgPath)
+	if err != nil {
+		t.Fatalf("reload config: %v", err)
+	}
+	if got.Autostart != "launchd" {
+		t.Errorf("autostart = %q after a name write-through, want %q — the runtime must never touch this field", got.Autostart, "launchd")
+	}
+	if got.Name != "Zaphod" {
+		t.Errorf("name = %q, want %q", got.Name, "Zaphod")
+	}
+	if got.SessionNames["7"] != "Fix Bug #404" {
+		t.Errorf("sessionNames = %v, want session 7 named", got.SessionNames)
+	}
+}
+
+// TestConfigWriteThroughOnAMissingFileStillWrites pins the first-run path:
+// no config.json yet is not an error (LoadConfig returns a zero value), so
+// the write-through must create the file rather than refuse.
+func TestConfigWriteThroughOnAMissingFileStillWrites(t *testing.T) {
+	cfgPath := filepath.Join(t.TempDir(), "config.json")
+	if err := writeConfigThrough(cfgPath, "Ford", nil); err != nil {
+		t.Fatalf("writeConfigThrough on a missing file: %v", err)
+	}
+	got, err := store.LoadConfig(cfgPath)
+	if err != nil {
+		t.Fatalf("reload: %v", err)
+	}
+	if got.Name != "Ford" {
+		t.Errorf("name = %q, want %q", got.Name, "Ford")
+	}
+	if got.Autostart != "" {
+		t.Errorf("autostart = %q on a fresh config, want empty", got.Autostart)
 	}
 }

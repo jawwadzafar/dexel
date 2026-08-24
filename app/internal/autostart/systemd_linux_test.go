@@ -287,12 +287,18 @@ func TestEnablePlatformDisablePlatformDispatch(t *testing.T) {
 		}
 	})
 
-	mech, err := enablePlatform("/bin/true", "/dev/null")
+	// Options{} is the zero value on purpose: BareExecutable is a
+	// macOS-only opt-out of .app bundle attribution, and Linux's unit
+	// always names exePath, so the zero value IS Linux's only behaviour.
+	res, err := enablePlatform("/bin/true", "/dev/null", Options{})
 	if err != nil {
 		t.Fatalf("enablePlatform: %v", err)
 	}
-	if mech != MechanismSystemdUser {
-		t.Fatalf("enablePlatform mechanism = %q, want %q (systemd is usable on this box)", mech, MechanismSystemdUser)
+	if res.Mechanism != MechanismSystemdUser {
+		t.Fatalf("enablePlatform mechanism = %q, want %q (systemd is usable on this box)", res.Mechanism, MechanismSystemdUser)
+	}
+	if res.Program != "/bin/true" {
+		t.Fatalf("enablePlatform program = %q, want the exePath it was given (%q) -- Linux never substitutes", res.Program, "/bin/true")
 	}
 
 	st, err := queryPlatform()

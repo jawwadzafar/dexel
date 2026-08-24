@@ -1,4 +1,4 @@
-# UI spec — dexel v2 (HTML / NES.css frontend)
+# UI spec — Dexel v2 (HTML / NES.css frontend)
 
 Target stack per **ADR 0011**: Go backend, HTML/JS/NES.css frontend served
 over `localhost:8080`, later wrapped by Wails v3 as a floating frameless
@@ -16,14 +16,17 @@ slots, prices, persistence).
 
 ## 0. Ground rules
 
-* **Window: 640 x 400 logical px, fixed.** Not responsive. No media queries,
+* **Layout: 640 x 400 logical px, fixed.** Not responsive. No media queries,
   no flex reflow that could move a pixel. The layout below is absolute
   positioning inside a 640x400 root, and that is deliberate: a desktop
   companion at a fixed integer scale is the entire premise (art-direction
-  non-negotiable #7).
+  non-negotiable #7). The *window* is resizable and the whole 640x400 unit is
+  scaled to fit it — see **§0.1**, which is the only place the window's size
+  enters this spec at all.
 * **Every length is an integer px.** No `%`, no `em`, no `rem`, no `vh` in the
   chrome. Fractional layout at this scale produces the half-pixel blur the art
-  direction bans.
+  direction bans. (§0.1's letterbox container is the one `%` in the
+  stylesheet, and it is outside the layout, not in it.)
 * **Font: `Press Start 2P`** (the NES.css companion font), bundled locally —
   **never** from a CDN, because the app must work fully offline (ADR 0001).
   It is an 8x8 cell monospace: at `font-size: 8px` one character is exactly
@@ -37,6 +40,84 @@ slots, prices, persistence).
 * `body { cursor: url(...) }` via NES.css's `.nes-pointer` on `<body>`.
 * No animation longer than 400 ms, no easing curves, no transitions on
   colour. Retro UI snaps.
+
+### 0.1 Window fit — scaling the fixed layout to the real window
+
+The native window (ADR 0015 / F3-design.md §2) opens at an inner size of
+**660x460** and the user can resize it. §0's layout is 640x400 and does not
+reflow, so the two have to be reconciled somewhere. They are reconciled here,
+and only here.
+
+**The contract.** The 640x400 layout is scaled **as one unit** to fit the
+window: aspect ratio preserved exactly, never stretched on one axis, centred,
+with the leftover area letterboxed/pillarboxed in `var(--shadow)` — the same
+colour `#root` already paints as its own ground, so the fill reads as the
+app's bezel continuing outward rather than as a gap behind the layout. The
+layout is never clipped, and no rect in §2 onwards ever moves relative to any
+other.
+
+**The scale factor.** `render/viewport.ts` computes it and publishes it as
+three custom properties on `:root` — `--ui-scale` (unitless), `--ui-ox` /
+`--ui-oy` (integer px) — recomputed on load, on `resize`, and on a
+device-pixel-ratio change:
+
+```
+exact = min(viewportWidth / 640, viewportHeight / 400)
+
+exact < 1   ->  use exact          (window smaller than the layout: shrink to
+                                    fit; clipping would hide controls)
+otherwise   ->  snap DOWN to the nearest CRISP factor if that costs at most
+                1/8 of the size, else use exact
+```
+
+A **crisp** factor is one where one art pixel covers a whole number of *device*
+pixels: an integer at `devicePixelRatio: 1`, and also 1.5x, 2.5x, … on a
+retina display where 1.5 CSS px is exactly 3 device px. Integer/crisp factors
+are strongly preferred because a fractional factor gives nearest-neighbour art
+pixels uneven widths and rasterises the 8px pixel font off its own grid — both
+visibly mushy. **1/8 is where that trade turns**: below it the size difference
+is not noticeable, above it (a 2x-capable window rendered at 1x) the empty
+margin is far worse than slightly soft pixels. Snapping only ever goes *down*;
+snapping up would overflow the window. Measured results:
+
+| window | exact | applied | note |
+| --- | --- | --- | --- |
+| 660x460 (default) | 1.03125 | **1x**, offset (10, 30) | the shipping look, unchanged and centred |
+| 700x900 (tall) | 1.09375 | **1x**, offset (30, 250) | aspect preserved; the tall bands are the window's own shape |
+| 900x600 | 1.40625 | **1.40625x**, offset (0, 19) | 1x would waste 260x200 px — fractional wins |
+| 1320x920 | 2.0625 | **2x**, offset (20, 60) | integer, perfectly crisp |
+
+**The mechanism.** A single `transform: translate(--ui-ox, --ui-oy)
+scale(--ui-scale)` with `transform-origin: 0 0` on `#root`, plus
+`image-rendering: pixelated`. A transform and **not** `zoom`: a transform is
+applied *after* layout, so every box stays exactly integral in CSS px and the
+finished composite is scaled uniformly, whereas `zoom` re-lays-out at the
+scaled size and at a fractional factor rounds every box independently — which
+lets 8px cells drift a pixel apart and breaks the grid this design is built on.
+
+**Modal dialogs carry the same transform themselves.** A `<dialog>` opened
+with `showModal()` is promoted to the **top layer**, and a top-layer element
+is *not* affected by an ancestor's transform (verified in this project's own
+headless Chromium: a dialog inside a `scale(0.5)` parent rendered at 1:1).
+Custom-property inheritance still reaches it, so each of the five dialogs
+declares its authored position as `--dlg-x` / `--dlg-y` instead of
+`left`/`top` and applies
+`translate(--ui-ox, --ui-oy) scale(--ui-scale) translate(--dlg-x, --dlg-y)`
+— the function order matters: the box is placed inside the layout's
+coordinate space *first*, then that space is scaled, then centred. With
+`left`/`top` the offset would be applied once by layout and again by the
+transform, and the modal would drift away from the scene as the window grew.
+
+**Hit targets need nothing extra.** A CSS transform is part of the box the
+browser hit-tests, so a click at a scaled position maps back through it
+natively. Nothing in `app/frontend/src` does *viewport-coordinate* arithmetic
+that a transform could invalidate — no `getBoundingClientRect`, no `clientX`.
+(The store's scrollbar thumb reads `scrollTop`/`scrollHeight`/`clientHeight`
+off `#store-grid`, which are element-local **layout** metrics in unscaled CSS
+px; a transform is applied after layout and does not touch them.) Verified
+with real CDP-dispatched clicks at 1x, 1.40625x and 2x: the hamburger, every
+menu item, a store category row, a card action button, and each modal's X all
+hit the element they are drawn on.
 
 ## 1. DOM contract
 
@@ -150,7 +231,7 @@ after) is zero titlebar layout work.
 | `#hud-level` | 80, 8, 40, 8 | `LV 5`, 8px, `var(--cream)` |
 | `#menu-open` | 600, 4, 32, 16 | hamburger button, `padding: 0`. Icon is three plain 1px-tall `.bar` divs inside `.menu-icon` (16x7), **not** a `☰` glyph — a fancy character renders blurry/inconsistent at this app's 1x DPI in the pixel font, the same lesson A2 already recorded for `→` |
 | `#menu-panel` | 496, 26, 136, auto | dropdown opened by `#menu-open`, closed by default (`display:none`, shown via `.visible`); right edge (632) lines up with `#menu-open`'s right edge (632) so it never overflows the 640px titlebar |
-| `#menu-panel-title` | inside `#menu-panel`, 128 x 16 | static `MENU`, replaced by the dexel's name once set (§7.4), 8px `var(--screen-dim)`, bottom rule separating it from the items |
+| `#menu-panel-title` | inside `#menu-panel`, 128 x 16 | static `MENU`, replaced by the Dexel's name once set (§7.4), 8px `var(--screen-dim)`, bottom rule separating it from the items |
 | `.menu-item` (×N) | inside `#menu-panel`, 128 x 20 each, 4px gap | one `nes-btn` per launcher, in menu order: `#store-open` (`[S] STORE`), `#activity-open` (`[A] ACTIVITY`), `#history-open` (`[H] HISTORY`), `#sessions-open` (`[W] SESSIONS`, P2, §9.1), and (PR-5, §2.4) `#pause-toggle` — label and action both flip live between `[P] PAUSE` (sends `PAUSE`) and `[P] RESUME` (sends `RESUME`), decided by `state.paused` read fresh from the store at click time, never assumed from the label |
 | `#paused-badge` | 380, 8, 96, 8 | (PR-5, §2.4) the always-visible paused indicator — an 8px dim solid square (`#paused-badge-dot`) + `PAUSED`, 8px `var(--screen-dim)`. Empty/hidden (`display:none` / `.visible`, same idiom as `#session-pill`) unless `state.paused` is true. Sits clear of both `#hud-level` (ends 120) and `#session-pill`'s box (132..372, §9.5) — a session can be active *and* paused at the same time, so both must stay visible together |
 
@@ -199,6 +280,18 @@ not decoration.
   user's machine (`activityLine`, from ADR 0009's app-identity mapping —
   `"Coding in VS Code"`, `"In the terminal"`, `"Working..."`). It is `cream`,
   has no prefix, and carries the mood dot.
+* **It is now drawn from a POOL per app type, not one string per state.** The
+  examples above are a subset. The server classifies the frontmost app
+  (`activity.AppTypeOf`) and only offers phrasings that type licenses: a work
+  verb ("Coding in X", "Typing in X") exists ONLY for coding-class apps, and
+  the non-coding pools are presence-only ("In X", "Frontmost: X") — which is
+  why `"Coding in Brave"` is now unrepresentable rather than merely unlikely.
+  The choice is a deterministic hash of (app id, 45s clock bucket), so the
+  line re-rolls at most once per 45s while the frontmost app is unchanged;
+  a per-tick random pick at 1Hz would read as a broken UI. The 34-char cap on
+  this row is enforced SERVER-side now: a candidate that would clip is not
+  offered, and if nothing fits, the shortest true rendering wins rather than a
+  shorter, less true claim.
 * The three rows below it are the character's own chatter. They are dimmer, are
   prefixed `>`, and are separated by the rule. **Never merge the two zones,
   never let a ticker line borrow a word from the real one.**
@@ -859,7 +952,7 @@ Field notes the implementers must not improvise on:
   server-side.
 * `config` — Phase P1 (Identity & first minutes,
   `docs/plan/PRODUCT-EVOLUTION.md` §5). Exactly one field today,
-  `config.name`: the dexel's name, **user-authored**, `""` when unset. The
+  `config.name`: the Dexel's name, **user-authored**, `""` when unset. The
   server always sends the block; it is optional client-side
   (`wire.ts: config?`) only so a pre-P1 server degrades to "unnamed".
 
@@ -928,7 +1021,7 @@ Field notes the implementers must not improvise on:
   decided **once, by the server, at boot**, as *(no save of any kind existed)*
   `&&` *(`config.name` is empty)*. Both halves matter: an existing
   `state.db`/`state.json`/legacy Rust save means somebody has played here even
-  if they never named the dexel, and a named `config.json` means the one
+  if they never named the Dexel, and a named `config.json` means the one
   question onboarding asks is already answered even on a machine whose save was
   wiped. A tampered, future-schema or unreadable save all count as "a save
   existed" — the failure worth avoiding is nagging a returning user, not
@@ -1038,7 +1131,7 @@ replaces the old.
   a panic and never a partial write.
 * `EQUIP_ITEM` with a `tintId` the player does not own is rejected — equipping
   is not a back door around `BUY_TINT`.
-* `SET_NAME` (Phase P1, §7) sets the dexel's name. `name` is **raw user
+* `SET_NAME` (Phase P1, §7) sets the Dexel's name. `name` is **raw user
   text** and passes through exactly one door, `game.NormalizeName` (see
   `config` in §6.1 for the rules). A rejected name — empty, whitespace-only,
   control-characters-only, or the `name` key missing entirely — is a
@@ -1090,7 +1183,7 @@ replaces the old.
 ## 7. The onboarding modal
 
 Phase P1 — Identity & first minutes (`docs/plan/PRODUCT-EVOLUTION.md` §5,
-§2.9). Shown **once, ever**, on a genuine fresh install: name your dexel,
+§2.9). Shown **once, ever**, on a genuine fresh install: name your Dexel,
 pick a starter colour, get a warm hello. Built to the §4 store modal's
 mechanics (native `<dialog>` + `showModal()`, the shared `#scrim`, one
 `'close'` event every dismissal path funnels through) — not a second modal
@@ -1159,7 +1252,7 @@ portrait changing pose mid-decision is noise). The box needs
 > the 40x40 tintable hoodie *thumbnail* at 2x here. Rendered in the real
 > running game it read as a purple dome, not a garment: a store card gets
 > away with that thumbnail because it sits next to the item's name in a list
-> of garments, and this modal has no such context. Showing the dexel
+> of garments, and this modal has no such context. Showing the Dexel
 > *wearing* the colour is both legible and the actual point of the screen.
 
 ### 7.2 The swatch row, and what a fresh install actually owns
@@ -1206,7 +1299,7 @@ the behaviour rather than needing its own wiring.
 > flag up.** The alternatives are both worse. Leaving `onboarding: true`
 > re-opens the modal on the very next 1 Hz broadcast — a nag loop. Letting
 > the client suppress it locally forever is the client asserting state the
-> server never sent, which §6.1's whole contract forbids. Naming the dexel
+> server never sent, which §6.1's whole contract forbids. Naming the Dexel
 > `"dexel"` is the only option that is both honest and quiet: the user opted
 > out of *choosing* a name, not into being asked again — and `SET_NAME`
 > already exists for renaming later. `"dexel"` is pinned on both sides
@@ -1231,7 +1324,7 @@ welcome toast, is composed by the server).
 | Where | id | Behaviour |
 |---|---|---|
 | Status panel, bottom-right | `#status-name` | `left:6 top:55 288x10`, `var(--gold)`, right-aligned, truncated to 24. Sits in the 12px of previously-**empty** space below `#ticker` (the panel's padding box is 66px tall; the ticker ends at 54). Empty — and therefore invisible — until named. |
-| Hamburger panel heading | `#menu-panel-title` | The static text `MENU` becomes the dexel's name once set, truncated to 16, falling back to `MENU` when unset. |
+| Hamburger panel heading | `#menu-panel-title` | The static text `MENU` becomes the Dexel's name once set, truncated to 16, falling back to `MENU` when unset. |
 
 > **[DESIGN CALL] / FLAGGED FOR THE OWNER: not the titlebar cluster.**
 > P1's exit criterion says the name is "echoed in the HUD/titlebar", but the
@@ -1289,7 +1382,7 @@ Named explicitly so nobody re-derives them as missing features.
 Phase P2 — Sessions & the session-complete moment
 (`docs/plan/PRODUCT-EVOLUTION.md` §3 Bet 1 / §5 Phase P2, ADR 0017,
 `docs/plan/P2-design.md`). A session is a user-declared work interval:
-start it (optionally named), work, stop it, and dexel hands back a cozy
+start it (optionally named), work, stop it, and Dexel hands back a cozy
 summary card — *"here's what we did together."* It grants nothing economic
 and gates nothing: it is a **lens** over tracking that already happens
 (P2-design §1), never a second earning path, and never a hold on the
@@ -1431,7 +1524,7 @@ sentence (§3).
 Everything below is **presentation only**. `render/scene.ts` owns it, it sends
 no `ClientAction`, it reads nothing but `activeState` and
 `stats.today.mouseActiveSeconds` off the state the server already sent, and it
-adds **no wire field**. Per PRODUCT-EVOLUTION.md §2.6 dexel is alive *without
+adds **no wire field**. Per PRODUCT-EVOLUTION.md §2.6 Dexel is alive *without
 simulation mechanics*: there is no meter, no need, no decay, nothing that
 accumulates while you are away and nothing that asks anything of you. The
 timers here are a display loop and mean nothing.
@@ -1467,7 +1560,7 @@ each end of it, clear of the mouse slot.
    not a claim about what you are doing.
 2. **sleep** — `onBreak` owns its pose outright, and it also **suppresses the
    celebration**: the sleep pose means 30 s+ of genuine idleness, so an
-   auto-ended session would otherwise have a sleeping dexel cheer at an empty
+   auto-ended session would otherwise have a sleeping Dexel cheer at an empty
    chair.
 3. **mouse** — the signal-driven pose.
 4. **typing** — the 5 fps `type_a`/`type_b` cycle.
@@ -1481,11 +1574,13 @@ Every beat is a **sprite swap on the one existing 200 ms frame timer** — no
 CSS transition, no easing curve, no `requestAnimationFrame`. §0's "no
 animation longer than 400 ms" governs *transitions*, and these are frame
 sequences on a fixed-interval timer, exactly like the `type_a`/`type_b` cycle
-that already ships. No second interval was added, and the tick rebuilds the
-dev composite **only when the frame it would paint changed**, so an idle dexel
-is quiet between beats: measured in the running game, `idle` costs
-**0.47 rebuilds/s** against `coding`'s 5.00/s, and `onBreak` stays at exactly
-0 (ADR 0011's all-day cost promise).
+that already ships. No second interval was added, and the tick touches the dev
+composite **only when the frame it would paint changed**, so an idle Dexel is
+quiet between beats: measured in the running game, `idle` costs **0.47 frame
+swaps/s** against `coding`'s 5.00/s, and `onBreak` stays at exactly 0 (ADR
+0011's all-day cost promise). A "swap" is now literally two `display`/`opacity`
+writes — see §10.5, which replaced the per-tick rebuild those numbers were
+originally measured against.
 
 | beat | sequence | length | cadence |
 | --- | --- | --- | --- |
@@ -1517,6 +1612,59 @@ invents an event):
 
 Nothing else calls it. There is no timed "celebrate occasionally", and no
 client-side inference of a milestone.
+
+### 10.5 The compositing contract — build the scene DOM once, then mutate it
+
+This is a hard rule, not a preference, and it exists because breaking it
+produced a shipped bug (**BUG-1**: "the character blinks on and off for
+milliseconds"). `render/scene.ts` used to `innerHTML = ''` its subtree and
+recreate every layer with a fresh `<img>` on every render — and renders happen
+on each ~1 Hz state broadcast *and* on every 200 ms animation tick.
+
+**Why that flickers.** A brand-new `<img>` has no bitmap to paint until its
+resource is decoded, and Chrome decodes asynchronously even for an image
+already in cache. Worse for a tinted layer: `--form` is a CSS `mask-image`,
+and a mask whose bitmap is not ready masks the fill away *entirely*, so the
+flat tint vanished and only the grayscale `.tint-shade` showed. Captured from
+the running game with `Page.startScreencast` (which emits every composited
+frame), a 60 s activity cycle of the old build produced **17 distinct
+character images where only 8 poses exist**: three frames with the character
+completely absent, one rendered pure white, one with the hoodie but no hands.
+
+**The rules.**
+
+1. **Identity.** Every element the scene can show is created once, in
+   `buildSceneSkeleton()`, and lives for the page's lifetime — one `<img>` per
+   slot, one chair layer pair, one hoodie overlay. No render path creates,
+   removes or `innerHTML`-clears anything. `src`, `--form` and `--tint` are
+   written **only when the value changed** (`render/tint.ts`'s `setSrc` /
+   `updateTintLayer`), so a render where nothing changed writes nothing.
+2. **Decode-free frame swaps.** The nine developer frames of §10.1 are
+   **stacked**: nine form layers and nine base images, each permanently
+   pointed at its own file, exactly one of each shown. A frame swap is two
+   style writes, never an image load and never a mask change.
+3. **The form stack hides with `opacity: 0`, not `display: none`.** A
+   `display: none` layer is never painted and therefore its mask is never
+   decoded, so the *first* appearance of each pose still flashed white.
+   `opacity: 0` keeps all nine masks in the paint tree and decoded while
+   contributing no pixels.
+4. **Pre-warm everything.** `render/preload.ts` fetches *and* `decode()`s every
+   sprite the scene can show — all nine `dev_form_*`/`dev_base_*` frames plus
+   every catalog item's `sprite`/`detail` — once, at startup. 368 KB total off
+   localhost, held for the page's lifetime so the decodes are not collected.
+5. **What the teardown used to do implicitly, say explicitly.** A slot with no
+   sprite (an `*_none` item) stays hidden because its `<img>` is hidden, not
+   because a holder was left empty; a chair with no catalog item at all hides
+   its holder; "one child per holder" holds because nothing ever appends a
+   second one.
+
+**Exit criterion, and how it is checked.** Over a screencast of a full 60 s
+activity cycle (typing at 5 fps, idle with breath/stretch, `onBreak` sleep,
+the mouse pose), *every* composited frame must show a complete character. The
+current build: **261 frames, 7 distinct character images, all of them real
+poses, zero absent/white/partial composites**, and a `MutationObserver` on
+`#scene-sprites` counts **0 added and 0 removed nodes** across 14 s of
+animation (the old build: 132 and 132).
 
 ### 10.5 The hoodie overlay rides the lift
 

@@ -49,6 +49,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"time"
 
 	"github.com/jawwadzafar/dexel/app/internal/lifecycle"
@@ -635,14 +636,22 @@ func cmdOpen(args []string) int {
 
 // openURL launches the desktop app if one is installed, else the default
 // browser, on the runtime's own loopback URL.
+//
+// A desktop app that fails to launch FALLS THROUGH to the browser instead
+// of failing the command. `dexel open`'s job is to show the user their
+// game; a broken or half-installed window is a reason to use the other
+// front door, not a reason to show nothing (RUN-MODES.md: "the browser
+// fallback is not a consolation prize").
 func (e *cliEnv) openURL(url string) int {
 	if app := e.findDesktopApp(); app != "" {
+		name, argv := desktopAppLaunchCommand(e.goos, app, url)
 		fmt.Fprintf(e.out, "opening %s in %s\n", url, app)
-		if err := launchDetached(app, []string{url}); err != nil {
+		if err := launchDetached(name, argv); err != nil {
 			fmt.Fprintf(e.errOut, "dexel: launch %s: %v\n", app, err)
-			return 1
+			fmt.Fprintln(e.errOut, "dexel: falling back to the browser")
+		} else {
+			return 0
 		}
-		return 0
 	}
 	name, argv := browserOpenCommand(e.goos, url)
 	fmt.Fprintf(e.out, "opening %s\n", url)
@@ -652,6 +661,31 @@ func (e *cliEnv) openURL(url string) int {
 		return 1
 	}
 	return 0
+}
+
+// desktopAppLaunchCommand is how to start the desktop app that
+// findDesktopApp resolved (ARCHITECTURE.md Decision 17). Pure, for the
+// same reason browserOpenCommand below is.
+//
+// The macOS branch is not a stylistic choice. A `.app` is a DIRECTORY, not
+// an executable, so handing its path to exec.Command fails with
+// "permission denied" (EACCES) — which is exactly what `dexel open` did
+// the moment a dexel.app existed in /Applications, the one path
+// desktopAppCandidates points at on darwin. `open -a <bundle>` is how a
+// bundle is launched, and it RAISES an already-running instance instead of
+// starting a second copy, which is the behaviour `dexel open` wants for a
+// window that is meant to be reopened over and over.
+//
+// No URL is passed to the bundle: the desktop shell resolves the runtime
+// itself via `dexel-server status --json` (desktop/src-tauri/src/lib.rs),
+// and a lock-holding runtime is unique, so there is nothing to
+// disambiguate. A bare executable named dexel-desktop still gets the URL
+// as its single argv element, the way it always did.
+func desktopAppLaunchCommand(goos, app, url string) (string, []string) {
+	if goos == "darwin" && strings.HasSuffix(app, ".app") {
+		return "open", []string{"-a", app}
+	}
+	return app, []string{url}
 }
 
 // browserOpenCommand is the per-OS "open this URL in whatever the user
@@ -699,8 +733,13 @@ func desktopAppCandidates(goos, binDir, localAppData string) []string {
 	switch goos {
 	case "darwin":
 		// The .app bundle itself, opened via `open` — which is what a
-		// macOS app is, rather than an executable on a path.
-		out = append(out, "/Applications/dexel.app")
+		// macOS app is, rather than an executable on a path. Capital D:
+		// the bundle is named after tauri.conf.json's productName
+		// ("Dexel"), not after the lowercase binary inside it. macOS
+		// paths are case-insensitive by default so the old
+		// "dexel.app" spelling usually still resolved — this is a
+		// correctness statement, not a bug fix.
+		out = append(out, "/Applications/Dexel.app")
 	case "windows":
 		if localAppData != "" {
 			out = append(out, filepath.Join(localAppData, "Programs", "dexel", exe))

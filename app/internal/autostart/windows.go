@@ -27,21 +27,26 @@ import (
 	"golang.org/x/sys/windows/registry"
 )
 
-func enablePlatform(exePath, logPath string) (Mechanism, error) {
+func enablePlatform(exePath, logPath string, opts Options) (Result, error) {
 	// logPath is unused here: the Run key has no supervisor and no log
 	// redirection of its own — `dexel start` (which this points at, via
 	// windowsRunValueData) owns its own log file, the same reasoning as
 	// the Linux XDG fallback.
+	//
+	// opts is unused for the same reason it is unused on Linux:
+	// BareExecutable opts out of macOS .app bundle attribution, and the
+	// Run key always names exePath. A no-op, not an error.
 	_ = logPath
+	_ = opts
 	key, _, err := registry.CreateKey(registry.CURRENT_USER, windowsRunKeyPath, registry.SET_VALUE)
 	if err != nil {
-		return MechanismNone, fmt.Errorf("open/create Run key: %w", err)
+		return Result{}, fmt.Errorf("open/create Run key: %w", err)
 	}
 	defer key.Close()
 	if err := key.SetStringValue(windowsRunValueName, windowsRunValueData(exePath)); err != nil {
-		return MechanismNone, fmt.Errorf("set Run value: %w", err)
+		return Result{}, fmt.Errorf("set Run value: %w", err)
 	}
-	return MechanismWindowsRun, nil
+	return Result{Mechanism: MechanismWindowsRun, Program: exePath}, nil
 }
 
 // disablePlatform deletes the value. Idempotent: deleting an

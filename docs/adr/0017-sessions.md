@@ -4,13 +4,13 @@ Status: accepted (2026-08-22, P2 design pass) · Realises PRODUCT-EVOLUTION Bet 
 
 ## Context
 
-dexel's loop is complete and honest: real content-free activity → work → sprints
+Dexel's loop is complete and honest: real content-free activity → work → sprints
 → Dev Cash → a wardrobe that visibly changes the scene. What it has never had is
 **intention going in** and **occasion coming out**. Coins simply appear while you
 type. PRODUCT-EVOLUTION's thesis names the missing verbs —
 **INTENTION → HONEST REFLECTION → MEMORY** — and calls Sessions "the keystone of
 the whole thesis" because it is the container that turns silent accrual into
-*"I sat down to work with dexel, and here's what we did together."*
+*"I sat down to work with Dexel, and here's what we did together."*
 
 Everything a session needs is **already on the boundary**. `engine.TickResult`
 emits `KeystrokeDelta`, `MouseActive`, `FocusSessionsCompleted`, `FocusRunSeconds`,
@@ -81,7 +81,7 @@ boundary most at risk of being crossed by accident"* — and it is chosen over
 putting the name in the MAC'd row for three reasons that survive scrutiny:
 
 - **A project name is closer to work content than a pet name is.** ADR 0014
-  allow-listed the dexel's name as "a *different category* from observed
+  allow-listed the Dexel's name as "a *different category* from observed
   activity — data the user deliberately writes about their own pet." A
   *timestamped series* of project names is a work journal: it answers *what you
   were working on, and when*. That is the same artifact ADR 0013 refused when it
@@ -126,18 +126,18 @@ table will hang "first named session" / "10 sessions" off exactly this data and
 grant *earn-only cosmetics*, which is where a session's reward becomes visible on
 screen (ADR 0008) without ever entering the priced economy.
 
-**4. End rules are decided by what dexel can honestly know.** Closing the app
+**4. End rules are decided by what Dexel can honestly know.** Closing the app
 does **not** end a session — the in-progress session lives in the signed
 snapshot and resumes on the next boot, because the runtime already tracks
 independently of any window and "abandoning a session loses nothing" is a P2
 requirement. But an open container must never claim silence as work:
 
 - **Idle auto-end (2 h), with the end backdated to the last observed activity.**
-  This is ADR 0010 applied to a container: dexel knows when it last saw input; it
+  This is ADR 0010 applied to a container: Dexel knows when it last saw input; it
   does **not** know you were still in your session during the silence, so it
   refuses to claim it. Backdating also makes the reopen-after-a-long-close case
   self-heal — the first tick after loading a stale session ends it at the last
-  moment dexel actually saw the user, instead of inventing a ten-hour session.
+  moment Dexel actually saw the user, instead of inventing a ten-hour session.
   The session's counters are taken at that same watermark, so every number on the
   card stays mutually consistent.
 - **Only when the provider can see global input.** With a blind provider
@@ -196,7 +196,7 @@ skip the check by calling the convenient function.
 Tamper policy is **unchanged from ADR 0014/0016**: any chain failure is
 `ErrTampered`, the DB is renamed aside to `.invalid` (never deleted), the economy
 resets from `game.New()`, the legacy Rust import stays unreachable, and
-`config.json` — including the dexel's name *and* every project name — is
+`config.json` — including the Dexel's name *and* every project name — is
 untouched. One new rule, stated precisely because it is the only place "missing"
 is not "destroyed": a **missing `sessions` table is the honest empty log iff the
 signed head is `""`**; a missing table with a non-empty head is tampering. (The

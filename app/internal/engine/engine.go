@@ -220,11 +220,22 @@ func (e *Engine) Tick() TickResult {
 	// App-switch: diff this tick's (already sanitized, ADR 0009) ActiveApp
 	// against the previous tick's. No new observation — ActiveApp is
 	// already on Snapshot. Reads 0 on Linux, which never sets ActiveApp.
+	//
+	// dexel's OWN window is TRANSPARENT here (activity.SelfAppID): looking
+	// at your companion is not a context switch in your work, and counting
+	// it made the Activity modal's app-switch number a measure of how often
+	// you glanced at dexel. Neither counted nor recorded, so
+	// editor -> dexel -> editor is one continuous stretch in the editor
+	// rather than two switches. (No economy effect either way at the
+	// default AppSwitchWork = 0.0, but a counter shown to the user is a
+	// claim, and this one was about dexel rather than about work.)
 	var appSwitches uint64
-	if wasInitialized && snap.ActiveApp != e.lastActiveApp {
-		appSwitches = 1
+	if !activity.IsSelf(snap.ActiveApp) {
+		if wasInitialized && snap.ActiveApp != e.lastActiveApp {
+			appSwitches = 1
+		}
+		e.lastActiveApp = snap.ActiveApp
 	}
-	e.lastActiveApp = snap.ActiveApp
 
 	e.initialized = true
 

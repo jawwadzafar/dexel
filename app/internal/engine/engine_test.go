@@ -427,3 +427,47 @@ func TestFocusRunSecondsGrowsAndResetsOnBreak(t *testing.T) {
 		t.Errorf("first typed tick after a break: FocusRunSeconds = %d, want 0 (new run, not a continuation)", r.FocusRunSeconds)
 	}
 }
+
+// TestGlancingAtDexelIsNotAnAppSwitch pins that dexel's own window is
+// transparent to app-switch accounting.
+//
+// The user-visible symptom was in the Activity modal: the "app switches"
+// number counted every time you clicked dexel to look at it, so a counter
+// that claims to describe your work described how often you glanced at your
+// companion. editor -> dexel -> editor must read as ONE continuous stretch
+// in the editor, not two switches — and no switch at all is recorded for
+// dexel itself.
+func TestGlancingAtDexelIsNotAnAppSwitch(t *testing.T) {
+	p := &stubProvider{honesty: activity.HonestyGlobal}
+	e := New(p)
+
+	tick := func(app string) uint64 {
+		p.snap = activity.Snapshot{ActiveApp: app}
+		return e.Tick().AppSwitches
+	}
+
+	tick("code") // first tick never counts a switch (no previous app)
+	if got := tick("code"); got != 0 {
+		t.Fatalf("staying in the same app counted %d switches, want 0", got)
+	}
+	if got := tick(activity.SelfAppID); got != 0 {
+		t.Errorf("clicking dexel counted %d app switches, want 0 — looking at your companion is not a context switch", got)
+	}
+	if got := tick(activity.SelfAppID); got != 0 {
+		t.Errorf("staying in dexel counted %d app switches, want 0", got)
+	}
+	// ...and coming back to the SAME editor is not a switch either: dexel
+	// never displaced it as "the app you were in".
+	if got := tick("code"); got != 0 {
+		t.Errorf("editor -> dexel -> same editor counted %d switches, want 0 — dexel must not split one work stretch in two", got)
+	}
+	// A real switch still counts.
+	if got := tick("chrome"); got != 1 {
+		t.Errorf("a real app switch counted %d, want 1 — this fix must not stop counting genuine switches", got)
+	}
+	// Even one that happens to pass "through" dexel on the way.
+	tick(activity.SelfAppID)
+	if got := tick("code"); got != 1 {
+		t.Errorf("chrome -> dexel -> code counted %d switches, want 1 — the real switch is chrome->code", got)
+	}
+}

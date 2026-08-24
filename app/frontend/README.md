@@ -38,6 +38,14 @@ behaviour, same DOM/WS contract, no redesign.
     two Phase P1 name echoes (`#status-name`, `#menu-panel-title`).
   - `overlays.ts` — the connection-status overlay and the assets-missing
     banner.
+  - `preload.ts` — fetches AND `decode()`s every scene sprite at startup,
+    holding the `Image` refs so the decodes are not collected. A sprite
+    whose bitmap is not ready yet does not render as "slightly late": a
+    fresh `<img>` paints nothing, and a `mask-image` that is not decoded
+    masks its fill away entirely, which made the character flash WHITE.
+  - `viewport.ts` — the proportional window scaling (`docs/ui-spec.md`
+    §0.1): one transform on `#root` sized from the viewport, recomputed on
+    load, `resize` and dpr change, preferring a crisp scale factor.
   - `flash.ts` — the flash toast + the insufficient-funds flash.
 - **FEATURE/LOGIC layer** (`src/features/`) — each owns its own DOM/UI
   state, reads the store, and is the only place that sends the

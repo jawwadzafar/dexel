@@ -1,7 +1,7 @@
-# dexel — Product Evolution
+# Dexel — Product Evolution
 
 **Status:** design-only decision document (Opus, 2026-08-22). No code. No commit.
-**Audience:** the owner, in the morning, deciding where dexel goes after the
+**Audience:** the owner, in the morning, deciding where Dexel goes after the
 current infra wave lands.
 **Scope:** synthesises the owner's 10-direction brief against the *real*
 codebase and returns a single coherent product thesis, the strongest bets, the
@@ -14,9 +14,9 @@ proposal below lives inside them or it does not ship.
 
 ---
 
-## 0. Where dexel is today (the ground truth this plan builds on)
+## 0. Where Dexel is today (the ground truth this plan builds on)
 
-dexel is a cozy, behind-the-shoulder pixel developer companion. The loop that
+Dexel is a cozy, behind-the-shoulder pixel developer companion. The loop that
 shipped at v1.0.0 and has been extended through A1/A2/A3 and F1/F2:
 
 - **Real, content-free activity → work.** The engine samples one `Snapshot`
@@ -54,7 +54,7 @@ re-explain it):**
   (Sessions/Goals) slot in"*. The information architecture for everything below
   is already being built.
 - **SEC-1 — save integrity / anti-cheat.** Splits a **user-editable CONFIG**
-  (named example: the dexel's name) from **PROTECTED game state** (Dev Cash,
+  (named example: the Dexel's name) from **PROTECTED game state** (Dev Cash,
   owned items, XP, sprint, history), HMAC-signing the protected fields. This is
   the enabling primitive for *identity* (a legitimate place for a user-authored
   name/goal) **and** for *earned collectibles* (a protected grant that can't be
@@ -65,7 +65,7 @@ re-explain it):**
 **The honest reading of today's product:** the *mechanics* are excellent and
 the *loop closes* — but the loop is **passive and undifferentiated**. Coins
 accrue silently in the background; every hour of typing looks like every other
-hour; there is no intention going in and no punctuation coming out. dexel keeps
+hour; there is no intention going in and no punctuation coming out. Dexel keeps
 you company but you never *tell it anything* and it never *marks an occasion*.
 That gap — not a missing feature — is what the evolution should close.
 
@@ -73,30 +73,30 @@ That gap — not a missing feature — is what the evolution should close.
 
 ## 1. The product thesis (the through-line)
 
-> **dexel is the coziest witness to your work. You set the intention; dexel
+> **Dexel is the coziest witness to your work. You set the intention; Dexel
 > keeps you company and honestly reflects the effort you actually put in; and
 > together you build a memory of the journey.**
 
 Three verbs, in order: **INTENTION → HONEST REFLECTION → MEMORY.**
 
 This thesis is forced by the invariants, not bolted onto them. Honest mechanics
-(ADR 0010) mean dexel can *never* know what you did — it sees counts and
+(ADR 0010) mean Dexel can *never* know what you did — it sees counts and
 durations, never content, never outcomes. So there is exactly one honest way to
 add goals, journeys, and meaning: **the user supplies the intention and the
-knowledge; dexel supplies the companionship, the honest effort-tracking, and
-the celebration.** dexel is a *witness*, not a *tracker*; a *companion*, not a
+knowledge; Dexel supplies the companionship, the honest effort-tracking, and
+the celebration.** Dexel is a *witness*, not a *tracker*; a *companion*, not a
 *coach*. It never grades you, never infers, never nags.
 
 Everything in the brief maps onto the three verbs:
 
-| Verb | Brief directions | What dexel provides |
+| Verb | Brief directions | What Dexel provides |
 |---|---|---|
 | **Intention** | Sessions (1), Goals (2), Journeys (3), Onboarding/Identity (9) | A container for "I'm setting out to do this" that the user opens and closes |
 | **Companionship** | Character life (6), World expansion (5) | A living, growing space that feels present in your day |
-| **Memory** | Progression (4), Achievements/Moments (7), Personal journey (8) | Honest celebration and a scrapbook of what you and dexel did together |
+| **Memory** | Progression (4), Achievements/Moments (7), Personal journey (8) | Honest celebration and a scrapbook of what you and Dexel did together |
 | *(future)* | Social (10) | Deferred — a local, user-initiated export at most; never accounts/servers |
 
-**The anti-thesis — what dexel must never become:** a productivity dashboard, a
+**The anti-thesis — what Dexel must never become:** a productivity dashboard, a
 Pomodoro timer with quotas, a habit app that guilt-trips a broken streak, a
 coach that scores your focus, or a surveillance tool that infers what you were
 doing. Every rejection in §4 is an application of this one sentence.
@@ -121,14 +121,14 @@ verdict. Costs are relative (Small/Medium/Large) against the F2 architecture.
   A3 `History` buckets); `features/session.ts` + a session-complete overlay in
   `render/overlays.ts`.
 - **Fit:** this *is* the Intention pillar. It's the container that turns silent
-  accrual into "I sat down to work, dexel kept me company, here's what we did."
+  accrual into "I sat down to work, Dexel kept me company, here's what we did."
   The optional project name is user-typed CONFIG (like the SEC-1 name), never an
   observed signal — it lives on the editable side of the SEC-1 split and never
   leaves the machine.
 - **Risk & guard:** the failure mode is "Pomodoro dashboard". Guard it: no
   targets, no quotas, no efficiency score, no "you were only 60% focused";
   abandoning a session loses nothing and is never scolded; the summary is a cozy
-  card (duration, focus blocks, coins earned this session, a dexel celebrate
+  card (duration, focus blocks, coins earned this session, a Dexel celebrate
   animation), not a stats readout. The game already speaks this language —
   "sprint", not "task".
 - **Verdict: SHIP (Phase P2). The keystone of the whole thesis.**
@@ -137,12 +137,12 @@ verdict. Costs are relative (Small/Medium/Large) against the F2 architecture.
 - **Reuses:** the SEC-1 config side (goals are user-authored data, like the
   name — never inferred). The honesty rule is a *gift* here: goals with
   user-controlled milestone completion is the textbook honest mechanic (ADR
-  0010) — dexel is structurally incapable of pretending it knows you finished
+  0010) — Dexel is structurally incapable of pretending it knows you finished
   something.
 - **Cost:** Medium as data; the danger is in the presentation.
 - **Fit:** philosophically flawless, but a bare goals-with-checkboxes modal is a
   **todo list**, which the brief explicitly warns against and which weakens the
-  product (§4). Goals only become a *dexel* feature when they are made
+  product (§4). Goals only become a *Dexel* feature when they are made
   game-like — i.e. Journeys (#3).
 - **Verdict: SHIP the DATA MODEL only, as the substrate of Journeys. Never ship
   a "Goals" modal that reads as a task manager.**
@@ -191,7 +191,7 @@ verdict. Costs are relative (Small/Medium/Large) against the F2 architecture.
   the grant). That gives rewards weight without inflating the Dev Cash economy.
 - **New idea (grounded): ambient time-of-day room light.** The scene already
   has "one pool of light"; shifting it with the *local clock* (morning / dusk /
-  night — content-free, no work signal at all) makes dexel feel present in your
+  night — content-free, no work signal at all) makes Dexel feel present in your
   day for a small render change. High cozy payoff, zero privacy surface.
 - **Verdict: run World content as an ALWAYS-ON track alongside every phase, not
   as a phase. Add earn-only collectibles when Moments land (P4). Defer
@@ -214,7 +214,7 @@ verdict. Costs are relative (Small/Medium/Large) against the F2 architecture.
   fires only on a *real* sprint/session/milestone event, a "focused" pose only
   on real keystrokes. Never a fake "working hard" loop while idle. And **no
   simulation/tamagotchi needs** (the brief says "alive *without* simulation
-  mechanics"): dexel never gets hungry, never decays, never guilt-trips you for
+  mechanics"): Dexel never gets hungry, never decays, never guilt-trips you for
   being away.
 - **Verdict: SHIP (Phase P3). Second product feature, because it makes
   everything after it land harder.**
@@ -241,21 +241,21 @@ verdict. Costs are relative (Small/Medium/Large) against the F2 architecture.
   over the Moments (#7), Journeys (#5), and world-ownership data already on the
   wire. No new backend observation.
 - **Fit:** this is the home of the Memory pillar — a cozy look-back at moments
-  earned, journeys completed, cosmetics acquired, and dexel's growth. It only
+  earned, journeys completed, cosmetics acquired, and Dexel's growth. It only
   has anything to show *after* Moments/Journeys exist, so it comes late.
 - **Verdict: SHIP LATE (Phase P6) as an evolution of the existing modal, and
   reframe the streak here as gentle "consistency", not a loss-framed counter.**
 
 ### 9. Onboarding / Identity — **high leverage, cheap, rides SEC-1. The fast-follow.**
 - **Reuses:** SEC-1 *already* introduces the user-editable CONFIG with the
-  dexel's name as its named example — identity is half-built by infra. Starter
+  Dexel's name as its named example — identity is half-built by infra. Starter
   style = the free tier-0 hoodie + one of the six free tints the wardrobe
   already grants on first launch. A first-launch flow is a `features/*` module +
   the "no save exists" branch the store already handles.
 - **Cost:** Small-Medium (one modal + config plumbing that SEC-1 mostly lays).
 - **Fit:** the first minutes decide whether someone *bonds* with a companion.
-  Naming your dexel and picking its look is the emotional front door, and it
-  makes every later feature feel personal ("*your* dexel completed a journey").
+  Naming your Dexel and picking its look is the emotional front door, and it
+  makes every later feature feel personal ("*your* Dexel completed a journey").
 - **Risk & guard:** keep it to ~30 seconds — name + one colour + a warm hello.
   Not a wizard. Returning users never see it.
 - **Verdict: SHIP EARLY (Phase P1) — cheapest emotional leverage, and it needs
@@ -270,12 +270,12 @@ verdict. Costs are relative (Small/Medium/Large) against the F2 architecture.
 - **Verdict: NOT in the phased plan. Recorded in §5 "Out of scope" with its one
   acceptable future shape, so nobody designs a backend for it.**
 
-### Ideas the brief is missing (grounded in what dexel already is)
+### Ideas the brief is missing (grounded in what Dexel already is)
 
-- **The honesty keystone — "dexel reacts to what you mark."** When the *user*
-  marks a goal/journey milestone done, dexel celebrates (P3 animation + a P4
+- **The honesty keystone — "Dexel reacts to what you mark."** When the *user*
+  marks a goal/journey milestone done, Dexel celebrates (P3 animation + a P4
   Moment). This is the single design move that makes Goals honest *and* joyful:
-  the user supplies the knowledge (ADR 0010), dexel supplies the joy. It is the
+  the user supplies the knowledge (ADR 0010), Dexel supplies the joy. It is the
   philosophical center of gravity for directions 2/3/6/7 and should be stated as
   a rule, not just a feature.
 - **Earn-only collectibles** (folded into #5/#7 above): a reward axis distinct
@@ -287,7 +287,7 @@ verdict. Costs are relative (Small/Medium/Large) against the F2 architecture.
   0009's spatial split** (the sprint name is the character's flavour, bottom-
   left; the activity line is the user's reality, bottom-right; they never merge).
 - **Ambient time-of-day light** (folded into #5): reflects *your time*, never
-  *your work* — the safest possible way to make dexel feel present.
+  *your work* — the safest possible way to make Dexel feel present.
 
 ---
 
@@ -300,7 +300,7 @@ The keystone. It adds the **Intention** the loop is missing and the
 **celebration** it never delivers, built almost entirely on signals the engine
 *already* emits (`FocusRunSeconds`, focus sessions, keystroke delta) with **no
 new privacy surface** (`content_free_test`'s field count is untouched). It turns
-"coins appeared while I typed" into "I sat down to work with dexel, and here's
+"coins appeared while I typed" into "I sat down to work with Dexel, and here's
 what we did together." Everything else in the thesis hangs off this container.
 
 ### Bet 2 — Character life (P3)
@@ -344,7 +344,7 @@ philosophy-erosion risks that a "just do the brief" reading would walk into.
   targets, no efficiency scores, no "focus percentage", no shaming an abandoned
   session. Sessions are cozy work-companionship, not a timer with a grade.
 - **Character-life *simulation* (tamagotchi needs).** REJECTED. The brief says
-  "alive *without* simulation mechanics." dexel never gets hungry, never decays,
+  "alive *without* simulation mechanics." Dexel never gets hungry, never decays,
   never guilt-trips you for being away. Life = ambient/reactive animation only.
 - **Multiple scenes / full environment overhaul — DEFERRED (not rejected).** It
   collides with the parked art fidelity and with the load-bearing monitor
@@ -356,9 +356,9 @@ philosophy-erosion risks that a "just do the brief" reading would walk into.
   is a pressure mechanic). The only ever-acceptable shape is exporting a
   screenshot/achievement card the user chose to share.
 - **Anything that infers outcomes or content.** PERMANENTLY REJECTED by ADR
-  0010/0002/0009: dexel never marks a milestone done itself, never claims you
+  0010/0002/0009: Dexel never marks a milestone done itself, never claims you
   "learned"/"finished"/"worked on" anything, never adds a sixth `Snapshot`
-  field. The user marks; dexel witnesses.
+  field. The user marks; Dexel witnesses.
 - **Already-deferred items stay deferred, named not built:** copy/paste
   earning (ADR 0012, needs a consent-gated `CGEventTap`) and hourly buckets
   (ADR 0013, would reconstruct a daily schedule). Neither is revived by this
@@ -382,7 +382,7 @@ below should land before UI-1 and SEC-1, which it builds on.
 ---
 
 ### Phase P1 — Identity & first minutes  *(v1.4, Small)*
-Name your dexel + pick a starter hoodie/tint on first launch; a warm hello.
+Name your Dexel + pick a starter hoodie/tint on first launch; a warm hello.
 Rides the SEC-1 config so the name lives on the *editable* side of the integrity
 split (a name is user data, not economy state).
 - **Extends:** SEC-1 config (name field); the existing "no save exists" startup
@@ -420,10 +420,10 @@ animation fired by *real* events (sprint/session complete, and later milestones)
   deterministic, additive to the *current* style — motion, not a fidelity
   chase); `render/scene.ts` gains a richer animation scheduler keyed off the
   `activeState`/mood it already reads. **No backend, no wire, no privacy change.**
-- **Exit criteria:** dexel visibly blinks/stretches at idle and shifts pose with
+- **Exit criteria:** Dexel visibly blinks/stretches at idle and shifts pose with
   mood *honestly* (celebrate fires **only** on a real event, never fabricated,
   never a fake "busy" loop while idle); deterministic sprites; no perceptible
-  perf/battery regression (dexel is left open all day — ADR 0011's cost
+  perf/battery regression (Dexel is left open all day — ADR 0011's cost
   promise); overseer visual gate passes with own eyes.
 
 ### Phase P4 — Moments & earn-only collectibles  *(v1.7, Medium) — Bet 3*
@@ -454,21 +454,21 @@ grant a collectible.
   Moments/collectibles for rewards; save schema **6 → 7** (additive). Presented
   as journeys/quests with visual progress, **never a checklist** (§4).
 - **Exit criteria:** user creates a custom journey and picks a preset; marking a
-  milestone (**user action only** — dexel never auto-completes) celebrates and
-  may grant a collectible; **nothing dexel observes ever advances a milestone**
+  milestone (**user action only** — Dexel never auto-completes) celebrates and
+  may grant a collectible; **nothing Dexel observes ever advances a milestone**
   (the honesty proof — assert it in a test the way anti-mash is asserted); gated
   live.
 
 ### Phase P6 — Memory (the scrapbook)  *(v1.9, Small-Medium)*
 Evolve the A3 History `[H]` modal into a cozy look-back: completed journeys,
-earned moments, collectibles, dexel's growth over time. Reframe the streak
+earned moments, collectibles, Dexel's growth over time. Reframe the streak
 gently as "consistency", never a loss-framed number.
 - **Extends:** `features/history-modal.ts` gains a memory/scrapbook view over
   the Moments (P4), Journeys (P5), and world-ownership data **already on the
   wire** — **no new backend observation.** Streak presentation softened
   (celebratory, never guilt).
 - **Exit criteria:** the modal shows a warm timeline of moments/journeys/
-  cosmetics and dexel's growth; the streak is presented without loss-framing; no
+  cosmetics and Dexel's growth; the streak is presented without loss-framing; no
   content stored anywhere (structural test still green); does not duplicate the
   A1/A2 Activity analytics; gated live.
 
@@ -496,17 +496,17 @@ fidelity (one catalog row + `gen_assets.py` sprites, per ADR 0008).
 
 ## 6. One-paragraph summary for the morning
 
-dexel's mechanics are done and honest; what's missing is *intention going in*
+Dexel's mechanics are done and honest; what's missing is *intention going in*
 and *occasion coming out*. The evolution is one thesis — **you set the
-intention, dexel honestly reflects the effort, and together you build a memory**
+intention, Dexel honestly reflects the effort, and together you build a memory**
 — realised in a sequence that spends art and code where the emotional return is
-highest and the privacy risk is zero: name your dexel (P1, rides SEC-1), sit
+highest and the privacy risk is zero: name your Dexel (P1, rides SEC-1), sit
 down to a session and get a warm summary (P2, the keystone, built on signals we
-already have), give dexel a living body to celebrate with (P3, the animation
+already have), give Dexel a living body to celebrate with (P3, the animation
 hook already exists), turn real firsts and consistency into celebrated moments
 with earn-only cosmetics (P4), then — and only then — let users author journeys
 they mark themselves (P5) and look back on the whole thing in a scrapbook (P6),
 with a steady stream of in-style world content feeding the rewards throughout.
 We ship none of the productivity-app traps — no quotas, no guilt streaks, no
-todo lists, no inference, no social backend — because the point of dexel is to
+todo lists, no inference, no social backend — because the point of Dexel is to
 be the coziest witness to your work, not a manager of it.

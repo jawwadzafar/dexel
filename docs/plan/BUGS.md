@@ -1,4 +1,4 @@
-# dexel — bug / polish log (evidence-based)
+# Dexel — bug / polish log (evidence-based)
 
 Filed 2026-08-22 from user review of the live screenshots. Each fix must be
 verified in the REAL running game (render → look → iterate), not in isolation.

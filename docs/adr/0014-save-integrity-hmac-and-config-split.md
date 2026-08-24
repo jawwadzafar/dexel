@@ -8,7 +8,7 @@ The save is plain JSON at `~/.config/dexel/state.json` (schema 4). Any user can
 open it in a text editor and change `"devCash": 100` to `"devCash": 999999`, or
 add item ids to `ownedItems`, and the game trusts it verbatim on next load. The
 owner wants to **deter casual cheating** ("we don't want cheaters") — but some
-fields are legitimately the user's to set: the **name** they give their dexel,
+fields are legitimately the user's to set: the **name** they give their Dexel,
 and future cosmetic preferences. Those must stay freely editable while the
 economy-critical fields become tamper-evident.
 
@@ -39,7 +39,7 @@ of the source tree for reasons other than cheat-resistance.
 - `~/.config/dexel/state.json` — the existing `SaveData` (DevCash, XP, sprint,
   ownedItems, ownedTints, equipped, stats/history/streak, import provenance),
   now carrying an HMAC tag. **Protected.**
-- `~/.config/dexel/config.json` — user-authored config: the dexel's **name**
+- `~/.config/dexel/config.json` — user-authored config: the Dexel's **name**
   (+ future cosmetic prefs). **Unsigned, hand-editable by design.**
 
 Two files rather than one mixed file, because the split then falls out for

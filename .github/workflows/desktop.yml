@@ -85,22 +85,163 @@ jobs:
       - name: Cross-compile every non-darwin sidecar
         run: scripts/build-sidecar.sh --all
 
+      # FOUR assertions, because any three of them can pass while the
+      # arrangement is only half right:
+      #
+      #   1. No two executables destined for one flat install directory
+      #      collide CASE-INSENSITIVELY. This is the real invariant and it
+      #      is the one that was unenforced twice. See the step's own
+      #      comment for why there is no build error to rely on.
+      #   2. tauri.conf.json's externalBin entry is the string we think it
+      #      is, and capabilities/default.json's shell:allow-execute scope
+      #      entry agrees with it. Without this, the filename list below
+      #      could be "corrected" to match a config nobody checked, and the
+      #      job would go green while the bundler found no sidecar.
+      #   3. Every triple-suffixed artifact Tauri will look for exists.
+      #   4. No artifact under a PREVIOUS name is left lying around, so a
+      #      half-finished rename cannot be masked by a stale build.
+      #
+      # $BASE may contain a SPACE. It does not today ("Dexel"), but it did
+      # for the whole "Dexel Runtime" generation and it is display text, so
+      # it can again -- see scripts/build-sidecar.sh's header for why that
+      # name is display text at all. That is why the list below is a quoted
+      # bash array and the loop is `for f in "${expected[@]}"`: the
+      # `for f in $expected` word-split loop this replaced would read one
+      # filename as two, find neither, and -- because the missing halves
+      # would be reported as separate names -- invite someone to "fix" the
+      # list instead of the quoting. Do not un-quote anything here.
+      - name: Assert no two bundled executables collide case-insensitively
+        run: |
+          set -euo pipefail
+          conf=desktop/src-tauri/tauri.conf.json
+
+          # ------------------------------------------------------------
+          # THE INVARIANT: every executable this config places in ONE flat
+          # directory must be distinct even after case folding.
+          #
+          # On macOS they all land in Dexel.app/Contents/MacOS/; in the
+          # .deb they all land in /usr/bin; in the NSIS installer they all
+          # land in the install directory. macOS's default APFS volume is
+          # case-insensitive and Windows always is, so a colliding pair is
+          # ONE FILE.
+          #
+          # There is no build error to lean on -- checked in the vendored
+          # tauri-bundler 2.9.4 rather than assumed:
+          #   * macos/app.rs's bundle_project calls copy_binaries (the
+          #     externalBin entries) and THEN copy_binaries_to_bundle (the
+          #     main binary);
+          #   * linux/debian.rs's generate_data does it in the OPPOSITE
+          #     order;
+          #   * both end in utils/fs_utils.rs's copy_file, whose body is
+          #     `fs::create_dir_all(dest_dir)?; fs::copy(from, to)?` -- an
+          #     overwrite that returns Ok.
+          # So a collision ships a bundle missing one of its two programs,
+          # exit code 0, no warning, and WHICH program survives differs by
+          # target. On macOS the survivor is the GUI shell, which means the
+          # login item opens a WINDOW at every login instead of starting
+          # the runtime. PLATFORM_NOTES.md §3.1.3 has the field account.
+          #
+          # sed, not jq/python: this runner is only guaranteed a Go
+          # toolchain. The extraction is self-checking -- if the file is
+          # ever reformatted so that the one-entry-per-line assumption
+          # breaks, the count cross-check below fails loudly instead of
+          # silently enumerating nothing.
+          # ------------------------------------------------------------
+          main=$(sed -n 's/.*"mainBinaryName"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$conf")
+          if [ -z "$main" ]; then
+            echo "::error::$conf does not state \"mainBinaryName\". Without it the main binary silently takes the Cargo package name, which is how the collision this step guards against happened in the first place." >&2
+            exit 1
+          fi
+
+          # Every externalBin entry, read from inside the array's own
+          # sed range so a "binaries/..." string elsewhere in the file
+          # cannot be mistaken for one.
+          mapfile -t external < <(
+            sed -n '/"externalBin"[[:space:]]*:[[:space:]]*\[/,/\]/p' "$conf" |
+              sed -n 's/.*"binaries\/\([^"]*\)".*/\1/p'
+          )
+          # grep -o, not grep -c: -c counts LINES, so two array entries on
+          # ONE line would agree with a one-entry extraction and let a whole
+          # executable through unchecked. Occurrences are what must match.
+          total=$(grep -o '"binaries/' "$conf" | wc -l | tr -d ' ')
+          if [ "${#external[@]}" -eq 0 ] || [ "${#external[@]}" -ne "$total" ]; then
+            echo "::error::extracted ${#external[@]} externalBin entries from $conf but the file contains $total \"binaries/\" occurrences. The extraction above assumes at most one array element per line; $conf has been reformatted, so FIX THIS STEP rather than assuming it still checks anything." >&2
+            exit 1
+          fi
+
+          names=("$main" "${external[@]}")
+          printf 'checking %d executable name(s) destined for one directory:\n' "${#names[@]}"
+          printf '  %s\n' "${names[@]}"
+
+          # Folded duplicates. The names may contain spaces but never
+          # newlines, so a line-oriented sort|uniq is safe.
+          dupes=$(printf '%s\n' "${names[@]}" | tr '[:upper:]' '[:lower:]' | sort | uniq -d)
+          if [ -n "$dupes" ]; then
+            echo "::error::these executable names collide case-insensitively: $(echo "$dupes" | tr '\n' ' '). All of them land in Dexel.app/Contents/MacOS/ (and in /usr/bin for the .deb), which is case-insensitive by default, so they are ONE FILE -- and tauri-bundler overwrites with a plain fs::copy WITHOUT erroring. Rename one of them. See desktop/src-tauri/Cargo.toml's [package] header and PLATFORM_NOTES.md §3.1.3." >&2
+            exit 1
+          fi
+          echo "ok  no case-insensitive collision among ${#names[@]} name(s)"
+
+          # The same invariant is a unit test in the Rust crate
+          # (`mod bundle_layout` in desktop/src-tauri/src/lib.rs), which is
+          # the copy that fails locally before anyone pushes. This step is
+          # the copy that runs on THIS job, which is the only one active on
+          # every push -- the crate's tests need a Rust toolchain and a
+          # built sidecar, and the two bundle jobs are dormant.
+          echo "ok  (mirrors mod bundle_layout in desktop/src-tauri/src/lib.rs)"
+
       - name: Assert the externalBin names are exactly what Tauri looks for
         run: |
           set -euo pipefail
+          BASE="Dexel"
+
+          # (2) The config and the ACL must both name $BASE. grep -F, so
+          # nothing in the string is read as a pattern, and no jq/python
+          # dependency on the runner.
+          for cfg in desktop/src-tauri/tauri.conf.json desktop/src-tauri/capabilities/default.json; do
+            if ! grep -qF "\"binaries/$BASE\"" "$cfg"; then
+              echo "::error::$cfg does not contain \"binaries/$BASE\" — this assertion and the config have drifted apart, so the filename check below is asserting the wrong names. Fix whichever one is wrong; do not just edit this workflow." >&2
+              exit 1
+            fi
+            echo "ok  $cfg names binaries/$BASE"
+          done
+
           cd desktop/src-tauri/binaries
-          expected="
-          dexel-server-aarch64-pc-windows-msvc.exe
-          dexel-server-aarch64-unknown-linux-gnu
-          dexel-server-x86_64-pc-windows-msvc.exe
-          dexel-server-x86_64-unknown-linux-gnu
-          "
-          for f in $expected; do
+
+          # (3) Every non-darwin artifact, by the exact name Tauri derives
+          # (<base>-<target triple>[.exe]). The darwin pair is built on the
+          # Mac (see desktop-macos below), not here.
+          expected=(
+            "$BASE-aarch64-pc-windows-msvc.exe"
+            "$BASE-aarch64-unknown-linux-gnu"
+            "$BASE-x86_64-pc-windows-msvc.exe"
+            "$BASE-x86_64-unknown-linux-gnu"
+          )
+          for f in "${expected[@]}"; do
             if [ ! -f "$f" ]; then
-              echo "::error::missing sidecar $f — bundle.externalBin resolves binaries/dexel-server-<target triple>, so a wrong name silently becomes 'no sidecar for this target' at bundle time." >&2
+              echo "::error::missing sidecar '$f' — bundle.externalBin resolves 'binaries/$BASE-<target triple>', so a wrong name silently becomes 'no sidecar for this target' at bundle time." >&2
               exit 1
             fi
             echo "ok  $f  ($(file -b "$f" | cut -c1-60))"
+          done
+
+          # (4) Nothing under either retired name. If build-sidecar.sh and
+          # the config disagree this is the assertion that says so out loud
+          # rather than shipping a bundle with two daemons in it.
+          # build-sidecar.sh purges these itself
+          # (PREVIOUS_BIN_BASES/purge_previous_names), so a hit here means
+          # the script did not run, or its list and $BASE have drifted.
+          #
+          # These globs are matched case-sensitively against real directory
+          # entries, and neither retired name is a case-variant of "$BASE"
+          # -- both carry a suffix ("-server", " Runtime") that "$BASE"
+          # alone does not -- so this cannot match the artifact just built.
+          for retired in "Dexel Runtime" "dexel-server"; do
+            if compgen -G "$retired-*" >/dev/null; then
+              echo "::error::found artifact(s) under the retired name '$retired-*': $(echo "$retired"-*). The sidecar is '$BASE' now (PLATFORM_NOTES.md §3.1.3); a stale artifact means scripts/build-sidecar.sh and tauri.conf.json have drifted." >&2
+              exit 1
+            fi
+            echo "ok  no '$retired-*' artifacts"
           done
 
       # The one behaviour the whole desktop shell depends on: the Go server
@@ -121,7 +262,14 @@ jobs:
         run: |
           set -euo pipefail
           tmp=$(mktemp -d)
-          cp desktop/src-tauri/binaries/dexel-server-x86_64-unknown-linux-gnu "$tmp/dexel-server"
+          # The SOURCE name is the renamed artifact; the temp copy is
+          # deliberately still called dexel-server, because that local
+          # filename is the `./dexel-server -addr ...` invocation
+          # app/cli.go's dispatch-table docs and app/cli_test.go cite by
+          # file:line. It is a scratch filename in a temp dir, not the
+          # bundled artifact, so renaming it would only invalidate those
+          # references.
+          cp "desktop/src-tauri/binaries/Dexel-x86_64-unknown-linux-gnu" "$tmp/dexel-server"
           chmod +x "$tmp/dexel-server"
           log=$(mktemp)
           ( cd "$tmp" && exec ./dexel-server -addr 127.0.0.1:0 -provider fake ) >"$log" 2>/dev/null &

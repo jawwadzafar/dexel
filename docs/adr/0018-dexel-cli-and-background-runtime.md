@@ -1,4 +1,4 @@
-# 0018 — dexel CLI and background runtime: one binary, argv-shape dispatch, ask-don't-trust discovery
+# 0018 — Dexel CLI and background runtime: one binary, argv-shape dispatch, ask-don't-trust discovery
 
 Status: accepted (2026-08-22, PR-3) · Realises `dev_docs/production-runtime/ARCHITECTURE.md`
 Decisions 1–3, 6, 7, 9, 12 (`dev_docs/production-runtime/MIGRATION_PLAN.md` §PR-3)
@@ -17,7 +17,7 @@ someone else owned — a terminal window, or (per ADR 0015) a Tauri sidecar
 that killed it the moment its window closed. `docs/plan/RUN-MODES.md`
 records this honestly as "mode A."
 
-The owner's product intent — "start dexel, forget the terminal, come back to
+The owner's product intent — "start Dexel, forget the terminal, come back to
 it" — needs something that outlives any one window. The load-bearing fact,
 verified by reading the tree rather than assumed
 (`dev_docs/production-runtime/ARCHITECTURE.md` §1.1): **the runtime already
@@ -144,7 +144,7 @@ pid.** Immediately after `net.Listen` succeeds, the runtime writes
 token}`, mode `0600`) atomically, using the same tmp+fsync+rename recipe
 ADR 0016's `store.SaveConfig` already established — one write primitive,
 reused rather than re-invented. A pidfile alone cannot survive pid reuse, so
-every verb that needs to know "is a dexel actually running" — `status`,
+every verb that needs to know "is a Dexel actually running" — `status`,
 `start`'s pre-flight check, `stop` — calls `lifecycle.Discover`, which reads
 the file, then round-trips an HTTP call to the address inside it, and treats
 connection-refused, a timeout, or any answer as confirming liveness; on

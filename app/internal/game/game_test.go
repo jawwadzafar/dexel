@@ -2,8 +2,10 @@ package game
 
 import (
 	"errors"
+	"slices"
 	"testing"
 
+	"github.com/jawwadzafar/dexel/app/internal/activity"
 	"github.com/jawwadzafar/dexel/app/internal/engine"
 )
 
@@ -344,8 +346,17 @@ func TestStateActivityLineIsHonestAndScreenLinesAlwaysElevenTickerAlwaysThree(t 
 	g := New()
 	g.Tick(engine.TickResult{Mood: engine.MoodCoding, ActiveApp: "code", ActiveAppDisplay: "VS Code"})
 	s := g.State()
-	if s.ActivityLine != "Coding in VS Code" {
-		t.Errorf("ActivityLine = %q, want %q", s.ActivityLine, "Coding in VS Code")
+	// The activity line is now drawn from a small pool per app type, chosen
+	// stably rather than frozen to one string (see activity_line.go's
+	// stability rule), so State() is pinned to "it is one of the phrasings
+	// this type+mood licenses" instead of one literal. The pool for a
+	// coding-class app with mood == Coding is the work pool, so this still
+	// asserts the honest join ADR 0009 intended — that the line claims
+	// working IN VS Code — and activity_line_test.go's matrix owns the
+	// per-type rules.
+	wantOneOf := renderPool(activity.AppTypeCoding, engine.MoodCoding, "VS Code")
+	if !slices.Contains(wantOneOf, s.ActivityLine) {
+		t.Errorf("ActivityLine = %q, want one of %q", s.ActivityLine, wantOneOf)
 	}
 	if s.ActiveState != "coding" {
 		t.Errorf("ActiveState = %q, want %q", s.ActiveState, "coding")

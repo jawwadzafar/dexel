@@ -1,4 +1,4 @@
-# dexel — Rust vs Go: parallel-implementation evaluation and plan
+# Dexel — Rust vs Go: parallel-implementation evaluation and plan
 
 Status: evaluation + plan, 2026-08-22 · Answers "can we build the Rust version,
 which will win, and what's the plan" · Grounded in ADR 0011 (the deliberate
@@ -336,7 +336,7 @@ criterion, verbatim: *"closing the window leaves the runtime running (`dexel
 status` still reports it) — that is the single assertion this whole step exists
 to make true."* An in-process Rust server has two options. Re-couple the
 lifetimes — reintroducing the exact bug PR-9 deletes, and breaking the owner's
-stated intent ("start dexel, forget the terminal, come back to it"). Or keep
+stated intent ("start Dexel, forget the terminal, come back to it"). Or keep
 them decoupled — in which case you still need `dexel runtime`, `dexel start`,
 `runtime.json`, the discovery round-trip and the single-instance lock, which is
 the *entire mechanism*, and "unification" saved you the handshake alone.
@@ -515,7 +515,7 @@ What `app-rs/` should do instead:
   row's MAC and anchored by a `sessionLogHead` field that the state MAC itself
   covers; and the load-bearing sentinel that a *tampered* save must never
   collapse into *no save*.
-- **Keep the config split.** Free text (the dexel's name, session names) lives
+- **Keep the config split.** Free text (the Dexel's name, session names) lives
   in an unsigned `config.json`; the signed save holds only ids, timestamps, hex
   digests and closed-set enums. That is what makes §2.6's allow-list true.
 - **One thing worth deciding early**, because it interacts with §3.4: whether to
@@ -1052,7 +1052,7 @@ row is checked by `parity-check.sh`, a ported test, or a screenshot.
   breakdown by source.
 - **Honesty:** provider honesty reported; blind provider freezes the idle clock
   and never claims a break (ADR 0010); `STORE_OPEN` freezes earning.
-- **Identity + config:** the dexel's name, stored in unsigned config, never in
+- **Identity + config:** the Dexel's name, stored in unsigned config, never in
   the signed save (ADR 0014).
 - **Store:** catalog with slots/tiers, buy item, buy tint, equip with tint,
   tier-0 defaults granted, owned-items and owned-tints sets.

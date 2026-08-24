@@ -1,4 +1,4 @@
-# Art direction — dexel v2 (behind-the-shoulder)
+# Art direction — Dexel v2 (behind-the-shoulder)
 
 **This is a v2 rewrite. The v0.2 side-view composition is superseded.** The
 camera has moved: we now sit in a mixed behind + slightly-elevated, 3/4
@@ -29,6 +29,18 @@ Retro). We are not copying its assets, we are matching the register.
    every `background-image` in the scene, and an integer `transform: scale()`.
    No anti-aliasing, no gradients, no sub-pixel placement. A blurry or
    half-pixel sprite is the single fastest way to lose the look.
+
+   **Amendment (window scaling, `docs/ui-spec.md` §0.1).** "Integer only"
+   holds for AUTHORING and for the composition inside the scene, which is
+   still exactly 2x. It cannot hold for the whole-window scale, because a
+   resizable native window is not an integer multiple of 640x400: the honest
+   rule is *integer whenever the window can fit one*. §0.1 therefore snaps to
+   a crisp factor (an integer, or 1.5x/2.5x on retina where 1.5 CSS px is
+   exactly 3 device px) whenever that costs at most 1/8 of the available
+   size, and only falls back to a fractional scale when the alternative is a
+   large empty margin. Below 1x there is no crisper factor to snap to. This
+   is a deliberate trade: slightly uneven art pixels beat both a distorted
+   aspect ratio and a window mostly full of dead space.
 2. **The generator is the source.** `tools/gen_assets.py` is the source
    format; the PNGs in `app/assets/` are build artifacts, like object files.
    Regenerate with `python3 tools/gen_assets.py`. Never hand-edit a PNG.

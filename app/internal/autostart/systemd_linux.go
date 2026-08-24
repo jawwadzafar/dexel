@@ -203,17 +203,23 @@ func statusSystemd() (Status, error) {
 // both).
 // ---------------------------------------------------------------------
 
-func enablePlatform(exePath, logPath string) (Mechanism, error) {
+func enablePlatform(exePath, logPath string, opts Options) (Result, error) {
+	// opts.BareExecutable is macOS-only (it opts out of .app bundle
+	// attribution, a concept Linux does not have): the unit/desktop file
+	// always names exePath here, so the flag is a no-op rather than an
+	// error — `dexel autostart enable --bare` on Linux asks for exactly
+	// what Linux already does.
+	_ = opts
 	if systemdUsable() {
 		if err := enableSystemd(exePath); err != nil {
-			return MechanismNone, err
+			return Result{}, err
 		}
-		return MechanismSystemdUser, nil
+		return Result{Mechanism: MechanismSystemdUser, Program: exePath}, nil
 	}
 	if err := enableXDGAutostart(exePath); err != nil {
-		return MechanismNone, err
+		return Result{}, err
 	}
-	return MechanismXDGAutostart, nil
+	return Result{Mechanism: MechanismXDGAutostart, Program: exePath}, nil
 }
 
 // disablePlatform probes BOTH mechanisms regardless of which one is

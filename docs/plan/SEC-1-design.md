@@ -10,7 +10,7 @@ implementation code is written here. Companion decision record:
 The problem, verbatim from the owner: the save is plain JSON at
 `~/.config/dexel/state.json`; a user can hand-edit it to mint Dev Cash or grant
 items, and we want to deter that. But some fields are legitimately the user's —
-the **name** they give their dexel — which they should be free to set. So:
+the **name** they give their Dexel — which they should be free to set. So:
 separate editable **config** from protected **game state**, and make tampering
 with the protected economy detectable and rejected.
 
@@ -63,7 +63,7 @@ not a reason to stop no one.
 
 | Field (config) | Class | Why |
 |---|---|---|
-| dexel **name** (NEW slot) | **CONFIG** | the user names their own pet — theirs to set |
+| Dexel **name** (NEW slot) | **CONFIG** | the user names their own pet — theirs to set |
 | future cosmetic prefs (theme, always-on-top toggle, sound, window prefs…) | **CONFIG** | preferences, never economy |
 
 The rule that decides the boundary: **does editing this field grant the user
@@ -245,7 +245,7 @@ Concretely:
   import.** The `game.Game` is already `New()` (fresh defaults), so the economy
   starts clean; the next autosave writes a valid, signed schema-5 save.
 - `config.json` is loaded on a **separate, independent path** and is untouched —
-  the user keeps their dexel's name.
+  the user keeps their Dexel's name.
 
 Why not the alternatives:
 - **Refuse to load** → a game that won't start. Bad UX for what might be a

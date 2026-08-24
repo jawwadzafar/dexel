@@ -2,11 +2,11 @@
 
 **Status:** design only (no implementation). Realizes ROADMAP F3.
 **Decision record:** ADR 0015. **Scope owned by this doc:** the packaging of
-dexel as a native desktop app. Backend behaviour, economy, privacy and the
+Dexel as a native desktop app. Backend behaviour, economy, privacy and the
 frontend are unchanged except for the two small, explicitly-scoped server
 changes in §2 and §8.
 
-Goal (owner): ship dexel as a native desktop app — no browser, no terminal —
+Goal (owner): ship Dexel as a native desktop app — no browser, no terminal —
 for macOS, Windows and Linux on x86_64 **and** arm64, with least effort.
 Wrap the EXISTING Go backend + web frontend; do **not** rewrite in Rust
 (ADR 0011 deliberately pivoted away from Rust).
@@ -102,12 +102,15 @@ alternative open.
   `DEXEL_LISTENING` line; parse the URL; then build the window. (Also
   forward sidecar stdout/stderr to the Tauri log so a packaged crash is
   diagnosable — mirrors the loud-failure ethos already in main.go.)
-- *Terminate:* store the `CommandChild` in Tauri managed state; on
-  `RunEvent::ExitRequested`/`Exit` and on main-window close, kill it. Prefer
-  `SIGTERM` on Unix so the server's existing signal handler runs its final
-  save (main.go already traps SIGINT/SIGTERM → persist → provider.Stop →
-  http.Shutdown). A hard kill elsewhere (Windows) is acceptable: autosave
-  already bounds loss to ~30s.
+- *Terminate:* **SUPERSEDED by ARCHITECTURE.md Decision 17 (implemented
+  2026-08-23).** This section described the shell owning the server and
+  killing it on window close. It no longer does: the shell attaches to the
+  detached runtime (`status --json`, `start` if absent) and terminates
+  nothing, because closing a window must never stop activity capture. The
+  `CommandChild`, the SIGTERM/SIGKILL escalation and the `libc` dependency
+  are gone. Everything else in this section (spawn mechanics, readiness,
+  forwarding output to the Tauri log) still describes the code, now applied
+  to short-lived CLI calls rather than a long-lived child.
 
 **Port strategy — ephemeral loopback.** Launch with `-addr 127.0.0.1:0`.
 The OS assigns a free port, so a stray port-8080 process or a second
@@ -216,7 +219,11 @@ three." Mapped against reality (one private-repo Linux x64 runner):
 | Windows x86_64 | `windows/amd64`, CGO off | MSI/NSIS (+WebView2) | needs a Windows runner | 2 |
 | Windows arm64 | `windows/arm64`, CGO off | MSI/NSIS | needs Windows arm64 tooling | 3 |
 
-Target-triple mapping for the sidecar naming (`dexel-server-$TARGET_TRIPLE`):
+Target-triple mapping for the sidecar naming (`Dexel Runtime-$TARGET_TRIPLE`
+since 2026-08-23; this document was written when the base name was
+`dexel-server`, and every `dexel-server-*` below should be read with the new
+base — see ARCHITECTURE.md Decision 17's update for why it changed and why
+`dexel` was not available):
 
 | Rust target triple | GOOS/GOARCH |
 |---|---|
@@ -252,7 +259,7 @@ once a Mac runner exists.
 - **Icon:** app icons are required per platform (`.icns` for macOS, `.ico`
   for Windows, a PNG set for Linux + the Tauri icon pipeline). None exist in
   the repo yet (only screenshot PNGs in `docs/images/`). **Asset task for
-  game-artist** (see §8) — derive from the dexel wordmark / dev sprite via
+  game-artist** (see §8) — derive from the Dexel wordmark / dev sprite via
   `tools/gen_assets.py` so it stays reproducible per ADR 0004.
 
 ---
@@ -314,7 +321,9 @@ note; superseded by EMBED-1's self-contained sidecar,
 `externalBin: ["binaries/dexel-server"]`, icons), a tight shell-plugin
 capability allowing only the sidecar, and `src/main.rs`: spawn sidecar with
 the §1 args/env, parse the `DEXEL_LISTENING` line, open the window on that
-URL, store the `CommandChild`, kill on exit (SIGTERM on Unix).
+URL, store the `CommandChild`, kill on exit (SIGTERM on Unix). *(The last two
+clauses are superseded by Decision 17 — the shell attaches to the runtime and
+kills nothing; see §1's Terminate note.)*
 
 **T2 — Go changes (owner: backend engineer; owns `app/main.go`).** Small and
 surgical:
@@ -338,7 +347,7 @@ run on the mac), and emit `desktop/src-tauri/binaries/dexel-server-$TRIPLE`
 
 **T4 — Icons (owner: game-artist; owns `tools/gen_assets.py` +
 `desktop/src-tauri/icons/`).** Generate the platform icon set (.icns/.ico/PNG)
-procedurally from the dexel identity, per ADR 0004; wire into Tauri's icon
+procedurally from the Dexel identity, per ADR 0004; wire into Tauri's icon
 config.
 
 **T5 — CI (owner: CI engineer; owns `.github/workflows/desktop.yml`).** A

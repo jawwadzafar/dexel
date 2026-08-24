@@ -4,7 +4,7 @@ Status: design pass (2026-08-22) · Extends SEC-1 (`docs/plan/SEC-1-design.md`,
 ADR 0014) · Constrained by the in-flight release pipeline
 (`scripts/build-release.sh`: `CGO_ENABLED=0` for linux/windows × amd64/arm64)
 
-Scope: move dexel's **game state** from `~/.config/dexel/state.json` to
+Scope: move Dexel's **game state** from `~/.config/dexel/state.json` to
 **SQLite** at `~/.config/dexel/state.db`, carrying the SEC-1 HMAC forward so
 tampering is still detected and quarantined. `config.json` stays plain JSON.
 Design only — no implementation in this pass.
@@ -111,7 +111,7 @@ and the upstream GitLab README, not from memory):
    Measure it, don't assume (§7 exit criteria).
 5. **Locking on network filesystems.** SQLite's POSIX advisory locks are
    unreliable on NFS/SMB, and `~/.config` *can* be network-mounted. Accepted:
-   dexel is single-process and single-writer, and WAL — which is worse on
+   Dexel is single-process and single-writer, and WAL — which is worse on
    network filesystems, not better — is not being used (§4.5).
 
 ---
@@ -128,7 +128,7 @@ SEC-1 §1.1 classified **PROTECTED**: `schema`, `devCash`, `xp`, `sprint`
 
 **Stays exactly as it is — `~/.config/dexel/config.json`, plain JSON,
 unsigned, hand-editable.** This is not an oversight, it is ADR 0014's whole
-point: the dexel's **name** (and future cosmetic prefs) are the user's to edit,
+point: the Dexel's **name** (and future cosmetic prefs) are the user's to edit,
 and putting them in a signed store would make "hand-editing my pet's name" a
 tamper event. `config.go` is **untouched by DB-1** — same `ConfigPath()`, same
 `LoadConfig`/`SaveConfig`, same `writeFileAtomically` recipe. The
@@ -377,7 +377,7 @@ mirrors of a signed field (cross-checked, row 4) or fail closed (row 5).
 ### 3.4 Tamper policy — unchanged from ADR 0014
 
 Quarantine the file, `ErrTampered`, fresh economy from `game.New()`, **no
-legacy import**, `config.json` (and therefore the dexel's name) untouched, one
+legacy import**, `config.json` (and therefore the Dexel's name) untouched, one
 log line, next autosave writes a valid signed DB. Nothing about this changes;
 only the filename in the log does.
 
@@ -482,7 +482,7 @@ what the DB stores. Test: §6, `TestLegacyRustChainOnAJSONLessFreshMachineWrites
 
 WAL is the reflexive answer and it is the **wrong** one here:
 
-- WAL's benefit is *concurrent readers alongside a writer*. dexel has **one
+- WAL's benefit is *concurrent readers alongside a writer*. Dexel has **one
   writer and zero concurrent readers** — `app/main.go`'s single-owner loop is
   the only thing that ever touches the store (`grep` confirms `internal/store`
   is imported by `main.go` and nothing else).

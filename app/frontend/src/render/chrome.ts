@@ -18,7 +18,7 @@ const ticker = byId<HTMLUListElement>('ticker');
 //   - #status-name, the always-visible one, in the empty strip below the
 //     ticker;
 //   - #menu-panel-title, the hamburger panel's heading, which reads
-//     "MENU" until the dexel has a name and the dexel's name after that.
+//     "MENU" until the Dexel has a name and the Dexel's name after that.
 // Deliberately NOT the titlebar's top-left cluster: that stays
 // coin-then-level and nothing else, by owner directive.
 const statusName = byId('status-name');

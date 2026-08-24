@@ -23,4 +23,5 @@ say something different — supersede it with a new one and cross-link.
 | [0015](0015-tauri-desktop-shell.md) | Tauri desktop shell: Go binary as sidecar, webview on local server, phased build matrix | accepted |
 | [0016](0016-sqlite-persistence.md) | SQLite persistence: signed snapshot row, pure-Go driver, tamper-tighter than JSON | accepted |
 | [0017](0017-sessions.md) | Sessions: intention as a lens, names on the config side, a chained-MAC append log, rewards outside the economy | accepted |
-| [0018](0018-dexel-cli-and-background-runtime.md) | dexel CLI and background runtime: one binary, argv-shape dispatch, ask-don't-trust discovery | accepted |
+| [0018](0018-dexel-cli-and-background-runtime.md) | Dexel CLI and background runtime: one binary, argv-shape dispatch, ask-don't-trust discovery | accepted |
+| [0019](0019-app-identity-via-cgwindowlist-and-an-availability-bit.md) | App identity from CGWindowList, not NSWorkspace: a frozen cache is a confident wrong answer, plus an explicit availability bit | accepted |
