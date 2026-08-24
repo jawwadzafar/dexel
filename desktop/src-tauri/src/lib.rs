@@ -205,8 +205,9 @@ fn resolve_driver() -> Driver {
 /// What one short-lived `dexel <args>` run said.
 ///
 /// `code` is deliberately kept and reported rather than turned into an error
-/// here: `status --json` exits 1 when no runtime is running, which is a
-/// perfectly normal answer and not a failure (see [`discover_runtime`]).
+/// here: for `status --json`, "no runtime is running" is a perfectly normal
+/// answer and not a failure, so the exit code is not the authority on it
+/// (see [`discover_runtime`]). `start`'s code IS checked.
 struct CliOutput {
     stdout: String,
     code: Option<i32>,
@@ -352,10 +353,15 @@ fn run_bundled(app: &tauri::AppHandle, args: &[&str]) -> Result<CliOutput, Strin
 
 /// Ask the Go CLI whether a runtime is already running, and where.
 ///
-/// `Ok(None)` means "nothing running" — a normal answer, not a failure. Note
-/// that `status --json` EXITS 1 in that case, so the exit code must not be
-/// treated as an error here; the authority is the `running` field in the JSON
-/// it prints (app/cmd_lifecycle.go). `status` also verifies liveness by
+/// `Ok(None)` means "nothing running" — a normal answer, not a failure. The
+/// authority for that is the `running` field in the JSON, never the exit
+/// code: `cmdStatus` in app/cmd_lifecycle.go exits **0 whether or not a
+/// runtime is running**, precisely so callers like this one are not forced to
+/// treat a normal answer as an error. (An earlier version of this comment
+/// claimed it exits 1; measured on Linux 2026-08-24, `status --json` with no
+/// runtime exits 0, and the Go source says so explicitly. Reading `running`
+/// was correct either way, which is why the wrong comment cost nothing.)
+/// `status` also verifies liveness by
 /// round-tripping an HTTP call to the runtime it found, so a `true` here means
 /// a server that actually answers, not just a pid file.
 fn discover_runtime(app: &tauri::AppHandle, driver: &Driver) -> Result<Option<String>, String> {
