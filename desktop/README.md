@@ -49,11 +49,13 @@ desktop/
 
 ### Why `src-tauri/Cargo.toml` declares an empty `[workspace]`
 
-The repository root `Cargo.toml` is a Cargo workspace (`activity/`,
-`companion/`, `tools/shotcap/` — the legacy Rust/Bevy track frozen by ADR
-0011). A crate nested under a workspace root that is not a member makes cargo
-refuse to build with *"current package believes it's in a workspace when it's
-not"*. The empty `[workspace]` table makes this crate its own workspace root,
+The repository root used to hold a Cargo workspace (`activity/`, `companion/`,
+`tools/shotcap/` — the legacy Rust/Bevy track frozen by ADR 0011 and since
+archived on branch `attic/legacy-rust-and-fleet`, ADR 0020). A crate nested
+under a workspace root that is not a member makes cargo refuse to build with
+*"current package believes it's in a workspace when it's not"*, so the empty
+table was required then and is kept now: it is the thing that guarantees this
+crate never gets adopted by a workspace someone adds above it. The empty `[workspace]` table makes this crate its own workspace root,
 which also keeps its lockfile, feature resolution and `target/` directory
 independent of that frozen track.
 

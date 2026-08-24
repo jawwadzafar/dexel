@@ -15,7 +15,10 @@ Ground rules that hold across every phase (do not re-decide):
   holds; blind sources never fabricate.
 - **In-game gate**: no visual/UX change ships without the overseer rendering
   the real product and judging it — isolated mockups have lied to us twice.
-- **Stack**: Go + HTML/NES.css (`app/`), ADR 0011. Rust frozen legacy.
+- **Stack**: Go + HTML/NES.css (`app/`), ADR 0011. The Rust/Bevy game is frozen
+  legacy and archived on branch `attic/legacy-rust-and-fleet` (ADR 0020) — not
+  in this tree. `app-rs/` is a separate, EXPERIMENTAL port of the *current*
+  product and stays.
 - **Know what already ships before planning the next thing**:
   [`docs/game/`](../game/README.md) is how the game works *today* — the real
   rules and numbers, read out of the Go source and updated in the same commit

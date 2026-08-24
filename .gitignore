@@ -6,8 +6,10 @@
 # not match them, and one `git add -A` tried to commit ~9GB of artifacts.
 target-*/
 **/target-*/
-# Build artifacts from scripts/build.sh (native + cross binaries). The script
-# writes to ./build/<target>/ — never commit the binaries.
+# ./build/ was scripts/build.sh's output directory (native + cross binaries of
+# the legacy Bevy companion). Both the script and that crate are archived on
+# branch attic/legacy-rust-and-fleet (ADR 0020); the rule stays so a checkout of
+# that branch, or any ad-hoc build dir, still cannot stage binaries.
 /build/
 
 # Release archives from scripts/build-release.sh (the self-contained Go
@@ -15,8 +17,11 @@ target-*/
 # license files) — never commit these either.
 /dist/
 
-# Cargo.lock is committed deliberately — this workspace builds an application
-# (the companion binary), where a locked dependency tree is the convention.
+# The two live Rust workspaces (desktop/src-tauri/ and app-rs/) commit their
+# Cargo.lock deliberately — they build applications, where a locked dependency
+# tree is the convention. The root workspace's Cargo.toml/Cargo.lock are
+# archived on branch attic/legacy-rust-and-fleet (ADR 0020); the target rules
+# above are still needed for the two live ones.
 
 # fleetsmith — per-developer runtime tier, never committed
 _fleet/local/

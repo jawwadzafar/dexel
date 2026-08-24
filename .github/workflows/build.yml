@@ -12,13 +12,10 @@ on:
 # self-hosted runner. Use the `darkmirror` label so the job is pinned to that
 # specific machine.
 #
-# Three independent jobs live here:
-#   - `build` (below): the LEGACY, frozen Rust/Bevy companion crate under
-#     companion/ (ADR 0011: superseded by the Go+WS backend under app/, kept
-#     buildable only as the one-time legacy-save source the Go backend
-#     imports from — see docs/upgrade-design.md). Not where new work lands.
-#   - `go`: the ACTUAL current backend under app/ — go vet + a raced test
-#     run. This is the job that must be green for any app/ change.
+# Two independent jobs live here:
+#   - `go`: the current backend under app/ — go vet + a raced test run via
+#     scripts/test-race.sh. This is the job that must be green for any app/
+#     change.
 #   - `frontend`: the TypeScript source under app/frontend/ (Frontend
 #     architecture track F1, docs/plan/ROADMAP.md) — npm ci, tsc --noEmit,
 #     and a fresh esbuild run diffed against the committed
@@ -26,102 +23,24 @@ on:
 #     drift from its TS source. (The bundle was named game.js before
 #     EMBED-1 renamed it after the product.)
 #
-# Targets produced by `build` (Linux host):
-#   - x86_64-unknown-linux-gnu   (native)
-#   - aarch64-unknown-linux-gnu  (cross, via `cross`/Docker — provides the
-#     aarch64 glibc sysroot Bevy's wayland/gbm/alsa libs need)
+# There used to be a third job, `[legacy rust] Build`, compiling the frozen
+# Rust/Bevy `companion` crate for two Linux targets on every push. Its own
+# purpose — keeping a binary around that could produce a legacy save for the
+# Go backend to import — died when review item B-2 deleted the importer, so
+# the crates are archived on branch `attic/legacy-rust-and-fleet` and the job
+# is gone (ADR 0020, docs/plan/REPO-STRUCTURE-AUDIT.md).
 #
-# macOS arm64 CANNOT be produced on a Linux runner. That build is included in
-# release.yml, gated behind a macOS runner label — it activates once a macOS
-# runner (e.g. "mac") is registered. See release.yml.
-
-env:
-  CARGO_TERM_COLOR: always
+# macOS arm64 CANNOT be produced on a Linux runner; the macOS release build
+# lives in release.yml behind a macOS runner label. See release.yml.
 
 # Self-hosted runners keep their state; clean the workspace when a job ends.
 # (Standard hygiene for self-hosted runners.)
 jobs:
-  # LEGACY: the frozen Rust/Bevy companion crate (see the file-level comment
-  # above). Kept building so the one-time legacy-save import path
-  # (docs/upgrade-design.md) always has a real binary to produce a save
-  # with; not where new gameplay work happens anymore.
-  build:
-    name: "[legacy rust] Build ${{ matrix.name }}"
-    runs-on: [self-hosted, darkmirror]
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - name: linux-x86_64
-            target: x86_64-unknown-linux-gnu
-            cross: false
-          - name: linux-arm64
-            target: aarch64-unknown-linux-gnu
-            cross: true
-    steps:
-      - name: Clean workspace
-        run: |
-          rm -rf "${GITHUB_WORKSPACE:?}"/* "${GITHUB_WORKSPACE:?}"/.[!.]* 2>/dev/null || true
-
-      - uses: actions/checkout@v4
-
-      - name: Install Rust
-        run: |
-          if ! command -v cargo >/dev/null; then
-            curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal
-            . "$HOME/.cargo/env"
-            echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
-          fi
-          rustc --version && cargo --version
-
-      - name: Cache cargo
-        uses: Swatinem/rust-cache@v2
-        with:
-          key: build-${{ matrix.target }}
-
-      - name: Add target
-        run: rustup target add ${{ matrix.target }}
-
-      # Native x86_64 needs a C linker.
-      - name: Install build deps (native x86_64)
-        if: matrix.cross == false
-        run: |
-          if ! command -v cc >/dev/null; then
-            (sudo apt-get update && sudo apt-get install -y build-essential) 2>/dev/null \
-              || echo "no sudo — relying on an existing cc/zig toolchain"
-          fi
-
-      # aarch64 via `cross` (Docker) — provides a real aarch64 toolchain+glibc.
-      - name: Install cross
-        if: matrix.cross == true
-        run: |
-          if ! command -v cross >/dev/null; then
-            cargo install cross --git https://github.com/cross-rs/cross
-          fi
-          cross --version
-
-      - name: Build
-        if: matrix.cross == false
-        run: cargo build --release --target ${{ matrix.target }} -p companion
-
-      - name: Build (cross aarch64)
-        if: matrix.cross == true
-        run: cross build --release --target ${{ matrix.target }} -p companion
-
-      - name: Show artifact
-        run: file target/${{ matrix.target }}/release/companion
-
-      - name: Upload artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: companion-${{ matrix.name }}-${{ github.sha }}
-          path: target/${{ matrix.target }}/release/companion
-
   # The current backend (ADR 0011): go vet + a raced test run of everything
   # under app/. CGO is required — internal/store's/handlers' race tests and
   # (on a real darwin runner) provider_darwin.go's cgo all need a working C
-  # toolchain, which is why this job installs one the same way the rust
-  # `build` job above does (native x86_64 needs a linker too).
+  # toolchain, which is why the race step goes through scripts/test-race.sh:
+  # it finds a compiler, proves it works, and exports CC (SF-3).
   go:
     name: Go (vet + race test)
     runs-on: [self-hosted, darkmirror]

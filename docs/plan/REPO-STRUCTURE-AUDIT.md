@@ -1,7 +1,14 @@
 # Repo structure & dead-file audit — dexel
 
 **Date:** 2026-08-24 · **HEAD at audit:** `f920e4b` ("desktop: first Linux build") ·
-**Author:** structure-audit agent · **Status:** PLAN — nothing executed.
+**Author:** structure-audit agent · **Status:** **EXECUTED 2026-08-24** —
+Phases 0-5 landed on `main` (see below); Phase 6 (the `app/main.go` split) is
+deliberately NOT done. The document is left exactly as written, as the record
+of what was decided and why, so every path it names as a deletion target is
+still named here — those files now live on branch `attic/legacy-rust-and-fleet`,
+not in this tree, which is why a repo-relative link check reports them missing
+from `main`. Execution notes, including the three places reality differed from
+this plan, are at the end of §6.
 **Owner's brief:** *"evaluate files that are not needed and improve code structure
 as industry standard — but don't break anything."*
 
@@ -784,3 +791,68 @@ GitHub Actions is currently blocked at the account level — run the gates local
 | Pre-existing broken doc links | 15 (8 forward references — leave; 7 genuinely stale) |
 | Gates verified green at `f920e4b` | `go vet`, `go test`, **`go test -race`**, `go build`, `tsc`, `esbuild` + **zero bundle drift**, 3× `cargo metadata` |
 | Gates NOT verifiable here | `desktop cargo check` (missing `libdbus-1-dev`), all of CI (account-blocked) |
+
+---
+
+## 6b. Execution record (2026-08-24) — what actually happened
+
+Phases 0-5 executed on `main`, one commit per phase, the full local gate
+(§6 G1-G6 plus a YAML/`bash -n` check on every changed workflow run-block) green
+after each. Phase 6 was explicitly out of scope for this pass.
+
+**Owner decisions as resolved:** D-1 **yes, archive** (hence ADR 0020, which
+amends ADR 0011's "Not deleted" clause). D-2 **commit the scripts** — they now
+live at `_fleet/shared/scripts/`. D-3 **move the changelog** — now
+`docs/HARNESS-CHANGELOG.md`. D-4 **apply the proposed text**, keeping the
+standing "orchestrate only, all implementation through subagents" rule and a
+pointer to `docs/plan/{ROADMAP,ORCHESTRATION-LOG}.md`. D-5 **archive both**.
+D-6 **acknowledged** — CI is dead, every gate was run locally.
+
+**Three places this plan was wrong or incomplete, with evidence:**
+
+1. **One archive branch, not two.** §6 proposed `attic/fleet-harness` (Phase 4)
+   and `legacy-rust` (Phase 5). Both archives went to a single branch,
+   **`attic/legacy-rust-and-fleet`**, cut at `d005454` and pushed to `origin`
+   *before* either deletion commit. One branch, one recovery command, and the
+   branch predates both deletions — which is what the safety argument actually
+   requires.
+2. **Committing the hook script needed one more guard than D-2 anticipated.**
+   D-2 called the gate "genuinely useful" and stopped there. But the reason it
+   was harmless before is that it pointed at a missing file and therefore never
+   ran; making it real also makes it run in a checkout where
+   `_fleet/local/handoffs/` does not exist (it is gitignored), where every
+   subagent would then be blocked forever on a handoff file it cannot have
+   written yet. `validate-handoff.sh` now treats a **missing handoffs directory**
+   as "no run in progress" (report, exit 0) and stays fully strict once the
+   directory exists. Verified by hand: terminal agent → 0, real workspace → 0,
+   simulated fresh clone → 0 with the notice, workspace-present-but-no-handoff
+   → 2. Relatedly, `log-event.sh` resolved its output as `$(dirname $0)/../runs`,
+   which after the move would have written untracked JSONL into the *tracked*
+   `_fleet/shared/`; it now targets `_fleet/local/runs/` explicitly.
+3. **§2.4 left the 8 `.claude/agents/*.md` as an either/or ("retarget … or
+   archive") and wrote out no text for them.** They were retargeted at the Go/TS
+   product, because they are live agent types and the standing rule is that all
+   implementation goes through them: `cargo fmt/clippy/test` → `go vet` +
+   `scripts/test-race.sh` + `npm run typecheck && npm run build` with no bundle
+   drift, `ActivityProvider` trait → the `app/internal/activity` boundary,
+   `assets/` → `app/assets/`, and `docs/{implementation-plan,milestone-log,pr-log}.md`
+   → `docs/plan/{ROADMAP,ORCHESTRATION-LOG}.md`. The same pass retargeted
+   `run-dev-companion` (which §2.4 also left as either/or) and
+   `visual-verification`, and repointed `orchestration-playbook` and
+   `pr-merge-decision` at the archived `RUN_PROMPT.md`/`fleet.yaml` *as archived*
+   rather than as live paths.
+
+**Two measurements this plan reported that came out differently:**
+
+- The **doc-link baseline is 12 paths, not 15.** The §6 G5 regex only matches
+  paths prefixed `docs|dev_docs|app|scripts|tools|desktop|app-rs|_fleet|.claude|.github`,
+  so the bare `activity/*.go` references §7 counts are invisible to it; and
+  committing this document added three of its own forward references
+  (`docs/README.md`, `docs/HARNESS-CHANGELOG.md`,
+  `docs/adr/0020-archive-the-frozen-rust-track.md`), two of which Phases 3-4 then
+  created. After Phase 5 the sweep's only *new* entries are paths this very
+  document names as deletion targets — verified one by one with
+  `git grep -l -F <path> -- '*.md'`, every hit being this file (plus
+  `docs/HARNESS-CHANGELOG.md` citing its own former location).
+- **`.git` was 1.70 GiB and is now 3.1 MiB**, and the ignored residue came to
+  **~75 GiB reclaimed** — both as predicted. `git fsck` is clean afterwards.

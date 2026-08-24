@@ -2,11 +2,13 @@
 # (dev_docs/rust-port-evaluation.md, §5.0).
 #
 # This is its OWN workspace root, exactly like desktop/src-tauri/Cargo.toml,
-# and for the same reason: the repository root Cargo.toml is a workspace
-# whose members are the frozen Bevy track (activity/, companion/,
-# tools/shotcap/). Declaring [workspace] here stops cargo's upward search
-# at this file, so app-rs/'s lockfile, feature resolution and target/ are
-# fully independent of that 566-crate / 70 GiB tree.
+# and originally for the same reason: the repository root Cargo.toml was a
+# workspace whose members were the frozen Bevy track (activity/, companion/,
+# tools/shotcap/) — a 566-crate / 70 GiB tree. That workspace is archived on
+# branch attic/legacy-rust-and-fleet (ADR 0020), so nothing sits above this
+# file today; the [workspace] table stays because it is what stops cargo's
+# upward search and keeps this crate's lockfile, feature resolution and
+# target/ independent of whatever anyone adds above it later.
 #
 # P0a scope only: a single dexel-bin crate exercising the crates the plan's
 # §2.1 probe used (tiny_http, rust-embed, serde_json, rusqlite bundled,

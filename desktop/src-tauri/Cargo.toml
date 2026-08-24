@@ -104,12 +104,13 @@ edition = "2021"
 rust-version = "1.77.2"
 license = "MIT OR Apache-2.0"
 
-# An explicit, EMPTY workspace table. The repository root Cargo.toml is a
+# An explicit, EMPTY workspace table. The repository root used to hold a
 # workspace (members: activity/, companion/, tools/shotcap — the legacy
-# Bevy/Rust track). Without this table cargo would refuse to build here
-# with "current package believes it's in a workspace when it's not".
-# Declaring our own workspace root also keeps this Tauri build's lockfile,
-# feature resolution and target/ directory fully independent of that track.
+# Bevy/Rust track, archived on branch attic/legacy-rust-and-fleet by ADR 0020),
+# and without this table cargo refused to build here with "current package
+# believes it's in a workspace when it's not". Keep it: it is what guarantees
+# this Tauri build's lockfile, feature resolution and target/ directory stay
+# independent of any workspace anyone adds above it.
 [workspace]
 
 [lib]

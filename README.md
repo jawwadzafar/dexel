@@ -265,15 +265,27 @@ and numbers a player is actually subject to, read out of the Go source.
 
 ### Legacy: the Rust/Bevy implementation
 
-`companion/` and `activity/` at the repo root (the Rust crates — not
-`app/internal/activity/`), plus `Cargo.toml`/`Cargo.lock` and `target/`, are
-the **original** implementation of this game in Rust + Bevy. It is frozen
-legacy: kept in the tree and buildable (CI still builds it), but it is not
-the product and receives no new feature work. The project pivoted to the Go
-+ HTML/NES.css stack in `app/` for verifiability (a headless browser on any
-machine sees exactly what a user sees) and portability. See
-[ADR 0011](docs/adr/0011-engine-pivot-to-pdf-native-stack.md) for the full
-reasoning. If you're new here: **`app/` is the thing you run.**
+The **original** implementation of this game was Rust + Bevy — crates
+`companion/` and `activity/` at the repo root, plus `tools/shotcap/`, the root
+`Cargo.toml`/`Cargo.lock`, and `scripts/build.sh`. The project pivoted to the
+Go + HTML/NES.css stack in `app/` for verifiability (a headless browser on any
+machine sees exactly what a user sees) and portability — see
+[ADR 0011](docs/adr/0011-engine-pivot-to-pdf-native-stack.md).
+
+Those files now live on the branch **`attic/legacy-rust-and-fleet`**, not in
+`main`'s working tree
+([ADR 0020](docs/adr/0020-archive-the-frozen-rust-track.md)). Nothing consumed
+them any more — the legacy-save importer that was their stated purpose was
+deleted, and two directories named `activity/` in one repo kept misleading
+readers. To get the Bevy game back:
+
+```bash
+git worktree add ../dexel-legacy attic/legacy-rust-and-fleet
+cd ../dexel-legacy && cargo run -p companion
+```
+
+If you're new here: **`app/` is the thing you run**, and
+`app/internal/activity/` is the only `activity` there is.
 
 ## Privacy
 
@@ -391,8 +403,8 @@ the normative specs (`docs/ui-spec.md`, `docs/art-direction.md`,
 ([`docs/plan/ROADMAP.md`](docs/plan/ROADMAP.md)), and the reasoning behind
 each major decision as an ADR in [`docs/adr/`](docs/adr/README.md).
 
-**CI:** `.github/workflows/build.yml` runs three jobs on push/PR — the
-legacy Rust build, `go vet` + `go test -race` for `app/`, and a frontend job
+**CI:** `.github/workflows/build.yml` runs two jobs on push/PR — `go vet` +
+the raced test suite via `scripts/test-race.sh` for `app/`, and a frontend job
 that runs `npm run build` fresh and diffs it against the committed bundle so
 the two can never silently drift. This repository is private, so the
 workflow runs on a self-hosted runner and its badge/checks won't render for
