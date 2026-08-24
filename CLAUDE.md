@@ -1,9 +1,47 @@
-## Harness: dev-companion
+## Project: dexel
 
-**Goal:** Rust + Bevy developer companion desktop game
+**Goal:** Dexel — a cozy pixel-art desktop companion whose workday runs on your
+real typing. Go + HTML/CSS/TypeScript (ADR 0011). The thing you run is `app/`.
 
-**Trigger:** For implementing, extending, or re-planning the dev-companion Rust/Bevy game, use the `run-dev-companion` skill. Simple questions can be answered directly.
+**Stack:** Go server + WebSocket + a committed TypeScript bundle, shipped as ONE
+binary (`app/embed.go` compiles `app/public/` and `app/assets/` in). A Tauri v2
+shell lives in `desktop/`.
 
-**Handover gate:** `.claude/settings.json` registers a `SubagentStop` hook running `_fleet/local/scripts/validate-handoff.sh`, which blocks a fleet agent from finishing until its handoff file exists and carries every required section. Note that project-level hooks do not run until this workspace is trusted — until you accept that dialog the gate is silently skipped and the fleet degrades to advisory instructions.
+**Where to start:** `docs/README.md` indexes the four documentation layers.
+`docs/game/` is how the game works today; `docs/plan/ROADMAP.md` is what's next;
+`docs/adr/` is why.
 
-**Changelog:** harness changes are recorded in `_fleet/shared/CHANGELOG.md` — append a row there rather than editing this file, which is regenerated on every build.
+**Source of truth for the work itself:** `docs/plan/ROADMAP.md` is the plan and
+`docs/plan/ORCHESTRATION-LOG.md` is its append-only event log. Neither lives in
+chat: read both before planning anything, and append to the log as work lands.
+If this file and those two disagree, they win.
+
+**How work gets done — standing rule:** the main session **orchestrates only**.
+ALL implementation goes through subagents, with exclusive file ownership per
+agent (two agents editing one file has already cost this repo real rework), and
+every "done" is re-verified by the orchestrator from a clean build/cache before
+it is trusted — agents have reported green off a stale cache while the tree did
+not actually build. Agent definitions live in `.claude/agents/`; the
+`orchestration-playbook` skill is the full method.
+
+**The gate:** no visual/UX change is done until it is rendered in the REAL running
+game — build the Go binary, run it with the fake provider, screenshot it, judge it
+with your own eyes. Isolated mockups have lied twice. See the
+`feature-build-and-verify` skill.
+
+**Before shipping:** `cd app && go vet ./...`, `bash scripts/test-race.sh`, and
+`cd app/frontend && npm run typecheck && npm run build` with no bundle drift.
+GitHub Actions is currently blocked at the account level — run the gates locally.
+
+**Handover gate:** `.claude/settings.json` registers a `SubagentStop` hook running
+`_fleet/shared/scripts/validate-handoff.sh` (tracked), which blocks a subagent
+from finishing until its handoff file in `_fleet/local/handoffs/` carries every
+required section. Project hooks do not run until this workspace is trusted — until
+you accept that dialog the gate is silently skipped and the handoff discipline is
+advisory only.
+
+**Legacy:** the Rust/Bevy implementation and the opencode fleet harness are
+archived on branch `attic/legacy-rust-and-fleet` (ADR 0011, ADR 0020). Two things
+named `activity` used to exist; now only `app/internal/activity/` does.
+
+**Changelog:** harness changes go in `docs/HARNESS-CHANGELOG.md`.

@@ -32,8 +32,9 @@ the next provider swap will rediscover the same failure modes.
 art, and docs content is done by parallel subagents, each with **exclusive
 ownership of its files** for the duration of its task. The overseer reads,
 briefs, verifies, resolves ownership conflicts, and commits.
-`docs/RUN_PROMPT.md`: "Tiny fixes are not an exception; they get batched
-into agent briefs." Don't make a one-line edit yourself because delegating it
+The v0.1 run prompt (`RUN_PROMPT.md`, archived on branch
+`attic/legacy-rust-and-fleet` — every quotation of it below is from there):
+"Tiny fixes are not an exception; they get batched into agent briefs." Don't make a one-line edit yourself because delegating it
 feels like overhead — the discipline is the point.
 
 ## Exclusive file ownership — the collision lessons
@@ -50,7 +51,7 @@ Two different collision bugs already cost this project real time:
 - **A naming collision in review artifacts made one milestone's backfilled
   review accidentally re-review the wrong milestone** (an M1 backfill review
   silently re-reviewed M0 because of a handoff-file naming collision;
-  `docs/RUN_PROMPT.md`). The fix that stuck: handoff/log filenames encode
+  the archived v0.1 run prompt). The fix that stuck: handoff/log filenames encode
   enough identifying detail (milestone number, PR number, from/to agent) that
   two different pieces of work can never collide under the same name, and a
   stale file gets an explicit `.stale-was-actually-<x>` suffix rather than
@@ -63,7 +64,7 @@ overlap even slightly, resolve it before dispatch, not after both report done.
 ## Never trust "done" without independent, clean-cache re-verification
 
 An agent's own self-report is not evidence. This project's actual policy
-(`docs/RUN_PROMPT.md`): "check `docs/milestone-log.md`/`docs/pr-log.md` for
+(the archived v0.1 run prompt): "check `docs/milestone-log.md`/`docs/pr-log.md` for
 real evidence of progress before assuming a pass is done, never trust an
 agent's self-report alone." Concretely:
 
@@ -137,13 +138,14 @@ for early/low-risk phases, not a permanent default once real users depend on
 
 ## Model/provider realities — opencode-fleet era, kept as history
 
-These applied when the fleet ran on opencode's model-pinned agents
-(`fleet.yaml`), before the pivot to Claude subagent orchestration. Kept
+These applied when the fleet ran on opencode's model-pinned agents (its
+`fleet.yaml`, archived on branch `attic/legacy-rust-and-fleet` with the rest of
+that harness — ADR 0020), before the pivot to Claude subagent orchestration. Kept
 because the failure *shapes* — not the specific model names — will recur with
 any future provider swap:
 
 - **A model passing a one-shot tool-call probe proves nothing about it
-  surviving as an agent.** `docs/RUN_PROMPT.md`: "a model can pass a
+  surviving as an agent.** The archived v0.1 run prompt: "a model can pass a
   synthetic probe... and answer a reasoning question perfectly, then still
   fail as an agent, because a multi-turn loop with real tools is a different
   capability." Before trusting a new candidate with a role, let it complete

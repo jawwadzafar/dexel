@@ -45,8 +45,9 @@ decide — that reviewer hasn't finished; wait or flag it as blocked in
 2. `gh pr merge <n> --squash --delete-branch` — do not wait for a human
    to merge. This project runs with standing authorization to commit,
    push, open PRs, review, and merge without per-action confirmation;
-   that authorization lives here and in `docs/RUN_PROMPT.md`, not in
-   any single conversation turn.
+   that authorization lives here (and originally in the v0.1 run prompt,
+   now archived on branch `attic/legacy-rust-and-fleet`), not in any
+   single conversation turn.
 3. Append a row to `docs/pr-log.md`: PR number, milestone, each
    reviewer's individual verdict, final decision, merge commit SHA
    (`git rev-parse HEAD` on `main` after the merge, or the SHA `gh pr

@@ -1,55 +1,65 @@
 ---
 name: visual-verification
 description: |
-  How to verify a milestone's visual exit criterion for dev-companion: capture the running game's own framebuffer with the in-process `shotcap` tool, then ask a vision model what is actually on screen via scripts/visual-check.py. Use whenever a milestone's exit criterion describes something a human must SEE (a progress bar moving, a HUD element appearing, a character animating, art looking finished), or when a milestone log records a visual check as unverified.
+  How to verify a visual exit criterion for dexel: render the REAL running app (build the Go binary, run it with the fake provider, screenshot the page with headless Chromium per the feature-build-and-verify recipe), then judge the image — yourself if you have vision, and/or via scripts/visual-check.py's vision model. Use whenever an exit criterion describes something a human must SEE (a progress bar moving, a HUD element appearing, a character animating, art looking finished), or when a log records a visual check as unverified.
 x-fleetsmith-origin: human
 ---
 
 # Visual verification
 
-Every model this fleet runs on is TEXT-ONLY — it cannot look at a
-screenshot. Two tools bridge that gap. Use them; do not fall back to
-asserting "the tests pass so the UI must be fine". A test that checks
-"the HUD entity was spawned" passes happily while the HUD is invisible
-off-screen — that exact bug shipped through five milestones and three
-approving reviewers before a human looked at the window.
+Do not fall back to asserting "the tests pass so the UI must be fine". A
+test that checks "the element was created" passes happily while the
+element is invisible off-screen — that exact bug shipped through five
+milestones and three approving reviewers before a human looked at the
+window. Mechanical proof and visual proof are different claims.
 
-## Capture: use in-process capture, NOT an X screenshot
+## Capture: render the REAL app, in a headless browser
 
-External screenshot tools (`import`, `scrot`, `grim`) have never worked
-on this machine — the X display is unauthorized from agent shells and
-none of those binaries are installed. Do not spend time on them.
-
-Instead use `tools/shotcap`, which runs the REAL game app under its
-normal winit runner, captures its own framebuffer via Bevy's
-`Screenshot` component, and exits by itself:
+The product is a Go server serving an HTML page, so the capture path is
+the one in the `feature-build-and-verify` skill (§ THE GATE) — that
+skill owns the recipe; this one owns the judging. In short:
 
 ```bash
-source ~/.cargo/devcompanion-env.sh
-export XAUTHORITY=/home/darkmirror/.Xauthority DISPLAY=:0
-mkdir -p /tmp/shots
-SHOTCAP_OUT=/tmp/shots SHOTCAP_EXIT_SECS=6 cargo run -p shotcap
-ls /tmp/shots/    # shot_2s.png, shot_5s.png
+export PATH=/home/darkmirror/go-toolchain/go/bin:$PATH
+cd app && go build -o /tmp/dc-verify . && cd ..
+
+# The fake provider is a deterministic scripted timeline (pure function of
+# elapsed time since Start), so a screenshot reproduces on any box and
+# needs no input-monitoring permission.
+DEVCOMPANION_FAKE_SCRIPT="type:20s,idle:40s,mouse:15s" \
+  /tmp/dc-verify -provider fake -addr 127.0.0.1:8099 &
+
+curl -s http://127.0.0.1:8099/api/health   # publicOk:true before you shoot
+
+# 640x400 is the shipping resolution (art-direction non-negotiable #7).
+npx --yes playwright screenshot --viewport-size=640,400 \
+  --wait-for-timeout=3000 http://127.0.0.1:8099/ /tmp/dc-shot.png
+kill %1
 ```
 
-It accepts a seeded save so you can capture a specific game state
-rather than a fresh one: `DEV_COMPANION_SEED_COINS`,
-`DEV_COMPANION_SEED_XP`, `DEV_COMPANION_SEED_WORK_DONE`. Use that to
-photograph the exact condition a criterion describes (e.g. seed coins
-above the desk-upgrade threshold to prove the upgrade appears).
+Two notes that save time. External X screenshot tools (`import`,
+`scrot`, `grim`) have never worked from agent shells on this machine —
+do not spend time on them; the headless browser is the supported path.
+And to photograph a specific game state rather than a fresh one, seed a
+save file or drive the app through the WS/HTTP surface — never fake the
+screenshot.
+
+(The old capture path was `cargo run -p shotcap`, an in-process Bevy
+framebuffer grab. That crate is archived with the frozen Rust game on
+branch `attic/legacy-rust-and-fleet` — ADR 0011, ADR 0020. There is
+nothing to run it against any more.)
 
 ## First: can YOU see?
 
 If you are a model with native vision (a Claude agent), Read the
 screenshot directly and judge it yourself — do not outsource judgment
-you can make better firsthand. The pipeline below is the primary path
-for text-only models (the opencode fleet) and a second opinion for
-everyone else.
+you can make better firsthand. The pipeline below is a second opinion
+for you, and the primary path for a text-only model.
 
 ## Judge: ask a vision model, and ask it to be critical
 
 ```bash
-python3 scripts/visual-check.py /tmp/shots/shot_5s.png \
+python3 scripts/visual-check.py /tmp/dc-shot.png \
   "Describe exactly what you see: scene contents, any character, art style, palette. Be specific and critical — if it looks unfinished or like placeholder programmer-art rectangles, say so plainly."
 ```
 
