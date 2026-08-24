@@ -256,9 +256,12 @@ binaries, so any sprite is a reviewable diff:
 python3 tools/gen_assets.py   # regenerates all sprite/thumbnail PNGs into app/assets/
 ```
 
-Full specs live in `docs/` (`docs/ui-spec.md`, `docs/art-direction.md`,
-`docs/upgrade-design.md`); the decisions behind the design, and why, live in
-[`docs/adr/`](docs/adr/README.md).
+Full specs live in `docs/` — [`docs/README.md`](docs/README.md) is the index
+of all four documentation layers. The normative specs are `docs/ui-spec.md`,
+`docs/art-direction.md`, and `docs/upgrade-design.md`; the decisions behind the
+design, and why, live in [`docs/adr/`](docs/adr/README.md); and
+[`docs/game/`](docs/game/README.md) is **how the game works today** — the rules
+and numbers a player is actually subject to, read out of the Go source.
 
 ### Legacy: the Rust/Bevy implementation
 
@@ -381,10 +384,12 @@ catalog + state client-side, for iterating on the store/history/activity
 modals without a live backend connection.
 
 **Project layout:** see [How it works / Architecture](#how-it-works--architecture)
-above. Design specs live in `docs/` (`docs/ui-spec.md`,
-`docs/art-direction.md`, `docs/upgrade-design.md`); the reasoning behind
-each major decision is recorded as an ADR in
-[`docs/adr/`](docs/adr/README.md).
+above. [`docs/README.md`](docs/README.md) indexes every documentation layer:
+the normative specs (`docs/ui-spec.md`, `docs/art-direction.md`,
+`docs/upgrade-design.md`), the current mechanics
+([`docs/game/`](docs/game/README.md)), the plan
+([`docs/plan/ROADMAP.md`](docs/plan/ROADMAP.md)), and the reasoning behind
+each major decision as an ADR in [`docs/adr/`](docs/adr/README.md).
 
 **CI:** `.github/workflows/build.yml` runs three jobs on push/PR — the
 legacy Rust build, `go vet` + `go test -race` for `app/`, and a frontend job

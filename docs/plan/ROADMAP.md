@@ -16,6 +16,11 @@ Ground rules that hold across every phase (do not re-decide):
 - **In-game gate**: no visual/UX change ships without the overseer rendering
   the real product and judging it — isolated mockups have lied to us twice.
 - **Stack**: Go + HTML/NES.css (`app/`), ADR 0011. Rust frozen legacy.
+- **Know what already ships before planning the next thing**:
+  [`docs/game/`](../game/README.md) is how the game works *today* — the real
+  rules and numbers, read out of the Go source and updated in the same commit
+  as any behaviour change. This roadmap is what comes next; that directory is
+  what exists. [`docs/README.md`](../README.md) indexes both.
 
 ---
 

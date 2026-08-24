@@ -1,5 +1,7 @@
 # Dexel — PR Log
 
+> **HISTORICAL (v0.1, Rust/Bevy era).** Superseded by [ADR 0011](adr/0011-engine-pivot-to-pdf-native-stack.md). The current plan is [`docs/plan/ROADMAP.md`](plan/ROADMAP.md); how the game works today is [`docs/game/`](game/README.md). Kept as a record — never as a plan.
+
 One row per milestone PR, appended by pr-merge-decider after every decision.
 Never delete or rewrite a past row — append corrections as new rows.
 

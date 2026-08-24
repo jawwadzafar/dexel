@@ -1,5 +1,7 @@
 # Dexel — Milestone Log
 
+> **HISTORICAL (v0.1, Rust/Bevy era).** Superseded by [ADR 0011](adr/0011-engine-pivot-to-pdf-native-stack.md). The current plan is [`docs/plan/ROADMAP.md`](plan/ROADMAP.md); how the game works today is [`docs/game/`](game/README.md). Kept as a record — never as a plan.
+
 One entry per milestone attempted, appended by game-engineer. Each entry:
 files changed, exact commands run, their real output, remaining issues.
 Never delete or rewrite a past entry — append corrections as new entries.
