@@ -20,3 +20,5 @@ Why (full analysis: dev_docs/rust-port-evaluation.md + dev_docs/rust-parallel/):
 
 Revisit ONLY if: dexel must target a platform Go cannot serve, or the desktop
 model changes to window-owns-runtime. Otherwise do not re-litigate.
+
+_The probe crate itself was dropped from main (2026-08-24, owner: no diversion at 0.1.0); recover it at branch attic/app-rs-experiment._
