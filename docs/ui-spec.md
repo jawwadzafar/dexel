@@ -301,7 +301,7 @@ not decoration.
 
 ### 2.4 Paused chrome (PR-5 — Pause semantics)
 
-`dev_docs/production-runtime/MIGRATION_PLAN.md` §PR-5. Three things change,
+`docs/production-runtime/MIGRATION_PLAN.md` §PR-5. Three things change,
 all driven by the one `state.paused` bool (§6.1) and nothing else —
 `activeState` never gains a fourth value for this (ADR 0010; pausedness is
 conveyed only via `paused`, never by inventing a mood string):
@@ -896,7 +896,7 @@ Field notes the implementers must not improvise on:
   detection there, ADR 0009). Seconds are whole seconds; the frontend
   formats them (`fmtDuration`/`fmtInt`), never the server. `stats` itself
   stays optional so a pre-A1 server degrades to an all-zero block.
-  `pausedSeconds` (PR-5, `dev_docs/production-runtime/MIGRATION_PLAN.md`
+  `pausedSeconds` (PR-5, `docs/production-runtime/MIGRATION_PLAN.md`
   §PR-5) adds a **third** time bucket alongside `activeSeconds`/
   `idleSeconds` — time spent with tracking stopped — never folded into
   idle: for any bucket, `activeSeconds + idleSeconds + pausedSeconds`
@@ -987,7 +987,7 @@ Field notes the implementers must not improvise on:
     accumulators**, not deltas, because neither has a monotonic lifetime
     counter to subtract from (P2-design §2.3). `elapsedSeconds` is
     **server-computed**; the client never derives live time. `pausedSeconds`
-    (PR-5, `dev_docs/production-runtime/MIGRATION_PLAN.md` §PR-5) joins
+    (PR-5, `docs/production-runtime/MIGRATION_PLAN.md` §PR-5) joins
     this same delta set: a running session's counters freeze while
     `state.paused` is true (no ticks land), and this is the session's own
     accrued paused time so far — non-optional in `wire.ts` (unlike the
@@ -1005,7 +1005,7 @@ Field notes the implementers must not improvise on:
     category citation exactly as `config.name` was (§2.7 of P2-design): a
     session name is CONFIG, never a `state.db` column, and is looked up by
     the server from `config.json`'s `sessionNames` map, keyed by `id`.
-* `paused` — PR-5 (`dev_docs/production-runtime/MIGRATION_PLAN.md` §PR-5).
+* `paused` — PR-5 (`docs/production-runtime/MIGRATION_PLAN.md` §PR-5).
   `true` while tracking is stopped: `provider.Stop()` has been called,
   `eng.Tick()` is not invoked, and there is no accrual and no analytics
   tally for as long as it stays true. **`activeState` does not gain a
@@ -1161,7 +1161,7 @@ replaces the old.
   success answered by `state` + `flash` (and, on a non-discarded stop, the
   `sessionComplete` message, §6.1), failure by `flash: error` and no state
   change. `SESSION_RENAME` is deferred, named, not built.
-* `PAUSE` / `RESUME` (PR-5, `dev_docs/production-runtime/MIGRATION_PLAN.md`
+* `PAUSE` / `RESUME` (PR-5, `docs/production-runtime/MIGRATION_PLAN.md`
   §PR-5) — no payload, same shape as the `STORE_OPEN`/`STORE_CLOSE`
   no-payload-action precedent above, and the **same no-flash precedent**
   too: pause is a state, not an event, so success is answered by an

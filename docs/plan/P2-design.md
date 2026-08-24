@@ -42,7 +42,7 @@ asking.**
   growth anywhere and will accept an anonymous container.
 
 - **Fork P2-B — which schema number does P2 take, 5→6 or 6→7?**
-  `dev_docs/production-runtime/MIGRATION_PLAN.md` sequencing constraint 3: only
+  `docs/production-runtime/MIGRATION_PLAN.md` sequencing constraint 3: only
   ONE schema-bumping task may be in flight, and PR-5 (pause) also wants 5→6.
   **Default taken: P2 claims 5 → 6.** P2 is the keystone of the
   FULL-EXECUTION MANDATE and is starting now; PR-5 has not started. Whoever runs
@@ -683,7 +683,7 @@ seeded at boot by `Apply`, appended on each end) and `State()` reads only that.
   `.future` and refused. A test named after the bump (mirroring
   `TestFutureSchema6RefusalStillFiresAfterTheSchema5Bump`) proves it.
 - **PR-5 must take 6 → 7** and add `pausedSeconds` to §2.3's delta set. Written
-  into `dev_docs/production-runtime/MIGRATION_PLAN.md` by DOC-1.
+  into `docs/production-runtime/MIGRATION_PLAN.md` by DOC-1.
 - **Retention: unbounded rows, a windowed UI.** A row is ~150 bytes; ten a day
   for a decade is a few megabytes, and the rows *are* the memory P6 is built on,
   so pruning them would delete the product feature. The wire carries the last
@@ -1075,7 +1075,7 @@ the pending-record pop after both `g.Tick` and `applyAction`; the immediate
 **Depends on GO-1 and GO-2.**
 
 **Task DOC-1 — docs (owns `docs/**` except the two files this design pass owns,
-plus `dev_docs/production-runtime/MIGRATION_PLAN.md`).** `docs/ui-spec.md`: the
+plus `docs/production-runtime/MIGRATION_PLAN.md`).** `docs/ui-spec.md`: the
 new §9 Sessions, the two §6.2 action rows, the `sessionComplete` message in
 §6.1, `[W]` in §5.2, **and the stale §1/§2.1 fixes** (§6.6).
 `docs/adr/README.md`: the ADR 0017 row. `docs/plan/ROADMAP.md`: P2's status line.

@@ -187,7 +187,7 @@ const DEV_ACTIVE_SESSION = {
   appSwitches: 1,
   coinsEarned: 14,
   longestFocusBlockSeconds: 380,
-  // PR-5 (dev_docs/production-runtime/MIGRATION_PLAN.md §PR-5) — this
+  // PR-5 (docs/production-runtime/MIGRATION_PLAN.md §PR-5) — this
   // session predates the pause feature in this fixture's own timeline, so
   // an honest 0 rather than an invented paused stretch.
   pausedSeconds: 0
@@ -333,7 +333,7 @@ export const DEV_STATE_NO_SESSION: Partial<StateMessage> = {
   sessions: { active: null, summary: { completed: 0, thisWeek: 0, longestSessionSeconds: 0 }, recent: [] }
 };
 
-// DEV_STATE_PAUSED — PR-5 (dev_docs/production-runtime/MIGRATION_PLAN.md
+// DEV_STATE_PAUSED — PR-5 (docs/production-runtime/MIGRATION_PLAN.md
 // §PR-5) fixture: tracking is stopped. `activeState` stays 'idle' — the
 // honest value while no keystroke/mouse ticks are landing — never a
 // fourth mood string; pausedness is conveyed only via `paused: true`

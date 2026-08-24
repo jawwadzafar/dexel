@@ -870,7 +870,7 @@ should be promoted without a real machine.
   `app/internal/autostart/{autostart,launchd_darwin}*.go`,
   `app/internal/game/activity_line*.go`, `app/internal/game/game_test.go`,
   `desktop/README.md`, `desktop/src-tauri/*`, `scripts/build-sidecar.sh`,
-  `dev_docs/production-runtime/PLATFORM_NOTES.md` (some of those were
+  `docs/production-runtime/PLATFORM_NOTES.md` (some of those were
   committed by their owners mid-run). **None** of them touch
   `provider_linux.go`, `provider_select_linux.go`, `internal/paths`,
   `internal/lifecycle`, `spawn_unix.go`, `systemd_linux.go` or `xdg_linux.go`

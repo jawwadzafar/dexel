@@ -1,7 +1,7 @@
 //go:build unix
 
 // spawn_unix.go — the unix half of the two per-OS process mechanics
-// `dexel start` and `dexel stop` need (dev_docs/production-runtime/
+// `dexel start` and `dexel stop` need (docs/production-runtime/
 // PLATFORM_NOTES.md §2). Build-tagged in the same shape as this repo's
 // existing provider_select_{linux,darwin,other}.go trio, deliberately:
 // ARCHITECTURE.md §10 rejects "a process-wide platform abstraction layer"

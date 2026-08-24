@@ -26,7 +26,7 @@ const menuPanelTitle = byId('menu-panel-title');
 // Phase P2 (docs/ui-spec.md §9.5) — the always-visible session indicator.
 const sessionPill = byId('session-pill');
 const sessionPillText = byId('session-pill-text');
-// PR-5 (dev_docs/production-runtime/MIGRATION_PLAN.md §PR-5) — the
+// PR-5 (docs/production-runtime/MIGRATION_PLAN.md §PR-5) — the
 // always-visible paused badge, same idiom as #session-pill above.
 const pausedBadge = byId('paused-badge');
 

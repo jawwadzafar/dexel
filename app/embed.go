@@ -41,7 +41,7 @@ import (
 // would quietly drop a dotfile the frontend adds later.
 //
 // Why this is a list of patterns instead of one `all:public` (N-9,
-// docs/plan/REVIEW-2026-08-22.md; dev_docs/rust-port-evaluation.md §2.1):
+// docs/plan/REVIEW-2026-08-22.md; docs/rust-port-evaluation.md §2.1):
 // app/public/js/dexel.js.map is a 230 KB pure debug artifact — about a
 // third of the whole embedded payload — and it was being compiled into
 // every shipped binary and served to every end user. go:embed has no

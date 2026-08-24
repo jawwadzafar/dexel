@@ -1,6 +1,6 @@
 // cmd_autostart.go — `dexel autostart enable|disable|status`
-// (dev_docs/production-runtime/MIGRATION_PLAN.md §PR-6,
-// dev_docs/production-runtime/PLATFORM_NOTES.md §3).
+// (docs/production-runtime/MIGRATION_PLAN.md §PR-6,
+// docs/production-runtime/PLATFORM_NOTES.md §3).
 //
 // One CLI verb, three OS mechanisms, ONE non-negotiable rule
 // (PLATFORM_NOTES.md §3, ARCHITECTURE.md's consent posture): autostart

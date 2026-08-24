@@ -15,7 +15,7 @@ import (
 // reflection, so the day a Snapshot field grows a nested struct, that
 // struct is discovered and required to be registered here automatically
 // — see internal/contentfree's package doc for why that recursion is the
-// whole point (dev_docs/rust-port-evaluation.md §2.6).
+// whole point (docs/rust-port-evaluation.md §2.6).
 func contentFreeRegistry() contentfree.Registry {
 	return contentfree.Registry{
 		// Each entry is a justification, not just a registration. In

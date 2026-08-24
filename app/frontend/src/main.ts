@@ -35,7 +35,7 @@ import * as historyModal from './features/history-modal';
 import * as onboardingModal from './features/onboarding-modal';
 import * as sessionsModal from './features/sessions-modal';
 // Wires #menu-open/#menu-panel as a side effect on import. PR-5
-// (dev_docs/production-runtime/MIGRATION_PLAN.md §PR-5) gave it one piece
+// (docs/production-runtime/MIGRATION_PLAN.md §PR-5) gave it one piece
 // of store-derived state to render — the pause/resume label — via the
 // named renderPauseLabel() export called from renderAll() below.
 import * as menu from './features/menu';

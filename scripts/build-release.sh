@@ -233,7 +233,7 @@ build_one() {
     # cannot answer that on its own.
     # -s -w strips the DWARF debug info and the symbol table: ~5.9 MB
     # (31.7%) off every shipped binary, measured on linux/amd64
-    # (dev_docs/rust-port-evaluation.md §2.1). Nothing in the product
+    # (docs/rust-port-evaluation.md §2.1). Nothing in the product
     # reads either one — Go panics still print full stack traces with
     # function names and line numbers, because that comes from
     # .gopclntab, which -s -w does NOT touch. What is lost is `dlv`

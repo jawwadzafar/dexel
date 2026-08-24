@@ -50,7 +50,7 @@
 # executable that is actually exec'd, and `dexel autostart enable` points
 # its LaunchAgent at that file inside the installed `Dexel.app`. So that
 # filename is what the owner reads in that pane.
-# dev_docs/production-runtime/PLATFORM_NOTES.md §3.1.2–§3.1.3 has the
+# docs/production-runtime/PLATFORM_NOTES.md §3.1.2–§3.1.3 has the
 # whole account, including the two earlier names (`dexel-server`, then
 # `Dexel Runtime`) and what the pane showed for each.
 #

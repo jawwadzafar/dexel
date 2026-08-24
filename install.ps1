@@ -3,7 +3,7 @@
 #   irm https://raw.githubusercontent.com/jawwadzafar/dexel/main/install.ps1 | iex
 #   irm https://get.dexel.jwdlab.com/install.ps1 | iex          (later, same file)
 #
-# The Windows half of dev_docs/production-runtime/RELEASE_PIPELINE.md section 6,
+# The Windows half of docs/production-runtime/RELEASE_PIPELINE.md section 6,
 # stage 1: same ten steps as install.sh, same GitHub-API release resolution,
 # same refusal to install anything whose sha256 does not match.
 #

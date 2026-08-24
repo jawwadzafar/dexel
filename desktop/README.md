@@ -135,7 +135,7 @@ one flat install directory may collide case-insensitively. That is checked by
 `mod bundle_layout` in `src-tauri/src/lib.rs` (a unit test over this crate's
 own `tauri.conf.json`) and by a step in `.github/workflows/desktop.yml`'s
 `sidecar` job, which is the copy that runs on a push touching only the JSON.
-`dev_docs/production-runtime/PLATFORM_NOTES.md` §3.1.3 has the full account,
+`docs/production-runtime/PLATFORM_NOTES.md` §3.1.3 has the full account,
 including the two rejected alternatives.
 
 ### Build, in order

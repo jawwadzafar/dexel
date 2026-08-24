@@ -29,7 +29,7 @@ const (
 )
 
 // actionPause/actionResume are PR-5's wire literals
-// (dev_docs/production-runtime/ARCHITECTURE.md §3's `PAUSE`/`RESUME` on the
+// (docs/production-runtime/ARCHITECTURE.md §3's `PAUSE`/`RESUME` on the
 // existing actions channel). Named once for exactly the reason
 // actionSetName and the two session literals are: applyAction handles them,
 // and runServe's action loop has to recognise the SAME literal to know that

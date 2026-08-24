@@ -1,4 +1,4 @@
-// pause.go implements PR-5 — honest pause/resume (dev_docs/production-runtime/
+// pause.go implements PR-5 — honest pause/resume (docs/production-runtime/
 // ARCHITECTURE.md §6 Decisions 13-16, MIGRATION_PLAN.md §PR-5) — on the
 // game side: the persisted `paused` flag, the PausedSeconds bucket, and the
 // one tick path a paused runtime takes.

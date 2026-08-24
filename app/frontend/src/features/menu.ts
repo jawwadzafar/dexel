@@ -11,7 +11,7 @@
 // Goals, ...) is just one more `.menu-item` button in index.html; this
 // file needs zero changes to support it.
 //
-// PR-5 (dev_docs/production-runtime/MIGRATION_PLAN.md §PR-5) is the one
+// PR-5 (docs/production-runtime/MIGRATION_PLAN.md §PR-5) is the one
 // exception to "never reaches into ... modules": pause/resume has no
 // dedicated feature module (no modal to open), so this file owns
 // #pause-toggle directly — reading live state from ../state/store and

@@ -1,5 +1,5 @@
 // version.go — dexel's build-time version stamp
-// (dev_docs/production-runtime/MIGRATION_PLAN.md §PR-2).
+// (docs/production-runtime/MIGRATION_PLAN.md §PR-2).
 package main
 
 // version is a semver-ish release tag (e.g. "v9.9.9"), set at BUILD time

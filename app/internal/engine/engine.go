@@ -326,7 +326,7 @@ func (e *Engine) mood(snap activity.Snapshot, honesty activity.Honesty, now time
 // Reset clears every piece of engine-local state that carries meaning
 // ACROSS ticks, so the next Tick behaves exactly like the first tick of a
 // freshly-constructed Engine. It is the resume seam
-// (dev_docs/production-runtime/ARCHITECTURE.md Decision 16, MIGRATION_PLAN.md
+// (docs/production-runtime/ARCHITECTURE.md Decision 16, MIGRATION_PLAN.md
 // §PR-5): called when a paused runtime resumes, BEFORE the provider is
 // started again.
 //

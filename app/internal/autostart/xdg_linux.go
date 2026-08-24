@@ -1,7 +1,7 @@
 //go:build linux
 
 // xdg_linux.go implements Linux's FALLBACK autostart mechanism
-// (dev_docs/production-runtime/PLATFORM_NOTES.md §3.2): an XDG
+// (docs/production-runtime/PLATFORM_NOTES.md §3.2): an XDG
 // autostart .desktop entry, used only when systemd_linux.go's
 // systemdUsable() says no user systemd session exists. It has no
 // supervision of its own, so its Exec line runs `dexel start` — never

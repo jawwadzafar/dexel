@@ -89,7 +89,7 @@ type StateMessage struct {
 	// SET_NAME — the client never decides it, never sets it, and never
 	// keeps showing the intro against a false here.
 	Onboarding bool `json:"onboarding"`
-	// Paused is PR-5's pause signal (dev_docs/production-runtime/
+	// Paused is PR-5's pause signal (docs/production-runtime/
 	// ARCHITECTURE.md Decision 15, MIGRATION_PLAN.md §PR-5) and it is the
 	// AUTHORITATIVE one: while it is true the activity provider is
 	// STOPPED, engine.Engine.Tick is not called, and nothing about the
@@ -145,7 +145,7 @@ type StatCounters struct {
 	// the game layer — see Game.recordStats). Always 0 on Linux, which
 	// never sets ActiveApp (ADR 0009); shown honestly, no special-casing.
 	AppSwitches uint64 `json:"appSwitches"`
-	// PausedSeconds (PR-5, dev_docs/production-runtime/ARCHITECTURE.md
+	// PausedSeconds (PR-5, docs/production-runtime/ARCHITECTURE.md
 	// Decision 14) counts one second for every tick the runtime spent
 	// PAUSED — the user having explicitly said "stop watching me", with
 	// the provider stopped and no engine tick taken at all.
@@ -319,7 +319,7 @@ type Game struct {
 	configName string
 	onboarding bool
 
-	// paused is PR-5's pause state (dev_docs/production-runtime/
+	// paused is PR-5's pause state (docs/production-runtime/
 	// ARCHITECTURE.md §6). Unlike onboarding it IS persisted
 	// (SaveData.Paused, FORK D: "pause is a user intent... a pause that
 	// silently evaporated mid-update would be a lie in the other

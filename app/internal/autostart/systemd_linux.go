@@ -1,7 +1,7 @@
 //go:build linux
 
 // systemd_linux.go implements Linux's PRIMARY autostart mechanism
-// (dev_docs/production-runtime/PLATFORM_NOTES.md §3.2): a systemd
+// (docs/production-runtime/PLATFORM_NOTES.md §3.2): a systemd
 // `--user` unit, detected — never assumed — via `systemctl --user
 // is-system-running`. It also holds the three package-level dispatch
 // functions (enablePlatform/disablePlatform/queryPlatform) for the

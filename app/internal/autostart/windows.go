@@ -1,7 +1,7 @@
 //go:build windows
 
 // windows.go implements Windows' autostart mechanism
-// (dev_docs/production-runtime/PLATFORM_NOTES.md §3.3): one value under
+// (docs/production-runtime/PLATFORM_NOTES.md §3.3): one value under
 // HKCU\Software\Microsoft\Windows\CurrentVersion\Run, via
 // golang.org/x/sys/windows/registry (already a direct dependency of
 // app/go.mod) — no COM, no IShellLink, no scheduler XML, and reversible

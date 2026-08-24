@@ -1,7 +1,7 @@
 //go:build darwin
 
 // launchd_darwin.go implements macOS's autostart mechanism
-// (dev_docs/production-runtime/PLATFORM_NOTES.md §3.1): a launchd user
+// (docs/production-runtime/PLATFORM_NOTES.md §3.1): a launchd user
 // agent, chosen over Login Items because a plist + one `launchctl` call
 // works for a bare CLI with no app bundle, no Objective-C/Swift call
 // and no Automation permission prompt.

@@ -40,7 +40,7 @@ const (
 )
 
 // serveMode is WHICH of the three entry points is running today's server
-// body (dev_docs/production-runtime/ARCHITECTURE.md Decision 3 and FORK
+// body (docs/production-runtime/ARCHITECTURE.md Decision 3 and FORK
 // A). `serve` and `runtime` "are the same code path; the two names exist
 // so a log line, a launchd plist, and a human's terminal each say the
 // thing they mean" — and modeLegacy is the third name for that same path:

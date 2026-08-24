@@ -1,7 +1,7 @@
 //go:build windows
 
 // spawn_windows.go — the Windows half of the per-OS process mechanics
-// (dev_docs/production-runtime/PLATFORM_NOTES.md §2). Authored against
+// (docs/production-runtime/PLATFORM_NOTES.md §2). Authored against
 // the documented flags and unit-tested only for what a non-Windows host
 // can check; honestly marked unverified-on-hardware in the same style as
 // desktop/README.md, because this repo has no Windows runner

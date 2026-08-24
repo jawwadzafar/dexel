@@ -34,7 +34,7 @@
            titlebar's empty space between #hud-level (ends 120) and
            #menu-open (starts 600), so nothing else moves. -->
       <span id="session-pill"><span id="session-pill-dot"></span><span id="session-pill-text"></span></span>
-      <!-- PR-5 (dev_docs/production-runtime/MIGRATION_PLAN.md §PR-5): the
+      <!-- PR-5 (docs/production-runtime/MIGRATION_PLAN.md §PR-5): the
            always-visible paused badge. Owned by render/chrome.ts, which
            toggles the .visible class exactly the way #session-pill does
            above — empty box, hidden by default, shown only while
@@ -55,7 +55,7 @@
         <button id="activity-open" class="nes-btn menu-item">[A] ACTIVITY</button>
         <button id="history-open" class="nes-btn menu-item">[H] HISTORY</button>
         <button id="sessions-open" class="nes-btn menu-item">[W] SESSIONS</button>
-        <!-- PR-5 (dev_docs/production-runtime/MIGRATION_PLAN.md §PR-5):
+        <!-- PR-5 (docs/production-runtime/MIGRATION_PLAN.md §PR-5):
              label toggles PAUSE/RESUME and the click action flips with
              it — both driven by live state.paused, read fresh from the
              store at click time (features/menu.ts). -->

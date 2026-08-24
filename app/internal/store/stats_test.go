@@ -359,7 +359,7 @@ func TestSchema3SaveRoundTripsWithNewCountersAndCoins(t *testing.T) {
 // (docs/plan/SEC-1-design.md §5/§8, ADR
 // 0014-save-integrity-hmac-and-config-split.md) requires stay intact
 // through every subsequent bump, restated by P2 (docs/plan/P2-design.md
-// §5.6) and again by PR-5 (dev_docs/production-runtime/MIGRATION_PLAN.md
+// §5.6) and again by PR-5 (docs/production-runtime/MIGRATION_PLAN.md
 // §PR-5's exit criterion: "a schema-8 save is still refused"). (This test
 // has pinned the future/refused schema one bump past CurrentSchema at
 // every prior bump too — schema 5 back when CurrentSchema was 4, then

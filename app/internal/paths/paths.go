@@ -1,9 +1,9 @@
 // Package paths is the ONLY place in dexel that knows a filesystem
-// location (dev_docs/production-runtime/ARCHITECTURE.md "Decision 9 — A
+// location (docs/production-runtime/ARCHITECTURE.md "Decision 9 — A
 // new app/internal/paths package is the only place that knows a path",
-// dev_docs/production-runtime/MIGRATION_PLAN.md §PR-1). It resolves the
+// docs/production-runtime/MIGRATION_PLAN.md §PR-1). It resolves the
 // per-OS user-level locations documented in
-// dev_docs/production-runtime/PLATFORM_NOTES.md §1:
+// docs/production-runtime/PLATFORM_NOTES.md §1:
 //
 //	StateDir  state.db, config.json, runtime.json, runtime.lock
 //	LogDir    <StateDir>/logs

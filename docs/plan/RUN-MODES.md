@@ -75,7 +75,7 @@ go build -o dexel .
 
 **Status: works today.** See
 [ADR 0018](../adr/0018-dexel-cli-and-background-runtime.md) for the design,
-and [`dev_docs/production-runtime/ARCHITECTURE.md`](../../dev_docs/production-runtime/ARCHITECTURE.md)
+and [`docs/production-runtime/ARCHITECTURE.md`](../production-runtime/ARCHITECTURE.md)
 for the full decision record this mode was built from.
 
 ---
@@ -312,7 +312,7 @@ real and what is merely written down.
   single-instance locking.
 - [ADR 0015 — Tauri desktop shell](../adr/0015-tauri-desktop-shell.md) — the
   decision and its alternatives for modes B/C.
-- [`dev_docs/production-runtime/ARCHITECTURE.md`](../../dev_docs/production-runtime/ARCHITECTURE.md) —
+- [`docs/production-runtime/ARCHITECTURE.md`](../production-runtime/ARCHITECTURE.md) —
   the full production-runtime design mode P and ADR 0018 were built from.
 - [F3-design.md](F3-design.md) — the full design, build matrix and phasing.
 - [`desktop/README.md`](../../desktop/README.md) — build instructions and the

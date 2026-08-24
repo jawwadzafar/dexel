@@ -41,7 +41,7 @@
 # product's own word for it (app/cmd_lifecycle.go's `desktopAppName`,
 # ARCHITECTURE.md Decision 17) — which frees `Dexel` for this daemon.
 # desktop/src-tauri/Cargo.toml's [package] header has the full three-names
-# table, and dev_docs/production-runtime/PLATFORM_NOTES.md §3.1.3 has the
+# table, and docs/production-runtime/PLATFORM_NOTES.md §3.1.3 has the
 # field account. The invariant underneath it — no two executables destined
 # for one flat install directory may collide case-insensitively — is
 # enforced by `mod bundle_layout` in desktop/src-tauri/src/lib.rs and by an
@@ -79,7 +79,7 @@
 #     CGEventSource shim. A CGO_ENABLED=0 darwin build does not "compile
 #     but ship a blind provider": it FAILS TO LINK, because the cgo file
 #     is excluded from the build and NewDarwinProvider has no non-cgo
-#     definition (dev_docs/rust-port-evaluation.md §2.1's bonus finding
+#     definition (docs/rust-port-evaluation.md §2.1's bonus finding
 #     corrects the earlier wording here). Either way the conclusion is the
 #     same: the darwin targets are only built when the HOST is macOS
 #     (where the macOS Tauri bundle is built anyway) and are skipped,

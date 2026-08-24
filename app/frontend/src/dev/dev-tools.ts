@@ -15,7 +15,7 @@ declare global {
     // Phase P1: the fresh-install fixture, exposed so a harness can render
     // the onboarding modal with one call — window.devApply(window.devStateOnboarding).
     devStateOnboarding?: typeof DEV_STATE_ONBOARDING;
-    // PR-5 (dev_docs/production-runtime/MIGRATION_PLAN.md §PR-5): the
+    // PR-5 (docs/production-runtime/MIGRATION_PLAN.md §PR-5): the
     // paused fixture, exposed so a harness can render the PAUSED chrome
     // with one call — window.devApply(window.devStatePaused).
     devStatePaused?: typeof DEV_STATE_PAUSED;

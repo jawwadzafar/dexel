@@ -369,7 +369,7 @@ img, .sprite {
   vertical-align: top;
 }
 
-/* PR-5 (dev_docs/production-runtime/MIGRATION_PLAN.md §PR-5) — the
+/* PR-5 (docs/production-runtime/MIGRATION_PLAN.md §PR-5) — the
    always-visible paused badge. Sits to the RIGHT of #hud-level (80..120)
    and clear of #session-pill's own box (132..372, §9.5) with an 8px gap
    on each side, since a session can be active AND paused at once and

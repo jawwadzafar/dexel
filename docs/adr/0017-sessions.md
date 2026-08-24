@@ -33,7 +33,7 @@ how the log stays **tamper-evident**.
    "ADR 0014 category" field; or no per-session names at all in v1.
 2. **Which schema number does P2 take?** → **5 → 6**, and PR-5 (pause) becomes
    6 → 7 (Decision 6). Only one schema-bumping task may be in flight
-   (`dev_docs/production-runtime/MIGRATION_PLAN.md` sequencing constraint 3).
+   (`docs/production-runtime/MIGRATION_PLAN.md` sequencing constraint 3).
 3. **What does completing a session reward?** → **nothing economic**: a counter,
    a "sessions this week" number, and the celebration (Decision 3).
 4. **When does a session end by itself?** → **survives restarts; 2 h idle

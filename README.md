@@ -74,7 +74,7 @@ irm https://raw.githubusercontent.com/jawwadzafar/dexel/main/install.ps1 | iex
 > The same two files will later be served from
 > `https://get.dexel.jwdlab.com/install.sh` and `/install.ps1` — the same
 > bytes at a shorter address, not a different installer
-> ([release pipeline](dev_docs/production-runtime/RELEASE_PIPELINE.md)).
+> ([release pipeline](docs/production-runtime/RELEASE_PIPELINE.md)).
 
 **macOS is not published yet.** There is no macOS release artifact, so the
 installer says so and stops rather than pretending — build from source with

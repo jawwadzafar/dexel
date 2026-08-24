@@ -1,6 +1,6 @@
 // lifecycle_handlers.go — the lifecycle control plane's HTTP surface
-// (dev_docs/production-runtime/MIGRATION_PLAN.md §PR-4,
-// dev_docs/production-runtime/ARCHITECTURE.md §3 Decisions 5 and 8).
+// (docs/production-runtime/MIGRATION_PLAN.md §PR-4,
+// docs/production-runtime/ARCHITECTURE.md §3 Decisions 5 and 8).
 //
 // The four routes, all sharing one token gate:
 //

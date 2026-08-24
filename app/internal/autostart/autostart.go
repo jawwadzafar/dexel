@@ -1,6 +1,6 @@
 // Package autostart implements `dexel autostart enable|disable|status`
-// (dev_docs/production-runtime/MIGRATION_PLAN.md §PR-6,
-// dev_docs/production-runtime/PLATFORM_NOTES.md §3): one CLI verb, three
+// (docs/production-runtime/MIGRATION_PLAN.md §PR-6,
+// docs/production-runtime/PLATFORM_NOTES.md §3): one CLI verb, three
 // user-level, no-sudo mechanisms — launchd on macOS, systemd `--user`
 // (with XDG autostart as a detected, not assumed, fallback) on Linux,
 // the HKCU `Run` key on Windows.
@@ -314,7 +314,7 @@ func xmlUnescape(s string) string { return xmlUnescaper.Replace(s) }
 // bash). So items 1 and 2 above may buy nothing at all until the project
 // has a real Developer ID signature. They are cheap, correct, and the
 // documented/observed-in-the-field things to do — not a guarantee.
-// dev_docs/production-runtime/PLATFORM_NOTES.md §3.1 records the full
+// docs/production-runtime/PLATFORM_NOTES.md §3.1 records the full
 // verdict and what a real signature would cost.
 // ---------------------------------------------------------------------
 

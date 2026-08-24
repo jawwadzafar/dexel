@@ -89,7 +89,7 @@ export interface StatBlock {
   sprintsCompleted: number;
   focusSessions?: number;
   appSwitches?: number;
-  // PR-5 — Pause semantics (dev_docs/production-runtime/MIGRATION_PLAN.md
+  // PR-5 — Pause semantics (docs/production-runtime/MIGRATION_PLAN.md
   // §PR-5). Seconds spent paused (tracking stopped, no ticks, no accrual)
   // — a THIRD bucket alongside activeSeconds/idleSeconds, never folded
   // into idle: `activeSeconds + idleSeconds + pausedSeconds` covers the
@@ -132,7 +132,7 @@ export interface DayStat {
   coinsEarned: number;
   isActive: boolean;
   longestFocusBlockSeconds?: number;
-  // PR-5 — Pause semantics (dev_docs/production-runtime/MIGRATION_PLAN.md
+  // PR-5 — Pause semantics (docs/production-runtime/MIGRATION_PLAN.md
   // §PR-5) — that day's total paused seconds, the same third bucket
   // StatBlock gains above. Optional for the same reason
   // `longestFocusBlockSeconds` is: a still-older/degraded server, or a day
@@ -193,7 +193,7 @@ export interface ActiveSessionView {
   appSwitches: number;
   coinsEarned: number;
   longestFocusBlockSeconds: number;
-  // PR-5 — Pause semantics (dev_docs/production-runtime/MIGRATION_PLAN.md
+  // PR-5 — Pause semantics (docs/production-runtime/MIGRATION_PLAN.md
   // §PR-5) — joins P2's session delta set (P2-design.md §2.3/§5.6): a
   // running session's counters freeze while paused (no ticks), and this
   // is the accrued paused time for the session so far. Non-optional
@@ -222,7 +222,7 @@ export interface SessionView { // one finished session
   appSwitches: number;
   coinsEarned: number;
   longestFocusBlockSeconds: number;
-  // PR-5 (dev_docs/production-runtime/MIGRATION_PLAN.md §PR-5) — same
+  // PR-5 (docs/production-runtime/MIGRATION_PLAN.md §PR-5) — same
   // field/rationale as ActiveSessionView.pausedSeconds above, carried
   // through to the finished-session record verbatim.
   pausedSeconds: number;
@@ -283,7 +283,7 @@ export interface StateMessage {
   // clean empty state (no active session, no recent list) rather than
   // crashing or fabricating one client-side.
   sessions?: SessionsView;
-  // PR-5 — Pause semantics (dev_docs/production-runtime/MIGRATION_PLAN.md
+  // PR-5 — Pause semantics (docs/production-runtime/MIGRATION_PLAN.md
   // §PR-5). TRUE while tracking is stopped (provider.Stop() called,
   // eng.Tick() not invoked, no accrual and no analytics tally). Optional
   // for the same stale-server reason as `onboarding`/`sessions` above: a
@@ -338,7 +338,7 @@ export type ClientAction =
   // never the validation.
   | { action: 'SESSION_START'; name?: string }
   | { action: 'SESSION_STOP' }
-  // PR-5 — Pause semantics (dev_docs/production-runtime/MIGRATION_PLAN.md
+  // PR-5 — Pause semantics (docs/production-runtime/MIGRATION_PLAN.md
   // §PR-5). No payload, same shape as the `STORE_OPEN`/`STORE_CLOSE`
   // no-payload-action precedent above. `PAUSE` calls provider.Stop() and
   // stops tracking (no accrual, no analytics tally, no engine ticks);

@@ -62,7 +62,7 @@ type StatCountersSave struct {
 	// schema 1->2 bump.
 	FocusSessions uint64 `json:"focusSessions"`
 	AppSwitches   uint64 `json:"appSwitches"`
-	// PausedSeconds (PR-5, dev_docs/production-runtime/ARCHITECTURE.md
+	// PausedSeconds (PR-5, docs/production-runtime/ARCHITECTURE.md
 	// Decision 14) mirrors game.StatCounters.PausedSeconds, added in
 	// schema 7 (see CurrentSchema's doc comment). A schema-6 file has no
 	// such key; json.Unmarshal leaves it at 0, the correct "this build
@@ -284,7 +284,7 @@ type SaveData struct {
 	// exactly like ImportedFromRust/ImportedAt.
 	Session        *ActiveSessionSave `json:"session,omitzero"`
 	SessionLogHead string             `json:"sessionLogHead,omitempty"`
-	// Paused (PR-5, dev_docs/production-runtime/ARCHITECTURE.md Decision
+	// Paused (PR-5, docs/production-runtime/ARCHITECTURE.md Decision
 	// 16 and FORK D, schema 7) persists the user's pause INTENT across a
 	// restart: "pause is a user intent, and `dexel update` restarts the
 	// runtime; a pause that silently evaporated mid-update would be a lie
@@ -377,7 +377,7 @@ type SaveData struct {
 // migration (§5.6: "we never had sessions before, so inventing past ones
 // would be fabrication").
 //
-// Bumped 6 -> 7 for PR-5 (pause; dev_docs/production-runtime/
+// Bumped 6 -> 7 for PR-5 (pause; docs/production-runtime/
 // MIGRATION_PLAN.md §PR-5, ARCHITECTURE.md §6 Decisions 14/16 and FORK D
 // — P2/Sessions had already claimed 5 -> 6, so pause takes the next
 // number, per MIGRATION_PLAN.md sequencing constraint 3's "only ONE
@@ -404,7 +404,7 @@ const CurrentSchema = 7
 // behavioural change to this package's contract: everything else
 // Load/Save/Snapshot/Apply exposed before DB-1 is unchanged), which is
 // PR-1's whole point: zero migration for the only platform with real
-// saves today (dev_docs/production-runtime/MIGRATION_PLAN.md §PR-1,
+// saves today (docs/production-runtime/MIGRATION_PLAN.md §PR-1,
 // PLATFORM_NOTES.md §1). paths.StateDir() is the only place that knows
 // the actual per-OS location, including DEXEL_HOME's override and the
 // one-time macOS/Windows relocation. Prior builds wrote

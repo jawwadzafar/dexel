@@ -4,7 +4,7 @@ Status: evaluation + plan, 2026-08-22 · Answers "can we build the Rust version,
 which will win, and what's the plan" · Grounded in ADR 0011 (the deliberate
 Rust→Go pivot), ADR 0015 (which rejected a Rust *rewrite* once, for reasons
 that do not apply to a parallel build), ADR 0014/0016 (persistence and
-integrity), ADR 0018 + `dev_docs/production-runtime/` (CLI/runtime/release),
+integrity), ADR 0018 + `docs/production-runtime/` (CLI/runtime/release),
 the frozen Rust legacy in `companion/`+`activity/`, and measurements taken on
 this box today — including an actual Rust probe binary built and run.
 
@@ -842,14 +842,14 @@ what does not.
 **P0b — extract the shared contract.** This writes Go, not Rust, and is
 valuable whether or not `app-rs/` ever exists.
 
-- `dev_docs/parity/CONTRACT.md`: the WS `StateMessage` (18 fields, camelCase),
+- `docs/parity/CONTRACT.md`: the WS `StateMessage` (18 fields, camelCase),
   `CatalogMessage`, the client action verbs; the HTTP surface (`/`,
   `/assets/`, `/api/health`, `/ws`) and the same-origin rule; the
   `DEXEL_LISTENING` handshake line; `runtime.json` schema 1; `dexel status
   --json`; the honesty rules (blind provider ⇒ never `OnBreak`, idle clock
   freezes) and the privacy rules (counts and durations only; free text lives in
   `config.json`) as testable statements.
-- `dev_docs/parity/golden/*.json`: real `StateMessage` and `CatalogMessage`
+- `docs/parity/golden/*.json`: real `StateMessage` and `CatalogMessage`
   captures emitted by a **new Go test** driving the fake provider through a
   fixed script — the sequence, not just one frame. Note that byte-identity is
   *not* required on the wire (a browser reads `0` and `0.0` identically); the
@@ -1014,7 +1014,7 @@ scores elsewhere. These are the product's non-negotiables.
 | # | Gate | How it is checked |
 |---|---|---|
 | G1 | **Feature parity** against `PARITY-BASELINE` | The §6.5 checklist, every row green |
-| G2 | **Test parity** — all 257 Go tests have a named Rust twin or a **written waiver** in `dev_docs/parity/TEST-PARITY.md` giving the test name and the reason | count + review; silence is a dropped invariant, a waiver is a decision |
+| G2 | **Test parity** — all 257 Go tests have a named Rust twin or a **written waiver** in `docs/parity/TEST-PARITY.md` giving the test name and the reason | count + review; silence is a dropped invariant, a waiver is a decision |
 | G3 | **Privacy boundary** — no raw content, no titles, no keycodes, no URLs anywhere in the wire or the save; free text confined to unsigned config | §2.6's guard, and it must **fail the build** on a new field, demonstrated |
 | G4 | **Honesty** — a blind provider never reports `OnBreak`; the idle clock freezes rather than guessing; `STORE_OPEN` freezes earning | ported engine honesty tests |
 | G5 | **Same frontend, byte-identical** | CI diff of every served path against the Go server (§P1) |

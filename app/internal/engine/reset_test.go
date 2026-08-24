@@ -9,7 +9,7 @@ import (
 )
 
 // TestResetMakesTheNextTickBehaveLikeTheFirst is PR-5's resume seam
-// (dev_docs/production-runtime/ARCHITECTURE.md Decision 16,
+// (docs/production-runtime/ARCHITECTURE.md Decision 16,
 // MIGRATION_PLAN.md §PR-5's "resume after a long pause grants no work on
 // the first tick and no focus bonus from a pre-pause run (Engine.Reset()
 // proven)").

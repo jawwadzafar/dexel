@@ -1,6 +1,6 @@
 # P0a — the cross-compile probe (GO/NO-GO input)
 
-Per `dev_docs/rust-port-evaluation.md` §5 P0a and §6.4/§6.6: this is the
+Per `docs/rust-port-evaluation.md` §5 P0a and §6.4/§6.6: this is the
 single highest-weight input to the parallel-implementation decision,
 measured before any of `app-rs/`'s real crates exist. Everything below was
 actually built and run on this box (the one self-hosted Linux runner this

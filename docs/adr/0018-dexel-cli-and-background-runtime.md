@@ -1,7 +1,7 @@
 # 0018 — Dexel CLI and background runtime: one binary, argv-shape dispatch, ask-don't-trust discovery
 
-Status: accepted (2026-08-22, PR-3) · Realises `dev_docs/production-runtime/ARCHITECTURE.md`
-Decisions 1–3, 6, 7, 9, 12 (`dev_docs/production-runtime/MIGRATION_PLAN.md` §PR-3)
+Status: accepted (2026-08-22, PR-3) · Realises `docs/production-runtime/ARCHITECTURE.md`
+Decisions 1–3, 6, 7, 9, 12 (`docs/production-runtime/MIGRATION_PLAN.md` §PR-3)
 · Extends ADR 0015 (the Tauri sidecar this design's endpoint half will
 eventually invert) and ADR 0016 (reuses its tmp+fsync+rename write recipe)
 · Honours ADR 0010 (never claim something you cannot know — a pid is never
@@ -20,7 +20,7 @@ records this honestly as "mode A."
 The owner's product intent — "start Dexel, forget the terminal, come back to
 it" — needs something that outlives any one window. The load-bearing fact,
 verified by reading the tree rather than assumed
-(`dev_docs/production-runtime/ARCHITECTURE.md` §1.1): **the runtime already
+(`docs/production-runtime/ARCHITECTURE.md` §1.1): **the runtime already
 behaves like a background service**. `main()`'s `for { select { ... } }`
 loop is driven by wall-clock `time.Ticker`s, not by connection count;
 `hub.broadcastState` iterates an empty client map as a no-op, not a stall.

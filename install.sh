@@ -4,7 +4,7 @@
 #   curl -fsSL https://raw.githubusercontent.com/jawwadzafar/dexel/main/install.sh | bash
 #   curl -fsSL https://get.dexel.jwdlab.com/install.sh | sh          (later, same file)
 #
-# Stage 1 of dev_docs/production-runtime/RELEASE_PIPELINE.md § 6: the ten
+# Stage 1 of docs/production-runtime/RELEASE_PIPELINE.md § 6: the ten
 # steps of that contract, but resolving the release through the **GitHub
 # API** instead of an R2 `latest/VERSION` + `checksums.txt` pair, because
 # GitHub Releases is what exists today and R2 is not provisioned yet. When

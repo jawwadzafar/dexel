@@ -1,9 +1,9 @@
 # app-rs/ parity contract — P0b golden captures index
 
 Owner: this P0a/P0b execution pass. Scope per
-`dev_docs/rust-port-evaluation.md` §5 (P0a/P0b) and §6 (scorecard). This
+`docs/rust-port-evaluation.md` §5 (P0a/P0b) and §6 (scorecard). This
 directory is `app-rs/`'s designated home for parity/comparison artifacts,
-distinct from the plan prose's own `dev_docs/parity/` naming — kept
+distinct from the plan prose's own `docs/parity/` naming — kept
 separate to avoid collision with concurrent agents also touching this
 repo. Everything here is captured from the REAL, unmodified Go server
 (`app/`), driven by the fake activity provider, over its real `/ws`

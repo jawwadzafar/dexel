@@ -2,7 +2,7 @@
 // backs every content_free_test.go in this repo
 // (app/internal/{activity,game,store}). It exists to close a specific,
 // documented weakness in the incumbent per-struct allow-list tests
-// (dev_docs/rust-port-evaluation.md §2.6): those tests enumerate a single
+// (docs/rust-port-evaluation.md §2.6): those tests enumerate a single
 // type's fields against a hardcoded map, which is genuinely deny-by-
 // default at that ONE type, but does not recurse — a content-capable
 // field on a struct nested two levels down is uncaught unless a human

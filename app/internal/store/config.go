@@ -45,7 +45,7 @@ import (
 // a hand edit, an id reused after a discarded short session); that is
 // accepted and honest (§2.7): a logged session simply renders unnamed,
 // and the protected counts are never affected.
-// Autostart (PR-6, dev_docs/production-runtime/MIGRATION_PLAN.md §PR-6,
+// Autostart (PR-6, docs/production-runtime/MIGRATION_PLAN.md §PR-6,
 // PLATFORM_NOTES.md §3) is the first of the "future cosmetic prefs"
 // this struct's doc comment above anticipated: which login-autostart
 // mechanism `dexel autostart enable` last installed —

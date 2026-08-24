@@ -1,7 +1,7 @@
 // Package lifecycle owns the three mechanisms that let one dexel CLI
 // invocation find, talk to, and refuse to duplicate a dexel RUNTIME
-// process (dev_docs/production-runtime/ARCHITECTURE.md Decisions 6 and 7,
-// dev_docs/production-runtime/PLATFORM_NOTES.md §5):
+// process (docs/production-runtime/ARCHITECTURE.md Decisions 6 and 7,
+// docs/production-runtime/PLATFORM_NOTES.md §5):
 //
 //	runtime.json  the discovery file — {pid, port, token, ...} at 0600
 //	runtime.lock  the OS lock that makes "one runtime per state dir" true

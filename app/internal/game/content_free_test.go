@@ -19,7 +19,7 @@ import (
 // introduced ANYWHERE under StateMessage does not need a new manual
 // checkExact call to be caught: internal/contentfree.Audit discovers it
 // by walking the real reflect.Type graph and fails if it is not
-// registered here (dev_docs/rust-port-evaluation.md §2.6 names this
+// registered here (docs/rust-port-evaluation.md §2.6 names this
 // exact recursion gap in the old design).
 //
 // nameException is the one repeated, cited carve-out: a field literally
@@ -69,7 +69,7 @@ func contentFreeRegistry() contentfree.Registry {
 				// field.
 				"Config":     "game.ConfigView",
 				"Onboarding": "bool",
-				// PR-5 (pause, dev_docs/production-runtime/ARCHITECTURE.md
+				// PR-5 (pause, docs/production-runtime/ARCHITECTURE.md
 				// Decision 15): a plain server-computed bool saying
 				// whether tracking is currently off — the OPPOSITE of a
 				// privacy concern, and it can carry nothing but

@@ -1,4 +1,4 @@
-// cli.go — dexel's command dispatcher (dev_docs/production-runtime/
+// cli.go — dexel's command dispatcher (docs/production-runtime/
 // ARCHITECTURE.md FORK A and Decision 3, MIGRATION_PLAN.md §PR-3).
 //
 // One binary is simultaneously the CLI, the runtime, the web UI and (from

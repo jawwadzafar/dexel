@@ -17,7 +17,7 @@ import (
 // Being content-free upstream (activity.Snapshot, game.StateMessage) is
 // meaningless if the thing actually written to the user's disk is free
 // to grow a raw field later, and — the specific weakness this file's
-// walker-based design closes (dev_docs/rust-port-evaluation.md §2.6) — a
+// walker-based design closes (docs/rust-port-evaluation.md §2.6) — a
 // content-capable field nested two levels into SaveData no longer needs
 // a human to remember a manual checkExact call: internal/contentfree.Audit
 // discovers every reachable type by walking the real reflect.Type graph

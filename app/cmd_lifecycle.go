@@ -1,5 +1,5 @@
 // cmd_lifecycle.go — the lifecycle verbs: start, stop, restart, status,
-// open, logs (dev_docs/production-runtime/ARCHITECTURE.md Decision 3,
+// open, logs (docs/production-runtime/ARCHITECTURE.md Decision 3,
 // MIGRATION_PLAN.md §PR-3).
 //
 // The single idea every verb here is built on (ARCHITECTURE.md Decision
