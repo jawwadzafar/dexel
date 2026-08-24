@@ -39,8 +39,8 @@ Elsewhere:
 
 | Constant | Value | File |
 | --- | --- | --- |
-| `activity.MouseSampleInterval` | `100 * time.Millisecond` | `activity/provider.go` |
-| `activity.MaxAppIDLen` | `32` | `activity/sanitize.go` |
+| `activity.MouseSampleInterval` | `100 * time.Millisecond` | `app/internal/activity/provider.go` |
+| `activity.MaxAppIDLen` | `32` | `app/internal/activity/sanitize.go` |
 | `tickInterval` | `1 * time.Second` | `app/main.go` |
 | `game.HistoryRetentionDays` | `30` | `game/history.go` |
 | `game.ActiveDayMinSeconds` | `300` | `game/history.go` |

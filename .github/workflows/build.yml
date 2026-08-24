@@ -138,23 +138,22 @@ jobs:
         with:
           go-version: "1.27"
 
-      # -race needs a real C compiler/linker for its runtime; mirrors the
-      # rust job's "Install build deps (native x86_64)" step above.
-      - name: Install build deps (cgo/-race needs a C toolchain)
-        run: |
-          if ! command -v cc >/dev/null; then
-            (sudo apt-get update && sudo apt-get install -y build-essential) 2>/dev/null \
-              || echo "no sudo — relying on an existing cc/zig toolchain"
-          fi
-          go version
+      - name: go version
+        run: go version
 
       - name: go vet
         working-directory: app
         run: go vet ./...
 
-      - name: go test -race
-        working-directory: app
-        run: go test -race ./...
+      # SF-3 (docs/plan/REVIEW-2026-08-22.md): cgo does not look for `cc` — it
+      # reads $CC, defaulting to `gcc` on Linux — so the old `command -v cc`
+      # guard passed on this runner (a zig shim at ~/.local/bin/cc) and the
+      # whole suite then died with `cgo: C compiler "gcc" not found`.
+      # scripts/test-race.sh is the fix: it probes gcc/clang/cc, PROVES the
+      # compiler can compile a trivial C program, exports CC, and only then
+      # runs the suite. Do not re-derive that logic in YAML.
+      - name: go test -race (scripts/test-race.sh)
+        run: bash scripts/test-race.sh
 
   # Frontend architecture track F1 (docs/plan/ROADMAP.md): the TypeScript
   # source under app/frontend/ that builds into app/public/js/dexel.js — the

@@ -100,14 +100,8 @@ jobs:
         with:
           go-version: "1.27"
 
-      # -race needs a real C compiler/linker; mirrors build.yml's `go` job.
-      - name: Install build deps (cgo/-race needs a C toolchain)
-        run: |
-          if ! command -v cc >/dev/null; then
-            (sudo apt-get update && sudo apt-get install -y build-essential) 2>/dev/null \
-              || echo "no sudo — relying on an existing cc/zig toolchain"
-          fi
-          go version
+      - name: go version
+        run: go version
 
       - name: go vet
         working-directory: app
@@ -115,11 +109,11 @@ jobs:
           CGO_ENABLED: "1"
         run: go vet ./...
 
-      - name: go test -race
-        working-directory: app
-        env:
-          CGO_ENABLED: "1"
-        run: go test -race ./...
+      # SF-3: same fix as build.yml's `go` job — cgo reads $CC (gcc by
+      # default on Linux), not `cc`, so scripts/test-race.sh does the probing,
+      # proves the compiler works, and exports CC before running the suite.
+      - name: go test -race (scripts/test-race.sh)
+        run: bash scripts/test-race.sh
 
       # ---- version -----------------------------------------------------------
       - name: Determine release version

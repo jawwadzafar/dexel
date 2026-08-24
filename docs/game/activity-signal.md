@@ -132,7 +132,7 @@ what may be stored.
 
 ### App identity: sanitising, and the availability bit
 
-`SanitizeAppID` (`activity/sanitize.go`) is the only transform allowed between
+`SanitizeAppID` (`app/internal/activity/sanitize.go`) is the only transform allowed between
 "what the OS said" and "what leaves the package". It lowercases, keeps only
 `[a-z0-9._-]`, maps a space to `-` without ever emitting a doubled or trailing
 dash, **drops** every other byte rather than substituting it, and caps the
@@ -149,7 +149,7 @@ maps have identical key sets, so an app can never be classified without a
 display name or named without a class. See [`moods.md`](moods.md) §3.
 
 `AppIdentityAvailable` exists because `ActiveApp == ""` was doing two
-incompatible jobs. `AppIdentity.Available` (`activity/app_identity.go`) spells
+incompatible jobs. `AppIdentity.Available` (`app/internal/activity/app_identity.go`) spells
 out the resulting three-state table:
 
 | State | Meaning |

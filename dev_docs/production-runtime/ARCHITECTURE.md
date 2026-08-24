@@ -124,9 +124,11 @@ has a correct primitive on day one.
 `app/internal/store/config.go`). Both **hardcode `~/.config/dexel` on every
 OS** via `os.UserHomeDir()`. `db.go` (DB-1 / ADR 0016) gives us a signed single
 row, a strict open-gate, `.corrupt`/`.future`/`.invalid` quarantine, and a
-one-time `state.json` → `state.db` import. `legacy.go` proves the codebase
-already knows per-OS conventions (`~/Library/Application Support/...` on
-darwin) — it just doesn't apply them to its own files yet.
+one-time `state.json` → `state.db` import. The codebase already knew per-OS
+conventions (`~/Library/Application Support/...` on darwin) from the
+legacy-Rust importer — it just never applied them to its own files. (That
+importer, `app/internal/store/legacy.go`, was deleted by review item B-2; the
+tombstone comment in `app/main.go`'s `loadOrImport` records why.)
 
 **1.5 The Tauri shell currently OWNS the server.** `desktop/src-tauri/src/lib.rs`
 spawns the Go binary as a Tauri `externalBin` sidecar with `-addr 127.0.0.1:0`,
@@ -715,8 +717,10 @@ dexel uninstall
 (`--purge --yes` for scripts). **Never** touches
 `~/.local/share/dev-companion/save.json` or
 `~/Library/Application Support/dev-companion/save.json` — the legacy Rust save
-(`app/internal/store/legacy.go`) is not ours, and `docs/upgrade-design.md`
-requires the legacy build stay launchable.
+is not ours. (The importer that read it, `app/internal/store/legacy.go`, was
+deleted by review item B-2, and the Rust/Bevy crates themselves are archived on
+branch `attic/legacy-rust-and-fleet` — ADR 0011, ADR 0020. The save file still
+is not ours to delete.)
 
 Windows cannot delete its own running `.exe`: rename to `dexel.exe.old`,
 register `MOVEFILE_DELAY_UNTIL_REBOOT`, and say so.
