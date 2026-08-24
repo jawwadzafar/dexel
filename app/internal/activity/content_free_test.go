@@ -5,75 +5,95 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+
+	"github.com/jawwadzafar/dexel/app/internal/contentfree"
 )
+
+// contentFreeRegistry is activity's guarded root graph. Snapshot is
+// currently flat (no nested struct fields), but the registry is still
+// walked through internal/contentfree.Audit rather than hand-rolled
+// reflection, so the day a Snapshot field grows a nested struct, that
+// struct is discovered and required to be registered here automatically
+// — see internal/contentfree's package doc for why that recursion is the
+// whole point (dev_docs/rust-port-evaluation.md §2.6).
+func contentFreeRegistry() contentfree.Registry {
+	return contentfree.Registry{
+		// Each entry is a justification, not just a registration. In
+		// field order:
+		//   KeystrokeCount   — a count of presses, never which key.
+		//   MouseActive      — a recency bool, never a position.
+		//   IdleSeconds      — a duration.
+		//   ActiveApp        — an APPLICATION identity, sanitized and
+		//                      capped (SanitizeAppID), never a window
+		//                      title/doc/URL.
+		//   ActiveAppDisplay — a static table lookup on ActiveApp only.
+		//   AppIdentityAvailable — a bool about the PROVIDER's capability
+		//                      in this process context, carrying nothing
+		//                      about the user or what they are doing.
+		//                      Added (ADR 0019) because ActiveApp == ""
+		//                      was overloaded to mean both "nothing is
+		//                      frontmost" and "I cannot see apps from
+		//                      here", which made a total capture failure
+		//                      render identically to a real observation.
+		"activity.Snapshot": {
+			Sample: Snapshot{},
+			Allowed: map[string]string{
+				"KeystrokeCount":       "uint64",
+				"MouseActive":          "bool",
+				"IdleSeconds":          "float64",
+				"ActiveApp":            "string",
+				"ActiveAppDisplay":     "string",
+				"AppIdentityAvailable": "bool",
+			},
+		},
+	}
+}
 
 // TestSnapshotIsContentFree is the structural privacy test ADR 0002/0009
 // require: Snapshot must only ever carry counts, booleans, durations, and
 // sanitized/display app identifiers — never key identity, typed text,
-// clipboard content, or window titles. This test enumerates every field by
-// reflection against an explicit allow-list; adding a new field to
-// Snapshot that isn't on the allow-list, or whose name suggests raw
-// content, fails this test rather than silently shipping a privacy
-// regression.
+// clipboard content, or window titles. It runs internal/contentfree's
+// recursive Audit against Snapshot as the sole root of this package's
+// guarded graph: any field not on the allow-list, any field whose name
+// smells like content, or (as this package's own graph grows nested
+// structs) any nested type nobody registered, fails this test rather
+// than silently shipping a privacy regression.
 func TestSnapshotIsContentFree(t *testing.T) {
-	// Each entry is a justification, not just a registration. In field order:
-	//   KeystrokeCount   — a count of presses, never which key.
-	//   MouseActive      — a recency bool, never a position.
-	//   IdleSeconds      — a duration.
-	//   ActiveApp        — an APPLICATION identity, sanitized and capped
-	//                      (SanitizeAppID), never a window title/doc/URL.
-	//   ActiveAppDisplay — a static table lookup on ActiveApp only.
-	//   AppIdentityAvailable — a bool about the PROVIDER's capability in this
-	//                      process context, carrying nothing about the user or
-	//                      what they are doing. Added (ADR 0019) because
-	//                      ActiveApp == "" was overloaded to mean both
-	//                      "nothing is frontmost" and "I cannot see apps from
-	//                      here", which made a total capture failure render
-	//                      identically to a real observation. A capability bit
-	//                      is the smallest thing that can separate them, and
-	//                      it is strictly less revealing than the app identity
-	//                      it qualifies.
-	allowed := map[string]string{
-		"KeystrokeCount":       "uint64",
-		"MouseActive":          "bool",
-		"IdleSeconds":          "float64",
-		"ActiveApp":            "string",
-		"ActiveAppDisplay":     "string",
-		"AppIdentityAvailable": "bool",
+	roots := []reflect.Type{reflect.TypeOf(Snapshot{})}
+	for _, msg := range contentfree.Audit(roots, contentFreeRegistry(), contentfree.DefaultForbidden) {
+		t.Error(msg)
 	}
+}
 
-	// Field/type names whose presence anywhere on Snapshot is itself a
-	// violation, independent of the allow-list above (belt and suspenders:
-	// this catches a rename of an allowed field into something that smells
-	// like content, e.g. "ActiveApp" -> "ActiveAppTitle").
-	forbiddenSubstrings := []string{
-		"title", "text", "content", "keycode", "key_code", "clipboard",
-		"url", "path", "document", "message", "body", "keyname", "char",
+// TestContentFreeRejectsObservedContentFields proves the guard above
+// still BITES: it exercises Audit itself against a synthetic type shaped
+// like the mistakes someone would actually make (a field with a
+// content-smelling name, allow-listed anyway), so the check cannot be
+// satisfied by loosening the real registry.
+func TestContentFreeRejectsObservedContentFields(t *testing.T) {
+	type syntheticLeak struct {
+		WindowTitle       string
+		TypedText         string
+		ClipboardContents string
+		ActiveKeycode     string
+		ActiveUrl         string
+		DocumentPath      string
+		LastCharTyped     string
+		KeyName           string
 	}
-
-	typ := reflect.TypeOf(Snapshot{})
-	if typ.NumField() != len(allowed) {
-		t.Fatalf("Snapshot has %d fields, expected exactly %d (%v) — a field was added or removed without updating this privacy test",
-			typ.NumField(), len(allowed), allowed)
+	reg := contentfree.Registry{
+		"activity.syntheticLeak": {
+			Sample: syntheticLeak{},
+			Allowed: map[string]string{
+				"WindowTitle": "string", "TypedText": "string", "ClipboardContents": "string",
+				"ActiveKeycode": "string", "ActiveUrl": "string", "DocumentPath": "string",
+				"LastCharTyped": "string", "KeyName": "string",
+			},
+		},
 	}
-
-	for i := 0; i < typ.NumField(); i++ {
-		f := typ.Field(i)
-		wantType, ok := allowed[f.Name]
-		if !ok {
-			t.Errorf("Snapshot.%s is not on the content-free allow-list — every field must be justified here", f.Name)
-			continue
-		}
-		if f.Type.String() != wantType {
-			t.Errorf("Snapshot.%s has type %s, want %s", f.Name, f.Type.String(), wantType)
-		}
-
-		lower := strings.ToLower(f.Name)
-		for _, bad := range forbiddenSubstrings {
-			if strings.Contains(lower, bad) {
-				t.Errorf("Snapshot.%s name contains forbidden substring %q — looks like it could carry content", f.Name, bad)
-			}
-		}
+	got := contentfree.Audit([]reflect.Type{reflect.TypeOf(syntheticLeak{})}, reg, contentfree.DefaultForbidden)
+	if len(got) < 8 {
+		t.Fatalf("expected the forbidden-substring scan to flag all 8 synthetic content-shaped fields even though they are allow-listed, got %d violations: %v", len(got), got)
 	}
 }
 

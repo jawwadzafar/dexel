@@ -2,337 +2,292 @@ package store
 
 import (
 	"reflect"
-	"strings"
 	"testing"
+
+	"github.com/jawwadzafar/dexel/app/internal/contentfree"
 )
 
-// TestSaveDataIsContentFree is S3's clone of
-// internal/activity/content_free_test.go's TestSnapshotIsContentFree,
-// applied to the thing that actually persists to disk: SaveData is the
-// exact on-disk shape at ~/.config/dexel/state.json (store.go's doc
-// comment: "this file contains no user content"). Being content-free
-// upstream (Snapshot, StateMessage) is meaningless if the one thing
-// actually written to a file on the user's disk is free to grow a raw
-// field later. This test enumerates every field by reflection against an
-// explicit allow-list; adding a field to SaveData that isn't on the
-// allow-list, or whose name suggests raw content, fails this test rather
-// than silently shipping a privacy regression into a save file.
-func TestSaveDataIsContentFree(t *testing.T) {
-	allowed := map[string]string{
-		"Schema":           "int",
-		"DevCash":          "uint64",
-		"XP":               "uint64",
-		"Sprint":           "store.SprintSave",
-		"OwnedItems":       "[]string",
-		"OwnedTints":       "[]string",
-		"Equipped":         "map[string]store.EquippedSave",
-		"ImportedFromRust": "bool",
-		"ImportedAt":       "string",
-		"Stats":            "store.StatsSave",
-		// Session/SessionLogHead (P2, docs/plan/P2-design.md §5.1, ADR
-		// 0017 Decision 5, schema 6): the in-progress session and the
-		// session log's opaque chain head. Session's own nested field-level
-		// coverage is TestSessionSaveAndActiveSessionSaveAreContentFree
-		// below — deliberately no Name field on either, mirroring the
-		// dexel's own name being kept off this allow-list (see the Mac
-		// field's comment just below): a project name is user-authored
-		// CONFIG (§2.7), never a column here.
-		"Session":        "*store.ActiveSessionSave",
-		"SessionLogHead": "string",
-		// Mac (SEC-1, docs/plan/SEC-1-design.md §6, ADR
-		// 0014-save-integrity-hmac-and-config-split.md): the hex
-		// HMAC-SHA256 tag over the rest of this struct — a fixed-width
-		// DIGEST field, not content, and it cannot carry content since it
-		// is a deterministic function of the (already content-free)
-		// fields above. This is the one field allowed to be added here
-		// without itself needing a privacy justification beyond "it's a
-		// digest." The dexel's user-authored NAME, by contrast, is
-		// deliberately NOT here: it lives entirely outside SaveData, in
-		// its own unsigned config.json (see config.go's ConfigData doc
-		// comment for why), so this allow-list staying free of any name
-		// field is itself part of the privacy proof, not an omission.
-		"Mac": "string",
-		// Paused (PR-5, dev_docs/production-runtime/ARCHITECTURE.md
-		// Decision 16 / FORK D, schema 7): a single bool recording that
-		// the user asked dexel to STOP observing. It is a user intent,
-		// like ConfigView.Name — but unlike a name it is not text and
-		// carries no information beyond one bit, so it needs no ADR 0014
-		// category argument to sit inside the protected save; it belongs
-		// here precisely BECAUSE it must be MAC-protected (a save whose
-		// `paused` could be flipped by hand is a save whose privacy
-		// posture could be flipped by hand).
-		"Paused": "bool",
+// contentFreeRegistry is store's guarded root graph: SaveData (the
+// on-disk, MAC-protected shape at ~/.config/dexel/state.json — "this
+// file contains no user content") and ConfigData (the on-disk, UNSIGNED
+// shape at config.json — the one place free text legitimately lives,
+// per ADR 0014's config/state split), plus every named struct type
+// reachable from either, however many levels deep.
+//
+// Being content-free upstream (activity.Snapshot, game.StateMessage) is
+// meaningless if the thing actually written to the user's disk is free
+// to grow a raw field later, and — the specific weakness this file's
+// walker-based design closes (dev_docs/rust-port-evaluation.md §2.6) — a
+// content-capable field nested two levels into SaveData no longer needs
+// a human to remember a manual checkExact call: internal/contentfree.Audit
+// discovers every reachable type by walking the real reflect.Type graph
+// and fails this test if any of them is not registered here.
+func contentFreeRegistry() contentfree.Registry {
+	return contentfree.Registry{
+		"store.SaveData": {
+			Sample: SaveData{},
+			Allowed: map[string]string{
+				"Schema":           "int",
+				"DevCash":          "uint64",
+				"XP":               "uint64",
+				"Sprint":           "store.SprintSave",
+				"OwnedItems":       "[]string",
+				"OwnedTints":       "[]string",
+				"Equipped":         "map[string]store.EquippedSave",
+				"ImportedFromRust": "bool",
+				"ImportedAt":       "string",
+				"Stats":            "store.StatsSave",
+				// Session/SessionLogHead (P2, docs/plan/P2-design.md
+				// §5.1, ADR 0017 Decision 5, schema 6): the in-progress
+				// session and the session log's opaque chain head.
+				// Deliberately no Name field anywhere under Session — a
+				// project name is user-authored CONFIG (§2.7), never a
+				// column here; see TestSessionSaveTypesNeverCarryAName
+				// below.
+				"Session":        "*store.ActiveSessionSave",
+				"SessionLogHead": "string",
+				// Mac (SEC-1, ADR 0014): the hex HMAC-SHA256 tag over the
+				// rest of this struct — a fixed-width DIGEST, not
+				// content, and a deterministic function of the
+				// (already content-free) fields above.
+				"Mac": "string",
+				// Paused (PR-5, ARCHITECTURE.md Decision 16 / FORK D,
+				// schema 7): a single bool recording that the user asked
+				// dexel to STOP observing — a user intent, like
+				// ConfigView.Name, but unlike a name it is not text and
+				// carries no information beyond one bit.
+				"Paused": "bool",
+			},
+		},
+
+		"store.SprintSave": {
+			Sample: SprintSave{},
+			Allowed: map[string]string{
+				"Index":     "int",
+				"UnitsDone": "float64",
+			},
+		},
+
+		"store.EquippedSave": {
+			Sample: EquippedSave{},
+			Allowed: map[string]string{
+				"ItemID": "string",
+				"TintID": "*string",
+			},
+		},
+
+		"store.StatsSave": {
+			Sample: StatsSave{},
+			Allowed: map[string]string{
+				"Date":       "string",
+				"Today":      "store.StatCountersSave",
+				"Lifetime":   "store.StatCountersSave",
+				"CoinsToday": "store.CoinBreakdownSave",
+				// A3 (§5): the persisted rolling history + streak state.
+				"History": "[]store.DayBucketSave",
+				"Streak":  "store.StreakSave",
+			},
+		},
+
+		"store.StatCountersSave": {
+			Sample: StatCountersSave{},
+			Allowed: map[string]string{
+				"Keystrokes":         "uint64",
+				"MouseActiveSeconds": "uint64",
+				"ActiveSeconds":      "uint64",
+				"IdleSeconds":        "uint64",
+				"SprintsCompleted":   "uint64",
+				"FocusSessions":      "uint64",
+				"AppSwitches":        "uint64",
+				// PausedSeconds (PR-5, schema 7): the persisted third
+				// time bucket — seconds during which dexel observed
+				// nothing at all. Reused verbatim in the today/lifetime
+				// buckets, every finalized DayBucketSave, and both
+				// halves of an ActiveSessionSave.
+				"PausedSeconds": "uint64",
+			},
+		},
+
+		"store.CoinBreakdownSave": {
+			Sample: CoinBreakdownSave{},
+			Allowed: map[string]string{
+				"Keystrokes":    "uint64",
+				"Mouse":         "uint64",
+				"FocusSessions": "uint64",
+				"AppSwitches":   "uint64",
+			},
+		},
+
+		"store.DayBucketSave": {
+			Sample: DayBucketSave{},
+			Allowed: map[string]string{
+				"Date":                     "string",
+				"Counters":                 "store.StatCountersSave",
+				"CoinsEarned":              "uint64",
+				"LongestFocusBlockSeconds": "uint64",
+			},
+		},
+
+		"store.StreakSave": {
+			Sample: StreakSave{},
+			Allowed: map[string]string{
+				"Current":        "int",
+				"Longest":        "int",
+				"LastActiveDate": "string",
+			},
+		},
+
+		"store.ActiveSessionSave": {
+			Sample: ActiveSessionSave{},
+			Allowed: map[string]string{
+				"ID":                       "int",
+				"StartedAt":                "string",
+				"LastActivityAt":           "string",
+				"Baseline":                 "store.StatCountersSave",
+				"Watermark":                "store.StatCountersSave",
+				"CoinsEarned":              "uint64",
+				"LongestFocusBlockSeconds": "uint64",
+			},
+			// Deliberately NO Exceptions entry: unlike game's wire
+			// views, this type must never carry a Name field at all
+			// (§2.7) — see TestSessionSaveTypesNeverCarryAName.
+		},
+
+		"store.SessionSave": {
+			Sample: SessionSave{},
+			Allowed: map[string]string{
+				"ID":                       "int",
+				"StartedAt":                "string",
+				"EndedAt":                  "string",
+				"DurationSeconds":          "uint64",
+				"Counters":                 "store.StatCountersSave",
+				"CoinsEarned":              "uint64",
+				"LongestFocusBlockSeconds": "uint64",
+				"EndReason":                "string", // user|idle|maxDuration
+			},
+		},
+
+		// ConfigData (SEC-1 design §1, ADR 0014) is the SECOND root: the
+		// unsigned config.json shape. Name and SessionNames are the ONLY
+		// two places free text legitimately lives anywhere in dexel's
+		// persistence (design §1.1, P2-design.md §2.7) — both cited
+		// exceptions below. Autostart is a closed-set string written
+		// only by `dexel autostart enable/disable`.
+		"store.ConfigData": {
+			Sample: ConfigData{},
+			Allowed: map[string]string{
+				"Name":         "string",
+				"SessionNames": "map[string]string",
+				"Autostart":    "string",
+			},
+			Exceptions: map[string]string{
+				"Name": "ADR 0014 (docs/adr/0014-save-integrity-hmac-and-config-split.md): " +
+					"the dexel's own user-authored name — the ONE piece of free text SEC-1 design §1.1 " +
+					"deliberately carves out of the protected save",
+				"SessionNames": "ADR 0017 Decision 2 / P2-design.md §2.7: per-session user-authored project names, " +
+					"keyed by session id — the second (and last) piece of legitimate free text, kept in the " +
+					"unsigned config.json specifically so it can never reach the MAC'd SaveData graph",
+			},
+		},
 	}
+}
 
-	// Field/type names whose presence anywhere on SaveData is itself a
-	// violation, independent of the allow-list above (belt and suspenders:
-	// this catches a rename of an allowed field into something that smells
-	// like content).
-	forbiddenSubstrings := []string{
-		"title", "text", "content", "keycode", "key_code", "clipboard",
-		"url", "path", "document", "message", "body", "keyname", "char",
+// TestSaveDataAndConfigGraphsAreContentFree is store's structural
+// privacy test, run over ALL of this package's persisted roots at once
+// (Audit's reachability/rot cross-checks are only meaningful against the
+// full declared root set — auditing one root at a time would wrongly
+// flag the other roots' whole graphs as "registered but unreachable"):
+//
+//   - SaveData, the protected save: must only ever carry counts,
+//     durations, ids, closed-set enums, ISO timestamps, or a
+//     fixed-width digest — never a window title, a keycode, typed text,
+//     or (per §2.7) even a name — and neither may any type reachable
+//     from it, at any depth.
+//   - ConfigData, config.json: deliberately WHERE free text lives (SEC-1
+//     design §1.2), so the two fields that legitimately carry it must be
+//     exactly the two cited exceptions — no more, no fewer — and
+//     Autostart, the one other field on this type, stays a plain
+//     closed-set string.
+//   - SessionSave, the standalone finished-session row shape (see its
+//     root declaration's comment below for why it needs its own root).
+//
+// internal/contentfree.Audit walks all three graphs: any unlisted field,
+// any content-smelling name without a cited exception, or any nested
+// type nobody registered fails this test rather than silently shipping a
+// privacy regression into a save file.
+func TestSaveDataAndConfigGraphsAreContentFree(t *testing.T) {
+	roots := []reflect.Type{
+		reflect.TypeOf(SaveData{}),
+		reflect.TypeOf(ConfigData{}),
+		// SessionSave is a THIRD, independent root, not a descendant of
+		// SaveData by Go type reachability: finished sessions are
+		// chain-MAC'd rows in the separate `sessions` table (db.go's
+		// sessionsDDL), each a standalone marshaled SessionSave BLOB —
+		// "exactly a table's shape" (§5.1/§5.2) — never nested inside
+		// SaveData itself. It still needs the identical structural
+		// guard, so it is declared as its own root rather than assumed
+		// covered by SaveData's graph.
+		reflect.TypeOf(SessionSave{}),
 	}
-
-	typ := reflect.TypeOf(SaveData{})
-	if typ.NumField() != len(allowed) {
-		t.Fatalf("SaveData has %d fields, expected exactly %d (%v) — a field was added or removed without updating this privacy test",
-			typ.NumField(), len(allowed), allowed)
+	for _, msg := range contentfree.Audit(roots, contentFreeRegistry(), contentfree.DefaultForbidden) {
+		t.Error(msg)
 	}
+}
 
-	for i := 0; i < typ.NumField(); i++ {
-		f := typ.Field(i)
-		wantType, ok := allowed[f.Name]
-		if !ok {
-			t.Errorf("SaveData.%s is not on the content-free allow-list — every field must be justified here", f.Name)
-			continue
-		}
-		if f.Type.String() != wantType {
-			t.Errorf("SaveData.%s has type %s, want %s", f.Name, f.Type.String(), wantType)
-		}
-
-		lower := strings.ToLower(f.Name)
-		for _, bad := range forbiddenSubstrings {
-			if strings.Contains(lower, bad) {
-				t.Errorf("SaveData.%s name contains forbidden substring %q — looks like it could carry content", f.Name, bad)
+// TestSessionSaveTypesNeverCarryAName is the direct structural analogue
+// of P1's own proof that the dexel's name never reaches SaveData
+// (§2.7): ActiveSessionSave and SessionSave must have NO field whose
+// name matches "name" at all — not even behind a cited exception,
+// because unlike game's wire views there is no legitimate reason for one
+// to exist here. This is asserted independent of the registry above (so
+// it cannot be satisfied by quietly adding a Name exception to those two
+// TypeSpecs) by scanning the live type's fields directly.
+func TestSessionSaveTypesNeverCarryAName(t *testing.T) {
+	for _, typ := range []reflect.Type{reflect.TypeOf(ActiveSessionSave{}), reflect.TypeOf(SessionSave{})} {
+		for i := 0; i < typ.NumField(); i++ {
+			f := typ.Field(i)
+			if f.Name == "Name" || f.Name == "Names" {
+				t.Errorf("%s.%s: session save types must never carry a name field (§2.7) — a project name is user-authored CONFIG, kept in ConfigData.SessionNames, never a column here", typ.Name(), f.Name)
 			}
+		}
+	}
+
+	reg := contentFreeRegistry()
+	for _, name := range []string{"store.ActiveSessionSave", "store.SessionSave"} {
+		if len(reg[name].Exceptions) != 0 {
+			t.Errorf("%s carries a contentfree.Exceptions entry — session save types must have none (§2.7)", name)
 		}
 	}
 }
 
-// TestSprintSaveAndEquippedSaveAreContentFree extends the same guard to
-// SaveData's two nested struct types — the top-level field-count check
-// above only proves those two fields exist with the right named type; it
-// says nothing about what's INSIDE SprintSave/EquippedSave, which could
-// otherwise grow a content field without ever touching SaveData itself.
-func TestSprintSaveAndEquippedSaveAreContentFree(t *testing.T) {
-	allowedSprintSave := map[string]string{
-		"Index":     "int",
-		"UnitsDone": "float64",
+// TestContentFreeRejectsObservedContentFields proves the guard above
+// still BITES. It exercises Audit against a synthetic type shaped like
+// the mistakes someone would actually make — a field whose NAME smells
+// like observed content, allow-listed anyway and with no exception — so
+// this test cannot be satisfied by loosening the real registry.
+func TestContentFreeRejectsObservedContentFields(t *testing.T) {
+	type syntheticLeak struct {
+		WindowTitle       string
+		TypedText         string
+		ClipboardContents string
+		ActiveKeycode     string
+		ActiveUrl         string
+		DocumentPath      string
+		LastCharTyped     string
+		KeyName           string
 	}
-	allowedEquippedSave := map[string]string{
-		"ItemID": "string",
-		"TintID": "*string",
+	reg := contentfree.Registry{
+		"store.syntheticLeak": {
+			Sample: syntheticLeak{},
+			Allowed: map[string]string{
+				"WindowTitle": "string", "TypedText": "string", "ClipboardContents": "string",
+				"ActiveKeycode": "string", "ActiveUrl": "string", "DocumentPath": "string",
+				"LastCharTyped": "string", "KeyName": "string",
+			},
+		},
 	}
-
-	checkExact := func(t *testing.T, typ reflect.Type, allowed map[string]string) {
-		t.Helper()
-		if typ.NumField() != len(allowed) {
-			t.Fatalf("%s has %d fields, expected exactly %d (%v)", typ.Name(), typ.NumField(), len(allowed), allowed)
-		}
-		for i := 0; i < typ.NumField(); i++ {
-			f := typ.Field(i)
-			wantType, ok := allowed[f.Name]
-			if !ok {
-				t.Errorf("%s.%s is not on the content-free allow-list", typ.Name(), f.Name)
-				continue
-			}
-			if f.Type.String() != wantType {
-				t.Errorf("%s.%s has type %s, want %s", typ.Name(), f.Name, f.Type.String(), wantType)
-			}
-		}
+	got := contentfree.Audit([]reflect.Type{reflect.TypeOf(syntheticLeak{})}, reg, contentfree.DefaultForbidden)
+	if len(got) < 8 {
+		t.Fatalf("expected the forbidden-substring scan to flag all 8 synthetic content-shaped fields even though they are allow-listed, got %d violations: %v", len(got), got)
 	}
-
-	checkExact(t, reflect.TypeOf(SprintSave{}), allowedSprintSave)
-	checkExact(t, reflect.TypeOf(EquippedSave{}), allowedEquippedSave)
-}
-
-// TestStatsSaveAndStatCountersSaveAreContentFree is Phase A1's (Analytics
-// track, docs/plan/ROADMAP.md) extension of the same structural guard to
-// the schema-2 `stats` field: StatsSave and its nested StatCountersSave
-// must stay exactly a date string plus plain uint64 counts/durations,
-// never grow a raw field, the same way SprintSave/EquippedSave already are
-// above.
-func TestStatsSaveAndStatCountersSaveAreContentFree(t *testing.T) {
-	allowedStatsSave := map[string]string{
-		"Date":       "string",
-		"Today":      "store.StatCountersSave",
-		"Lifetime":   "store.StatCountersSave",
-		"CoinsToday": "store.CoinBreakdownSave",
-		// History/Streak (Analytics Phase A3, docs/plan/A3-design.md
-		// §4/§7 Task GO-2): the persisted rolling history + streak state.
-		// Their own nested field-level coverage is
-		// TestDayBucketSaveAndStreakSaveAreContentFree below.
-		"History": "[]store.DayBucketSave",
-		"Streak":  "store.StreakSave",
-	}
-	allowedStatCountersSave := map[string]string{
-		"Keystrokes":         "uint64",
-		"MouseActiveSeconds": "uint64",
-		"ActiveSeconds":      "uint64",
-		"IdleSeconds":        "uint64",
-		"SprintsCompleted":   "uint64",
-		"FocusSessions":      "uint64",
-		"AppSwitches":        "uint64",
-		// PausedSeconds (PR-5, schema 7, ARCHITECTURE.md Decision 14):
-		// the persisted third time bucket — seconds during which dexel
-		// observed nothing at all. The same content-free duration class
-		// as every sibling, and because this type is reused it lands in
-		// the today/lifetime buckets, every finalized DayBucketSave and
-		// both halves of an ActiveSessionSave at once.
-		"PausedSeconds": "uint64",
-	}
-	// CoinBreakdownSave (A2, docs/plan/A2-design.md §5/§7 Task GO-3): the
-	// persisted per-signal coin split. Every field a whole-number coin
-	// count — content-free by construction, same rule as
-	// StatCountersSave above.
-	allowedCoinBreakdownSave := map[string]string{
-		"Keystrokes":    "uint64",
-		"Mouse":         "uint64",
-		"FocusSessions": "uint64",
-		"AppSwitches":   "uint64",
-	}
-
-	checkExact := func(t *testing.T, typ reflect.Type, allowed map[string]string) {
-		t.Helper()
-		if typ.NumField() != len(allowed) {
-			t.Fatalf("%s has %d fields, expected exactly %d (%v)", typ.Name(), typ.NumField(), len(allowed), allowed)
-		}
-		for i := 0; i < typ.NumField(); i++ {
-			f := typ.Field(i)
-			wantType, ok := allowed[f.Name]
-			if !ok {
-				t.Errorf("%s.%s is not on the content-free allow-list", typ.Name(), f.Name)
-				continue
-			}
-			if f.Type.String() != wantType {
-				t.Errorf("%s.%s has type %s, want %s", typ.Name(), f.Name, f.Type.String(), wantType)
-			}
-			lower := strings.ToLower(f.Name)
-			forbiddenSubstrings := []string{
-				"title", "text", "content", "keycode", "key_code", "clipboard",
-				"url", "path", "document", "message", "body", "keyname", "char",
-			}
-			for _, bad := range forbiddenSubstrings {
-				if strings.Contains(lower, bad) {
-					t.Errorf("%s.%s name contains forbidden substring %q — looks like it could carry content", typ.Name(), f.Name, bad)
-				}
-			}
-		}
-	}
-
-	checkExact(t, reflect.TypeOf(StatsSave{}), allowedStatsSave)
-	checkExact(t, reflect.TypeOf(StatCountersSave{}), allowedStatCountersSave)
-	checkExact(t, reflect.TypeOf(CoinBreakdownSave{}), allowedCoinBreakdownSave)
-}
-
-// TestDayBucketSaveAndStreakSaveAreContentFree is Analytics Phase A3's
-// (docs/plan/A3-design.md §4/§7 Task GO-2) extension of the same
-// structural guard to the schema-4 `stats.history`/`stats.streak` nested
-// types: DayBucketSave must stay exactly a calendar date string, a reused
-// StatCountersSave bucket, and two plain uint64 counts/durations;
-// StreakSave must stay exactly two plain ints and one calendar date
-// string — the same content-free class StatsSave.Date already is (see
-// TestStatsSaveAndStatCountersSaveAreContentFree's allow-list comment).
-// Never grow a raw field on either, the same way every other nested save
-// type above is pinned.
-func TestDayBucketSaveAndStreakSaveAreContentFree(t *testing.T) {
-	allowedDayBucketSave := map[string]string{
-		"Date":                     "string",
-		"Counters":                 "store.StatCountersSave",
-		"CoinsEarned":              "uint64",
-		"LongestFocusBlockSeconds": "uint64",
-	}
-	allowedStreakSave := map[string]string{
-		"Current":        "int",
-		"Longest":        "int",
-		"LastActiveDate": "string",
-	}
-
-	checkExact := func(t *testing.T, typ reflect.Type, allowed map[string]string) {
-		t.Helper()
-		if typ.NumField() != len(allowed) {
-			t.Fatalf("%s has %d fields, expected exactly %d (%v)", typ.Name(), typ.NumField(), len(allowed), allowed)
-		}
-		for i := 0; i < typ.NumField(); i++ {
-			f := typ.Field(i)
-			wantType, ok := allowed[f.Name]
-			if !ok {
-				t.Errorf("%s.%s is not on the content-free allow-list", typ.Name(), f.Name)
-				continue
-			}
-			if f.Type.String() != wantType {
-				t.Errorf("%s.%s has type %s, want %s", typ.Name(), f.Name, f.Type.String(), wantType)
-			}
-			lower := strings.ToLower(f.Name)
-			forbiddenSubstrings := []string{
-				"title", "text", "content", "keycode", "key_code", "clipboard",
-				"url", "path", "document", "message", "body", "keyname", "char",
-			}
-			for _, bad := range forbiddenSubstrings {
-				if strings.Contains(lower, bad) {
-					t.Errorf("%s.%s name contains forbidden substring %q — looks like it could carry content", typ.Name(), f.Name, bad)
-				}
-			}
-		}
-	}
-
-	checkExact(t, reflect.TypeOf(DayBucketSave{}), allowedDayBucketSave)
-	checkExact(t, reflect.TypeOf(StreakSave{}), allowedStreakSave)
-}
-
-// TestSessionSaveAndActiveSessionSaveAreContentFree is P2's (docs/plan/
-// P2-design.md §5.1/§5.2, ADR 0017 Decision 5) extension of the same
-// structural guard to the schema-6 `session`/`sessionLogHead` fields and
-// the `sessions` table's payload shape: ActiveSessionSave must stay
-// exactly an id, two RFC3339 timestamp strings, two reused
-// StatCountersSave buckets and two plain uint64 counts/durations;
-// SessionSave must stay exactly an id, two RFC3339 timestamp strings, a
-// duration, a reused StatCountersSave bucket, two plain uint64 counts/
-// durations, and a closed-set endReason string. Deliberately NO field
-// named anything like "name" on either — a project name is user-authored
-// CONFIG (§2.7, ConfigData.SessionNames in config.go), never a column
-// here; this test is the direct structural analogue of P1's own proof
-// that the dexel's name never reaches SaveData.
-func TestSessionSaveAndActiveSessionSaveAreContentFree(t *testing.T) {
-	allowedActiveSessionSave := map[string]string{
-		"ID":                       "int",
-		"StartedAt":                "string",
-		"LastActivityAt":           "string",
-		"Baseline":                 "store.StatCountersSave",
-		"Watermark":                "store.StatCountersSave",
-		"CoinsEarned":              "uint64",
-		"LongestFocusBlockSeconds": "uint64",
-	}
-	allowedSessionSave := map[string]string{
-		"ID":                       "int",
-		"StartedAt":                "string",
-		"EndedAt":                  "string",
-		"DurationSeconds":          "uint64",
-		"Counters":                 "store.StatCountersSave",
-		"CoinsEarned":              "uint64",
-		"LongestFocusBlockSeconds": "uint64",
-		"EndReason":                "string",
-	}
-
-	checkExact := func(t *testing.T, typ reflect.Type, allowed map[string]string) {
-		t.Helper()
-		if typ.NumField() != len(allowed) {
-			t.Fatalf("%s has %d fields, expected exactly %d (%v)", typ.Name(), typ.NumField(), len(allowed), allowed)
-		}
-		for i := 0; i < typ.NumField(); i++ {
-			f := typ.Field(i)
-			wantType, ok := allowed[f.Name]
-			if !ok {
-				t.Errorf("%s.%s is not on the content-free allow-list", typ.Name(), f.Name)
-				continue
-			}
-			if f.Type.String() != wantType {
-				t.Errorf("%s.%s has type %s, want %s", typ.Name(), f.Name, f.Type.String(), wantType)
-			}
-			lower := strings.ToLower(f.Name)
-			forbiddenSubstrings := []string{
-				"title", "text", "content", "keycode", "key_code", "clipboard",
-				"url", "path", "document", "message", "body", "keyname", "char",
-				"name",
-			}
-			for _, bad := range forbiddenSubstrings {
-				if strings.Contains(lower, bad) {
-					t.Errorf("%s.%s name contains forbidden substring %q — looks like it could carry content", typ.Name(), f.Name, bad)
-				}
-			}
-		}
-	}
-
-	checkExact(t, reflect.TypeOf(ActiveSessionSave{}), allowedActiveSessionSave)
-	checkExact(t, reflect.TypeOf(SessionSave{}), allowedSessionSave)
 }
