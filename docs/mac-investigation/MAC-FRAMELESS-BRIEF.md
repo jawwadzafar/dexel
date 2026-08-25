@@ -5,6 +5,13 @@ written) is Linux and **cannot see a macOS window** — every macOS behaviour
 below is unverified until *you* verify it. Your job: investigate, fix, verify
 with your own eyes (screenshots), and write a verdict back (last section).
 
+**OWNERSHIP RULE (the owner was explicit): YOU do the whole job — build, fix,
+verify, commit, push. Leave NOTHING as a manual step for the owner.** "The
+owner should run X" is not an acceptable outcome; you are on the Mac, so you
+run X. The only things you hand back are (a) the verdict and (b) any decision
+that is genuinely the owner's taste (e.g. a visual style choice) — never a
+build or a fix you could have done yourself.
+
 Read the repo's `CLAUDE.md` first — it is binding. The rules that bite here:
 - **No `Co-Authored-By: Claude` trailer** in any commit, ever. A
   `Claude-Session:` trailer is fine.
@@ -129,6 +136,46 @@ bundle is removed too (extend the darwin reversal in `app/cmd_uninstall.go` if
 `/Applications/Dexel.app` / `~/Applications/Dexel.app` are not already covered —
 you own that file for this; keep its tests green).
 
+## Phase 3 — The always-on-top toggle (owner: "it's reversed on Linux")
+
+The owner reports on Linux: **toggle OFF → window stayed on top; toggle ON →
+window went to the bottom** — fully reversed. On the Mac they saw the toggle do
+**nothing** (a stale/old shell — expect Phase 1's fresh build to change this).
+
+**A full code trace was done on the Linux box and every layer is
+non-inverted** — do not re-derive this, verify it:
+- `app/frontend/src/features/settings-modal.ts`: `paintToggle` shows `'ON'`
+  when the flag is true; clicking sends `SET_PREF alwaysOnTop
+  !currentAlwaysOnTop()`. Correct.
+- `app/internal/game/prefs.go`: SET_PREF stores the bool directly;
+  `AlwaysOnTop()` returns it directly; `RestorePrefs` seeds it directly.
+- `app/cmd_lifecycle.go`: `status --json` emits `AlwaysOnTop: cfg.AlwaysOnTop`
+  verbatim (read from config.json).
+- `desktop/src-tauri/src/lib.rs`: `build_window` uses
+  `.always_on_top(prefs.always_on_top)`; `apply_prefs` calls
+  `set_always_on_top(wanted.always_on_top)`. Correct.
+
+So the inversion is **not in dexel's logic**. The two live hypotheses:
+1. **Stale build** — the owner tested a desktop shell built before the pref
+   existed (it once hardcoded `always_on_top(true)`). A fresh `Dexel.app` from
+   Phase 1 may simply behave correctly. TEST THIS FIRST on the Mac: toggle ON
+   in Settings → the window must rise above other windows; toggle OFF → it must
+   return to normal stacking (NOT sink below everything). Screenshot both.
+2. **Platform stacking quirk** — on macOS `set_always_on_top` sets an
+   `NSWindow` level; on Linux/GTK it is a `keep_above` hint and some
+   compositors mis-handle clearing it (this is why the owner saw it on Linux
+   and not the same way on Mac). If the Mac behaves correctly, the Linux
+   inversion is a **GTK/Mutter-specific** issue: note it in the verdict as a
+   Linux follow-up the owner must reproduce in their own GNOME session (the
+   Linux dev box runs headless Wayland and cannot display the shell). Do NOT
+   "fix" it by negating a value — that would break the Mac to patch Linux.
+
+If the Mac itself shows a real inversion on a **fresh** build, THAT is a genuine
+bug — root-cause it (check `applied` seeding vs `build_window`'s creation value,
+and whether the first focus event's `apply_prefs` no-ops correctly), fix it in
+`lib.rs` (yours), keep cargo fmt/clippy/test green, and screenshot both toggle
+states proving it. Add a unit test that pins the corrected apply direction.
+
 ## Gates before you call anything done
 
 - `cd app && go build ./... && go vet ./... && bash ../scripts/test-race.sh`
@@ -163,6 +210,9 @@ frameless, screenshot attached, and install.sh now installs it" is.
 - Any real macOS bug found + how you fixed it:
 - Phase 2 — does `install.sh` now build + install `Dexel.app` on a Mac clone?
   Proven how? Does `dexel uninstall` remove it?
+- Phase 3 — always-on-top on a FRESH Mac build: does ON pin above / OFF return
+  to normal? Was it a stale build, a Mac bug you fixed, or a Linux-only quirk
+  to hand back? (screenshots of both states)
 - Gates: which passed, which you couldn't run and why:
 - Commits pushed (SHAs) or left uncommitted (why):
 - Anything still needing the owner's decision:
