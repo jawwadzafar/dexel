@@ -92,7 +92,8 @@ changed. Versions track the release the change shipped in.
 ## Dexel in one page
 
 **Dexel is a pixel-art developer companion whose in-game workday is driven by
-your real one.** A tiny figure sits at a desk in a small always-on-top window.
+your real one.** A tiny figure sits at a desk in a small frameless window
+(kept above your other windows only if you ask it to — Settings, default off).
 When you type, it types. When you stop, it stops. It works through a rotating
 list of fictional sprints, gets paid in Dev Cash, and you spend that on
 cosmetics for its desk and its hoodie.

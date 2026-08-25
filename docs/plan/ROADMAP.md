@@ -294,7 +294,7 @@ rebuild and REPLACE the v0.1.0 release assets in place (the documented
 pre-release exception to the releases-are-immutable rule — that rule resumes
 the moment the owner unfreezes versioning), or install from source.
 
-### WINDOW-POLISH (2026-08-25, owner) — queued behind SETTINGS (same files)
+### WINDOW-POLISH (2026-08-25, owner) — **DONE** (with INTERACTION-HARDENING)
 - **Frameless Tauri window**: drop native decorations; the game's own titlebar
   becomes the drag region; in-UI close/minimize controls shown ONLY when
   running inside the shell (the same HTML serves browsers — shell mode must be
@@ -305,13 +305,52 @@ the moment the owner unfreezes versioning), or install from source.
   game surface preserving aspect — snapping to crisp multiples up to a sane
   max — then LETTERBOX (center with margins) instead of stretching further;
   never blur/distort the pixels. Applies to browser and shell alike.
+- **Status: DONE.** Frameless (`decorations(false)`); the game's `#titlebar` is
+  the drag region via `data-tauri-drag-region="deep"` and grows in-page
+  close/minimize under `body.shell`, shown only when the shell appends
+  `?shell=1`. The mechanism was VERIFIED against the tauri 2.11.5 source rather
+  than assumed: tauri injects `__TAURI_INTERNALS__`, the invoke script and every
+  plugin init script (incl. the drag-region handler) into remote-origin pages
+  unconditionally, so the only gate is the ACL — hence a separate
+  `loopback-window-controls.json` capability with `remote.urls`
+  (`http://127.0.0.1:*` + `localhost`, port wildcard required for the ephemeral
+  port), `windows:["main"]`, `local:false`, and the three window verbs; kept out
+  of `default.json` so its `shell:allow-execute` sidecar grant stays local-only.
+  `withGlobalTauri: true` for the public `getCurrentWindow()` API. All four
+  config points are pinned by `mod shell_mode` tests. Scaling now ALWAYS snaps
+  to a device-pixel-crisp factor (the old "non-crisp if snapping costs >1/8"
+  escape hatch put 1920x1080 at 2.7x — the exact blur this item forbade) and
+  caps at 3x; also fixed `#settings` being absent from the shared modal
+  window-fit transform, which left the Settings modal unscaled at the viewport
+  origin. Gated in the real running game at 700x500 / 960x600 / 1280x800 /
+  1920x1080: crisp, centred, modals aligned, real mouse clicks landing at 2x.
+  Wayland caveat: the shell window cannot be DISPLAYED on this box (GDK
+  segfault), so the Rust half is cargo-verified + source-verified and
+  `desktop/README.md` §"What still needs a human's eyes" lists the six things
+  the owner must confirm on mac/x11 (drag, both buttons, double-click maximize,
+  and above all whether a frameless window still RESIZES on Linux).
 
-### INTERACTION-HARDENING (2026-08-25, owner) — folds into WINDOW-POLISH
+### INTERACTION-HARDENING (2026-08-25, owner) — **DONE**
 - Sprites must not be draggable (no drag-image-out-to-new-window), scene text
   not selectable; clicks deliberate. CSS/attr hardening on the scene surface.
 - The server must NOT serve directory listings (/assets/ currently lists all
   files via http.FileServer). Files only, no index pages, both embedded and
   disk-override modes.
+- **Status: DONE.** Directory listings: `filesOnlyFS` in `app/main.go` wraps
+  both static mounts — `/` is the only mount whose root serves an index, every
+  other directory URL 404s (including the bare `/js`, which `http.FileServer`
+  used to 301 into a listing), while real files still go through `FileServer`
+  so Range/ETag/conditional requests are untouched. Verified live in BOTH
+  modes and pinned by `app/static_files_test.go`, which asserts the 404s AND
+  the 200s against the embedded tree and `os.DirFS` alike. Drag/select:
+  `draggable=false` from one `spriteImg()` factory, `-webkit-user-drag: none`,
+  `user-select: none` with `text` restored on real inputs, plus capturing
+  `dragstart`/`selectstart` cancels in `render/interaction.ts` as the backstop
+  — and NO `pointer-events`/`click` changes, so the scene container still
+  receives clicks cleanly for SCENE-REACTIONS. Also found and fixed:
+  `keybindings.ts` never checked modifiers despite its own comment claiming
+  bare letters only, so `Ctrl/Cmd+A` (the select-all reflex) opened the
+  Activity modal and `Ctrl+S` opened the store.
 
 ### SCENE-REACTIONS (2026-08-25, owner) — the interactive world
 Clickable scene items with cozy reactions (client-side fun, no economy, no

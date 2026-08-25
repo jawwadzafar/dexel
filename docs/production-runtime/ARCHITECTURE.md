@@ -581,9 +581,20 @@ Concretely, in `desktop/src-tauri/src/lib.rs`:
 
 What survives unchanged: `WebviewUrl::External(loopback url)` (F3-design FORK 2's
 recommended path — the page's origin IS the server's origin, so the WS
-same-origin check still passes with no `-insecure-origin` and no wildcard);
-`always_on_top(true)` (ADR 0007); the 660×460 fixed geometry; `tauri-plugin-log`;
-the icon set.
+same-origin check still passes with no `-insecure-origin` and no wildcard); the
+660×460 fixed geometry; `tauri-plugin-log`; the icon set.
+
+Two things named here have since changed, and both are user-visible:
+`always_on_top` is no longer the hardcoded `true` of ADR 0007 but
+`always_on_top(prefs.always_on_top)` — SET-1's `config.json` preference,
+**default off**, surfaced in the Settings modal and carried to the shell in
+`status --json`'s `prefs` block (ADR 0007 remains the reason the capability
+exists; what changed is who decides). And `decorations` is now `false`:
+WINDOW-POLISH made the window frameless, so the game's own `#titlebar` is the
+drag region and carries in-page close/minimize. `WebviewUrl::External` gained a
+`?shell=1` query for the page to know that — see `desktop/README.md` § "The
+frameless shell" for the ACL work a remote-origin page needs before it may call
+`start_dragging`/`close`/`minimize`.
 
 **`bundle.externalBin: ["binaries/dexel-server"]` also survives — reinterpreted.**
 It is no longer a sidecar the shell owns; it is the **fallback `dexel` binary**

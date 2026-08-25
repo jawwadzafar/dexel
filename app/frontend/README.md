@@ -43,9 +43,16 @@ behaviour, same DOM/WS contract, no redesign.
     whose bitmap is not ready yet does not render as "slightly late": a
     fresh `<img>` paints nothing, and a `mask-image` that is not decoded
     masks its fill away entirely, which made the character flash WHITE.
-  - `viewport.ts` — the proportional window scaling (`docs/ui-spec.md`
-    §0.1): one transform on `#root` sized from the viewport, recomputed on
-    load, `resize` and dpr change, preferring a crisp scale factor.
+  - `viewport.ts` — the letterbox window scaling (`docs/ui-spec.md` §0.1,
+    WINDOW-POLISH): one transform on `#root` sized from the viewport,
+    recomputed on load, `resize` and dpr change. Always snaps DOWN to a
+    device-pixel-crisp factor (integers at dpr 1, halves at dpr 2), caps at
+    `MAX_SCALE` = 3, and centres what is left in a letterbox.
+  - `interaction.ts` — INTERACTION-HARDENING's capturing `dragstart` /
+    `selectstart` guards. The declarative half lives in `game.css`
+    ("Interaction hardening") and `dom.ts`'s `spriteImg()`; this is the
+    backstop for elements neither reaches. Touches no click/pointer event —
+    the scene must keep receiving clicks.
   - `flash.ts` — the flash toast + the insufficient-funds flash.
 - **FEATURE/LOGIC layer** (`src/features/`) — each owns its own DOM/UI
   state, reads the store, and is the only place that sends the
@@ -59,6 +66,15 @@ behaviour, same DOM/WS contract, no redesign.
     starter colour) and the only sender of SET_NAME. Nothing opens it: it
     follows the server's `state.onboarding` flag in both directions.
   - `menu.ts` — the titlebar hamburger panel (`#menu-open`/`#menu-panel`).
+  - `settings-modal.ts` — SET-1's Settings modal (rename, always-on-top,
+    away-time display).
+  - `sessions-modal.ts` — Phase P2's Sessions modal + session-complete card.
+  - `shell-window.ts` — WINDOW-POLISH's in-page close/minimize buttons, shown
+    ONLY when the frameless Tauri shell appended `?shell=1` (`env.ts`'s
+    `SHELL_MODE`). A no-op in a browser tab, which keeps the browser page
+    pixel-identical. Dragging needs no code here: `#titlebar` carries
+    `data-tauri-drag-region="deep"` and tauri injects the handler for it into
+    remote-origin pages too — see `desktop/README.md`.
   - `keybindings.ts` — global keydown routing ([S]/Tab/[A]/[H]/[M]),
     delegating to whichever modal (if any) is open. Returns immediately
     for a keydown aimed at a text field: every shortcut is a bare letter,

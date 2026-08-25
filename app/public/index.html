@@ -24,7 +24,20 @@
     <div id="conn-overlay"><span>CONNECTING...</span></div>
     <div id="assets-error-overlay"><span></span></div>
 
-    <div id="titlebar">
+    <!-- WINDOW-POLISH (docs/plan/ROADMAP.md): in the frameless Tauri shell
+         this bar IS the window's drag handle. `data-tauri-drag-region="deep"`
+         is read by the init script the core `window` plugin injects into
+         EVERY document the webview loads — including a remote http:// origin
+         like dexel's own loopback server, which is what makes this work at
+         all (see desktop/README.md "The frameless shell"). "deep" means a
+         click anywhere in the bar drags; that script excludes BUTTON, INPUT,
+         A, LABEL and friends by itself, so #menu-open and the two window
+         controls below stay clickable with no extra markup.
+
+         The attribute is INERT in a browser — an unknown data-* attribute
+         with no reader — so it is written unconditionally and the browser
+         page stays byte-identical. -->
+    <div id="titlebar" data-tauri-drag-region="deep">
       <span id="hud-cash"><i class="nes-icon coin is-small"></i><span class="value">0</span></span>
       <span id="hud-level">LV 1</span>
       <!-- Phase P2 (docs/ui-spec.md §9.5): the always-visible session
@@ -47,6 +60,20 @@
       <button id="menu-open" class="nes-btn" aria-haspopup="true" aria-expanded="false" aria-label="Menu">
         <span class="menu-icon"><span class="bar"></span><span class="bar"></span><span class="bar"></span></span>
       </button>
+      <!-- WINDOW-POLISH: the frameless shell's own window controls. Present
+           in the DOM always and DISPLAYED only when body carries .shell (set
+           by features/shell-window.ts when the shell appended ?shell=1), so a
+           browser tab — which has its own close button and must stay
+           pixel-identical — never shows them. In shell mode they push
+           #menu-open left to 528 (see game.css "Shell mode").
+
+           Plain ASCII glyphs, not "–"/"✕": Press Start 2P has no glyph
+           past ASCII, and a missing glyph falls back to a thin system font
+           that anti-aliases to near-invisibility at 8px/1x (the A2 lesson,
+           docs/ui-spec.md §11.3). "-" and "X" are the same two characters
+           #store-close and its siblings already use. -->
+      <button id="win-minimize" class="nes-btn" aria-label="Minimize window">-</button>
+      <button id="win-close" class="nes-btn" aria-label="Close window">X</button>
       <div id="menu-panel">
         <!-- Phase P1: render/chrome.ts replaces this text with the Dexel's
              name once one is set, falling back to "MENU" when it is not. -->

@@ -145,6 +145,30 @@ const WINDOW_TITLE: &str = "Dexel";
 const WINDOW_W: f64 = 660.0;
 const WINDOW_H: f64 = 460.0;
 
+/// WINDOW-POLISH (docs/plan/ROADMAP.md) — the one bit of information this
+/// shell tells the page about itself, appended to the loopback URL it loads.
+///
+/// The page is dexel's ordinary frontend, served by the Go daemon to browsers
+/// and to this window alike, and it must look byte-identical in a browser tab.
+/// Two things are true only here: there is no native frame (see
+/// [`build_window`]'s `decorations(false)`), so the page has to supply
+/// close/minimize itself; and `#titlebar` is the window's drag handle. Neither
+/// is something the page can *detect* — `window.__TAURI__` is injected into
+/// every document the webview loads and says nothing about whether a frame
+/// exists — so the shell DECLARES it instead. `app/frontend/src/env.ts`'s
+/// `SHELL_MODE` is the other end of this contract, and `features/
+/// shell-window.ts` is the only module that reads it.
+///
+/// A query string and not a fragment, a header or an injected script: the Go
+/// server ignores unknown query parameters on `/` (it serves index.html
+/// regardless), a fragment is not readable before the first paint in every
+/// engine, a header would need the daemon to cooperate, and an injected
+/// initialization script would put shell-only behaviour in a place the browser
+/// build cannot be tested against. The origin is unchanged by a query, so the
+/// frontend's `location.host`-derived WebSocket URL and the server's
+/// same-origin check are untouched.
+const SHELL_QUERY: &str = "shell=1";
+
 /// Which `dexel` binary this shell drives (ARCHITECTURE.md Decision 17).
 ///
 /// `bundle.externalBin` is no longer "a sidecar the shell owns"; it is the
@@ -671,17 +695,43 @@ fn re_resolve(
         "the runtime moved from {} to {parsed} — re-pointing this window",
         *cur
     );
-    if let Err(e) = window.navigate(parsed.clone()) {
+    // Navigate to the SHELL url (with ?shell=1) but remember the bare one, so
+    // the comparison above stays bare-vs-bare — see shell_url's doc comment.
+    if let Err(e) = window.navigate(shell_url(&parsed)) {
         log::error!("could not navigate the window to {parsed}: {e}");
         return;
     }
     *cur = parsed;
 }
 
+/// The runtime URL with [`SHELL_QUERY`] on it — what this window actually
+/// loads, as opposed to what `status --json` reported.
+///
+/// Kept as a pure function of the bare URL, and used at BOTH of the two places
+/// that point the webview somewhere ([`build_window`] and [`re_resolve`]'s
+/// navigate), because the two must never disagree: a window that reloaded
+/// without `?shell=1` after the runtime moved would silently lose its own
+/// close and minimize buttons and become unclosable from inside.
+///
+/// The bare URL stays the one this shell REMEMBERS (see `re_resolve`'s
+/// `current`), so the "has the runtime moved?" comparison is bare-vs-bare. It
+/// used to be the same value as the loaded URL; conflating the two now would
+/// make every focus event see a difference and re-navigate the window
+/// endlessly.
+///
+/// `set_query` replaces any existing query rather than appending, which is
+/// what we want: the runtime's URL never carries one, and if it ever did,
+/// dropping it is safer than producing `?a=b?shell=1`.
+fn shell_url(url: &tauri::Url) -> tauri::Url {
+    let mut shell = url.clone();
+    shell.set_query(Some(SHELL_QUERY));
+    shell
+}
+
 /// Build dexel's one window, pointed at the runtime's loopback URL and
 /// carrying the user's preferences from the first frame.
 fn build_window(app: &tauri::App, url: tauri::Url, prefs: Prefs) -> tauri::Result<()> {
-    WebviewWindowBuilder::new(app, WINDOW_LABEL, WebviewUrl::External(url))
+    WebviewWindowBuilder::new(app, WINDOW_LABEL, WebviewUrl::External(shell_url(&url)))
         .title(WINDOW_TITLE)
         .inner_size(WINDOW_W, WINDOW_H)
         // Same as the default size: the layout is fixed-pixel and does not
@@ -700,9 +750,43 @@ fn build_window(app: &tauri::App, url: tauri::Url, prefs: Prefs) -> tauri::Resul
         // good idea — so the behaviour is kept, the DEFAULT is off, and
         // Settings owns the switch.
         .always_on_top(prefs.always_on_top)
-        // Native frame in Phase 1 — free drag/close. The in-page wordmark
-        // titlebar stays; a frameless look is Phase 2 polish.
-        .decorations(true)
+        // WINDOW-POLISH (docs/plan/ROADMAP.md): FRAMELESS. The game already
+        // draws its own 640x24 titlebar, and a native frame stacked on top of
+        // it was two title bars in a 460px-tall window — the thing the
+        // original floating-companion vision never had.
+        //
+        // Going frameless is not free, and the cost is paid in the page:
+        //
+        //   * There is no system close or minimize button any more, so the
+        //     page MUST provide both, or the window cannot be dismissed from
+        //     inside. app/frontend/src/features/shell-window.ts does, gated on
+        //     the `?shell=1` this shell appends (see SHELL_QUERY) so a browser
+        //     tab — which has its own — never grows a pair.
+        //   * There is nothing to drag the window by, so `#titlebar` carries
+        //     `data-tauri-drag-region="deep"` (app/public/index.html).
+        //
+        // Both of those need the page to reach Tauri's IPC, and the page is a
+        // REMOTE origin (`WebviewUrl::External` on http://127.0.0.1:<port>),
+        // not bundled `tauri://` content. What makes it work — verified
+        // against the tauri 2.11.5 source, because the docs do not say it
+        // plainly — is that `manager/webview.rs::prepare_pending_webview`
+        // pushes `__TAURI_INTERNALS__`, the invoke script, every plugin init
+        // script (including the core window plugin's drag.js, which is what
+        // implements the drag-region attribute) and — when
+        // `app.withGlobalTauri` is true — the global API bundle, ALL with no
+        // local-vs-remote condition. The gate is purely the ACL, and a remote
+        // origin matches only a capability that declares `remote.urls`; hence
+        // capabilities/loopback-window-controls.json. `core:window:default`
+        // grants read-only getters and would not have been enough even for a
+        // local page.
+        //
+        // Resizing is the remaining honest caveat, and it is
+        // platform-dependent: macOS and Windows still give an undecorated
+        // window draggable resize edges, while on Linux it is up to the
+        // compositor and an undecorated GTK window may offer none. See
+        // ../README.md "The frameless shell" for what still needs a human's
+        // eyes on each platform.
+        .decorations(false)
         .center()
         .build()
         .map(|_| ())
@@ -991,5 +1075,196 @@ mod bundle_layout {
             "capabilities/default.json's shell:allow-execute scope does not allow {wanted:?}; \
              the shell's bundled-driver fallback would be denied at runtime in a packaged build"
         );
+    }
+}
+
+// ---------------------------------------------------------------------------
+// WINDOW-POLISH — the frameless shell's four-file contract.
+// ---------------------------------------------------------------------------
+
+/// Going frameless made four files depend on each other, three of them not
+/// Rust, and every one of them fails SILENTLY when it drifts:
+///
+///   1. `build_window`'s `decorations(false)` — no native close/minimize/drag.
+///   2. `SHELL_QUERY` on the loaded URL — how the page learns (1) happened.
+///   3. `tauri.conf.json`'s `app.withGlobalTauri` — whether `window.__TAURI__`
+///      exists for `features/shell-window.ts` to call.
+///   4. `capabilities/loopback-window-controls.json` — whether the ACL lets a
+///      REMOTE origin call those commands at all.
+///
+/// Break 3 or 4 and you get a frameless window whose close button does
+/// nothing: no build error, no test failure, and the only symptom is a window
+/// the user cannot dismiss. The page complains loudly when it happens
+/// (shell-window.ts's honest-failure path), but "loud at runtime" is a poor
+/// substitute for "caught at build time", so the config side is pinned here.
+///
+/// What this canNOT check is whether the URL PATTERN actually matches the
+/// running port. That is decided by the `urlpattern` crate at runtime against
+/// a port nobody knows until the daemon binds it — but a malformed pattern
+/// panics during `generate_context!`, so a build that links has already proven
+/// the patterns parse. The port-wildcard behaviour itself is asserted
+/// separately in `shell_url_and_patterns`.
+#[cfg(test)]
+mod shell_mode {
+    use super::{shell_url, SHELL_QUERY};
+
+    const TAURI_CONF: &str = include_str!("../tauri.conf.json");
+    const DEFAULT_CAP: &str = include_str!("../capabilities/default.json");
+    const LOOPBACK_CAP: &str = include_str!("../capabilities/loopback-window-controls.json");
+
+    fn json(raw: &str, what: &str) -> serde_json::Value {
+        serde_json::from_str(raw).unwrap_or_else(|e| panic!("{what} is not valid JSON: {e}"))
+    }
+
+    /// `window.__TAURI__` is injected only when this is true (tauri 2.11.5:
+    /// `tauri-codegen`'s `plugin_global_api_scripts` is `None` otherwise), and
+    /// `features/shell-window.ts` calls
+    /// `window.__TAURI__.window.getCurrentWindow()`. Flipping this back to
+    /// false leaves a frameless window with two dead buttons.
+    #[test]
+    fn global_tauri_is_enabled_for_the_pages_window_api() {
+        let conf = json(TAURI_CONF, "tauri.conf.json");
+        assert_eq!(
+            conf["app"]["withGlobalTauri"].as_bool(),
+            Some(true),
+            "app.withGlobalTauri must be true: the frameless window's close and minimize \
+             buttons live in the PAGE (app/frontend/src/features/shell-window.ts) and reach \
+             the window through window.__TAURI__, which is not injected without it"
+        );
+    }
+
+    /// The loopback capability, field by field. Each assertion here is a
+    /// distinct way to end up with a silently unclosable window.
+    #[test]
+    fn the_loopback_capability_grants_exactly_the_three_window_verbs() {
+        let cap = json(LOOPBACK_CAP, "capabilities/loopback-window-controls.json");
+
+        // A remote origin matches ONLY a capability with `remote.urls`
+        // (tauri's `Origin::matches`: Remote never matches ExecutionContext::
+        // Local). Without this block the page is granted nothing at all.
+        let urls: Vec<&str> = cap["remote"]["urls"]
+            .as_array()
+            .expect("the capability must declare remote.urls — the page is a REMOTE http:// origin, and core:default only ever applies to local app URLs")
+            .iter()
+            .map(|u| u.as_str().expect("remote.urls entries are strings"))
+            .collect();
+        // The daemon binds an EPHEMERAL port in runtime mode (`-addr
+        // 127.0.0.1:0`), so a pattern without a port wildcard would match only
+        // port 80 and nothing real. urlpattern does NOT widen the port the way
+        // tauri widens path/query/hash.
+        assert!(
+            urls.contains(&"http://127.0.0.1:*"),
+            "remote.urls must include \"http://127.0.0.1:*\" — the runtime's port is ephemeral, \
+             and a pattern with a fixed or absent port matches nothing it will ever bind; got {urls:?}"
+        );
+        // `localhost` and `127.0.0.1` are different hostnames to urlpattern
+        // with no cross-matching, and which spelling `status --json` reports
+        // is the daemon's business, not this shell's.
+        assert!(
+            urls.contains(&"http://localhost:*"),
+            "remote.urls must also include \"http://localhost:*\": urlpattern treats it as a \
+             different host from 127.0.0.1, and the URL the daemon reports may use either \
+             spelling; got {urls:?}"
+        );
+
+        // `windows` defaults to an EMPTY vec, and tauri's resolve_access
+        // requires `windows.iter().any(...)` — an empty list matches nothing,
+        // so omitting this silently grants nothing.
+        let windows: Vec<&str> = cap["windows"]
+            .as_array()
+            .expect("the capability must list `windows` — it defaults to empty, and an empty list matches NO window")
+            .iter()
+            .map(|w| w.as_str().expect("windows entries are strings"))
+            .collect();
+        assert!(
+            windows.contains(&super::WINDOW_LABEL),
+            "the capability's `windows` must include this shell's only window label {:?}; got {windows:?}",
+            super::WINDOW_LABEL
+        );
+
+        // `local` defaults to TRUE, which would also grant these three verbs
+        // to any future bundled/tauri:// page. Nothing needs that, and a
+        // capability should grant the smallest thing that works.
+        assert_eq!(
+            cap["local"].as_bool(),
+            Some(false),
+            "the capability should set \"local\": false — it exists for the loopback page only, \
+             and `local` defaults to true, which would silently widen it"
+        );
+
+        let perms: Vec<&str> = cap["permissions"]
+            .as_array()
+            .expect("permissions is an array")
+            .iter()
+            .map(|p| {
+                p.as_str()
+                    .expect("these permissions are plain identifier strings")
+            })
+            .collect();
+        // start-dragging is what index.html's data-tauri-drag-region needs
+        // (tauri's drag.js invokes `plugin:window|start_dragging`); close and
+        // minimize are what shell-window.ts's two buttons need. None of the
+        // three is in core:window:default, which is read-only getters plus
+        // internal-toggle-maximize.
+        for wanted in [
+            "core:window:allow-start-dragging",
+            "core:window:allow-close",
+            "core:window:allow-minimize",
+        ] {
+            assert!(
+                perms.contains(&wanted),
+                "the capability must grant {wanted:?} — it is NOT in core:window:default, so \
+                 without it the page's call is denied with \"not allowed on origin [remote: ...]\"; \
+                 got {perms:?}"
+            );
+        }
+    }
+
+    /// The OTHER half of scoping this correctly: the pre-existing capability
+    /// must stay local-only. It carries `shell:allow-execute` for the bundled
+    /// Go daemon, and adding a `remote` block to it — the obvious shortcut
+    /// instead of writing a second file — would hand the loopback page the
+    /// ability to spawn that binary with arbitrary arguments.
+    #[test]
+    fn the_sidecar_capability_stays_local_only() {
+        let cap = json(DEFAULT_CAP, "capabilities/default.json");
+        assert!(
+            cap.get("remote").is_none(),
+            "capabilities/default.json must NOT declare `remote`: it grants shell:allow-execute \
+             on the bundled Go daemon, and a remote block would expose that to the loopback page. \
+             Window verbs belong in capabilities/loopback-window-controls.json."
+        );
+    }
+
+    /// `shell_url` is the whole of the shell-mode signal, and it has to be
+    /// exact: the page reads `?shell=1` and nothing else, and the port/host/
+    /// path must survive untouched or the window loads the wrong server.
+    #[test]
+    fn shell_url_and_patterns() {
+        let bare = tauri::Url::parse("http://127.0.0.1:53421/").expect("test URL");
+        let shell = shell_url(&bare);
+
+        assert_eq!(shell.query(), Some(SHELL_QUERY));
+        assert_eq!(shell.as_str(), "http://127.0.0.1:53421/?shell=1");
+        // Everything the window depends on for reaching the right daemon is
+        // preserved. Same-origin matters too: the frontend derives its
+        // WebSocket URL from location.host and the server checks the Origin
+        // header, and a query string changes neither.
+        assert_eq!(shell.host_str(), bare.host_str());
+        assert_eq!(shell.port(), bare.port());
+        assert_eq!(shell.path(), bare.path());
+        assert_eq!(shell.origin(), bare.origin());
+
+        // Idempotent: `re_resolve` navigates to shell_url(bare) but remembers
+        // `bare`, so this should never be reached twice in production — but if
+        // the remembered value ever became the decorated one, doubling the
+        // query would be the bug, and it does not happen.
+        assert_eq!(shell_url(&shell).as_str(), shell.as_str());
+
+        // The bare URL is NOT mutated: re_resolve's "has the runtime moved?"
+        // comparison is bare-vs-bare, and a shell_url that mutated its input
+        // would make every window focus look like a moved runtime and
+        // re-navigate the page endlessly.
+        assert_eq!(bare.as_str(), "http://127.0.0.1:53421/");
     }
 }

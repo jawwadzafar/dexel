@@ -87,6 +87,76 @@ img, .sprite {
   image-rendering: crisp-edges;
 }
 
+/* ---------- Interaction hardening (INTERACTION-HARDENING, ROADMAP.md) ----------
+   "Sprites must not be draggable (no drag-image-out-to-new-window), scene
+   text not selectable; clicks deliberate."
+
+   THE BUG THIS CLOSES. Every sprite in the scene is an <img>, and an <img> is
+   a native drag source by DEFAULT. Dragging one and dropping it back onto the
+   same window made the webview NAVIGATE to /assets/<file>.png — the running
+   game replaced by a bare PNG, the WebSocket gone, recoverable only by a
+   reload. Sweeping the mouse across the scene also produced a blue text
+   selection over the terminal and the status lines, which in a pixel-art
+   window reads as a rendering fault rather than as a selection.
+
+   THREE MECHANISMS, because no single one covers it:
+     - `user-select: none` on the layout root  -> no selection to make, and
+       nothing to hand to a text drag.
+     - `-webkit-user-drag: none` on images     -> the drag GESTURE is refused
+       by Blink/WebKit, which is every engine this ships to (Chromium in the
+       browser, WebKitGTK / WKWebView / WebView2 in the shell).
+     - `draggable=false` on every <img>        -> set once in dom.ts's
+       spriteImg(); the IDL attribute is what makes the element a drag source
+       at all, and it is the only one of the three that is not a hint.
+   render/interaction.ts adds a cancelling dragstart/selectstart listener on
+   top as the backstop for elements none of the three above reach.
+
+   WHAT STAYS SELECTABLE. Real text entry — the session-name field, the
+   rename field, and any input/textarea/contenteditable added later — is
+   restored to `user-select: text` below. That is not a nicety: without it a
+   user cannot double-click a word in the name they are editing, cannot
+   drag-select part of it, and on some platforms cannot use the clipboard from
+   the context menu. The scene is not text; a text field is.
+
+   WHAT IS DELIBERATELY NOT DONE. No `pointer-events: none`, and nothing here
+   touches click/mousedown/pointerdown. The scene container must keep
+   receiving clicks cleanly — that is the groundwork the brief names for
+   SCENE-REACTIONS — and `pointer-events: none` on sprites would have been
+   the lazy way to stop drags while also making the scene permanently
+   unclickable. */
+html, body, #root {
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+/* Long-press on a touch/pen webview otherwise offers "Save image" / "Open in
+   new tab" for the sprite under the finger — the same escape hatch out of the
+   app that the drag was, reached a different way. */
+#root {
+  -webkit-touch-callout: none;
+}
+
+/* The one exception, and the only one. Kept as element selectors rather than
+   an id list so a modal added later inherits the right behaviour without a
+   CSS edit (the #settings-in-the-transform-list bug, fixed below, is exactly
+   what an id list costs). */
+input,
+textarea,
+[contenteditable="true"] {
+  user-select: text;
+  -webkit-user-select: text;
+  cursor: text;
+}
+
+/* `-webkit-user-drag` is a WebKit/Blink property with no standard
+   counterpart; `user-drag` is written alongside it purely so a future engine
+   that standardises the name inherits the intent. Neither is load-bearing on
+   its own — dom.ts's `draggable=false` is. */
+img {
+  -webkit-user-drag: none;
+  user-drag: none;
+}
+
 /* No animation longer than 400ms; no transitions on colour or position.
    Retro UI snaps. (Exceptions explicitly called out in the spec — the
    blink cursor and the 5fps dev frame swap — are driven by JS timers,
@@ -105,9 +175,19 @@ img, .sprite {
   height: 400px;
   background: var(--shadow);
   overflow: hidden;
+  /* WINDOW-POLISH: nearest-neighbour for the WHOLE scaled composite.
+     `image-rendering` is an inherited property, so declaring it here reaches
+     every descendant — including the mask-image/background-image sprites the
+     `img, .sprite` rule above cannot name. Without it a >1x scale resamples
+     those bilinearly and the tinted garment layers go soft while the plain
+     <img> layers stay sharp: the worst possible result, since the mismatch is
+     more visible than either treatment alone. */
+  image-rendering: pixelated;
   /* Window fit (BUG-2). transform-origin at the top-left so the offsets are
      plain "move the scaled box here" values rather than being folded through
-     a centre point. */
+     a centre point (see render/viewport.ts's "CENTRING" note: a centre origin
+     lets the browser derive a half-pixel offset and throw the crisp factor
+     away at the last step). */
   transform-origin: 0 0;
   transform: translate(var(--ui-ox), var(--ui-oy)) scale(var(--ui-scale));
   cursor: url(data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAYAAABzenr0AAAAzElEQVRYR+2X0Q6AIAhF5f8/2jYXZkwEjNSVvVUjDpcrGgT7FUkI2D9xRfQETwNIiWO85wfINfQUEyxBG2ArsLwC0jioGt5zFcwF4OYDPi/mBYKm4t0U8ATgRm3ThFoAqkhNgWkA0jJLvaOVSs7j3qMnSgXWBMiWPXe94QqMBMBc1VZIvaTu5u5pQewq0EqNZvIEMCmxAawK0DNkay9QmfFNAJUXfgGgUkLaE7j/h8fnASkxHTz0DGIBMCnBeeM7AArpUd3mz2x3C7wADglA8BcWMZhZAAAAAElFTkSuQmCC) 14 0, pointer;
@@ -132,8 +212,19 @@ img, .sprite {
    scaled, and the dialog would drift away from the scene as the window grew.
 
    Hit testing needs nothing extra: a transform is part of the box the browser
-   hit-tests, so a click on a scaled button maps back through it natively. */
-#store, #activity, #history, #sessions, #onboarding {
+   hit-tests, so a click on a scaled button maps back through it natively.
+
+   WINDOW-POLISH FIX: #settings was MISSING from this list. It was added by
+   SET-1 after BUG-2 wrote this rule; it declares its own --dlg-x/--dlg-y and
+   its comment says "Consumed by the shared window-fit transform above", but
+   the selector list was never extended, so it inherited neither the transform
+   nor a left/top. A `position: fixed` box with `margin: 0` and no inset
+   resolves to its STATIC position, which put the Settings modal at the
+   top-left of the viewport, unscaled, while every other modal tracked the
+   scene — visible the moment the window was not exactly 1x. This is the tax
+   an id list charges, which is why the interaction-hardening rules above are
+   written against element selectors instead. */
+#store, #activity, #history, #sessions, #settings, #onboarding {
   left: 0;
   top: 0;
   transform-origin: 0 0;
@@ -418,6 +509,70 @@ img, .sprite {
   height: 16px;
   padding: 0;
 }
+
+/* ---------- Shell mode: the frameless window's own controls ----------
+   WINDOW-POLISH (docs/plan/ROADMAP.md). The Tauri shell now builds its window
+   with `decorations(false)`, so there is no native frame to close or minimise
+   with — this bar has to provide both, and the titlebar itself is the drag
+   region (see index.html's data-tauri-drag-region and
+   features/shell-window.ts).
+
+   `body.shell` is the switch, set by shell-window.ts only when the shell
+   appended ?shell=1 to the URL it loaded. That is the whole reason the two
+   buttons are hidden by DEFAULT rather than shown by default and hidden in a
+   browser: the same index.html is served to a browser tab, which has its own
+   close button and whose appearance must stay byte-identical to what it was
+   before this change. A default-visible control would have changed the
+   browser page, which is exactly what the brief forbids.
+
+   GEOMETRY. Three 32x16 buttons with 4px gutters, right-aligned to the
+   titlebar's 632px inner edge (the same edge #menu-open and #menu-panel
+   already share):
+
+     menu-open   528..560     (moved left from 600 by the rule below)
+     win-minimize 564..596
+     win-close    600..632
+
+   #paused-badge ends at 476 and #session-pill at 372, so nothing in the bar
+   has to move but the hamburger, and #menu-panel (496..632) is right-aligned
+   and unaffected. */
+#win-minimize,
+#win-close {
+  display: none;
+  position: absolute;
+  top: 4px;
+  width: 32px;
+  height: 16px;
+  padding: 0;
+  font-size: 8px;
+  /* 8px, NOT 16px, and this was a real bug caught by looking at the rendered
+     window. `.nes-btn` (see NES.CSS OVERRIDES) is `box-sizing: border-box`
+     with a 4px border, so a 16px-tall button has an EIGHT pixel content box.
+     A 16px line-height inside it produces a line box twice the height of its
+     container, and the glyph came out squashed against the bottom edge as a
+     two-pixel coloured smudge — unreadable, and exactly the class of failure
+     docs/ui-spec.md §11.3 records for missing glyphs. #store-close, the other
+     8px glyph button in this file, solves it the same way (line-height 6px in
+     an 8x8 content box). */
+  line-height: 8px;
+}
+#win-minimize { left: 564px; }
+#win-close { left: 600px; }
+
+body.shell #win-minimize,
+body.shell #win-close {
+  display: block;
+}
+/* The hamburger's only shell-mode difference. Its panel is right-aligned to
+   632 and stays where it is. */
+body.shell #menu-open { left: 528px; }
+
+/* The drag region must not show a text I-beam while the pointer crosses it,
+   and a mousedown on it must not start a selection. `user-select: none`
+   already covers the layout (see "Interaction hardening"); this is the cursor
+   half, and it is scoped to shell mode because in a browser the titlebar is
+   ordinary page chrome with the app's own pointer cursor. */
+body.shell #titlebar { cursor: default; }
 .menu-icon {
   position: relative;
   display: inline-block;

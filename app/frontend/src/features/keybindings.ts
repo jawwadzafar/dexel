@@ -46,9 +46,31 @@ function isTextEntryTarget(target: EventTarget | null): boolean {
   return tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || node.isContentEditable === true;
 }
 
+// INTERACTION-HARDENING (docs/plan/ROADMAP.md, "clicks deliberate") — the
+// second half of the same hazard, found while gating the selection rules.
+//
+// The comment above says every shortcut here is "a BARE letter ... with no
+// modifier", but nothing checked that: `e.key` for Ctrl+A is still "a", so
+// Ctrl/Cmd+A opened the ACTIVITY modal, Ctrl/Cmd+S opened the STORE, Ctrl+H
+// opened HISTORY. Those are three of the most reflexive chords a developer
+// has, and Cmd+A in particular is what a user presses to try to select text —
+// the exact gesture this wave otherwise made a no-op, which would have left
+// "select all" doing nothing visible except opening an unrelated modal.
+//
+// Shift is deliberately NOT in this list. Shift+S still produces `e.key ===
+// "S"`, which the handlers below already accept alongside "s" on purpose: a
+// user with caps lock on must keep their shortcuts.
+function hasModifier(e: KeyboardEvent): boolean {
+  return e.ctrlKey || e.metaKey || e.altKey;
+}
+
 export function init(): void {
   document.addEventListener('keydown', function (e: KeyboardEvent) {
     if (isTextEntryTarget(e.target)) return;
+    // Before every ownership tier, for the same reason isTextEntryTarget is:
+    // a chord belongs to the browser/OS (or to a text field), and a modal
+    // that swallowed it would be as wrong as a launcher that fired on it.
+    if (hasModifier(e)) return;
     // Onboarding takes the ownership tier first: it is modal over
     // everything and must not let a bare letter reach the launchers even
     // when focus sits on one of its buttons rather than its input.

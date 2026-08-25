@@ -14,6 +14,7 @@
 // value actually changed, so a no-op repaint invalidates nothing.
 import type { Rect } from '../geometry';
 import { assetUrl } from '../assets';
+import { spriteImg } from '../dom';
 
 // Assigns a sprite URL to an existing <img> only when it differs from what
 // the element is already showing. Compares the ATTRIBUTE, not `img.src`:
@@ -38,7 +39,7 @@ export function buildTintLayer(formFile: string | null | undefined, tintHex: str
   wrap.style.setProperty('--tint', tintHex);
   const fill = document.createElement('div');
   fill.className = 'tint-fill';
-  const shade = document.createElement('img');
+  const shade = spriteImg();
   shade.className = 'tint-shade';
   shade.alt = '';
   // A null form file leaves both the mask and the <img> UNSET rather than
@@ -76,7 +77,7 @@ export function positionEl<T extends HTMLElement>(node: T, rect: Rect): T {
   return node;
 }
 export function plainImg(file: string | null | undefined, rect: Rect, cls?: string): HTMLImageElement {
-  const img = document.createElement('img');
+  const img = spriteImg();
   img.className = 'layer sprite' + (cls ? ' ' + cls : '');
   img.alt = '';
   img.src = assetUrl(file) || '';

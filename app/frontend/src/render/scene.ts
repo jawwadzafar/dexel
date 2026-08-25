@@ -9,7 +9,7 @@
 //
 // This module used to DESTROY AND REBUILD its whole subtree on every render:
 // `scene.innerHTML = ''` plus a `holder.innerHTML = ''` per slot, then a
-// fresh document.createElement('img') and a fresh `img.src` for every layer.
+// fresh spriteImg() and a fresh `img.src` for every layer.
 // renderScene() runs on each ~1Hz state broadcast, and renderDev() runs on
 // every 200ms animation tick as well, so that teardown was on the hot path.
 //
@@ -51,7 +51,7 @@
 //
 // Behaviour is otherwise unchanged: same poses, same beat timing, same
 // y-offsets, same layer order and occlusion, same tint handling.
-import { byId } from '../dom';
+import { byId, spriteImg } from '../dom';
 import * as store from '../state/store';
 import {
   CHAIR_RECT, CHAIR_Z_DETAIL, CHAIR_Z_FORM, DEV_RECT, DEV_Z_BASE, DEV_Z_FORM, DEV_Z_STYLE,
@@ -251,7 +251,7 @@ function buildHolder(): HTMLDivElement {
 // holder's origin. Starts hidden and with no src: the first render decides
 // whether the slot has a sprite at all.
 function buildSlotImg(slot: string): HTMLImageElement {
-  const img = document.createElement('img');
+  const img = spriteImg();
   img.className = 'layer sprite';
   img.alt = '';
   img.style.position = 'absolute';
@@ -289,7 +289,7 @@ function buildSceneSkeleton(): void {
   chairHolder = buildHolder();
   chairForm = buildTintLayer(null, '#ffffff');
   chairForm.style.zIndex = String(CHAIR_Z_FORM);
-  chairDetail = document.createElement('img');
+  chairDetail = spriteImg();
   chairDetail.className = 'layer sprite';
   chairDetail.alt = '';
   chairDetail.style.position = 'absolute';
@@ -321,7 +321,7 @@ function buildSceneSkeleton(): void {
     devFormLayers[frame] = form;
     devHolder.appendChild(form);
   });
-  devStyleImg = document.createElement('img');
+  devStyleImg = spriteImg();
   devStyleImg.className = 'layer sprite';
   devStyleImg.alt = '';
   devStyleImg.style.position = 'absolute';
@@ -332,7 +332,7 @@ function buildSceneSkeleton(): void {
   devStyleImg.style.display = 'none';
   devHolder.appendChild(devStyleImg);
   DEV_FRAMES.forEach(function (frame) {
-    const base = document.createElement('img');
+    const base = spriteImg();
     base.className = 'layer sprite';
     base.alt = '';
     setSrc(base, 'dev_base_' + frame + '.png');

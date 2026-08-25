@@ -5,7 +5,7 @@
 // and reuses the render layer's generic sprite/tint primitives
 // (../render/tint, ../render/scene's currentDevFrame) to compose its
 // preview pane — it never reaches into the scene compositor's own DOM.
-import { byId } from '../dom';
+import { byId, spriteImg } from '../dom';
 import * as store from '../state/store';
 import { sendAction, setStoreOpenHoldDesired } from '../state/ws-client';
 import { assetUrl } from '../assets';
@@ -240,7 +240,7 @@ function buildThumb(slot: CatalogSlot, item: CatalogItem): HTMLElement {
     const tint = buildTintLayer(formFile, store.tintHexFor(tintId));
     tint.style.left = '0'; tint.style.top = '0'; tint.style.width = '100%'; tint.style.height = '100%';
     wrap.appendChild(tint);
-    const detail = document.createElement('img');
+    const detail = spriteImg();
     detail.alt = '';
     detail.src = assetUrl(detailFile) || '';
     detail.style.position = 'absolute';
@@ -251,7 +251,7 @@ function buildThumb(slot: CatalogSlot, item: CatalogItem): HTMLElement {
     return wrap;
   }
   if (!item.sprite) { return document.createElement('span'); }
-  const img = document.createElement('img');
+  const img = spriteImg();
   img.alt = '';
   img.src = assetUrl(item.thumb || ('thumb_' + item.id + '.png')) || '';
   return img;
@@ -369,7 +369,7 @@ function updatePreview(): void {
   } else {
     const rect = SLOT_RECT[slot.id];
     const scale = Math.max(1, Math.min(3, Math.floor(Math.min(152 / rect.w, 152 / rect.h))));
-    const img = document.createElement('img');
+    const img = spriteImg();
     img.className = 'scene';
     img.alt = '';
     img.src = assetUrl(item.sprite) || '';

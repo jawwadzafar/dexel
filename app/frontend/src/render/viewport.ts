@@ -22,33 +22,75 @@
 // apart by a pixel — visible as broken alignment in a design built on an 8px
 // grid.
 //
-// THE SCALE RULE, and why:
+// THE SCALE RULE, and why (WINDOW-POLISH, docs/plan/ROADMAP.md — "snapping
+// to crisp multiples up to a sane max, then LETTERBOX"):
 //
 //   exact = min(vw / 640, vh / 400)         — the largest fit, no clipping
 //
 //   * exact < 1 (window smaller than the layout): use `exact`. There is no
 //     crisper factor available below 1x, and clipping instead would hide
 //     controls the user cannot then reach.
-//   * otherwise: snap DOWN to the nearest CRISP factor if that costs at most
-//     1/8 of the size, else use `exact`.
+//   * otherwise: cap at MAX_SCALE, then snap DOWN to the nearest CRISP
+//     factor. Always. There is no tolerance and no non-crisp fallback.
 //
 // A "crisp" factor is one where a single art pixel covers a whole number of
 // DEVICE pixels — an integer at dpr 1, and also 1.5x, 2.5x, ... on a retina
 // display, where 1.5 CSS px is exactly 3 device px. At a non-crisp factor
-// nearest-neighbour scaling gives art pixels uneven widths and the 8px pixel
-// font is rasterised off its own grid; both are visibly mushy, so a crisp
-// factor is worth giving up a little size for. 1/8 is where that trade
-// turns: below it the size difference is not noticeable, and above it (a 2x
-// window rendered at 1x, say) the empty margin is far worse than soft pixels.
-// Snapping only ever goes DOWN — snapping up would overflow the window.
+// nearest-neighbour scaling gives art pixels UNEVEN widths (at 1.5x on a
+// dpr-1 screen, alternating 1 and 2 device px) and the 8px pixel font is
+// rasterised off its own grid. Both are visibly mushy in a game whose entire
+// look is "every pixel is where the artist put it", so a crisp factor is
+// worth giving up size for.
+//
+// WHICH LADDER, and the honest cost. The owner's brief offered two: half
+// steps (1x, 1.5x, 2x, 2.5x, 3x) or integers only, "pick and justify". This
+// picks NEITHER as a fixed list — it derives the ladder from the display,
+// which is the same choice expressed correctly:
+//
+//   dpr 1  ->  step 1     ladder 1x, 2x, 3x
+//   dpr 2  ->  step 0.5   ladder 1x, 1.5x, 2x, 2.5x, 3x
+//   dpr 3  ->  step 1/3   ladder 1x, 1.333x, 1.667x, ...
+//
+// A hardcoded half-step ladder would be pixel-exact on a retina display and
+// pixel-UNEVEN on the ordinary 1080p monitor most of this product's users
+// have — it buys a bigger picture by breaking the one promise this item is
+// named after. So half steps are used exactly where they are free, and the
+// dpr-1 case falls back to the integers the brief names as "also
+// defensible". The cost, stated plainly: on a dpr-1 display a 960x600 window
+// fits 1.5x exactly and renders at 1x instead, so the game sits at 640x400
+// inside a 160x100 letterbox rather than filling the window. That is the
+// trade — a smaller crisp picture over a larger mushy one.
+//
+// An earlier version of this module allowed a non-crisp `exact` whenever
+// snapping would have cost more than 1/8 of the size. That is what put a
+// 1920x1080 window at 2.7x — every art pixel 2 or 3 device px wide, which is
+// exactly the "stretch-blur" this item exists to remove. It is gone.
+//
+// THE CAP. MAX_SCALE is 3, and it is a PRODUCT decision, not a technical
+// one: nothing breaks at 4x. dexel is a companion that sits beside your work,
+// and its 8px type and 32px character stop reading as cozy and start reading
+// as a billboard somewhere past 3x — on a 4K display an uncapped fit would
+// choose 5x and paint a 3200x2000 developer. Past the cap the extra room
+// becomes letterbox, which is the intended shape of a too-big window.
 //
 // At the DEFAULT 660x460 this yields exact = 1.03125 -> 1x, i.e. the shipping
 // appearance is byte-for-byte the authored layout, centred in a 10px
 // pillarbox and a 30px letterbox.
+//
+// CENTRING. The brief says "transform-origin center"; this uses
+// `transform-origin: 0 0` plus explicit integer offsets, which centres the
+// same box more precisely. With a centre origin the browser derives the
+// offset itself as (vw - 640*s)/2, a value that is frequently a half pixel
+// (any odd leftover) and puts the whole layout on a half-pixel grid — every
+// art pixel then straddles two device pixels and the crisp factor is thrown
+// away at the very last step. Math.round on our own offsets cannot do that.
+// The result is centred to within the half pixel that has nowhere to go.
 
 const BASE_W = 640;
 const BASE_H = 400;
-const SNAP_TOLERANCE = 0.125; // 1/8 — see the rule above
+// The product cap — see "THE CAP" above. Exported so the ?dev=1 console and
+// any future test can assert against the same number this module snaps to.
+export const MAX_SCALE = 3;
 
 // The smallest scale increment that still lands art pixels on whole device
 // pixels. A fractional devicePixelRatio (a Windows 125% display) has no such
@@ -64,8 +106,16 @@ export function chooseScale(vw: number, vh: number, step: number): number {
   const exact = Math.min(vw / BASE_W, vh / BASE_H);
   if (!(exact > 0)) return 1; // a zero-sized viewport (minimised / detached)
   if (exact < 1) return exact;
-  const snapped = Math.floor(exact / step) * step;
-  return exact / snapped <= 1 + SNAP_TOLERANCE ? snapped : exact;
+  const capped = Math.min(exact, MAX_SCALE);
+  // A tiny epsilon before the floor, because the fit is a division: a window
+  // sized to exactly 2x can land on 1.9999999999999998 and snap to 1x, which
+  // would make the perfect-fit case the one that looks worst. The epsilon is
+  // far below any real step (the smallest is 1/3) so it can never promote a
+  // genuine 1.99x to 2x and overflow the window by a visible amount.
+  const snapped = Math.floor(capped / step + 1e-9) * step;
+  // step <= 1 and capped >= 1, so snapped >= 1 already; the max() is a
+  // belt-and-braces floor against a pathological devicePixelRatio.
+  return Math.max(snapped, 1);
 }
 
 // The three custom properties this module owns. #root consumes all three;

@@ -16,11 +16,14 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"io/fs"
 	"log"
 	"net"
 	"net/http"
 	"os"
 	"os/signal"
+	"path"
+	"strings"
 	"syscall"
 	"time"
 
@@ -455,11 +458,15 @@ func runServe(mode serveMode, args []string) {
 	controlCh := make(chan struct{}, 1)
 
 	mux := http.NewServeMux()
-	mux.Handle("/", http.FileServer(http.FS(publicFS)))
+	// INTERACTION-HARDENING (docs/plan/ROADMAP.md): both static mounts are
+	// FILES ONLY — see filesOnlyFS. "/" is the one mount whose own root
+	// serves an index.html; every other directory URL under either mount
+	// is a 404.
+	mux.Handle("/", filesOnlyFS(publicFS, true))
 	// "/assets/<file>" is the URL prefix the frontend's assetUrl() builds
 	// against (app/frontend/src/assets.ts); StripPrefix turns it back into
 	// the bare filename the tree — embedded or on disk — is keyed by.
-	mux.Handle("/assets/", http.StripPrefix("/assets/", http.FileServer(http.FS(assetsFS))))
+	mux.Handle("/assets/", http.StripPrefix("/assets/", filesOnlyFS(assetsFS, false)))
 	mux.HandleFunc("/api/health", healthHandler(assetsDir, publicOk, version, buildVersion(), publicSource, assetsSource))
 	mux.HandleFunc("/ws", hub.handleWS(actions, catalog))
 
@@ -938,4 +945,88 @@ func recordStickyPort(stateDir string, ln net.Listener) {
 	if err := lifecycle.WriteStickyPort(stateDir, tcp.Port); err != nil {
 		log.Printf("sticky port: %v — the next restart will take a fresh OS-assigned port", err)
 	}
+}
+
+// filesOnlyFS wraps a static tree so it serves FILES and nothing else —
+// INTERACTION-HARDENING (docs/plan/ROADMAP.md): "The server must NOT serve
+// directory listings (/assets/ currently lists all files via
+// http.FileServer). Files only, no index pages, both embedded and
+// disk-override modes."
+//
+// # What was wrong
+//
+// http.FileServer's documented behaviour for a directory URL is to serve
+// that directory's index.html if one exists and otherwise to render a
+// generated HTML listing of every entry. Neither static tree dexel serves
+// has an index.html below its own root, so `GET /assets/` returned a 200
+// with a browsable index of every sprite in the product, and `GET /js/`,
+// `/css/`, `/fonts/` did the same for the frontend. That is a real, if
+// small, information leak (it enumerates files a client was never told
+// about, including ones a future build might not mean to publish), and it
+// is a UX lie: a directory is not a page of this application.
+//
+// # The rule this enforces
+//
+// One mount root serves an index page — "/" — and every other directory
+// URL under either mount is a 404. Concretely, for a request whose path
+// has already had its mount prefix stripped:
+//
+//	""  or "/"          -> rootIndex ? the tree's index.html : 404
+//	anything ending "/" -> 404          (an explicit directory request)
+//	names a directory   -> 404          (bare "/js", which FileServer
+//	                                     would 301 to "/js/" and list)
+//	names a file        -> the file, served by http.FileServer
+//
+// The last line is the point of wrapping rather than reimplementing:
+// http.FileServer/http.ServeContent own conditional requests, Range,
+// Last-Modified/ETag and content sniffing, and all of that keeps working
+// unchanged for every real file (js, css, fonts, PNGs). Only the
+// directory cases are intercepted, so nothing that used to load stops
+// loading — see TestStaticTreesServeFilesOnly, which asserts both halves
+// (404s AND 200s) against BOTH the embedded and the disk-override tree.
+//
+// rootIndex is true only for the frontend mount, where "/" IS the
+// application. The /assets/ mount passes false: its root is a sprite
+// directory, and a request for it is a request for nothing.
+//
+// The check is deliberately on the fs.FS, not on the URL string, because
+// which names are directories is a property of the tree — and the two
+// trees this serves (embed.FS via fs.Sub, os.DirFS) must behave
+// identically, which is exactly what a stat on the fs.FS gives.
+func filesOnlyFS(fsys fs.FS, rootIndex bool) http.Handler {
+	files := http.FileServer(http.FS(fsys))
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// http.StripPrefix leaves "/assets/" as "" and "/assets/x.png" as
+		// "x.png", so the leading slash is restored before cleaning to
+		// keep one code path for both mounts.
+		upath := r.URL.Path
+		if !strings.HasPrefix(upath, "/") {
+			upath = "/" + upath
+		}
+		// path.Clean resolves any ".." before it is ever handed to the
+		// tree; it also collapses "//" and trailing dots. The trailing
+		// slash is checked on the RAW path because Clean removes it.
+		cleaned := path.Clean(upath)
+
+		if cleaned == "/" {
+			if !rootIndex {
+				http.NotFound(w, r)
+				return
+			}
+			// Delegate: FileServer serves this root's index.html with
+			// full conditional-request handling, exactly as before.
+			files.ServeHTTP(w, r)
+			return
+		}
+		if strings.HasSuffix(upath, "/") {
+			http.NotFound(w, r)
+			return
+		}
+		info, err := fs.Stat(fsys, strings.TrimPrefix(cleaned, "/"))
+		if err != nil || info.IsDir() {
+			http.NotFound(w, r)
+			return
+		}
+		files.ServeHTTP(w, r)
+	})
 }

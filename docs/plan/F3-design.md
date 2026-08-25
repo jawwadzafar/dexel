@@ -249,11 +249,21 @@ once a Mac runner exists.
   same**, so the fixed-pixel layout is never clipped. `resizable: true`
   (extra space letterboxes around the fixed canvas; the layout does not
   reflow).
-- **Always-on-top:** `alwaysOnTop: true` (ADR 0007 — a companion the editor
-  buries never gets seen). A runtime toggle can follow later.
-- **Decorations:** native window frame in Phase 1 (least effort; gives
-  drag/close for free). A frameless "floating companion" look with a custom
-  drag region is a Phase-2 polish toward the original vision, not Phase 1.
+- **Always-on-top:** ~~`alwaysOnTop: true`~~ — **SHIPPED DIFFERENTLY.** The
+  "runtime toggle" this bullet deferred is what actually shipped, in SET-1: it
+  is a `config.json` preference with a Settings-modal switch, default **OFF**,
+  read by the shell from `dexel status --json`'s `prefs.alwaysOnTop` and
+  re-asserted on every window focus (`apply_prefs` in `desktop/src-tauri/src/
+  lib.rs`). ADR 0007 is still why the capability exists; forcing it on every
+  user was the wrong way to act on a good idea, because a window that cannot be
+  put behind anything is an obstruction on macOS.
+- **Decorations:** ~~native window frame in Phase 1~~ — **SHIPPED as
+  frameless** in WINDOW-POLISH, which is the "Phase-2 polish" this bullet
+  named. `decorations(false)`; the game's own `#titlebar` carries
+  `data-tauri-drag-region="deep"` and, in shell mode only, in-page close and
+  minimize buttons. The non-obvious part — that a webview pointed at a REMOTE
+  loopback URL can do this at all, and what the ACL needs — is written up in
+  `desktop/README.md` § "The frameless shell".
 - **First run:** the window simply opens on the game — sidecar spawns, port
   handshake completes, webview loads. No wizard, no terminal, no browser.
 - **Icon:** app icons are required per platform (`.icns` for macOS, `.ico`

@@ -66,26 +66,60 @@ exact = min(viewportWidth / 640, viewportHeight / 400)
 
 exact < 1   ->  use exact          (window smaller than the layout: shrink to
                                     fit; clipping would hide controls)
-otherwise   ->  snap DOWN to the nearest CRISP factor if that costs at most
-                1/8 of the size, else use exact
+otherwise   ->  cap at MAX_SCALE (3), then snap DOWN to the nearest CRISP
+                factor. Always. No tolerance, no non-crisp fallback.
 ```
 
 A **crisp** factor is one where one art pixel covers a whole number of *device*
 pixels: an integer at `devicePixelRatio: 1`, and also 1.5x, 2.5x, … on a
-retina display where 1.5 CSS px is exactly 3 device px. Integer/crisp factors
-are strongly preferred because a fractional factor gives nearest-neighbour art
-pixels uneven widths and rasterises the 8px pixel font off its own grid — both
-visibly mushy. **1/8 is where that trade turns**: below it the size difference
-is not noticeable, above it (a 2x-capable window rendered at 1x) the empty
-margin is far worse than slightly soft pixels. Snapping only ever goes *down*;
-snapping up would overflow the window. Measured results:
+retina display where 1.5 CSS px is exactly 3 device px. At a non-crisp factor
+nearest-neighbour scaling gives art pixels *uneven widths* — at 1.5x on a dpr-1
+screen, alternating 1 and 2 device px — and the 8px pixel font is rasterised
+off its own grid. Both are visibly mushy in a game whose whole look is "every
+pixel is where the artist put it".
 
-| window | exact | applied | note |
-| --- | --- | --- | --- |
-| 660x460 (default) | 1.03125 | **1x**, offset (10, 30) | the shipping look, unchanged and centred |
-| 700x900 (tall) | 1.09375 | **1x**, offset (30, 250) | aspect preserved; the tall bands are the window's own shape |
-| 900x600 | 1.40625 | **1.40625x**, offset (0, 19) | 1x would waste 260x200 px — fractional wins |
-| 1320x920 | 2.0625 | **2x**, offset (20, 60) | integer, perfectly crisp |
+**Which ladder (WINDOW-POLISH decision).** The ladder is derived from the
+display rather than hardcoded, which is the same choice made correctly:
+
+| `devicePixelRatio` | step | ladder |
+| --- | --- | --- |
+| 1 | 1 | 1x, 2x, 3x |
+| 2 | 0.5 | 1x, 1.5x, 2x, 2.5x, 3x |
+| 3 | ⅓ | 1x, 1.333x, 1.667x, … |
+| fractional (Windows 125%) | 1 | 1x, 2x, 3x — no crisp increment exists |
+
+A hardcoded half-step ladder would be pixel-exact on a retina display and
+pixel-*uneven* on the ordinary 1080p monitor most users have. So half steps are
+used exactly where they are free. **The cost, stated plainly:** on a dpr-1
+display a 960x600 window fits 1.5x exactly and renders at 1x instead — a
+smaller crisp picture instead of a larger mushy one.
+
+**The cap.** `MAX_SCALE = 3` is a *product* decision, not a technical one:
+nothing breaks at 4x. dexel sits beside your work, and its 8px type stops
+reading as cozy somewhere past 3x — on a 4K display an uncapped fit would pick
+5x and paint a 3200x2000 developer. Past the cap the extra room becomes
+letterbox, which is the intended shape of a too-big window.
+
+**Centring.** `transform-origin: 0 0` plus explicit `Math.round`ed offsets, not
+a centre origin. With a centre origin the browser derives the offset itself as
+`(vw - 640*s)/2`, which is a half pixel for any odd leftover and puts the whole
+layout on a half-pixel grid — every art pixel then straddles two device pixels
+and the crisp factor is thrown away at the very last step.
+
+Measured in the real running game with headless Chromium at dpr 1:
+
+| window | exact | applied | offset | letterbox |
+| --- | --- | --- | --- | --- |
+| 660x460 (default) | 1.03125 | **1x** | (10, 30) | the shipping look, unchanged and centred |
+| 700x500 | 1.09375 | **1x** | (30, 50) | small-window case |
+| 960x600 | 1.5 | **1x** | (160, 100) | 1.5x is not device-pixel-exact at dpr 1 |
+| 1280x800 | 2.0 | **2x** | (0, 0) | exact fit, no bars |
+| 1920x1080 | 2.7 | **2x** | (320, 140) | a wide letterbox, perfectly crisp |
+
+An earlier revision allowed a non-crisp `exact` whenever snapping cost more
+than 1/8 of the size, which is what put a 1920x1080 window at **2.7x** — every
+art pixel 2 or 3 device px wide, i.e. exactly the stretch-blur this section
+exists to prevent. That tolerance is gone.
 
 **The mechanism.** A single `transform: translate(--ui-ox, --ui-oy)
 scale(--ui-scale)` with `transform-origin: 0 0` on `#root`, plus
@@ -99,7 +133,8 @@ lets 8px cells drift a pixel apart and breaks the grid this design is built on.
 with `showModal()` is promoted to the **top layer**, and a top-layer element
 is *not* affected by an ancestor's transform (verified in this project's own
 headless Chromium: a dialog inside a `scale(0.5)` parent rendered at 1:1).
-Custom-property inheritance still reaches it, so each of the five dialogs
+Custom-property inheritance still reaches it, so each of the **six** dialogs
+(`#store`, `#activity`, `#history`, `#sessions`, `#settings`, `#onboarding`)
 declares its authored position as `--dlg-x` / `--dlg-y` instead of
 `left`/`top` and applies
 `translate(--ui-ox, --ui-oy) scale(--ui-scale) translate(--dlg-x, --dlg-y)`
@@ -107,6 +142,17 @@ declares its authored position as `--dlg-x` / `--dlg-y` instead of
 coordinate space *first*, then that space is scaled, then centred. With
 `left`/`top` the offset would be applied once by layout and again by the
 transform, and the modal would drift away from the scene as the window grew.
+
+> **Fixed in WINDOW-POLISH:** `#settings` was **missing** from that selector
+> list. It was added by SET-1 after this rule was written; it declares its own
+> `--dlg-x`/`--dlg-y` and its CSS comment says "consumed by the shared
+> window-fit transform above", but the id list was never extended — so it got
+> neither the transform nor a `left`/`top`, and a `position: fixed` box with
+> `margin: 0` and no inset falls back to its *static* position. The Settings
+> modal therefore sat at the top-left of the viewport, unscaled, while every
+> other modal tracked the scene; visible the moment the window was not exactly
+> 1x. This is the tax an id list charges, and it is why the interaction rules in
+> §0.2 are written against element selectors instead.
 
 **Hit targets need nothing extra.** A CSS transform is part of the box the
 browser hit-tests, so a click at a scaled position maps back through it
@@ -118,6 +164,86 @@ px; a transform is applied after layout and does not touch them.) Verified
 with real CDP-dispatched clicks at 1x, 1.40625x and 2x: the hamburger, every
 menu item, a store category row, a card action button, and each modal's X all
 hit the element they are drawn on.
+
+### 0.2 Interaction hardening — the surface is a game, not a document
+
+INTERACTION-HARDENING (`docs/plan/ROADMAP.md`). The game surface must behave
+like a game surface: **sprites are not draggable, scene text is not selectable,
+and clicks are deliberate.** Real text inputs are the one exception and stay
+fully editable.
+
+**What was actually wrong.** Every sprite in the scene is an `<img>`, and an
+`<img>` is a native drag source *by default*. Dragging one and dropping it back
+onto the same window made the page **navigate to `/assets/<file>.png`** — the
+running game replaced by a bare PNG, the WebSocket gone, recoverable only by a
+reload. Sweeping the mouse across the scene also drew a blue text selection over
+the terminal and status lines, which in a pixel-art window reads as a rendering
+fault. And `Ctrl/Cmd+A` — the chord a user presses *to select text* — fired the
+bare-letter `[A]` shortcut and opened the Activity modal.
+
+**Four mechanisms, because no single one covers it.**
+
+| mechanism | where | what it stops |
+| --- | --- | --- |
+| `draggable = false` on every `<img>` | `dom.ts`'s `spriteImg()`, the single factory every render module now uses | the element being a drag source at all — the only one of these that is not a hint |
+| `-webkit-user-drag: none` on `img` | `game.css` "Interaction hardening" | the drag gesture in Blink/WebKit (every engine dexel ships to) |
+| `user-select: none` on `html, body, #root`, restored to `text` on `input, textarea, [contenteditable="true"]` | `game.css` | selection over the scene; the exception is element-selector-based so a modal added later inherits it |
+| capturing `dragstart` / `selectstart` cancel, skipped inside text entry | `render/interaction.ts` | anything the three above do not reach (a link a future feature adds, an `<img>` built without `spriteImg`) |
+
+Plus one keyboard rule: `features/keybindings.ts` returns early when
+`ctrlKey`/`metaKey`/`altKey` is held. Its own comment already claimed every
+shortcut was "a bare letter with no modifier" — nothing checked it, and `e.key`
+for `Ctrl+A` is still `"a"`. **Shift is deliberately excluded**: `Shift+S`
+produces `"S"`, which the handlers accept on purpose so caps lock does not break
+shortcuts.
+
+**What is deliberately NOT done.** No `pointer-events: none`, and nothing
+touches `click` / `mousedown` / `pointerdown`. The scene container must keep
+receiving clicks cleanly — that is the groundwork SCENE-REACTIONS builds on —
+and `pointer-events: none` on sprites would have been the lazy way to stop drags
+while making the scene permanently unclickable. Cancelling `mousedown` (the
+usual shortcut for "no selection") would also cancel focus and break every
+button and input in the app.
+
+`-webkit-touch-callout: none` on `#root` is authored for the WebKit engines
+(WebKitGTK on Linux, WKWebView on macOS), where a long press otherwise offers
+"Save image" / "Open in new tab" — the same escape hatch, reached differently.
+Blink does not implement it, so it does not appear in a Chromium computed style.
+
+### 0.3 Shell mode — the same page in a frameless native window
+
+WINDOW-POLISH. The Tauri shell now builds its window with
+**`decorations(false)`**, so the game's own 640x24 `#titlebar` is the whole
+title bar: it is the window's **drag region**, and it carries the window's
+**close and minimize** buttons.
+
+The same `index.html` is served to a browser tab, which has all of those
+already. So the browser page must stay **pixel-identical**, and it is:
+
+| | browser | shell (`?shell=1`) |
+| --- | --- | --- |
+| `body` class | `nes-pointer` | `nes-pointer shell` |
+| `#win-minimize` / `#win-close` | `display: none` | `display: block`, at 564 / 600 |
+| `#menu-open` | `left: 600px` | `left: 528px` |
+| `data-tauri-drag-region="deep"` on `#titlebar` | present, inert (nothing reads it) | read by the injected handler |
+
+**How the shell is detected: it declares itself.** `desktop/src-tauri/src/
+lib.rs` appends `?shell=1` to the loopback URL it loads (`SHELL_QUERY`), and
+`app/frontend/src/env.ts`'s `SHELL_MODE` reads it. Deliberately **not**
+`typeof window.__TAURI__ !== 'undefined'`: that global is injected into every
+document the webview loads and says nothing about whether a native frame exists,
+so detecting it would put close/minimize *on top of* a decorated title bar.
+
+**How a remote-origin page can drag and close a native window** is written up
+in full in [`desktop/README.md`](../desktop/README.md) § "The frameless shell";
+the short version is that tauri injects its IPC and every plugin init script
+into *every* document with no local-vs-remote condition, and the only real gate
+is the ACL — hence `capabilities/loopback-window-controls.json`.
+
+**Failure is loud.** `features/shell-window.ts` shows the buttons whenever
+`?shell=1` is set, even if the Tauri API is unreachable, and a click then reports
+the failure in the flash toast and the console. A frameless window with a
+silently dead close button is unclosable; a visible complaint is recoverable.
 
 ## 1. DOM contract
 
@@ -147,6 +273,10 @@ verification harness and the spec both address elements by id.
         <!-- SET-1: #settings-open ([G] SETTINGS) joins here, §11.1 -->
         <!-- PR-5: #pause-toggle joins here, §2.4 -->
       </div>
+      <!-- WINDOW-POLISH: the frameless shell's window controls, §0.3.
+           Always in the DOM, DISPLAYED only under body.shell. -->
+      <button id="win-minimize" class="nes-btn" aria-label="Minimize window">-</button>
+      <button id="win-close"    class="nes-btn" aria-label="Close window">X</button>
     </div>
 
     <div id="panel-sprint" class="pixel-panel">
@@ -234,6 +364,19 @@ after) is zero titlebar layout work.
 | `#hud-level` | 80, 8, 40, 8 | `LV 5`, 8px, `var(--cream)` |
 | `#menu-open` | 600, 4, 32, 16 | hamburger button, `padding: 0`. Icon is three plain 1px-tall `.bar` divs inside `.menu-icon` (16x7), **not** a `☰` glyph — a fancy character renders blurry/inconsistent at this app's 1x DPI in the pixel font, the same lesson A2 already recorded for `→` |
 | `#menu-panel` | 496, 26, 136, auto | dropdown opened by `#menu-open`, closed by default (`display:none`, shown via `.visible`); right edge (632) lines up with `#menu-open`'s right edge (632) so it never overflows the 640px titlebar |
+| `#win-minimize` | 564, 4, 32, 16 | **shell mode only** (§0.3) — `display: none` in a browser. `line-height: 8px`, not 16: `.nes-btn` is `border-box` with a 4px border, so a 16px-tall button has an **8px content box**, and a 16px line-height put a line box twice its container's height and squashed the glyph into an unreadable smudge at the bottom edge (#store-close solves it the same way). Plain ASCII `-`, per §11.3's missing-glyph lesson |
+| `#win-close` | 600, 4, 32, 16 | **shell mode only** — same rules; plain ASCII `X`, the same character `#store-close` uses |
+
+In shell mode `#menu-open` moves to `left: 528px` to make room, so the three
+buttons are 528..560 / 564..596 / 600..632 — right-aligned to the same 632px
+inner edge `#menu-panel` already uses. `#session-pill` (ends 372) and
+`#paused-badge` (ends 476) are clear of all three, so nothing else in the bar
+moves.
+
+`#titlebar` itself carries `data-tauri-drag-region="deep"` — the whole bar is
+the window's drag handle in shell mode, and the injected handler excludes
+`BUTTON`/`INPUT`/`A`/`LABEL` by itself, so all three buttons above stay
+clickable with no extra markup. The attribute is inert in a browser.
 | `#menu-panel-title` | inside `#menu-panel`, 128 x 16 | static `MENU`, replaced by the Dexel's name once set (§7.4), 8px `var(--screen-dim)`, bottom rule separating it from the items |
 | `.menu-item` (×N) | inside `#menu-panel`, 128 x 20 each, 4px gap | one `nes-btn` per launcher, in menu order: `#store-open` (`[S] STORE`), `#activity-open` (`[A] ACTIVITY`), `#history-open` (`[H] HISTORY`), `#sessions-open` (`[W] SESSIONS`, P2, §9.1), `#settings-open` (`[G] SETTINGS`, SET-1, §11.1), and (PR-5, §2.4) `#pause-toggle` — label and action both flip live between `[P] PAUSE` (sends `PAUSE`) and `[P] RESUME` (sends `RESUME`), decided by `state.paused` read fresh from the store at click time, never assumed from the label |
 | `#paused-badge` | 380, 8, 96, 8 | (PR-5, §2.4) the always-visible paused indicator — an 8px dim solid square (`#paused-badge-dot`) + `PAUSED`, 8px `var(--screen-dim)`. Empty/hidden (`display:none` / `.visible`, same idiom as `#session-pill`) unless `state.paused` is true. Sits clear of both `#hud-level` (ends 120) and `#session-pill`'s box (132..372, §9.5) — a session can be active *and* paused at the same time, so both must stay visible together |

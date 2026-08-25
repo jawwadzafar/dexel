@@ -13,19 +13,29 @@ Sources: `app/public/index.html`, `app/frontend/src/**`, `app/main.go`,
 ## 1. The window
 
 **660 × 460**, and that is also the **minimum** — resizable up, never down.
-Native title bar (a frameless look is explicitly deferred), centred on first
-launch, **always on top** ([ADR 0007](../adr/0007-always-on-top.md): "a
-companion the editor buries never gets seen"). **No transparency** anywhere:
-`body` and `#root` are painted opaque, and there is no `.transparent()` call in
-the Tauri shell.
+**Frameless** since WINDOW-POLISH (`decorations(false)`): there is no native
+title bar, so the game's own 640 × 24 `#titlebar` *is* the title bar — it is
+the window's drag region, and in shell mode it grows two window controls
+(`-` minimize, `X` close) that a browser tab never shows. Centred on first
+launch. **Always on top is the user's choice, default off** — since SET-1 it is
+a preference in `config.json`, surfaced in the Settings modal and read by the
+shell out of `dexel status --json`'s `prefs.alwaysOnTop`.
+[ADR 0007](../adr/0007-always-on-top.md) ("a companion the editor buries never
+gets seen") is still *why* the capability exists; what changed is who decides,
+because a window that cannot be put behind anything is an obstruction on macOS.
+**No transparency** anywhere: `body` and `#root` are painted opaque, and there
+is no `.transparent()` call in the Tauri shell.
 
 The layout inside is a fixed **640 × 400** design, and the *whole* of it is
 scaled as one unit by a single `transform: translate(...) scale(...)` on
-`#root`. The scale is `min(vw/640, vh/400)`, snapped **down** to the nearest
-crisp factor when that costs at most ⅛. At the default window size this gives
-exactly **1×**, centred inside a 10 px pillarbox and 30 px letterbox filled
-with the same shadow colour, so the leftover area reads as a bezel rather than
-a gap.
+`#root`. The scale is `min(vw/640, vh/400)`, always snapped **down** to a
+device-pixel-crisp factor (integers at dpr 1; halves too on a retina display)
+and capped at **3×**. At the default window size this gives exactly **1×**,
+centred inside a 10 px pillarbox and 30 px letterbox filled with the same
+shadow colour, so the leftover area reads as a bezel rather than a gap. At
+1920 × 1080 it gives **2×** centred in a 320 × 140 letterbox: the fit would
+allow 2.7×, but a non-integer factor gives art pixels uneven widths, and a
+smaller crisp picture beats a bigger mushy one.
 
 One consequence worth knowing, because it explains an odd-looking piece of
 CSS: a `showModal()` dialog is promoted to the browser's *top layer* and is
@@ -34,6 +44,14 @@ same transform itself and positions with custom properties instead of
 `left`/`top`. Because scaling is done with `transform` rather than `zoom`, hit
 testing needs no coordinate maths at all — there is no `getBoundingClientRect`
 and no `clientX` anywhere in the frontend.
+
+The surface is also hardened as a *game* surface rather than a document
+(INTERACTION-HARDENING): sprites are not draggable — an `<img>` is a drag source
+by default, and dropping one back on the window used to navigate the webview to
+the bare PNG — scene text is not selectable, and `Ctrl/Cmd`-chords no longer
+fire the bare-letter shortcuts. Real text inputs stay fully selectable and
+editable, and nothing touches `click`/`pointer-events`, so the scene keeps
+receiving clicks. `docs/ui-spec.md` §0.2 has the mechanism.
 
 ---
 

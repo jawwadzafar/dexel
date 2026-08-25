@@ -1,0 +1,21 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "loopback-window-controls",
+  "description": "WINDOW-POLISH: lets dexel's OWN loopback page drag, minimize and close the frameless window it is displayed in -- and nothing else. The window is built with decorations(false), so without these three commands the page has no way to move or dismiss it. Scoped to the 'main' window and to loopback origins only; `local` is false so this capability grants nothing to any future bundled page. Deliberately a SEPARATE file from default.json, which keeps its shell:allow-execute sidecar grant local-only: merging the two would have handed the page the ability to spawn the Go daemon.",
+  "local": false,
+  "windows": [
+    "main"
+  ],
+  "remote": {
+    "urls": [
+      "http://127.0.0.1:*",
+      "http://localhost:*"
+    ]
+  },
+  "permissions": [
+    "core:window:allow-start-dragging",
+    "core:window:allow-close",
+    "core:window:allow-minimize",
+    "core:window:allow-internal-toggle-maximize"
+  ]
+}

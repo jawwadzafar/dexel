@@ -5,9 +5,12 @@
 //                   (connect/backoff/reconnect + sendAction + the STORE_OPEN
 //                   re-assert)
 //   - RENDER:       render/scene.ts, render/terminal.ts, render/chrome.ts,
-//                   render/overlays.ts, render/flash.ts, render/tint.ts —
-//                   given the current store state, update the DOM each owns;
-//                   none of them send a ClientAction.
+//                   render/overlays.ts, render/flash.ts, render/tint.ts,
+//                   render/viewport.ts (WINDOW-POLISH's letterbox scaling)
+//                   and render/interaction.ts (INTERACTION-HARDENING's
+//                   drag/selection backstops) — given the current store
+//                   state, update the DOM each owns; none of them send a
+//                   ClientAction.
 //   - FEATURE/LOGIC: features/store-modal.ts, features/activity-modal.ts,
 //                   features/history-modal.ts, features/onboarding-modal.ts
 //                   (Phase P1's first-launch identity modal),
@@ -16,6 +19,8 @@
 //                   features/settings-modal.ts (SET-1's Settings modal:
 //                   rename, always-on-top, away-time display),
 //                   features/menu.ts (the title-bar hamburger menu),
+//                   features/shell-window.ts (WINDOW-POLISH's in-page
+//                   close/minimize for the frameless Tauri shell),
 //                   features/keybindings.ts —
 //                   each owns its own DOM/UI state, reads the store, and
 //                   is the only place that sends ClientActions for that
@@ -30,6 +35,7 @@ import { renderTerminal } from './render/terminal';
 import { onCelebrate, renderScene } from './render/scene';
 import { hideConnOverlay, showConnOverlay } from './render/overlays';
 import { initViewport } from './render/viewport';
+import { initInteractionGuards } from './render/interaction';
 import { showFlash } from './render/flash';
 import * as storeModal from './features/store-modal';
 import * as activityModal from './features/activity-modal';
@@ -37,6 +43,9 @@ import * as historyModal from './features/history-modal';
 import * as onboardingModal from './features/onboarding-modal';
 import * as sessionsModal from './features/sessions-modal';
 import * as settingsModal from './features/settings-modal';
+// WINDOW-POLISH: shows the frameless shell's close/minimize controls, and
+// only in the shell (?shell=1). A no-op in a browser tab.
+import { initShellWindow } from './features/shell-window';
 // Wires #menu-open/#menu-panel as a side effect on import. PR-5
 // (docs/production-runtime/MIGRATION_PLAN.md §PR-5) gave it one piece
 // of store-derived state to render — the pause/resume label — via the
@@ -96,6 +105,17 @@ function onSessionComplete(session: SessionView): void {
 // (see render/viewport.ts for the scaling contract). Independent of DEV_MODE:
 // a ?dev=1 harness screenshots the same scaled page a player sees.
 initViewport();
+
+// INTERACTION-HARDENING — the dragstart/selectstart backstops (see
+// render/interaction.ts). Installed before any feature module can render
+// content into the scene, so there is no window in which a sprite is
+// draggable.
+initInteractionGuards();
+
+// WINDOW-POLISH — in the frameless shell, reveal and wire the in-page window
+// controls. Returns immediately in a browser tab, where the page must stay
+// pixel-identical.
+initShellWindow();
 
 keybindings.init();
 

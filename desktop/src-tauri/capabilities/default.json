@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Capability for dexel's single main window. Deliberately minimal: the page the webview loads is dexel's own loopback server, which talks to the Go backend over plain HTTP/WebSocket and never uses Tauri IPC. There is no `remote` field, so that http://127.0.0.1:<port> origin is granted NOTHING through Tauri's ACL. The one allowed sidecar is `binaries/Dexel` -- the bundled Go daemon, whose CAPITALISED name is load-bearing and whose collision hazard with the shell's own main binary is guarded by a test; see SIDECAR_NAME in ../src/lib.rs.",
+  "description": "Capability for dexel's single main window. Deliberately minimal: the page the webview loads is dexel's own loopback server, which talks to the Go backend over plain HTTP/WebSocket and never uses Tauri IPC. There is deliberately no `remote` field HERE, so the http://127.0.0.1:<port> origin is granted nothing from THIS capability -- in particular not shell:allow-execute, which would let the page spawn the Go daemon. WINDOW-POLISH did give that origin three window verbs (start-dragging/close/minimize, needed because the window is now frameless), and they live in a separate file, loopback-window-controls.json, precisely so this sidecar grant stays local-only. `mod shell_mode` in ../src/lib.rs fails if a `remote` block ever appears here. The one allowed sidecar is `binaries/Dexel` -- the bundled Go daemon, whose CAPITALISED name is load-bearing and whose collision hazard with the shell's own main binary is guarded by a test; see SIDECAR_NAME in ../src/lib.rs.",
   "windows": [
     "main"
   ],

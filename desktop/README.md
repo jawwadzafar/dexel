@@ -245,9 +245,12 @@ setup()
   |                            runtime.json), then ask again
   |                            (each call bounded by CLI_TIMEOUT = 20s)
   |
-  3. WebviewWindowBuilder::new(app, "main", WebviewUrl::External(url))
-  |      .title("dexel").inner_size(660,460).min_inner_size(660,460)
-  |      .always_on_top(true).decorations(true).center().build()
+  3. WebviewWindowBuilder::new(app, "main",
+  |        WebviewUrl::External(shell_url(url)))   // url + "?shell=1"
+  |      .title("Dexel").inner_size(660,460).min_inner_size(660,460)
+  |      .always_on_top(prefs.always_on_top)       // SET-1: the USER's choice
+  |      .decorations(false)                       // WINDOW-POLISH: frameless
+  |      .center().build()
   |
   v
 run(|_handle, event|)
@@ -290,6 +293,194 @@ There is deliberately no `SidecarGuard`, no `CommandChild` in managed state,
 no SIGTERM/SIGKILL escalation and no `libc` dependency any more: with nothing
 owned, there is nothing to terminate.
 
+## The frameless shell
+
+WINDOW-POLISH (`docs/plan/ROADMAP.md`). The window is built with
+**`decorations(false)`**: there is no native title bar, so the game's own
+640x24 `#titlebar` is the whole title bar. It is the window's drag handle, and
+it carries the window's close and minimize buttons.
+
+That put a requirement on the PAGE, and the page is not ours in the way a
+normal Tauri frontend is: the webview is pointed at
+`WebviewUrl::External("http://127.0.0.1:<ephemeral port>")` — the Go daemon's
+own loopback server — not at bundled `tauri://` content. So the page is a
+**remote origin** as far as Tauri is concerned, and the docs are not explicit
+about what a remote-origin page can do. This section records what was
+*verified*, against the `tauri 2.11.5` source in
+`~/.cargo/registry/src/*/tauri-2.11.5`, and how it is pinned.
+
+### 1. The IPC and every plugin init script ARE injected into a remote page
+
+`crates/tauri/src/manager/webview.rs::prepare_pending_webview` builds
+`all_initialization_scripts` and pushes, in order and with **no**
+local-vs-remote condition:
+
+```rust
+all_initialization_scripts.push(main_frame_script(r"
+    Object.defineProperty(window, 'isTauri', { value: true });
+    if (!window.__TAURI_INTERNALS__) { ... }
+".to_owned()));
+all_initialization_scripts.push(main_frame_script(self.invoke_initialization_script.clone()));
+...
+all_initialization_scripts.extend(plugin_init_scripts);
+...
+if let Some(plugin_global_api_scripts) = &*app_manager.plugin_global_api_scripts {
+    for &script in plugin_global_api_scripts.iter() { ... }
+}
+```
+
+Three consequences:
+
+- `window.__TAURI_INTERNALS__.invoke` exists on the loopback page. Calls are
+  **made and then rejected by the ACL** — not silently absent.
+- The core `window` plugin's init script is `src/window/scripts/drag.js`
+  (registered in `window/plugin.rs::init()` via `#[default_template]`), and it
+  is a *plugin* init script, so it runs on the loopback page too. **That is
+  what makes `data-tauri-drag-region` work on a remote origin** — the drag
+  needs no JavaScript of ours at all. In 2.11.5 that script also supports
+  `="deep"` (any descendant click drags) and auto-excludes `A, BUTTON, INPUT,
+  SELECT, TEXTAREA, LABEL, SUMMARY`, `contenteditable`, `tabindex != -1` and
+  the interactive ARIA roles — so `#menu-open`, `#win-minimize` and
+  `#win-close` stay clickable inside the drag region with no extra markup.
+- `window.__TAURI__` — the public JS API bundle — is the *last* of those and is
+  gated on `app.withGlobalTauri`, which `tauri-codegen`'s `context.rs` reads:
+  `if config.app.with_global_tauri { read_global_api_scripts(...) } else {
+  None }`. It defaults to **false** and was explicitly false here, so
+  `tauri.conf.json` now sets **`"withGlobalTauri": true`**.
+
+### 2. The ACL is the real gate, and a remote origin needs `remote.urls`
+
+`crates/tauri/src/webview/mod.rs` classifies each IPC call:
+
+```rust
+let acl_origin = if is_local { Origin::Local } else { Origin::Remote { url: request.url.clone() } };
+```
+
+`is_local_url` is true only for the `tauri://` protocol URL, something relative
+to `devUrl`/`frontendDist`, or a user-registered custom protocol. `frontendDist`
+here is `../dist`, so `http://127.0.0.1:<port>` is **not** local. And
+`ipc/authority.rs`'s matcher is exhaustive:
+
+```rust
+(Self::Local,  ExecutionContext::Local)              => true,
+(Self::Remote { url }, ExecutionContext::Remote { url: url_pattern }) => url_pattern.test(url),
+_ => false,
+```
+
+A `Origin::Remote` can therefore match **only** a capability that declares
+`remote`. `core:default` (which `capabilities/default.json` grants) contains
+`core:window:default`, and that set is read-only getters plus
+`allow-internal-toggle-maximize` — it does not contain close, minimize or
+start-dragging for any origin at all.
+
+Hence **`capabilities/loopback-window-controls.json`**, a *separate* file:
+
+```json
+{
+  "identifier": "loopback-window-controls",
+  "local": false,
+  "windows": ["main"],
+  "remote": { "urls": ["http://127.0.0.1:*", "http://localhost:*"] },
+  "permissions": [
+    "core:window:allow-start-dragging",
+    "core:window:allow-close",
+    "core:window:allow-minimize",
+    "core:window:allow-internal-toggle-maximize"
+  ]
+}
+```
+
+Every field there is load-bearing, and each one is a distinct way to end up
+with a silently unclosable window:
+
+| field | why |
+| --- | --- |
+| `remote.urls` | the only thing a remote origin can match at all (above) |
+| `:*` on the port | the runtime binds an **ephemeral** port. `RemoteUrlPattern::from_str` widens an empty `search`, `hash` and `pathname` to `*` — so `?shell=1` and any path match for free — but it does **not** widen the port. A pattern without `:*` matches port 80 and nothing the daemon will ever bind |
+| both `127.0.0.1` **and** `localhost` | different hostnames to URLPattern, with no cross-matching; which spelling `status --json` reports is the daemon's business |
+| `windows: ["main"]` | `resolve_access` requires `windows.iter().any(...)`, and `windows` defaults to an **empty** vec — omitting it grants nothing |
+| `local: false` | `local` defaults to **true**, which would also hand these verbs to any future bundled page. Nothing needs that |
+| a **separate file** from `default.json` | `default.json` carries `shell:allow-execute` for the bundled Go daemon. Adding a `remote` block there — the obvious shortcut — would have let the loopback page **spawn that binary with arbitrary arguments** |
+
+A malformed pattern is not a silent failure: `resolve_command` does
+`.unwrap_or_else(|e| panic!("invalid URL pattern for remote URL {url}: {e}"))`
+at **compile** time, inside `generate_context!`. Confirmed here by temporarily
+corrupting the pattern, which produced
+`error: proc macro panicked ... invalid URL pattern for remote URL
+http://127.0.0.1:{{{bad: tokenizer error` — which also proves the file is
+really being read by this build, and that the good pattern parses.
+
+### 3. What the page does with it
+
+`app/public/index.html` + `app/frontend/src/features/shell-window.ts`:
+
+```html
+<div id="titlebar" data-tauri-drag-region="deep"> ... </div>
+<button id="win-minimize" class="nes-btn" aria-label="Minimize window">-</button>
+<button id="win-close"    class="nes-btn" aria-label="Close window">X</button>
+```
+
+```js
+const appWindow = window.__TAURI__.window.getCurrentWindow();  // v2: a function, not v1's `appWindow` singleton
+appWindow.minimize();   // -> plugin:window|minimize
+appWindow.close();      // -> plugin:window|close
+```
+
+Dragging is the attribute; only close and minimize are called from JS, and they
+go through the **public** `getCurrentWindow()` API rather than
+`__TAURI_INTERNALS__.invoke('plugin:window|close')` — same channel underneath,
+but the internals namespace is documented as unstable.
+
+The controls are shown only when `?shell=1` is on the URL (`SHELL_QUERY` in
+`lib.rs`, `SHELL_MODE` in `app/frontend/src/env.ts`), because the same
+`index.html` is served to browser tabs and the browser page must stay
+pixel-identical. `?shell=1` is a **declaration**, not a capability probe: the
+page cannot *detect* whether a native frame exists, and `window.__TAURI__` says
+nothing about it.
+
+### 4. How this is kept from rotting
+
+`mod shell_mode` in `src-tauri/src/lib.rs` reads the real `tauri.conf.json` and
+both capability files at compile time (`include_str!`) and asserts every row of
+the table above, plus that `default.json` never grows a `remote` block, plus
+`shell_url`'s exactness. Break `withGlobalTauri`, drop the port wildcard, forget
+`windows`, or widen the sidecar capability, and `cargo test` fails instead of a
+user discovering a window they cannot close.
+
+The page also fails **loudly** rather than dead: `shell-window.ts` shows the
+buttons whenever `?shell=1` is set, and if `window.__TAURI__` is missing or the
+ACL rejects a call it writes a diagnostic to the console (naming
+`withGlobalTauri`, the capability file and `location.origin`) and flashes an
+error toast. A visible complaint is recoverable; a dead close button on a
+frameless window is not.
+
+### 5. What still needs a human's eyes — cargo-verified only
+
+This box is a Wayland session where the Tauri window **cannot be displayed at
+all** (a GDK segfault before the window appears), so everything above was
+verified by *compiling* and by reading tauri's source, plus the page half
+gated in a real headless Chromium against the real Go server. The following
+need an owner with a visible window on macOS or X11:
+
+1. **The drag region actually drags.** Press and drag anywhere on the game's
+   title bar (not on a button) and the window should move with the pointer.
+2. **Both buttons work.** `-` minimizes; `X` closes the window — and per the
+   contract above, closing the window must leave the runtime running (`dexel
+   status` still reports it).
+3. **The buttons appear at all**, i.e. the shell really did load `?shell=1`
+   and `window.__TAURI__` really did reach the loopback page. If the buttons
+   are visible but a click flashes an error, read the console message — it
+   names which of the four config points failed.
+4. **Double-click-to-maximize** on the title bar (`internal_toggle_maximize`,
+   which is why that permission is in the capability). Maximizing is harmless
+   here: the layout letterboxes.
+5. **Resizing a frameless window**, the one real regression risk. macOS and
+   Windows still give an undecorated window draggable resize edges; on Linux
+   this is up to the compositor and an undecorated GTK window may offer none.
+   If Linux loses resizing, the options are a CSD/resize-grip in the page or
+   `decorations(true)` on Linux only — do not guess, measure first.
+6. **No double title bar** anywhere, and no leftover native frame shadow.
+
 ### Verified end to end on macOS (2026-08-23)
 
 1. No runtime running, launch `Dexel.app` -> log: `driving Dexel
@@ -321,6 +512,12 @@ developer's real save was never opened. Full transcript in
 3. Window `660x460` (`min_inner_size` == default, so it cannot be clipped),
    titled "Dexel", centred, `always_on_top`, native decorations — confirmed
    from the X server's own window tree.
+
+   > Two of those are historical as of this run's date. **SET-1** made
+   > always-on-top the *user's* preference (default **off**, read from
+   > `status --json`'s `prefs.alwaysOnTop`), and **WINDOW-POLISH** made the
+   > window **frameless** (`decorations(false)`) — see "The frameless shell"
+   > above. The rest of this checklist stands unchanged.
 4. The webview holds seven keep-alive connections to the runtime (page, CSS,
    JS, sprite assets and the state WebSocket), and the window's compositor
    pixmap shows the finished pixel-art scene.
