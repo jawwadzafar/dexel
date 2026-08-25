@@ -300,6 +300,14 @@ SPEC: list[tuple[str, int, int]] = [
     ("room_back.png", 320, 200),
     ("desk_back.png", 320, 58),
     ("monitor.png", 132, 64),
+    # SCENE-REACTIONS (docs/plan/ROADMAP.md) - the monitor's click react, on
+    # the same 132x64 canvas. Only the HEAD (bezel + glass + chin) slides 1px
+    # horizontally; the neck, foot and contact shadow stay planted, so the
+    # wobble reads as a knock on a monitor that is still standing on the desk.
+    # The shake is horizontal-ONLY and the glass ROWS never move - see
+    # assert_monitor_shake for the composition contract that forces this.
+    ("monitor_shake_a.png", 132, 64),
+    ("monitor_shake_b.png", 132, 64),
     # Developer (14), all 192x76, identical canvas and anchor. PERSPECTIVE
     # REWRITE: the canvas is wide (the `mouse` pose reaches room x252) and
     # short (the figure has to read inside room y99..160 - keyboard above,
@@ -329,6 +337,16 @@ SPEC: list[tuple[str, int, int]] = [
     ("dev_base_stretch.png", 192, 76),
     ("dev_base_cheer_a.png", 192, 76),
     ("dev_base_cheer_b.png", 192, 76),
+    # SCENE-REACTIONS - the "hey!" react (DEV_REACT_FRAMES): two ADDITIVE
+    # frames on the same approved pose. The upper body flinches UP and leans
+    # 1px sideways (rigidly, hood and back together, so the hoodie overlays
+    # still follow by a single offset) while the RIGHT hand comes off the keys
+    # and swings out in a wave-ish acknowledge. The left hand never leaves its
+    # key: the beat has to read as an indignant startled turn, not as injury.
+    ("dev_form_react_a.png", 192, 76),
+    ("dev_form_react_b.png", 192, 76),
+    ("dev_base_react_a.png", 192, 76),
+    ("dev_base_react_b.png", 192, 76),
     ("hoodie_classic.png", 192, 76),
     ("hoodie_zip.png", 192, 76),
     ("hoodie_tech.png", 192, 76),
@@ -366,6 +384,22 @@ SPEC: list[tuple[str, int, int]] = [
     ("bev_thermos.png", 20, 24),
     ("bev_teacup.png", 20, 24),
     ("bev_energy.png", 20, 24),
+    # SCENE-REACTIONS - beverage reacts, PER STYLE rather than one shared
+    # overlay sprite: the four vessels' rims sit on four different rows (mug
+    # 10, thermos 3, teacup 11, can 5), so a single shared burst would either
+    # float five rows above the mug or be painted straight through the
+    # thermos's lid. Each frame is its own vessel hopped 1px/2px with the
+    # contact shadow held on the desk (hop_with_planted_shadow) plus a burst
+    # grown from that vessel's own rim - steam for the hot drinks, a fizz
+    # sparkle for the can, which is also what keeps the set style-consistent.
+    ("bev_mug_react_a.png", 20, 24),
+    ("bev_mug_react_b.png", 20, 24),
+    ("bev_thermos_react_a.png", 20, 24),
+    ("bev_thermos_react_b.png", 20, 24),
+    ("bev_teacup_react_a.png", 20, 24),
+    ("bev_teacup_react_b.png", 20, 24),
+    ("bev_energy_react_a.png", 20, 24),
+    ("bev_energy_react_b.png", 20, 24),
     # Plant (3 + empty slot), 40x44 at (244, 32), base row 76
     ("plant_succulent.png", 40, 44),
     ("plant_monstera.png", 40, 44),
@@ -379,9 +413,21 @@ SPEC: list[tuple[str, int, int]] = [
     ("buddy_bot_a.png", 28, 30),
     ("buddy_bot_b.png", 28, 30),
     ("buddy_cat.png", 28, 30),
+    # SCENE-REACTIONS - one 2-frame react per REAL buddy (buddy_none has no
+    # sprite, and buddy_bot_b is the blink frame of buddy_bot, not a fifth
+    # companion): the duck and the bot HOP with their contact shadow held on
+    # the desk, the bot also flashes its eyes and beeps its antenna, and the
+    # cat - which is all head and tail - twitches its ears and flicks its
+    # tail instead, then lifts a pixel on the second frame.
+    ("buddy_duck_react_a.png", 28, 30),
+    ("buddy_duck_react_b.png", 28, 30),
+    ("buddy_bot_react_a.png", 28, 30),
+    ("buddy_bot_react_b.png", 28, 30),
+    ("buddy_cat_react_a.png", 28, 30),
+    ("buddy_cat_react_b.png", 28, 30),
 ]
 SPEC_NAMES = {name for name, _, _ in SPEC}
-assert len(SPEC) == 55, f"manifest drifted: {len(SPEC)} entries, expected 55"
+assert len(SPEC) == 75, f"manifest drifted: {len(SPEC)} entries, expected 75"
 
 # `*_form.png` files are palette-purity EXEMPT and ramp-purity CHECKED instead
 # (art-direction "Palette-purity exception (the only one)"). Covers both the
@@ -412,6 +458,45 @@ AMBIENT_PAIRS = (("dev_form_idle.png", "dev_form_breath.png"),
                  ("dev_form_breath.png", "dev_form_stretch.png"),
                  ("dev_base_idle.png", "dev_base_breath.png"))
 CHEER_PAIR = ("dev_base_cheer_a.png", "dev_base_cheer_b.png")
+# SCENE-REACTIONS. Every react is checked TWICE over: against its own second
+# frame (it must be a real 2-frame beat, not one sprite shown twice) and
+# against the REST frame it interrupts (it must be a real departure from the
+# sprite already on screen, or the click does nothing visible). Both halves
+# are frame diffs, so a future edit that neutralises one of them fails loudly.
+REACT_PAIRS = (
+    ("dev_form_idle.png", "dev_form_react_a.png"),
+    ("dev_form_react_a.png", "dev_form_react_b.png"),
+    ("dev_base_idle.png", "dev_base_react_a.png"),
+    ("dev_base_react_a.png", "dev_base_react_b.png"),
+    ("monitor.png", "monitor_shake_a.png"),
+    ("monitor_shake_a.png", "monitor_shake_b.png"),
+    ("bev_mug.png", "bev_mug_react_a.png"),
+    ("bev_mug_react_a.png", "bev_mug_react_b.png"),
+    ("bev_thermos.png", "bev_thermos_react_a.png"),
+    ("bev_thermos_react_a.png", "bev_thermos_react_b.png"),
+    ("bev_teacup.png", "bev_teacup_react_a.png"),
+    ("bev_teacup_react_a.png", "bev_teacup_react_b.png"),
+    ("bev_energy.png", "bev_energy_react_a.png"),
+    ("bev_energy_react_a.png", "bev_energy_react_b.png"),
+    ("buddy_duck.png", "buddy_duck_react_a.png"),
+    ("buddy_duck_react_a.png", "buddy_duck_react_b.png"),
+    ("buddy_bot_a.png", "buddy_bot_react_a.png"),
+    ("buddy_bot_react_a.png", "buddy_bot_react_b.png"),
+    ("buddy_cat.png", "buddy_cat_react_a.png"),
+    ("buddy_cat_react_a.png", "buddy_cat_react_b.png"),
+)
+# (react frame, rest frame, contact-shadow row) for every prop react built on
+# the hop mechanism - checked by assert_hop_shadow_planted.
+HOP_REACTS = tuple(
+    (f"bev_{style}_react_{tag}.png", f"bev_{style}.png", 23)
+    for style in ("mug", "thermos", "teacup", "energy") for tag in ("a", "b")
+) + tuple(
+    (f"buddy_{b}_react_{tag}.png", rest, row)
+    for b, rest, row in (("duck", "buddy_duck.png", 29),
+                         ("bot", "buddy_bot_a.png", 29),
+                         ("cat", "buddy_cat.png", 17))
+    for tag in ("a", "b")
+)
 
 
 # --------------------------------------------------------------------------
@@ -542,6 +627,61 @@ def union_mask(*masks: list[list[bool]]) -> list[list[bool]]:
     h = len(masks[0])
     w = len(masks[0][0])
     return [[any(m[y][x] for m in masks) for x in range(w)] for y in range(h)]
+
+
+def shifted_copy(src: "Sprite", dx: int, dy: int,
+                 rows: set[int] | None = None) -> "Sprite":
+    """A rigid, pixel-for-pixel copy of `src` displaced by (dx, dy).
+
+    SCENE-REACTIONS uses this for every react frame that is "the same object,
+    moved": re-running a builder with shifted coordinates would re-roll its
+    ordered-dither pattern against the new y (a subtly RE-SHADED object, which
+    is exactly what the frame-diff rules exist to forbid), whereas copying the
+    already-painted pixels moves the object and its shading together.
+
+    `rows` (source rows) limits the displacement to part of the sprite: the
+    rest is copied in place. That is how the monitor's head shakes while its
+    foot stays planted, and how a buddy hops while its contact shadow stays on
+    the desk. Colours round-trip through the sprite's own palette by NAME, so
+    a copy can no more introduce an off-palette pixel than a fresh paint can.
+    """
+    out = Sprite(src.w, src.h, palette=src.palette)
+    by_rgb = {rgb + (255,): name for name, rgb in src.palette.items()}
+    px = src.img.load()
+    for y in range(src.h):
+        move = rows is None or y in rows
+        for x in range(src.w):
+            c = px[x, y]
+            if c[3] == 0:
+                continue
+            name = by_rgb[c]                    # KeyError = off-palette source
+            if move:
+                out.dot(x + dx, y + dy, name)
+            else:
+                out.dot(x, y, name)
+    return out
+
+
+def hop_with_planted_shadow(base: "Sprite", dy: int, shadow_row: int,
+                            shadow_x0: int, shadow_x1: int,
+                            inset: int) -> "Sprite":
+    """The shared prop-hop mechanism (beverage + buddy reacts): lift every row
+    ABOVE `shadow_row` by `dy`, leave the 1px contact shadow exactly where it
+    was, and pull it in `inset` px on each side.
+
+    Holding the shadow row is what makes a 1-2px hop read as leaving the desk
+    rather than as the whole sprite sliding: the contact shadow is the only
+    thing in these sprites that belongs to the DESK instead of to the object,
+    and a tighter shadow is what a thing slightly further from a surface
+    casts. It also keeps the "anything resting on a surface ends in a 1px
+    shadow row wider than itself" rule true in every react frame - checked by
+    assert_hop_shadow_planted.
+    """
+    out = shifted_copy(base, 0, dy, rows=set(range(0, shadow_row)))
+    for x in range(out.w):
+        out.clear(x, shadow_row)
+    out.hline(shadow_row, shadow_x0 + inset, shadow_x1 - inset, "shadow")
+    return out
 
 
 # --------------------------------------------------------------------------
@@ -819,6 +959,43 @@ def build_monitor() -> Sprite:
     return s
 
 
+# SCENE-REACTIONS - "click the monitor -> it shakes", and THE composition
+# contract that shape has to respect.
+#
+# The 11 lines of live terminal text are NOT part of this sprite: they are DOM
+# text (#terminal in app/public/css/game.css) positioned in SCENE coordinates
+# that know nothing about which monitor PNG is currently shown - left 200px /
+# top 52px / 240x88 at the frontend's 2x upscale, i.e. room x100..219,
+# y26..69. monitor.png is placed at room (94, 20) (SCENERY in
+# app/frontend/src/geometry.ts), so its glass - MONITOR_SCREEN_RECT - lands on
+# room x98..221, y24..67 and the text sits inside it with 2px of margin at the
+# left and right. (Vertically the text already overhangs the glass by 2 rows
+# onto the chin; that is pre-existing and documented in game.css.)
+#
+# Two consequences, both baked into the art rather than left to the wiring:
+#   * the shake is HORIZONTAL ONLY. The glass rows never move, so nothing can
+#     slide out from under text that does not move with it.
+#   * the amplitude is 1px, which is exactly the margin the text has. A 2px
+#     shake would put a glyph column on the bezel.
+# The alternative - shifting the whole #sprite-monitor element in the DOM -
+# would need the terminal element shifted by the same amount in the same
+# frame; these frames deliberately do not require that (see the handoff note).
+MONITOR_ROOM_ORIGIN = (94, 20)
+TERMINAL_ROOM_RECT = (100, 26, 219, 69)
+# Only the HEAD moves: bezel + glass + chin (local rows 0..55). The neck, foot
+# and contact shadow (rows 56..63) stay planted, which is both what a knocked
+# monitor does and what keeps the "contact shadow wider than the object" rule
+# true in the react frames.
+MONITOR_HEAD_ROWS = frozenset(range(0, MONITOR_SCREEN_RECT[3] + 9))
+MONITOR_SHAKE_DX = {"a": -1, "b": 1}
+
+
+def build_monitor_shake(tag: str) -> Sprite:
+    """monitor.png with its head slid MONITOR_SHAKE_DX[tag] px sideways."""
+    return shifted_copy(build_monitor(), MONITOR_SHAKE_DX[tag], 0,
+                        rows=set(MONITOR_HEAD_ROWS))
+
+
 # --------------------------------------------------------------------------
 # Developer (14): dev_form_*, dev_base_*, hoodie_*
 # --------------------------------------------------------------------------
@@ -988,8 +1165,29 @@ DEV_OX, DEV_OY = 64, 92       # room x = DEV_OX + lx, room y = DEV_OY + ly
 # exactly where the keys are and the limb cannot detach at either end.
 DEV_AMBIENT_FRAMES = ("breath", "stretch")
 DEV_CHEER_FRAMES = ("cheer_a", "cheer_b")
+# SCENE-REACTIONS "hey!" - the click react, two more ADDITIVE frames on the
+# same pose:
+#
+#   react_a  the startle. The whole upper body jumps 2px UP and leans 1px
+#            AWAY (-x) - a recoil - and the RIGHT hand pops off the keys out
+#            past the keyboard's right end.
+#   react_b  the acknowledge. The body settles back to 1px up and leans 1px
+#            TOWARD the hand (+x), which is the closest this camera can get to
+#            "turning to look at you", while that hand swings 5px further out:
+#            a wave, not a flail.
+#
+# Why a rigid whole-body lean instead of tilting the HOOD alone (which is what
+# a head-turn would really be): the four hoodie_<style>.png overlays are one
+# file per style for every frame, printed on hood AND back, and the frontend
+# realigns them by a single rigid offset (FRAME_OVERLAY_DY, now joined by
+# FRAME_OVERLAY_DX). Tilt the hood on its own and hoodie_tech's edge piping
+# slides off the hood's silhouette while its shoulder strap stays put - the
+# one thing assert_hoodie_react_alignment exists to prevent. A 1px lean of the
+# whole torso is honest, reads as a flinch, and keeps every printed mark
+# pixel-locked to the fabric it is printed on.
+DEV_REACT_FRAMES = ("react_a", "react_b")
 DEV_FRAMES = ("idle", "type_a", "type_b", "mouse", "sleep") + \
-    DEV_AMBIENT_FRAMES + DEV_CHEER_FRAMES
+    DEV_AMBIENT_FRAMES + DEV_CHEER_FRAMES + DEV_REACT_FRAMES
 
 # Keyboard guard: the keyboard (room y90..113) is drawn UNDER the developer,
 # so the hands legitimately cover its NEAR rows - but its far rows must stay
@@ -1087,9 +1285,20 @@ def _back_hw(y: int) -> int:
 
 
 DOME_DY = {"idle": 0, "type_a": 0, "type_b": 0, "mouse": 0, "sleep": 3,
-           "breath": -1, "stretch": -2, "cheer_a": -1, "cheer_b": -3}
+           "breath": -1, "stretch": -2, "cheer_a": -1, "cheer_b": -3,
+           "react_a": -2, "react_b": -1}
 BACK_DY = {"idle": 0, "type_a": 0, "type_b": 0, "mouse": 0, "sleep": 2,
-           "breath": -1, "stretch": -2, "cheer_a": -1, "cheer_b": -3}
+           "breath": -1, "stretch": -2, "cheer_a": -1, "cheer_b": -3,
+           "react_a": -2, "react_b": -1}
+# SIDEWAYS lean, the axis SCENE-REACTIONS adds (every pre-react frame is 0 and
+# stays 0). Applied to hood and back TOGETHER, exactly like the vertical lift,
+# so the garment moves as one rigid piece; +-1px is the whole budget, which at
+# the frontend's 2x upscale is a clearly visible 2px flinch without the
+# silhouette ever morphing.
+BODY_DX = {f: 0 for f in DEV_FRAMES}
+BODY_DX.update({"react_a": -1, "react_b": 1})
+assert set(BODY_DX) == set(DEV_FRAMES), "BODY_DX must cover every frame"
+assert all(abs(v) <= 1 for v in BODY_DX.values()), "the lean budget is +-1px"
 
 # HOODIE-OVERLAY ALIGNMENT (this is why every P3 frame lifts hood and back by
 # the SAME amount, unlike `sleep`, whose 3px/2px split is the documented
@@ -1107,6 +1316,12 @@ BACK_DY = {"idle": 0, "type_a": 0, "type_b": 0, "mouse": 0, "sleep": 2,
 # frontend copy of it can be diffed against the art.
 FRAME_OVERLAY_DY = {f: (DOME_DY[f] if DOME_DY[f] == BACK_DY[f] else None)
                     for f in DEV_FRAMES}
+# SCENE-REACTIONS: the same contract on the new horizontal axis. render/scene.ts
+# must offset the hoodie layer's `left` by this in addition to its `top` -
+# every pre-react frame is 0, so an un-updated frontend keeps working for the
+# frames it already knows and only the react frames need the new column.
+FRAME_OVERLAY_DX = {f: (None if FRAME_OVERLAY_DY[f] is None else BODY_DX[f])
+                    for f in DEV_FRAMES}
 assert FRAME_OVERLAY_DY["sleep"] is None, "sleep is the ONE non-rigid frame"
 assert all(dy is not None for f, dy in FRAME_OVERLAY_DY.items() if f != "sleep"), \
     "every non-sleep frame must lift hood and back rigidly (DOME_DY == BACK_DY)"
@@ -1116,19 +1331,19 @@ assert all(dy is not None for f, dy in FRAME_OVERLAY_DY.items() if f != "sleep")
 DEV_MAX_BODY_LIFT = -min(min(DOME_DY.values()), min(BACK_DY.values()))
 
 
-def _hood_span(y: int, ddy: int):
+def _hood_span(y: int, ddy: int, ddx: int = 0):
     hw = _HOOD_HW.get(y - ddy)
     if hw is None:
         return None
-    return DEV_CX - hw, DEV_CX + hw - 1
+    return DEV_CX - hw + ddx, DEV_CX + hw - 1 + ddx
 
 
-def _back_span(y: int, sdy: int):
+def _back_span(y: int, sdy: int, sdx: int = 0):
     ry = y - sdy
     if ry < _BACK_TOP or ry > _BACK_BOT:
         return None
     hw = _back_hw(ry)
-    return DEV_CX - hw, DEV_CX + hw - 1
+    return DEV_CX - hw + sdx, DEV_CX + hw - 1 + sdx
 
 
 # --- HANDS ----------------------------------------------------------------
@@ -1230,6 +1445,23 @@ _ARM_CHEER_LEFT = {
 _HAND_CHEER_LEFT = {"cheer_a": _hand_rect(48, 8),   # room x104..120
                     "cheer_b": _hand_rect(42, 8)}   # room x98..114
 
+# SCENE-REACTIONS `react_a`/`react_b`: the "hey!" wave. ONLY the right arm has
+# its own path (the left one is the base arm carrying the body's lift/lean, so
+# the left hand stays planted on its key and anchors the whole beat). The hand
+# leaves the keyboard SIDEWAYS, not upward: rows 8..17 is already the top legal
+# band (DEV_KB_GUARD_ROW), so - exactly as for the cheer pair - "off the keys"
+# has to be spent on width. It lands on the bare desk strip between the
+# keyboard (ends room x207) and the mouse slot (starts room x224), the same
+# strip the sleep frame's `z` uses, so the wave never covers a purchasable item.
+# The deltoid row/column carries the frame's own bounce and lean, which is what
+# makes the pair a flinch instead of a detached arm swing.
+_ARM_REACT_RIGHT = {
+    "react_a": [(142, 20, 4.8), (138, 30, 5.6), (134, 41, 6.6), (121, 53, 8.0)],
+    "react_b": [(147, 20, 4.8), (143, 30, 5.6), (138, 41, 6.6), (123, 54, 8.0)],
+}
+_HAND_REACT_RIGHT = {"react_a": _hand_rect(141, 8),   # room x197..213
+                     "react_b": _hand_rect(146, 8)}   # room x202..218
+
 # `sleep`: the hands have slid forward-and-down OFF the keys onto the desk
 # lip, the forearms folded short into a slumped shoulder.
 _ARM_SLEEP_LEFT = [
@@ -1260,6 +1492,11 @@ FRAME_HAND_OFFSET = {
     "stretch": {"L": (0, 0), "R": (0, 0)},
     "cheer_a": {"L": (0, 0), "R": (0, 0)},
     "cheer_b": {"L": (0, 0), "R": (0, 0)},
+    # SCENE-REACTIONS: the left hand stays exactly on its key (no offset) and
+    # the right hand carries its own rect (_HAND_REACT_RIGHT), so neither side
+    # reads this table - the entries exist so every DEV_FRAMES key is present.
+    "react_a": {"L": (0, 0), "R": (0, 0)},
+    "react_b": {"L": (0, 0), "R": (0, 0)},
 }
 
 # How much of a frame's body lift each arm control point takes, from the WRIST
@@ -1285,6 +1522,17 @@ def _arm_points(frame: str, side: str):
         pts = [list(p) for p in _ARM_CHEER_LEFT[frame]]
         if side == "R":
             pts = [[DEV_MIRROR - p[0], p[1], p[2]] for p in pts]
+        return pts
+    if frame in DEV_REACT_FRAMES:
+        if side == "R":
+            return [list(p) for p in _ARM_REACT_RIGHT[frame]]
+        # Left arm: the base limb, with the shoulder end carrying the frame's
+        # lift AND lean on the same graded weights the ambient frames use - so
+        # the wrist stays on its key while the deltoid moves with the body.
+        pts = [list(p) for p in _ARM_BASE_LEFT]
+        for i, w in enumerate(_ARM_LIFT_WEIGHT):
+            pts[i][0] += int(round(BODY_DX[frame] * w))
+            pts[i][1] += int(round(BACK_DY[frame] * w))
         return pts
     pts = [list(p) for p in _ARM_BASE_LEFT]
     ox, oy = FRAME_HAND_OFFSET[frame][side]
@@ -1333,6 +1581,9 @@ def _dev_hand_rects(frame: str):
     if frame in DEV_CHEER_FRAMES:
         x0, x1, y0, y1 = _HAND_CHEER_LEFT[frame]
         return (x0, x1, y0, y1), (DEV_MIRROR - x1, DEV_MIRROR - x0, y0, y1)
+    if frame in DEV_REACT_FRAMES:
+        # Left hand planted on its key, right hand out on the bare desk strip.
+        return _HAND_BASE_LEFT, _HAND_REACT_RIGHT[frame]
     x0, x1, y0, y1 = _HAND_BASE_LEFT
     lox, loy = FRAME_HAND_OFFSET[frame]["L"]
     left = (x0 + lox, x1 + lox, y0 + loy, y1 + loy)
@@ -1346,9 +1597,10 @@ def _dev_hand_rects(frame: str):
 def _dev_fabric_grid(frame: str):
     """Fabric footprint (hood + back + arms) - exactly what dev_form fills."""
     ddy, sdy = DOME_DY[frame], BACK_DY[frame]
+    bdx = BODY_DX[frame]
     grid = _arm_grid(frame)
     for y in range(DEV_H):
-        for span in (_hood_span(y, ddy), _back_span(y, sdy)):
+        for span in (_hood_span(y, ddy, bdx), _back_span(y, sdy, bdx)):
             if span:
                 x0, x1 = span
                 for x in range(max(0, x0), min(DEV_W - 1, x1) + 1):
@@ -1414,15 +1666,19 @@ def _arm_v(arms, x: int, y: int) -> float:
     return 3.0 - 0.9 * ((x - c) / half)         # rounded cylinder, lit-left
 
 
-def _hood_v(x: int, y: int, ddy: int, span, arms) -> float:
+def _hood_v(x: int, y: int, ddy: int, span, arms, ddx: int = 0) -> float:
     x0, x1 = span
     hw = max(1.0, (x1 - x0 + 1) / 2.0)
-    rel = (x - DEV_CX) / hw
+    # `xr` is x back in the UNLEANED frame of reference: a leaning body carries
+    # its own shading with it (centre fold, crown highlight), so the lean can
+    # never re-light the garment - it only moves it.
+    xr = x - ddx
+    rel = (xr - DEV_CX) / hw
     ry = y - ddy
     v = 3.0 - 0.8 * rel
     if ry <= _HOOD_TOP + 9:
         v += 0.3                                 # crown catches the key light
-    if abs(x - DEV_CX) <= 1 and ry >= _HOOD_TOP + 8:
+    if abs(xr - DEV_CX) <= 1 and ry >= _HOOD_TOP + 8:
         v -= 0.5                                 # soft centre-back fold seam
     if rel < -0.4 and x - x0 <= 3:
         v += 1.2 * (1 - (x - x0) / 4.0)          # rim light on the lit edge
@@ -1433,19 +1689,20 @@ def _hood_v(x: int, y: int, ddy: int, span, arms) -> float:
     return v
 
 
-def _back_v(x: int, y: int, sdy: int, span, arms) -> float:
+def _back_v(x: int, y: int, sdy: int, span, arms, sdx: int = 0) -> float:
     x0, x1 = span
     half = max(1.0, (x1 - x0) / 2.0)
-    rel = (x - DEV_CX) / half
+    xr = x - sdx                                 # see _hood_v: lean, not relight
+    rel = (xr - DEV_CX) / half
     ry = y - sdy
     v = 3.0 - 0.8 * rel
     if ry <= _BACK_TOP + 2:
         v -= 0.7 * (0.3 + max(0.0, (_BACK_TOP + 2 - ry) / 3.0))   # hood-drape/neck AO
-    if abs(x - DEV_CX) <= 1 and ry >= _BACK_TOP + 3:
+    if abs(xr - DEV_CX) <= 1 and ry >= _BACK_TOP + 3:
         v -= 0.35                                # centre-back seam
     for bx in (DEV_CX - 16, DEV_CX + 15):        # shoulder-blade patches
-        if abs(x - bx) <= 8 and _BACK_TOP + 7 <= ry <= _BACK_TOP + 20:
-            d = ((x - bx) ** 2 + (ry - (_BACK_TOP + 13)) ** 2) ** 0.5
+        if abs(xr - bx) <= 8 and _BACK_TOP + 7 <= ry <= _BACK_TOP + 20:
+            d = ((xr - bx) ** 2 + (ry - (_BACK_TOP + 13)) ** 2) ** 0.5
             if d <= 9:
                 v -= 0.4 * (1 - d / 9.0)
     if x - x0 <= 3:
@@ -1458,14 +1715,15 @@ def _back_v(x: int, y: int, sdy: int, span, arms) -> float:
 def build_dev_form(frame: str) -> Sprite:
     s = Sprite(DEV_W, DEV_H, palette=RAMP)
     ddy, sdy = DOME_DY[frame], BACK_DY[frame]
+    bdx = BODY_DX[frame]
     arms = _arm_grid(frame)
     hood = {}
     back = {}
     for y in range(DEV_H):
-        hs = _hood_span(y, ddy)
+        hs = _hood_span(y, ddy, bdx)
         if hs:
             hood[y] = hs
-        bs = _back_span(y, sdy)
+        bs = _back_span(y, sdy, bdx)
         if bs:
             back[y] = bs
     for y in range(DEV_H):
@@ -1473,9 +1731,9 @@ def build_dev_form(frame: str) -> Sprite:
             if arms[y][x]:
                 v = _arm_v(arms, x, y)
             elif y in hood and hood[y][0] <= x <= hood[y][1]:
-                v = _hood_v(x, y, ddy, hood[y], arms)
+                v = _hood_v(x, y, ddy, hood[y], arms, bdx)
             elif y in back and back[y][0] <= x <= back[y][1]:
-                v = _back_v(x, y, sdy, back[y], arms)
+                v = _back_v(x, y, sdy, back[y], arms, bdx)
             else:
                 continue
             s.dot(x, y, ramp_dither(x, y, v))
@@ -1521,10 +1779,10 @@ def _dev_hood_detail(s: Sprite, frame: str) -> None:
     centre column is also reserved: hoodie_zip's teeth run up it, and
     dev_base draws ABOVE the style overlay, so anything painted there would
     erase the zip."""
-    ddy = DOME_DY[frame]
-    for dx, dy in _HOOD_SEAM_L + _HOOD_HEM_L:
-        s.dot(DEV_CX + dx, dy + ddy, "shadow")
-        s.dot(DEV_CX - 1 - dx, dy + ddy, "shadow")
+    ddy, ddx = DOME_DY[frame], BODY_DX[frame]
+    for mx, my in _HOOD_SEAM_L + _HOOD_HEM_L:
+        s.dot(DEV_CX + mx + ddx, my + ddy, "shadow")
+        s.dot(DEV_CX - 1 - mx + ddx, my + ddy, "shadow")
 
 
 def _dev_paint_hand(s: Sprite, x0: int, x1: int, y0: int, y1: int) -> None:
@@ -2304,6 +2562,78 @@ def build_bev_energy() -> Sprite:
     return s
 
 
+# SCENE-REACTIONS - "click the beverage -> steam/sip".
+#
+# Mechanism: per-style FRAMES, not one shared overlay sprite. The four vessels
+# have four different rim heights (mug 10, thermos 3, teacup 11, can 5) on a
+# 20x24 canvas, so a single shared burst would float five rows above the mug's
+# rim or be painted straight through the thermos's lid - and a shared overlay
+# would also owe the frontend a new layer, z-index and placement rect. A frame
+# swap on the slot that already exists needs none of that.
+#
+# Each react frame is the SAME vessel, hopped (1px then 2px) with its contact
+# shadow held on the desk and pulled in a pixel on the second rung
+# (hop_with_planted_shadow), plus a burst grown from that vessel's OWN rim:
+# steam wisps for the three hot drinks, fizz bubbles plus a `gold` sparkle for
+# the energy can - which is what keeps the four reads style-consistent instead
+# of putting a plume of steam over a cold can. The thermos, whose lid is 3
+# rows from the top of the canvas, vents SIDEWAYS at the lid seam instead of
+# upward: there is no headroom, and pressure escaping a sealed flask is the
+# right read for it anyway.
+
+
+def _wisp(x: int, y0: int, n: int, phase: int = 0, colour: str = "cream"):
+    """A wavy dotted steam wisp rising from (x, y0): `n` dots, one every other
+    row, alternating 1px sideways so it curls instead of ruling a straight
+    line (a straight dotted line reads as a crack, not as steam)."""
+    return [(x + (1 if (i + phase) % 2 else 0), y0 - 2 * i, colour)
+            for i in range(n)]
+
+
+# style -> rest builder, (contact shadow row, x0, x1), and the burst point
+# list for each of the two rungs, in FINAL canvas coordinates.
+BEV_REACT: dict[str, dict] = {
+    "mug": {
+        "rest": build_bev_mug, "shadow": (23, 2, 17),
+        "burst": (_wisp(5, 8, 3) + _wisp(11, 7, 2, phase=1),
+                  _wisp(4, 7, 4) + _wisp(12, 6, 3, phase=1)),
+    },
+    "thermos": {
+        "rest": build_bev_thermos, "shadow": (23, 3, 16),
+        "burst": ([(5, 3, "cream"), (4, 1, "cream"),
+                   (14, 3, "cream"), (15, 1, "cream")],
+                  [(5, 2, "cream"), (3, 1, "cream"), (2, 0, "cream"),
+                   (14, 2, "cream"), (16, 1, "cream"), (17, 0, "cream")]),
+    },
+    "teacup": {
+        "rest": build_bev_teacup, "shadow": (23, 0, 19),
+        "burst": (_wisp(7, 9, 3) + _wisp(12, 8, 2, phase=1),
+                  _wisp(6, 8, 4) + _wisp(13, 7, 3, phase=1)),
+    },
+    "energy": {
+        "rest": build_bev_energy, "shadow": (23, 3, 16),
+        "burst": ([(7, 3, "cream"), (11, 3, "cream"), (9, 1, "gold")],
+                  # Rung two pushes the two side bubbles OUT past the can's
+                  # own columns (6..13): sat on its shoulders they merged into
+                  # the silhouette's top edge instead of reading as fizz.
+                  [(5, 2, "cream"), (14, 2, "cream"), (9, 0, "cream"),
+                   (11, 1, "gold")]),
+    },
+}
+
+
+def build_bev_react(style: str, stage: int) -> Sprite:
+    """`stage` 0/1 = the react's first/second frame: hop 1px/2px, shadow
+    pulled in 0px/1px per side, burst small/opened-out."""
+    spec = BEV_REACT[style]
+    row, sx0, sx1 = spec["shadow"]
+    s = hop_with_planted_shadow(spec["rest"](), -(stage + 1), row, sx0, sx1,
+                                inset=stage)
+    for x, y, colour in spec["burst"][stage]:
+        s.dot(x, y, colour)
+    return s
+
+
 # --------------------------------------------------------------------------
 # Plant (3): 40x44 at (244, 32), base row 76 (local row 44)
 # --------------------------------------------------------------------------
@@ -2456,24 +2786,86 @@ def build_buddy_bot_b() -> Sprite:
     return _build_buddy_bot(eyes_open=False)
 
 
-def build_buddy_cat() -> Sprite:
+_CAT_HEAD_ROWS = ((10, 10, 17), (11, 8, 19), (12, 6, 21), (13, 5, 22),
+                  (14, 5, 22), (15, 6, 21), (16, 8, 19))
+_CAT_TAIL_REST = ((20, 13), (21, 14), (22, 15), (21, 16))
+_CAT_EARS_REST = ((9, 9), (16, 9))
+
+
+def _build_buddy_cat(dy: int = 0, tail=_CAT_TAIL_REST, tip=(22, 15),
+                     ears=_CAT_EARS_REST, shadow_inset: int = 0) -> Sprite:
     """HERO-FIDELITY MATCH: the fur reads as a lit-left/shadow-right
     dithered gradient (`hair` toward the dark/shadow side, `desk` - the
     nearest warm-brown palette entry - toward the lit side) instead of a
-    flat single-tone silhouette."""
+    flat single-tone silhouette.
+
+    Parameterised for SCENE-REACTIONS: `dy` lifts the cat off the desk while
+    its contact shadow (row 17) stays put, and the ears/tail are passed in so
+    a react frame can twitch them without redrawing the head. The gradient is
+    always evaluated at the UNSHIFTED y and plotted at y + dy, so a hop moves
+    the fur's dither pattern with it instead of re-rolling it (the default
+    arguments reproduce the original sprite byte for byte)."""
     s = Sprite(28, 30)
-    head_rows = ((10, 10, 17), (11, 8, 19), (12, 6, 21), (13, 5, 22),
-                 (14, 5, 22), (15, 6, 21), (16, 8, 19))
-    for y, x0, x1 in head_rows:
+    for y, x0, x1 in _CAT_HEAD_ROWS:
         for x in range(x0, x1 + 1):
-            s.dot(x, y, hgrad(x, y, x0, x1, "hair", "desk"))
-    s.dot(9, 9, "pot")                        # ear tips
-    s.dot(16, 9, "pot")
-    s.dots([(20, 13), (21, 14), (22, 15), (21, 16)], "hair")   # tail
-    s.dot(20, 13, "desk")                     # tail's own lit root
-    s.dot(22, 15, "cream")                    # tail tip
-    s.hline(17, 4, 23, "shadow")
+            s.dot(x, y + dy, hgrad(x, y, x0, x1, "hair", "desk"))
+    for ex, ey in ears:
+        s.dot(ex, ey + dy, "pot")             # ear tips
+    s.dots([(x, y + dy) for x, y in tail], "hair")
+    s.dot(tail[0][0], tail[0][1] + dy, "desk")     # tail's own lit root
+    s.dot(tip[0], tip[1] + dy, "cream")            # tail tip
+    s.hline(17, 4 + shadow_inset, 23 - shadow_inset, "shadow")
     return s
+
+
+def build_buddy_cat() -> Sprite:
+    return _build_buddy_cat()
+
+
+# --------------------------------------------------------------------------
+# SCENE-REACTIONS - one 2-frame react per real buddy
+# --------------------------------------------------------------------------
+#
+# Same "small displacement, contact shadow stays on the desk" mechanism the
+# beverages use (hop_with_planted_shadow), because it is the cue that reads at
+# 1x: 1-2px of lift plus a shadow that tightens says "it jumped", where the
+# same 1-2px applied to the shadow as well would just be a slide.
+#
+#   duck  a plain hop - a rubber duck's whole character is that it bobs.
+#   bot   a hop plus its own two electrical tells: the eyes flash from
+#         `screen` to `lamp` (the palette's brightest warm) and the antenna
+#         bead throws a pair of `lamp` beep sparks that fly further out on the
+#         second frame. The blink pair (buddy_bot_a/b) is untouched.
+#   cat   ears and tail, not a hop, on the first frame - a cat that is all
+#         head and tail reacts by twitching them - then a 1px lift with the
+#         ears splayed wider and the tail flicked higher on the second.
+
+
+def build_buddy_duck_react(stage: int) -> Sprite:
+    return hop_with_planted_shadow(build_buddy_duck(), -(stage + 1),
+                                   29, 5, 22, inset=stage)
+
+
+def build_buddy_bot_react(stage: int) -> Sprite:
+    dy = -(stage + 1)
+    s = hop_with_planted_shadow(_build_buddy_bot(eyes_open=True), dy,
+                                29, 4, 23, inset=stage)
+    s.dots([(10, 14 + dy), (17, 14 + dy)], "lamp")        # eyes flash
+    spark = 2 + stage                                     # beep, thrown wider
+    s.dots([(13 - spark, 3 + dy - stage), (13 + spark, 3 + dy - stage)], "lamp")
+    return s
+
+
+_CAT_TAIL_FLICK = ({"tail": ((20, 13), (21, 12), (22, 11), (21, 10)),
+                    "tip": (22, 11), "ears": ((9, 8), (16, 8)), "dy": 0},
+                   {"tail": ((20, 13), (21, 12), (23, 11), (22, 9)),
+                    "tip": (23, 11), "ears": ((8, 7), (17, 7)), "dy": -1})
+
+
+def build_buddy_cat_react(stage: int) -> Sprite:
+    spec = _CAT_TAIL_FLICK[stage]
+    return _build_buddy_cat(dy=spec["dy"], tail=spec["tail"], tip=spec["tip"],
+                            ears=spec["ears"], shadow_inset=stage)
 
 
 # --------------------------------------------------------------------------
@@ -2484,6 +2876,8 @@ BUILDERS = {
     "room_back.png": build_room_back,
     "desk_back.png": build_desk_back,
     "monitor.png": build_monitor,
+    "monitor_shake_a.png": lambda: build_monitor_shake("a"),
+    "monitor_shake_b.png": lambda: build_monitor_shake("b"),
     "dev_form_idle.png": lambda: build_dev_form("idle"),
     "dev_form_type_a.png": lambda: build_dev_form("type_a"),
     "dev_form_type_b.png": lambda: build_dev_form("type_b"),
@@ -2502,6 +2896,10 @@ BUILDERS = {
     "dev_base_stretch.png": lambda: build_dev_base("stretch"),
     "dev_base_cheer_a.png": lambda: build_dev_base("cheer_a"),
     "dev_base_cheer_b.png": lambda: build_dev_base("cheer_b"),
+    "dev_form_react_a.png": lambda: build_dev_form("react_a"),
+    "dev_form_react_b.png": lambda: build_dev_form("react_b"),
+    "dev_base_react_a.png": lambda: build_dev_base("react_a"),
+    "dev_base_react_b.png": lambda: build_dev_base("react_b"),
     "hoodie_classic.png": build_hoodie_classic,
     "hoodie_zip.png": build_hoodie_zip,
     "hoodie_tech.png": build_hoodie_tech,
@@ -2526,6 +2924,14 @@ BUILDERS = {
     "bev_thermos.png": build_bev_thermos,
     "bev_teacup.png": build_bev_teacup,
     "bev_energy.png": build_bev_energy,
+    "bev_mug_react_a.png": lambda: build_bev_react("mug", 0),
+    "bev_mug_react_b.png": lambda: build_bev_react("mug", 1),
+    "bev_thermos_react_a.png": lambda: build_bev_react("thermos", 0),
+    "bev_thermos_react_b.png": lambda: build_bev_react("thermos", 1),
+    "bev_teacup_react_a.png": lambda: build_bev_react("teacup", 0),
+    "bev_teacup_react_b.png": lambda: build_bev_react("teacup", 1),
+    "bev_energy_react_a.png": lambda: build_bev_react("energy", 0),
+    "bev_energy_react_b.png": lambda: build_bev_react("energy", 1),
     "plant_succulent.png": build_plant_succulent,
     "plant_monstera.png": build_plant_monstera,
     "plant_bonsai.png": build_plant_bonsai,
@@ -2536,6 +2942,12 @@ BUILDERS = {
     "buddy_bot_a.png": build_buddy_bot_a,
     "buddy_bot_b.png": build_buddy_bot_b,
     "buddy_cat.png": build_buddy_cat,
+    "buddy_duck_react_a.png": lambda: build_buddy_duck_react(0),
+    "buddy_duck_react_b.png": lambda: build_buddy_duck_react(1),
+    "buddy_bot_react_a.png": lambda: build_buddy_bot_react(0),
+    "buddy_bot_react_b.png": lambda: build_buddy_bot_react(1),
+    "buddy_cat_react_a.png": lambda: build_buddy_cat_react(0),
+    "buddy_cat_react_b.png": lambda: build_buddy_cat_react(1),
 }
 assert set(BUILDERS) == SPEC_NAMES, "BUILDERS and SPEC have drifted apart"
 
@@ -3000,6 +3412,33 @@ def assert_dev_hands(frame: str, s: Sprite) -> str:
                 f"past both keyboard ends (x{kb_x0}..{kb_x1}), clear of the mouse; "
                 f"both hands {DEV_HAND_W}x{DEV_HAND_H}, {gap}px apart")
 
+    if frame in DEV_REACT_FRAMES:
+        # SCENE-REACTIONS: prove the wave from the pixels. The LEFT hand must
+        # still be fully on the keyboard (it is the anchor that makes the beat
+        # read as a flinch rather than as the whole figure sliding), and the
+        # right one must have left the keys - past the keyboard's right end -
+        # while still stopping short of the mouse slot it would otherwise sit
+        # on top of.
+        kb_x0, _, kb_x1, _ = KB_ROOM_RECT
+        if inside(KB_ROOM_RECT, lo) != len(lo):
+            raise AssertionError(
+                f"dev_base_{frame}.png: the left hand left the keyboard "
+                f"({inside(KB_ROOM_RECT, lo)}/{len(lo)}px inside {KB_ROOM_RECT}) - "
+                f"the react must keep one hand planted")
+        rmax = max(x for x, _y in hi)
+        if rmax <= kb_x1:
+            raise AssertionError(
+                f"dev_base_{frame}.png: the right hand only reaches room x{rmax}, "
+                f"still on the keyboard (ends x{kb_x1}) - the wave must come OFF "
+                f"the keys")
+        if rmax >= MOUSE_ROOM_RECT[0]:
+            raise AssertionError(
+                f"dev_base_{frame}.png: the right hand reaches room x{rmax}, onto "
+                f"the mouse slot (starts x{MOUSE_ROOM_RECT[0]})")
+        return (f"dev_base_{frame}.png: left hand planted on the keys, right hand "
+                f"waved out to room x{rmax} (past the keyboard's x{kb_x1}, clear of "
+                f"the mouse); both hands {DEV_HAND_W}x{DEV_HAND_H}, {gap}px apart")
+
     if frame == "sleep":
         if inside(KB_ROOM_RECT, pts) == len(pts):
             raise AssertionError(
@@ -3108,6 +3547,179 @@ def check_body_lift_ladder() -> str:
         out.append(f"{frame} {n}px cy={cy:.2f}")
         prev_cy = cy
     return "ambient lift ladder: " + " -> ".join(out) + " (mass within 4%, centroid rising)"
+
+
+def assert_monitor_shake(tag: str, s: Sprite, rest: Sprite) -> str:
+    """SCENE-REACTIONS composition guard - the one that keeps the shake from
+    breaking the terminal's text positioning contract (see the constants above
+    build_monitor_shake). Three things, all checked from the pixels:
+
+      * the glass is still the exact flat-`shadow` rect, at MONITOR_SCREEN_RECT
+        shifted by the frame's dx and NOT by a single row;
+      * the DOM terminal's text box still lands inside that glass; and
+      * the neck, foot and contact shadow are byte-identical to monitor.png -
+        the head shook, the monitor did not walk across the desk.
+    """
+    dx = MONITOR_SHAKE_DX[tag]
+    x0, y0, x1, y1 = MONITOR_SCREEN_RECT
+    px, rp = s.img.load(), rest.img.load()
+    shadow = PALETTE["shadow"] + (255,)
+    bad = [(x, y) for y in range(y0, y1 + 1) for x in range(x0 + dx, x1 + dx + 1)
+           if px[x, y] != shadow]
+    if bad:
+        raise AssertionError(
+            f"monitor_shake_{tag}.png: {len(bad)} px of the shifted screen rect "
+            f"are not flat shadow; first={bad[0]}")
+    # A vertical shake would move the glass rows out from under 11 lines of DOM
+    # text that do not move with them, so prove the displacement is purely
+    # horizontal: every head row of the shake frame must be that SAME row of
+    # monitor.png, shifted by dx (the one column that falls off the leading
+    # edge excepted). This also proves the head moved rigidly - no row of the
+    # bezel slid further than another.
+    moved = [(x, y) for y in MONITOR_HEAD_ROWS
+             for x in range(max(0, dx), min(s.w, s.w + dx))
+             if px[x, y] != rp[x - dx, y]]
+    if moved:
+        raise AssertionError(
+            f"monitor_shake_{tag}.png: {len(moved)} head px are not monitor.png's "
+            f"own row shifted {dx:+d}px - the shake is not a rigid HORIZONTAL "
+            f"displacement, so the glass rows can drift out from under the DOM "
+            f"terminal; first={moved[0]}")
+    ox, oy = MONITOR_ROOM_ORIGIN
+    gl, gr = ox + x0 + dx, ox + x1 + dx
+    tl, tt, tr, tb = TERMINAL_ROOM_RECT
+    if tl < gl or tr > gr:
+        raise AssertionError(
+            f"monitor_shake_{tag}.png: glass spans room x{gl}..{gr} but the terminal "
+            f"text box spans x{tl}..{tr} - the shake pushed text onto the bezel")
+    planted = [(x, y) for y in range(s.h) if y not in MONITOR_HEAD_ROWS
+               for x in range(s.w) if px[x, y] != rp[x, y]]
+    if planted:
+        raise AssertionError(
+            f"monitor_shake_{tag}.png: {len(planted)} px of the neck/foot/contact "
+            f"shadow moved; first={planted[0]} - only the head may shake")
+    return (f"monitor_shake_{tag}.png: head {dx:+d}px, glass room x{gl}..{gr} "
+            f"y{oy + y0}..{oy + y1} (rows unmoved), terminal text x{tl}..{tr} inside "
+            f"it, foot planted")
+
+
+def assert_hop_shadow_planted(react: str, rest: str, shadow_row: int) -> str:
+    """SCENE-REACTIONS prop-hop guard: a react frame may lift the object, but
+    the contact shadow belongs to the DESK, so it must stay on the row it was
+    on, never grow, and the object must actually have risen. Fail any of the
+    three and the "hop" is either a slide (shadow moved with it) or a
+    floating sprite (shadow gone)."""
+    ra = Image.open(ASSETS / react).convert("RGBA")
+    rb = Image.open(ASSETS / rest).convert("RGBA")
+    pa, pb = ra.load(), rb.load()
+    w, h = ra.size
+
+    def rows(px):
+        return [y for y in range(h) if any(px[x, y][3] != 0 for x in range(w))]
+
+    def span(px, y):
+        xs = [x for x in range(w) if px[x, y][3] != 0]
+        return (min(xs), max(xs)) if xs else None
+
+    ya, yb = rows(pa), rows(pb)
+    if ya[-1] != yb[-1] != shadow_row:
+        raise AssertionError(
+            f"{react}: bottom-most opaque row is {ya[-1]} (rest {yb[-1]}, contact "
+            f"shadow {shadow_row}) - the shadow must stay on the desk")
+    sa, sb = span(pa, shadow_row), span(pb, shadow_row)
+    if sa is None or sa[0] < sb[0] or sa[1] > sb[1]:
+        raise AssertionError(
+            f"{react}: contact shadow spans {sa} against the rest frame's {sb} - a "
+            f"hopping object casts the SAME or a tighter shadow, never a wider one")
+    if ya[0] > yb[0]:
+        raise AssertionError(
+            f"{react}: topmost opaque row {ya[0]} is BELOW the rest frame's {yb[0]} - "
+            f"the react must lift/extend the object, not sink it")
+    return (f"{react}: top row {yb[0]}->{ya[0]}, contact shadow held on row "
+            f"{shadow_row} ({sb[0]}..{sb[1]} -> {sa[0]}..{sa[1]})")
+
+
+def assert_bev_burst_accounting(style: str, stage: int) -> str:
+    """SCENE-REACTIONS beverage guard, and the cheapest possible proof that no
+    steam dot was painted ON TOP OF the vessel (steam in front of a mug reads
+    as a bug) and none fell off the canvas: the react frame's opaque mass must
+    equal the rest frame's, minus the two px the tightened contact shadow gives
+    up, plus EXACTLY one px per burst point."""
+    tag = "ab"[stage]
+    rest = Image.open(ASSETS / f"bev_{style}.png").convert("RGBA")
+    react = Image.open(ASSETS / f"bev_{style}_react_{tag}.png").convert("RGBA")
+
+    def mass(img):
+        px = img.load()
+        return sum(1 for y in range(img.size[1]) for x in range(img.size[0])
+                   if px[x, y][3] != 0)
+
+    burst = BEV_REACT[style]["burst"][stage]
+    want = mass(rest) - 2 * stage + len(burst)
+    got = mass(react)
+    if got != want:
+        raise AssertionError(
+            f"bev_{style}_react_{tag}.png: {got} opaque px, expected {want} "
+            f"({mass(rest)} rest - {2 * stage} shadow inset + {len(burst)} burst) - a "
+            f"burst dot landed on the vessel or off the canvas")
+    px = react.load()
+    for x, y, _c in burst:
+        if px[x, y][3] == 0:
+            raise AssertionError(
+                f"bev_{style}_react_{tag}.png: burst px ({x},{y}) is transparent")
+    return (f"bev_{style}_react_{tag}.png: {len(burst)}px burst clear of the vessel, "
+            f"mass {mass(rest)} -> {got}")
+
+
+def assert_hoodie_react_alignment(name: str, s: Sprite, frame: str) -> str:
+    """SCENE-REACTIONS overlay guard. The react frames move the garment on BOTH
+    axes, and the frontend realigns the one hoodie overlay by the matching
+    rigid offset (FRAME_OVERLAY_DX/DY). Prove the result: every style mark,
+    once shifted, still lands on THAT frame's fabric. This is what makes the
+    "lean the whole torso instead of tilting the hood" decision checkable
+    rather than a comment - tilt the hood alone and this fails."""
+    dx, dy = FRAME_OVERLAY_DX[frame], FRAME_OVERLAY_DY[frame]
+    fabric = _dev_fabric_grid(frame)
+    px = s.img.load()
+    bad = []
+    for y in range(DEV_H):
+        for x in range(DEV_W):
+            if px[x, y][3] == 0:
+                continue
+            nx, ny = x + dx, y + dy
+            if not (0 <= nx < DEV_W and 0 <= ny < DEV_H and fabric[ny][nx]):
+                bad.append((x, y))
+    if bad:
+        raise AssertionError(
+            f"{name}: {len(bad)} style mark px land OFF the {frame} garment once "
+            f"offset by ({dx:+d},{dy:+d}); first={bad[0]}")
+    return f"{name}: every style mark still on the fabric at ({dx:+d},{dy:+d})"
+
+
+def check_react_displacement() -> str:
+    """SCENE-REACTIONS proof-of-motion for the developer, the half a frame diff
+    cannot give: the react frames must be the SAME FIGURE displaced, so the
+    vertical centroid has to rise above idle's (the body flinches UP) while the
+    opaque mass stays close to it. The bound is looser than the ambient
+    ladder's 4% because one arm genuinely changes pose here (it reaches further
+    than a forearm on the keys, so a few dozen px of limb are new) - what it
+    still rules out is a redrawn or resized figure."""
+    base_n, base_cy = _form_mass("dev_form_idle.png")
+    out = []
+    for frame in DEV_REACT_FRAMES:
+        n, cy = _form_mass(f"dev_form_{frame}.png")
+        drift = abs(n - base_n) / base_n
+        if drift > 0.12:
+            raise AssertionError(
+                f"dev_form_{frame}.png: opaque mass {n}px is {drift:.1%} off "
+                f"dev_form_idle.png's {base_n}px - the figure was REDRAWN, not moved")
+        if cy >= base_cy - 0.3:
+            raise AssertionError(
+                f"dev_form_{frame}.png: centroid y {cy:.2f} is not clearly above "
+                f"dev_form_idle.png's {base_cy:.2f} - no visible flinch")
+        out.append(f"{frame} {n}px ({drift:+.1%}) cy={cy:.2f}")
+    return (f"react displacement: idle {base_n}px cy={base_cy:.2f} -> "
+            + " , ".join(out) + " (mass within 12%, centroid risen)")
 
 
 def cleanup_stale(expected: set[str]) -> list[str]:
@@ -3240,6 +3852,59 @@ def main() -> int:
     except AssertionError as exc:
         ok = False
         print("  FAIL:", exc)
+
+    print("\n-- SCENE-REACTIONS: rest-vs-react and react-pair frame diffs --")
+    for pair in REACT_PAIRS:
+        try:
+            print(" ", check_frame_diff(*pair))
+        except AssertionError as exc:
+            ok = False
+            print("  FAIL:", exc)
+
+    print("\n-- SCENE-REACTIONS: the developer's flinch is a displacement --")
+    try:
+        print(" ", check_react_displacement())
+    except AssertionError as exc:
+        ok = False
+        print("  FAIL:", exc)
+    print("  FRAME_OVERLAY_DX (render/scene.ts needs this second column):")
+    print("   ", ", ".join(f"{f}:{dx if dx is not None else 'n/a'}"
+                           for f, dx in FRAME_OVERLAY_DX.items()))
+
+    print("\n-- SCENE-REACTIONS: hoodie overlays still fit the react frames --")
+    for frame in DEV_REACT_FRAMES:
+        for name in HOODIE_FILES:
+            try:
+                print(" ", assert_hoodie_react_alignment(name, built[name], frame))
+            except AssertionError as exc:
+                ok = False
+                print("  FAIL:", exc)
+
+    print("\n-- SCENE-REACTIONS: monitor shake keeps the terminal contract --")
+    for tag in ("a", "b"):
+        try:
+            print(" ", assert_monitor_shake(tag, built[f"monitor_shake_{tag}.png"],
+                                            built["monitor.png"]))
+        except AssertionError as exc:
+            ok = False
+            print("  FAIL:", exc)
+
+    print("\n-- SCENE-REACTIONS: hopping props keep their contact shadow --")
+    for react, rest, row in HOP_REACTS:
+        try:
+            print(" ", assert_hop_shadow_planted(react, rest, row))
+        except AssertionError as exc:
+            ok = False
+            print("  FAIL:", exc)
+
+    print("\n-- SCENE-REACTIONS: beverage burst accounting --")
+    for style in BEV_REACT:
+        for stage in (0, 1):
+            try:
+                print(" ", assert_bev_burst_accounting(style, stage))
+            except AssertionError as exc:
+                ok = False
+                print("  FAIL:", exc)
 
     print("\n-- derived store thumbnails --")
     plan = thumbnail_plan()
