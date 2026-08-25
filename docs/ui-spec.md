@@ -743,7 +743,8 @@ DOM rects *are* the numbers in this document.
 | card action button | run the §4.3 action |
 | `#store-grid` wheel | scroll; update `#store-scroll` |
 | `#scrim` | **nothing** (see §4.5) |
-| anywhere in the scene | nothing. The scene is not interactive in v2 |
+| the dexel / the monitor / the beverage / the buddy | play that item's reaction (SCENE-REACTIONS, §12) |
+| anywhere else in the scene | nothing |
 
 ### 5.2 Keyboard
 
@@ -1758,7 +1759,8 @@ timers here are a display loop and mean nothing.
 
 ### 10.1 The frame set
 
-Nine frames, three layers each (`dev_form_<frame>` tinted by the hoodie's
+Nine frames at P3, **eleven** since SCENE-REACTIONS (§12) added `react_a` /
+`react_b`, three layers each (`dev_form_<frame>` tinted by the hoodie's
 tint + the hoodie style overlay + `dev_base_<frame>`), all
 192x76 on `DEV_RECT`, all from `tools/gen_assets.py`:
 
@@ -1771,6 +1773,7 @@ tint + the hoodie style overlay + `dev_base_<frame>`), all
 | `breath` | **P3** whole upper body 1 px higher; hands unmoved | the ambient scheduler |
 | `stretch` | **P3** the same lift at 2 px, held | the ambient scheduler |
 | `cheer_a` / `cheer_b` | **P3** arms flung up and out in a V, body bouncing 1 px / 3 px | `onCelebrate()` only |
+| `react_a` / `react_b` | **§12** startled 2 px lift + 1 px recoil with the right hand off the keys, then the 1 px acknowledge lean back toward the viewer | a click on the dexel |
 
 The four P3 frames are the **same approved pose displaced by 1..3 px** — no
 new proportions, no new silhouette. `gen_assets.py` proves it rather than
@@ -1783,6 +1786,11 @@ each end of it, clear of the mouse slot.
 
 ### 10.2 Precedence — highest wins
 
+0. **the click react** (`react_*`) — SCENE-REACTIONS (§12), added after P3 and
+   above everything below it for the ~1 s it lasts: the player touched the
+   character, and a click that visibly does nothing reads as broken. It can
+   never coincide with a celebration (§12 closes both directions) and it is
+   refused outright while `onBreak`.
 1. **celebration** (`cheer_*`) — a real event, so it outranks the poses; it is
    not a claim about what you are doing.
 2. **sleep** — `onBreak` owns its pose outright, and it also **suppresses the
@@ -2181,3 +2189,161 @@ real clicks and real per-character keystrokes, and judged from the pixels
 * **Clean.** Zero page errors or console errors across every run;
   `tsc --noEmit` clean; `cargo check` and `cargo clippy -D warnings` green
   for the shell change.
+
+---
+
+## 12. Scene reactions — click the room and the room answers
+
+SCENE-REACTIONS (`docs/plan/ROADMAP.md`). Four things in the room are
+clickable; clicking one plays that thing's short reaction and the room goes
+back to what it was doing. That is the whole feature. It is **client-side
+only**: `render/scene.ts` owns it, it sends **no `ClientAction`**, adds **no
+wire field**, touches no save, pays no coin and unlocks nothing. Reactions are
+free, repeatable, and mean nothing — which is exactly why they are safe (§5.3
+"shopping must not count as work" applies to fun too: no click here can move a
+single number).
+
+### 12.1 The four hit regions
+
+Room pixels (the scene's own 320x200 space, drawn at 2x inside the 640x400
+layout). Each is one invisible absolutely-positioned `<div class="hit-region">`
+inside `#scene-sprites`, created once with the rest of the scene skeleton
+(§10.5) and only ever shown or hidden after that.
+
+| item | rect (room px) | source | shown when |
+| --- | --- | --- | --- |
+| the dexel | `(118,110) 84x39` | `HIT_RECT.dev` | `activeState != "onBreak"` |
+| the monitor | `(94,20) 132x64` | `HIT_RECT.monitor` | always |
+| the beverage | `(56,90) 20x24` | `SLOT_RECT.beverage` | the equipped item has react art |
+| the buddy | `(288,46) 28x30` | `SLOT_RECT.buddy` | the equipped item has react art (so: never for `buddy_none`) |
+
+The dexel's region is **not** `DEV_RECT`. That canvas is 192x76 and mostly
+empty air (the `mouse` pose reaches out to room x252), so the region is the
+**body**: from the hood's own top row (y110) down to the last row before the
+chair (y148), across the shoulder span (x118..202). Both bounds exist to stop
+the hand cursor lying — above y110 the sprite is two forearms with the
+**keyboard** visible in the gap between them, and from y149 down the **chair**
+composites over the developer (§10.5's behind-view order), with the HUD panels
+opaque from y161. The other two regions are their slot rects, which are small
+enough to read as the object.
+
+**No coordinate maths anywhere.** A CSS transform is part of the box the
+browser hit-tests, so a click at 1x, at a snapped 2x, or at 2x inside a
+letterbox maps back through `#root`'s transform *and* the scene's `scale(2)`
+natively and lands on the room pixel it looks like it landed on. This
+frontend reads no `clientX` and calls no `getBoundingClientRect` (§0.1).
+
+**The affordance** is a hand cursor over those four rects and the app's pixel
+arrow everywhere else — one CSS rule (`#scene-sprites .hit-region { cursor:
+pointer }`), which is also how the player learns the room is clickable at all
+and that the plant, the wall, the keyboard and the mouse are not.
+
+### 12.2 The beats
+
+Sprite swaps on the **same 200 ms timer** as §10.3 — no second interval, no
+transition, no `requestAnimationFrame`.
+
+| item | frames | length |
+| --- | --- | --- |
+| the dexel | `react_a`, `react_a`, `react_b`, `react_b`, `react_b` | 1.0 s |
+| the monitor | `monitor_shake_a`, `_b`, `_a`, `_b` | 0.8 s |
+| the beverage | `<item>_react_a`, `_b`, `_b`, `_a` | 0.8 s |
+| the buddy | `<item>_react_a`, `_b`, `_b`, `_a` | 0.8 s |
+
+There is no `a → b → a → rest` for the character because **rest is not a
+frame**: the beat simply ends and §10.2's normal precedence paints whatever
+the server says you are doing. The prop beats are a hop and a settle, in the
+order the art was drawn for (`react_a`/`_b` are stage 1 and 2 of one hop with
+the contact shadow planted on the desk).
+
+The first frame is painted **on the click**, not on the next tick, so the room
+answers immediately.
+
+### 12.3 Precedence, and the sleep decision
+
+* The **dexel's** react sits at the top of §10.2 for its ~1 s — it interrupts
+  the ambient breath/stretch and outranks the typing/mouse/idle pose. The pose
+  bookkeeping keeps running underneath it, so typing resumes on the very next
+  tick with the cycle it would have had anyway. Nothing is claimed: the react
+  frames are a startle and a lean, not the typing pose.
+* **Celebration** and the react can never both be on screen: a click is
+  refused while a celebration is playing (a real server event is not something
+  a click may cut off), and `onCelebrate()` cancels a running react (the event
+  is the more important thing to show).
+* **Sleep: clicking a sleeping dexel does nothing, and it says so.** While
+  `onBreak` the dexel's hit region is hidden, so the cursor stays the ordinary
+  arrow and no click is swallowed by a dead target. The react frames are
+  authored on the awake pose (hands at the keyboard), so playing one from the
+  sleep pose would snap the figure upright and flop it back — slapstick, and
+  momentarily a pose that looks like *working* when the server has said for
+  30 s+ that nobody is there. §10.2 already suppresses the celebration while
+  asleep for the same reason. Waking it is not on the table either: the mood is
+  the server's to report from real keystrokes (ADR 0010). If the character
+  falls asleep mid-react the react is dropped on that tick.
+* The **monitor, beverage and buddy** react whether the dexel is awake, typing
+  or asleep. They are their own layers and say nothing about whether a human is
+  at the desk.
+
+### 12.4 Anti-mashing
+
+One react at a time per item — a click during a react is **dropped, never
+queued** — plus 1.2 s of enforced quiet after a beat ends. Worst case per item
+is therefore one ~1 s beat per ~2 s, no matter how fast the mouse is clicked,
+so no sprite can strobe. The cooldown is per **item**: mashing the mug never
+blocks the buddy, and a refused click costs nothing (it does not start or
+extend a cooldown).
+
+### 12.5 The monitor's hard constraint
+
+The monitor's reaction is a **`src` swap and nothing else** — the element must
+never move. The DOM terminal (§2) sits over the glass with 2 px of margin, and
+its 11 lines of text do **not** move with the sprite, so nudging `left` or
+adding a transform would slide the glass out from under the text. The shake is
+therefore authored *inside* the sprite: `tools/gen_assets.py`'s
+`assert_monitor_shake` fails the asset build unless each shake frame is
+`monitor.png`'s head displaced purely horizontally by exactly ±1 px, with the
+neck, foot and contact shadow byte-identical and the terminal's text box still
+inside the glass. Verified from the DOM in the real game: across
+rest → shake_a → shake_b → rest the monitor's bounding rect, its inline style
+and `#terminal`'s rect are all **unchanged**; only the `src` differs.
+
+### 12.6 The hoodie overlay leans too
+
+§10.5's rule gains a second axis. The react frames move the garment-bearing
+hood and back **rigidly on both axes** (`gen_assets.py`'s `DOME_DY == BACK_DY`
+and its `BODY_DX`, capped at ±1 px), so the one hoodie overlay file is offset
+by `FRAME_OVERLAY_DX[frame]` as well as `FRAME_OVERLAY_DY[frame]` and every
+drawstring, zip tooth and hem mark stays pixel-locked to the fabric it is
+printed on. `assert_hoodie_react_alignment` proves it for all four styles from
+the pixels. Measured live: `react_a` → `left: -1px; top: -2px`, `react_b` →
+`left: 1px; top: -1px`, every other frame → `left: 0; top: <P3 lift>`.
+
+### 12.7 Verified in the real running game
+
+Built and run with the fake provider under a throwaway `$DEXEL_HOME`, driven
+with **real mouse clicks** at mapped screen coordinates and judged from the
+pixels (the `feature-build-and-verify` gate):
+
+* **All four react and return.** The dexel (startle → acknowledge → back to
+  the typing cycle), the monitor (±1 px head wobble, four frames), all four
+  beverages (mug/thermos/teacup/energy — hop plus that vessel's own steam,
+  lid vent or fizz burst) and all three buddies (duck hop, bot eye-flash and
+  antenna sparks, cat ear-twitch and tail-flick), each returning to its exact
+  rest sprite.
+* **A click while typing.** State `coding`, frame `type_a` → `react_b` mid-beat
+  → `type_a` again ~0.9 s later, with no gap and no missed keystroke display.
+* **Mashing.** 14 clicks in ~700 ms produced exactly **one** beat, on the mug
+  and on the dexel alike.
+* **Scaled and letterboxed.** Real clicks landed on the same regions at
+  640x400 (1x), 1280x800 (2x, no bars) and 1400x900 (2x inside a 60x50
+  letterbox), with the hand cursor resolving to the hit region at every scale.
+* **Nothing else offers a click.** The keyboard, the mouse, the chair back, the
+  plant, the wall and an empty buddy slot all keep the ordinary arrow.
+* **`buddy_none`.** Sprite hidden, hit region hidden, no cursor change, no
+  reaction.
+* **Asleep.** The dexel's region gone and clicks inert while the sleep pose
+  holds; the monitor and the mug still answering; falling asleep mid-react
+  drops the react on that tick and waking up restores the region.
+* **Clean.** Zero console errors and zero page errors across every run, in the
+  real WS-backed app and under `?dev=1`; `tsc --noEmit` clean and the bundle
+  byte-identical across rebuilds.

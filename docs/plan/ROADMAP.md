@@ -294,7 +294,7 @@ rebuild and REPLACE the v0.1.0 release assets in place (the documented
 pre-release exception to the releases-are-immutable rule — that rule resumes
 the moment the owner unfreezes versioning), or install from source.
 
-### WINDOW-POLISH (2026-08-25, owner) — **DONE** (with INTERACTION-HARDENING)
+### [DONE 2026-08-25] WINDOW-POLISH (2026-08-25, owner) — **DONE** (with INTERACTION-HARDENING)
 - **Frameless Tauri window**: drop native decorations; the game's own titlebar
   becomes the drag region; in-UI close/minimize controls shown ONLY when
   running inside the shell (the same HTML serves browsers — shell mode must be
@@ -330,7 +330,7 @@ the moment the owner unfreezes versioning), or install from source.
   the owner must confirm on mac/x11 (drag, both buttons, double-click maximize,
   and above all whether a frameless window still RESIZES on Linux).
 
-### INTERACTION-HARDENING (2026-08-25, owner) — **DONE**
+### [DONE 2026-08-25] INTERACTION-HARDENING (2026-08-25, owner) — **DONE**
 - Sprites must not be draggable (no drag-image-out-to-new-window), scene text
   not selectable; clicks deliberate. CSS/attr hardening on the scene surface.
 - The server must NOT serve directory listings (/assets/ currently lists all
@@ -352,7 +352,7 @@ the moment the owner unfreezes versioning), or install from source.
   bare letters only, so `Ctrl/Cmd+A` (the select-all reflex) opened the
   Activity modal and `Ctrl+S` opened the store.
 
-### SCENE-REACTIONS (2026-08-25, owner) — the interactive world
+### [DONE 2026-08-25] SCENE-REACTIONS (2026-08-25, owner) — the interactive world
 Clickable scene items with cozy reactions (client-side fun, no economy, no
 wire changes): click the dexel → a "hey!" flinch/react; click the monitor →
 it shakes; click the beverage → steam/sip; click the buddy/pet → it reacts.

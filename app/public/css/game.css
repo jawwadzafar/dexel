@@ -279,6 +279,29 @@ img {
 
 .monitor-onbreak { filter: brightness(0.55); }
 
+/* ---------- Scene reactions: the click affordance ----------
+   SCENE-REACTIONS (docs/plan/ROADMAP.md, docs/ui-spec.md §12). The four
+   clickable things in the room — the dexel, the monitor, the equipped
+   beverage, the equipped buddy — each carry ONE invisible absolutely
+   positioned <div> at their room rect, created and shown/hidden by
+   render/scene.ts (which also owns what a click does). This rule is the whole
+   visual half of the feature: a hand cursor over those four rects and the
+   ordinary arrow everywhere else, which is what tells the player the room is
+   clickable at all — and, just as importantly, that the plant/wall/keyboard
+   are not.
+
+   `cursor: pointer` is the affordance this app already uses for every
+   clickable surface that is not a <button> (.swatch, .sessions-recent-row).
+   It overrides the pixel-arrow cursor #root sets, for exactly the span of the
+   region and no further.
+
+   These divs are empty and must never paint: no background, no border, no
+   outline is declared here, and none may be added. They also inherit the
+   layout root's `user-select: none` / drag hardening like everything else in
+   the scene, so a click-drag across the dexel cannot start a selection or a
+   drag. */
+#scene-sprites .hit-region { cursor: pointer; }
+
 #scene-text {
   position: absolute;
   left: 0;

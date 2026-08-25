@@ -55,11 +55,12 @@ import { byId, spriteImg } from '../dom';
 import * as store from '../state/store';
 import {
   CHAIR_RECT, CHAIR_Z_DETAIL, CHAIR_Z_FORM, DEV_RECT, DEV_Z_BASE, DEV_Z_FORM, DEV_Z_STYLE,
-  FRAME_FOR_STATE, SCENERY, SLOT_RECT, SLOT_Z
+  FRAME_FOR_STATE, HIT_RECT, HIT_Z, SCENERY, SLOT_RECT, SLOT_Z
 } from '../geometry';
 import { buildTintLayer, plainImg, positionEl, setSrc, updateTintLayer } from './tint';
-import { warmCatalogSprites, warmStaticSprites } from './preload';
+import { warmCatalogSprites, warmSprites, warmStaticSprites } from './preload';
 import { handleSpriteSentinelError } from './overlays';
+import type { Rect } from '../geometry';
 import type { CatalogMessage } from '../wire';
 
 const scene = byId<HTMLDivElement>('scene-sprites');
@@ -76,6 +77,8 @@ let devHolder: HTMLDivElement;
 const devFormLayers: Record<string, HTMLDivElement> = {}; // frame -> its tinted form layer
 const devBaseImgs: Record<string, HTMLImageElement> = {}; // frame -> its base <img>
 let devStyleImg: HTMLImageElement;                        // the one hoodie overlay
+let monitorImg: HTMLImageElement;                         // SCENERY's monitor, whose src the shake swaps
+const hitRegions: Record<string, HTMLDivElement> = {};    // SCENE-REACTIONS click targets
 let devFrameIndex = 0; // toggles 0/1 for type_a/type_b while coding
 // The `mouse` dev pose (right hand off the keyboard and onto the mouse) is
 // SIGNAL-DRIVEN, not a timed flourish: the server already reports mouse
@@ -109,6 +112,11 @@ const MOUSE_HOLD_TICKS = 8;    // ~1.6s at the 200ms tick below
 // mean nothing.
 //
 // PRECEDENCE, highest first (see sceneDevFrame):
+//   0. dev react    - SCENE-REACTIONS, added after P3: the player CLICKED the
+//                     character, so this outranks even the celebration for
+//                     the ~1s it lasts (see "PRECEDENCE, AND WHY A CLICK WINS"
+//                     below - it can never be running at the same time as a
+//                     celebration anyway)
 //   1. celebration  - a real event, and it outranks the pose because it is
 //                     an event rather than a claim about what you are doing
 //   2. sleep        - `onBreak` owns its pose outright, exactly as before;
@@ -162,7 +170,23 @@ const STRETCH_BAND_S: [number, number] = [18, 34];
 // slight garment offset is the documented pre-existing simplification.
 const FRAME_OVERLAY_DY: Record<string, number> = {
   idle: 0, type_a: 0, type_b: 0, mouse: 0, sleep: 0,
-  breath: -1, stretch: -2, cheer_a: -1, cheer_b: -3
+  breath: -1, stretch: -2, cheer_a: -1, cheer_b: -3,
+  react_a: -2, react_b: -1
+};
+// SCENE-REACTIONS: the SAME contract on the horizontal axis, because the
+// "hey!" react leans the torso sideways as well as lifting it — hood and back
+// together (gen_assets.py's BODY_DX, asserted rigid and capped at +-1px), so
+// the one garment overlay follows by one more integer offset instead of the
+// art forking into per-frame overlays. Every pre-react frame is 0, which is
+// why adding this column changed nothing that was already on screen. Printed
+// by `python3 tools/gen_assets.py` as "FRAME_OVERLAY_DX (render/scene.ts
+// needs this second column)"; `sleep` is 0 here for the same reason it is 0
+// above (it is the one frame whose hood and back do not move rigidly, and its
+// slight garment offset is the documented pre-existing simplification).
+const FRAME_OVERLAY_DX: Record<string, number> = {
+  idle: 0, type_a: 0, type_b: 0, mouse: 0, sleep: 0,
+  breath: 0, stretch: 0, cheer_a: 0, cheer_b: 0,
+  react_a: -1, react_b: 1
 };
 
 // Every developer frame the scene can ever paint — derived from the table
@@ -230,6 +254,10 @@ function advanceAmbient(eligible: boolean): void {
 export function onCelebrate(reason: 'session' | 'sprint'): void {
   const state = store.getState();
   if (!state || state.activeState === 'onBreak') return;
+  // SCENE-REACTIONS: a real server event outranks a click that is still
+  // playing out (the other direction — a click during a celebration — is
+  // refused in queueReact).
+  cancelDevReact();
   ambientQueue = [];
   ambientFrame = '';
   celebrateQueue = CELEBRATE_SCRIPT.slice();
@@ -237,6 +265,257 @@ export function onCelebrate(reason: 'session' | 'sprint'): void {
   breathIn = ticksUntil(BREATH_BAND_S);
   stretchIn = ticksUntil(STRETCH_BAND_S);
   if (sceneBuilt) renderDev();   // start on the event, not up to 200ms later
+}
+
+// =========================================================================
+// SCENE-REACTIONS — click the room and the room answers
+// (docs/plan/ROADMAP.md "SCENE-REACTIONS", docs/ui-spec.md §12)
+// =========================================================================
+//
+// Four clickable things: the developer, the monitor, the equipped beverage and
+// the equipped buddy. Each has its own 2-frame react in the art (commit
+// f67baf7) and its own independent little state machine below. Client-side
+// only, exactly as the item is scoped: no ClientAction, no wire field, no
+// coin, no persistence, nothing the server has to know about or could
+// disagree with. A click makes the room feel inhabited and changes nothing
+// else.
+//
+// WHERE THE CLICKS COME FROM, and why there is no coordinate maths. Each item
+// gets one invisible absolutely-positioned <div> inside #scene-sprites at its
+// room rect (geometry.ts's HIT_RECT / SLOT_RECT) with a `click` listener. The
+// scene is drawn at scale(2) inside a #root that is itself translated and
+// scaled to fit the window (render/viewport.ts), and a CSS transform is part
+// of the box the browser hit-tests — so a click at 3x in a letterboxed window
+// maps back through both transforms natively and lands on the same room
+// pixel it looks like it landed on. That is why this module reads no
+// clientX, calls no getBoundingClientRect, and needs no inverse transform:
+// the hit test happens in the scene's own coordinate space because the
+// targets LIVE in it. (The same property the modals already rely on — see
+// game.css "Window fit: the modal dialogs".)
+//
+// PRECEDENCE, AND WHY A CLICK WINS. The developer's react is queued at the
+// same level as the P3 celebration and checked just above it (sceneDevFrame),
+// which means it interrupts the ambient breath/stretch AND outranks the
+// typing/mouse/idle pose for its ~1s. That is deliberate: a click that
+// visibly does nothing while you happen to be typing reads as broken, and the
+// react is brief and returns to whatever the server says you are doing —
+// the pose bookkeeping in the tick below keeps running underneath, so typing
+// resumes on the very next tick with the cycle it would have had anyway.
+// Nothing here CLAIMS activity: the react frames are a startle and a lean,
+// they are not the typing pose, and the state-driven pose is what the frame
+// falls back to the moment the beat ends.
+//
+// The two directions of the celebration/react overlap are both closed rather
+// than left to chance: a click is REFUSED while a celebration is playing (a
+// real server event is not something a click may cut off), and onCelebrate()
+// cancels a running react (the event is the more important thing to show). So
+// only one of the two is ever on screen.
+//
+// SLEEP — THE DECIDED CASE. Clicking a SLEEPING dexel does nothing, and it
+// says so: while `onBreak` the developer's hit region is hidden entirely, so
+// the cursor stays the ordinary arrow and no click is swallowed by a dead
+// target. Two reasons this is the honest choice rather than a stir animation:
+// the react frames are authored on the AWAKE pose (hands at the keyboard),
+// so playing one from the sleep pose would snap the figure upright into a
+// hands-on-keys pose and flop it back — slapstick, and momentarily a pose
+// that looks like working when the server has said for 30s+ that nobody is
+// there; and P3 already suppresses the celebration bounce while asleep for
+// exactly the same reason (a sleeping character must not perform). Waking it
+// is not on the table either: the mood is the server's to report from real
+// keystrokes (ADR 0010), and a client that "woke" the character would be
+// asserting a state nobody sent. The other three items DO still react while
+// the dexel sleeps — the monitor, the mug and the buddy are their own layers
+// and say nothing about whether the human is at the desk.
+//
+// THE PROPS ARE INDEPENDENT LAYERS. The monitor is SCENERY and the beverage /
+// buddy are slot sprites: each is one <img> whose `src` the scheduler swaps,
+// which touches neither the developer's frame logic nor any other item's. The
+// monitor's react in particular is a SRC SWAP AND NOTHING ELSE — the element
+// must never move. tools/gen_assets.py bakes that constraint into the art
+// (assert_monitor_shake): the DOM terminal's 11 lines of text sit over the
+// glass with only 2px of margin, so the shake is authored as a +-1px
+// HORIZONTAL displacement of the monitor's head *inside* the sprite, with the
+// neck, foot and contact shadow byte-identical to monitor.png. Moving the
+// element instead — a `left` nudge, a transform — would slide the glass out
+// from under text that does not move with it.
+//
+// ANTI-MASH. One react at a time per item (a click during a react is
+// dropped, never queued) plus a per-item cooldown after it ends, so holding
+// the mouse down and clicking as fast as possible cannot strobe a sprite: the
+// worst case is one ~1s beat per ~2s per item. The cooldown is per ITEM, so
+// mashing the mug never blocks the buddy. No click is ever "spent" on
+// nothing: a refused click leaves the cooldown untouched.
+const REACT_KEYS = ['dev', 'monitor', 'beverage', 'buddy'];
+// One tick per frame, on the SAME 200ms timer as everything else in this file
+// (P3's rule: one interval, and it repaints only when the frame changed).
+//
+//   dev       400ms of startle (react_a: body 2px up, 1px recoil away, right
+//             hand off the keys) then 600ms of the acknowledge lean back
+//             toward the viewer (react_b) — the art's own two-beat intent,
+//             1.0s total, and not a→b→a: a→b→rest IS the return, because
+//             `rest` is whatever pose the server says you are in.
+//   monitor   a wobble: -1, +1, -1, +1 px, 800ms.
+//   props     a hop and a settle: 1px up, 2px up (held), back to 1px, 800ms.
+//             The beverage/buddy react frames are authored as stage 1 and 2 of
+//             one hop with the contact shadow planted, so this ordering is the
+//             arc the art was drawn for.
+const REACT_SCRIPT: Record<string, string[]> = {
+  dev: ['react_a', 'react_a', 'react_b', 'react_b', 'react_b'],
+  monitor: ['a', 'b', 'a', 'b'],
+  beverage: ['a', 'b', 'b', 'a'],
+  buddy: ['a', 'b', 'b', 'a']
+};
+const REACT_COOLDOWN_TICKS = 6;   // 1.2s of quiet after a beat ends
+// The prop react sprites, keyed by CATALOG ITEM ID and written out rather
+// than derived from item.sprite by string surgery. Two reasons, both real:
+// buddy_bot's `sprite` is buddy_bot_a.png (frame A of its blink pair) while
+// its react files are buddy_bot_react_a/b.png, so no suffix rule covers the
+// set; and an explicit table means an item with NO react art (a future
+// beverage, say) is simply absent, which is a case this module already has to
+// handle for `buddy_none` — no react, and no hit region either, instead of a
+// 404 and a hole where the sprite was. The wire is untouched: it still
+// carries exactly one sprite filename per item, and this is the client's own
+// presentation table, the same way FRAME_OVERLAY_DY is.
+const PROP_REACT_SPRITES: Record<string, [string, string]> = {
+  bev_mug: ['bev_mug_react_a.png', 'bev_mug_react_b.png'],
+  bev_thermos: ['bev_thermos_react_a.png', 'bev_thermos_react_b.png'],
+  bev_teacup: ['bev_teacup_react_a.png', 'bev_teacup_react_b.png'],
+  bev_energy: ['bev_energy_react_a.png', 'bev_energy_react_b.png'],
+  buddy_duck: ['buddy_duck_react_a.png', 'buddy_duck_react_b.png'],
+  buddy_bot: ['buddy_bot_react_a.png', 'buddy_bot_react_b.png'],
+  buddy_cat: ['buddy_cat_react_a.png', 'buddy_cat_react_b.png']
+};
+const MONITOR_REST_SPRITE = 'monitor.png';
+const MONITOR_SHAKE_SPRITES: [string, string] = ['monitor_shake_a.png', 'monitor_shake_b.png'];
+// Every react bitmap the scene can show, warmed at startup with the rest of
+// them (render/preload.ts). A prop react is a `src` swap on a live <img>, and
+// an undecoded bitmap paints NOTHING for a frame or two — the first click on
+// each item would have blinked the mug/buddy/monitor out of existence before
+// hopping it. All 16 files, not just the equipped ones: equipping is a click
+// away in the store. (The developer's four react files need no entry here —
+// they are stacked layers like every other dev frame and ride
+// warmStaticSprites via DEV_FRAMES.)
+const REACT_SPRITES: string[] = MONITOR_SHAKE_SPRITES.concat(
+  ...Object.keys(PROP_REACT_SPRITES).map(function (id) { return PROP_REACT_SPRITES[id]; })
+);
+
+interface ReactState {
+  queue: string[];   // frames left in the beat
+  frame: string;     // '' = not reacting
+  cooldown: number;  // ticks of enforced quiet left after a beat
+  painted: string;   // the frame this item's <img> is currently showing
+}
+const reacts: Record<string, ReactState> = {};
+REACT_KEYS.forEach(function (key) {
+  reacts[key] = { queue: [], frame: '', cooldown: 0, painted: '' };
+});
+
+// The file a prop shows for react frame `tag`, or null when the item equipped
+// in that slot has no react art (which is also how `buddy_none` — no item,
+// no sprite — answers).
+function reactFileFor(key: string, tag: string): string | null {
+  if (key === 'monitor') return MONITOR_SHAKE_SPRITES[tag === 'a' ? 0 : 1];
+  const item = store.equippedItemFor(key);
+  const pair = item ? PROP_REACT_SPRITES[item.id] : undefined;
+  if (!pair) return null;
+  return pair[tag === 'a' ? 0 : 1];
+}
+
+// The sprite a slot must paint RIGHT NOW: its react frame while one is
+// playing, otherwise the equipped item's own sprite. Called from
+// renderSlotSprite, which is what makes an in-flight react survive the ~1Hz
+// state broadcast instead of being reset to the rest sprite mid-hop.
+function slotReactSprite(slotId: string): string | null {
+  const r = reacts[slotId];
+  return r && r.frame ? reactFileFor(slotId, r.frame) : null;
+}
+
+// Paints one item's current react frame, and only when it changed.
+function paintReact(key: string): void {
+  const r = reacts[key];
+  if (r.painted === r.frame) return;
+  r.painted = r.frame;
+  if (key === 'dev') { renderDev(); return; }
+  if (key === 'monitor') {
+    setSrc(monitorImg, r.frame ? reactFileFor('monitor', r.frame) : MONITOR_REST_SPRITE);
+    return;
+  }
+  renderSlotSprite(key);
+}
+
+// A click on one of the four hit regions. Every refusal below is silent by
+// design — there is no error state for "the room did not feel like it".
+function queueReact(key: string): void {
+  const state = store.getState();
+  if (!state || !sceneBuilt) return;
+  const r = reacts[key];
+  if (r.frame || r.queue.length > 0 || r.cooldown > 0) return;   // anti-mash
+  if (key === 'dev') {
+    if (state.activeState === 'onBreak') return;                 // asleep: see above
+    if (celebrateFrame || celebrateQueue.length > 0) return;      // a real event is playing
+    ambientQueue = [];                                           // the click outranks the breath
+    ambientFrame = '';
+  } else if (!reactFileFor(key, 'a')) {
+    return;                                                      // nothing there to react
+  }
+  r.queue = REACT_SCRIPT[key].slice();
+  r.frame = r.queue.shift() as string;
+  paintReact(key);   // start on the click, not up to 200ms later
+}
+
+// One tick of every item's beat. A beat that just ended starts that item's
+// cooldown; an item doing nothing burns its cooldown down.
+function advanceReacts(): void {
+  REACT_KEYS.forEach(function (key) {
+    const r = reacts[key];
+    if (r.frame) {
+      r.frame = r.queue.length > 0 ? r.queue.shift() as string : '';
+      if (!r.frame) r.cooldown = REACT_COOLDOWN_TICKS;
+      paintReact(key);
+    } else if (r.cooldown > 0) {
+      r.cooldown -= 1;
+    }
+  });
+}
+
+// Drops a developer react on the floor. Called when the character falls
+// asleep mid-beat (the pose the server reports wins the moment it changes)
+// and from onCelebrate() (a real event outranks a click). The cooldown is
+// left alone: the click was honoured, it just got overtaken.
+function cancelDevReact(): void {
+  const r = reacts.dev;
+  if (!r.frame && r.queue.length === 0) return;
+  r.queue = [];
+  r.frame = '';
+  r.painted = '';
+  if (sceneBuilt) renderDev();
+}
+
+// One invisible click target. Built once with the rest of the skeleton and
+// only ever shown/hidden after that (BUG-1's identity invariant applies to
+// these too — and `display: none` is exactly what removes both the click and
+// the pointer cursor for an item that is not there).
+function buildHitRegion(key: string, rect: Rect): HTMLDivElement {
+  const el = document.createElement('div');
+  el.className = 'hit-region';
+  el.setAttribute('aria-hidden', 'true');   // decoration: it carries no information
+  el.style.position = 'absolute';
+  el.style.zIndex = String(HIT_Z);
+  positionEl(el, rect);
+  el.addEventListener('click', function () { queueReact(key); });
+  return el;
+}
+
+// Which hit regions are live right now. The monitor's is unconditional (it is
+// scenery — always there); the developer's disappears while asleep, and the
+// two slot regions disappear when the slot is empty or holds an item with no
+// react art, so there is never a pointer cursor over something that would not
+// answer.
+function renderHitRegions(): void {
+  const state = store.getState()!;
+  setShown(hitRegions.dev, state.activeState !== 'onBreak');
+  setShown(hitRegions.beverage, reactFileFor('beverage', 'a') !== null);
+  setShown(hitRegions.buddy, reactFileFor('buddy', 'a') !== null);
 }
 
 // A bare absolutely-positioned container. Every holder below is one, and
@@ -270,6 +549,10 @@ function buildSceneSkeleton(): void {
     img.style.zIndex = String(s.z);
     if (s.id) img.id = s.id;
     if (s.file === 'room_back.png') img.addEventListener('error', handleSpriteSentinelError);
+    // SCENE-REACTIONS: held so the shake is a src swap on a known element
+    // (and so renderScene's onBreak dimming toggles the same one) rather than
+    // a document lookup per tick.
+    if (s.file === 'monitor.png') monitorImg = img;
     scene.appendChild(img);
   });
   SLOT_IDS.forEach(function (slot) {
@@ -351,6 +634,19 @@ function buildSceneSkeleton(): void {
   // one decode the first time each pose appeared. (The form stack solves the
   // same problem for its masks a different way — see setFormShown.)
   warmStaticSprites(DEV_FRAMES);
+  // SCENE-REACTIONS: and the react bitmaps the props swap to on a click.
+  warmSprites(REACT_SPRITES);
+
+  // SCENE-REACTIONS click targets, on top of every sprite layer (HIT_Z) and
+  // invisible. Added LAST so they are also last in document order, which is
+  // what settles ties between the two that overlap (the developer's region
+  // covers the keyboard their hands rest on; neither the keyboard nor the
+  // chair is clickable, so there is no ambiguity to resolve beyond that).
+  hitRegions.dev = buildHitRegion('dev', HIT_RECT.dev);
+  hitRegions.monitor = buildHitRegion('monitor', HIT_RECT.monitor);
+  hitRegions.beverage = buildHitRegion('beverage', SLOT_RECT.beverage);
+  hitRegions.buddy = buildHitRegion('buddy', SLOT_RECT.buddy);
+  REACT_KEYS.forEach(function (key) { scene.appendChild(hitRegions[key]); });
 
   sceneBuilt = true;
 }
@@ -379,6 +675,10 @@ export function currentDevFrame(): string {
 // show off).
 function sceneDevFrame(): string {
   if (!store.getState()) return 'idle';
+  // SCENE-REACTIONS sits at the top: the player clicked the character, and
+  // for ~1s that is the most important thing on screen. It can never be set
+  // at the same time as celebrateFrame (queueReact / onCelebrate).
+  if (reacts.dev.frame) return reacts.dev.frame;
   if (celebrateFrame) return celebrateFrame;
   if (ambientFrame) return ambientFrame;
   return currentDevFrame();
@@ -425,7 +725,10 @@ function renderSlotSprite(slotId: string): void {
   // it last showed rather than cleared to '' — an empty src is a broken-image
   // request, and the element is not painted anyway.
   if (!item || !item.sprite) { setShown(img, false); return; }
-  setSrc(img, item.sprite);
+  // SCENE-REACTIONS: while this slot is mid-react it paints the react frame
+  // instead of the rest sprite — including on the ~1Hz state broadcast, which
+  // would otherwise reset the mug to its resting pose halfway through a hop.
+  setSrc(img, slotReactSprite(slotId) || item.sprite);
   setShown(img, true);
 }
 
@@ -507,6 +810,11 @@ function renderDev(): void {
   // printed on the fabric that moved (see FRAME_OVERLAY_DY). A `top` change
   // moves an already-decoded bitmap; it never re-decodes it.
   devStyleImg.style.top = (FRAME_OVERLAY_DY[frame] || 0) + 'px';
+  // SCENE-REACTIONS: the react frames also lean the body +-1px sideways, and
+  // the garment has to lean with the fabric it is printed on
+  // (FRAME_OVERLAY_DX). 0 for every other frame, so this write is a no-op
+  // everywhere it was a no-op before.
+  devStyleImg.style.left = (FRAME_OVERLAY_DX[frame] || 0) + 'px';
   renderedDevFrame = frame;
 }
 
@@ -529,8 +837,8 @@ export function renderScene(): void {
   SLOT_IDS.forEach(renderSlotSprite);
   renderChair();
   renderDev();
-  const monitor = document.getElementById('sprite-monitor');
-  if (monitor) monitor.classList.toggle('monitor-onbreak', state.activeState === 'onBreak');
+  renderHitRegions();
+  monitorImg.classList.toggle('monitor-onbreak', state.activeState === 'onBreak');
 }
 
 // dev frame animation (5fps while coding) — a fixed-interval timer, not
@@ -550,6 +858,15 @@ setInterval(function () {
   // ambient beat is cancelled rather than queued behind it.
   if (celebrateFrame) celebrateFrame = celebrateQueue.length > 0 ? celebrateQueue.shift() as string : '';
 
+  // SCENE-REACTIONS. The sleep check first: if the character fell asleep
+  // mid-react the server's pose wins immediately (and its hit region is
+  // already gone). Then one tick of every item's beat — the props repaint
+  // themselves inside advanceReacts, the developer's frame is picked up by
+  // the sceneDevFrame() check at the bottom of this tick like every other
+  // beat.
+  if (state.activeState === 'onBreak') cancelDevReact();
+  advanceReacts();
+
   // Pose bookkeeping — byte-for-byte the same decisions as before P3 (the
   // mouse hold still burns one tick per tick and the typing cycle still
   // toggles only while coding); only the early returns are gone, because the
@@ -559,6 +876,7 @@ setInterval(function () {
   else if (state.activeState === 'coding') devFrameIndex = devFrameIndex === 0 ? 1 : 0;
 
   advanceAmbient(!celebrateFrame && celebrateQueue.length === 0 &&
+                 !reacts.dev.frame && reacts.dev.queue.length === 0 &&
                  mouseHoldTicks === 0 && state.activeState === 'idle');
 
   if (sceneBuilt && sceneDevFrame() !== renderedDevFrame) renderDev();

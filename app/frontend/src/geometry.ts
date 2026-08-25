@@ -88,5 +88,59 @@ export const SLOT_Z: Record<string, number> = { wall: 2, plant: 5, buddy: 6, bev
 export const DEV_Z_FORM = 10, DEV_Z_STYLE = 11, DEV_Z_BASE = 12;
 export const CHAIR_Z_FORM = 13, CHAIR_Z_DETAIL = 14;
 
+// =========================================================================
+// SCENE-REACTIONS (docs/plan/ROADMAP.md, docs/ui-spec.md §12) — hit regions
+// =========================================================================
+//
+// The four clickable things in the room, in the SAME room-pixel space as
+// every rect above (the scene is a 320x200 surface drawn at 2x inside the
+// 640x400 layout, which is itself transformed to fit the window — see
+// render/viewport.ts). They are room rects and nothing else, which is what
+// lets the render layer express them as ordinary absolutely-positioned
+// children of #scene-sprites and let the browser do the hit testing through
+// both transforms; no viewport-coordinate maths enters this frontend.
+//
+// Two of the four ARE existing rects and are deliberately not repeated here:
+// the beverage and the buddy are exactly their SLOT_RECT (20x24 and 28x30 —
+// small enough that the rect already reads as the object). The other two need
+// their own, because the sprite canvas is much bigger than the thing drawn in
+// it:
+//
+//   dev      DEV_RECT is 192x76 at (64,92) and most of it is empty air: the
+//            `mouse` pose's arm reaches to room x252 and the `cheer` frames
+//            fling out to x223, none of which is where the FIGURE is. So this
+//            is the BODY — hood, shoulders, upper arms, torso — and nothing
+//            else, bounded by the two things that would otherwise make the
+//            hand cursor lie:
+//              top    room y110, the hood's own top row. Above it the sprite
+//                     is two forearms with a gap between them, and that gap
+//                     is where the KEYBOARD (room y90..113) is visible — a
+//                     pointer cursor there would be offering a click on the
+//                     keyboard, which is not a reactive item.
+//              bottom room y148, the last row before the chair. The chair
+//                     composites OVER the developer from room y149 down
+//                     (CHAIR_Z_* > DEV_Z_*, the behind-view order), so every
+//                     pixel below that is chair, not dexel — and further down
+//                     still, the SPRINT/STATUS HUD panels are opaque from
+//                     room y161 and would eat the click anyway.
+//            Horizontally it is the figure's own alpha box (dev_base_idle /
+//            dev_form_idle occupy local x54..138 => room x118..202), i.e. the
+//            shoulder span. 84x39 room px is 168x78 on screen at the scene's
+//            2x, which is a large, easy target.
+//   monitor   the monitor sprite's canvas IS its silhouette (every one of
+//            rows 0..59 is fully opaque bezel, then the neck and foot), so
+//            this is simply SCENERY's monitor rect restated as a hit target.
+//            The DOM terminal that sits over the glass is `pointer-events:
+//            none` (game.css #scene-text), so clicks on the text land here.
+export const HIT_RECT: Record<string, Rect> = {
+  dev: { left: 118, top: 110, w: 84, h: 39 },
+  monitor: { left: 94, top: 20, w: 132, h: 64 }
+};
+// Above CHAIR_Z_DETAIL (14), the topmost scene layer: a hit region has to
+// win the hit test against every sprite it overlaps (the chair backrest
+// draws OVER the developer, and the keyboard sits under their hands), and it
+// is invisible, so being on top costs no pixel.
+export const HIT_Z = 20;
+
 export const MOOD_COLOR: Record<ActiveState, string> = { coding: 'var(--plant)', idle: 'var(--screen)', onBreak: 'var(--pot)' };
 export const FRAME_FOR_STATE: Record<'idle' | 'onBreak', string> = { idle: 'idle', onBreak: 'sleep' }; // 'coding' alternates type_a/type_b, or 'mouse' while the server reports mouse activity (render/scene.ts)

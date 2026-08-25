@@ -61,6 +61,18 @@ export function warmStaticSprites(devFrames: string[]): void {
   });
 }
 
+// An explicit list of sprite filenames to warm — the escape hatch for bitmaps
+// that are neither scenery, nor a developer frame, nor an `item.sprite` from
+// the catalog. SCENE-REACTIONS' react frames are exactly that: they are
+// swapped in by a CLICK (render/scene.ts), so their first use is
+// user-initiated rather than part of the startup path, and an undecoded
+// bitmap would blank the mug/buddy/monitor for a frame at the worst possible
+// moment. Idempotent, like every other entry point here (`warmed` is keyed on
+// the URL), and a warm-up only: nothing waits on it.
+export function warmSprites(files: string[]): void {
+  files.forEach(warm);
+}
+
 // Every sprite the CATALOG can put in the scene: the currently equipped item
 // in each slot, and also every item the player might buy and equip next —
 // equipping is a click away and the newly equipped sprite would otherwise be

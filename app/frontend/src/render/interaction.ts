@@ -43,6 +43,22 @@
 // the common shortcut for "no selection" and it also cancels focus, which
 // would break every button and input in the app.
 
+// SCENE-REACTIONS, and why the click routing is NOT here. The groundwork above
+// kept the scene receiving clicks; the feature that uses them puts one
+// invisible hit region per clickable item INSIDE #scene-sprites and listens on
+// it (render/scene.ts, "SCENE-REACTIONS"). That belongs there rather than in
+// this module for two reasons. The regions are scene GEOMETRY — room rects out
+// of geometry.ts, children of the scene surface, built once with the rest of
+// the scene skeleton and shown/hidden by the same render pass that decides
+// whether the buddy slot has a buddy in it — and their listeners' only effect
+// is to queue a frame on the scene's own reaction scheduler. Routing them
+// through here would mean a second module holding scene coordinates and
+// reaching into the compositor's state, for no gain: there is no global click
+// policy to enforce, and this file's whole job is the two document-level
+// guards below. What stays true either way is the rule stated above — nothing
+// in this module touches `click`, `pointer-events`, or `mousedown`, so it
+// cannot break the reactions, and the reactions cannot weaken the guards.
+
 // Inputs are the one place the user is meant to be able to select, edit and
 // drag text. Kept as a predicate rather than a selector string so it also
 // covers a focused contenteditable if one is ever added.
