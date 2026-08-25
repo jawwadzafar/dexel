@@ -31,13 +31,21 @@ whole program is a pure function of the constants below. The run ends with a
 self-check that exits non-zero if anything fails, so a botched edit here
 cannot quietly ship a blank, off-palette, blurry or illegible icon:
 
-  * palette purity and full-opacity of every master, every delivered PNG and
-    every embedded .ico / .icns frame;
-  * the opaque footprint of each master is EXACTLY its rounded-square tile;
-  * the silhouette (tile, hood, cavity, eyes, drawstrings) is mirror-symmetric
-    to the pixel, while the shading deliberately is not;
-  * measured WCAG contrast ratios for the three reads the icon lives or dies
-    by (hood against tile, eyes against cavity, tile against a black taskbar);
+  * palette purity and BINARY alpha (0 or 255, never a midtone) of every
+    master, every delivered PNG and every embedded .ico / .icns frame — the
+    mark is transparent pixel art, so a semi-transparent halo pixel is a bug;
+  * the opaque footprint of each master is EXACTLY its hooded bust — nothing
+    outside the mark is painted, so the icon sits on true transparency and the
+    OS (macOS, Windows, GNOME) supplies its own frame;
+  * that mark FILLS the canvas — its bounding box is >= 80% of the edge in
+    both axes, with at least a 1px margin all round so a plate-compositing
+    desktop never clips it;
+  * the silhouette (bust, opening, drawstrings) is mirror-symmetric to the
+    pixel, while the shading deliberately is not;
+  * measured WCAG contrast for the two reads a tile-less, faceless mark lives
+    or dies by — the ink5 keyline against black (does the silhouette read on a
+    dark Dock?) and the crown highlight against the dark opening (does the
+    hood read as a ring, without eyes to anchor it?);
   * every .ico frame and every .icns chunk decodes back to the exact pixels
     of the master it came from — the assertion that catches a silent resample;
   * M16 differs from a naive downscale of M64 by more than a quarter of its
@@ -50,25 +58,49 @@ shape `iconutil -c icns` produces — ten chunks, no TOC, PNG payloads for the
 eight modern slots and RLE-compressed ARGB for `ic04`/`ic05`.
 
 --------------------------------------------------------------------------
-THE MARK: dexel, hooded, lit by the screen
+THE MARK: dexel, hooded, faceless, on transparency
 --------------------------------------------------------------------------
 
 The identity of this product is a character, so the icon is that character
-and not a rebus about it. A hooded bust, front on, centred on a dusk
-rounded-square tile: the indigo hood's crown and cheeks as a ring, a dark
-opening where a face would be, two mint eyes in it, two drawstrings hanging
-over the chest.
+and not a rebus about it. A hooded bust, front on, filling the frame: the
+indigo hood's crown and cheeks as a ring of fabric, a dark FACELESS opening
+where a face would be, two drawstrings hanging over the chest. No tile behind
+it and no eyes in it — the mark stands on TRUE TRANSPARENCY so macOS, Windows
+and GNOME each frame it with their own system chrome instead of a dusk
+rounded-square baked into the file. (Owner direction, 2026-08: "remove the
+glowing eyes. remove background also so that on mac and other places it's just
+icon and the OS system.")
 
 Front on, because the game's own camera is behind-the-shoulder (docs/
 art-direction.md: "the hood is a **dome**, not a head: no face, no ears") and
 a dome from behind reduces, at 16px, to a featureless bump on a trapezoid —
-indistinguishable from a hundred other dark app icons. A front-facing
-adaptation keeps every brand-carrying feature (the hood, the indigo, the
-dusk, the screen light) and adds the one thing a 16px tile can still hold: a
-pair of eyes. This is the documented [DESIGN CALL] in docs/art-direction.md
-§Icon, and it is why the eyes are `screen` mint rather than any warm colour —
-they are not eye colour, they are the monitor reflected in them, the same
-"one cool light in a warm frame" rule the room obeys.
+indistinguishable from a hundred other dark app icons. A front-facing hooded
+bust keeps every brand-carrying feature: the hood, the indigo, the screen's
+cool rim light, the drawstrings.
+
+THE HARD PROBLEM this file solves — a dark indigo hood on a transparent
+background is nearly invisible on a dark Dock: the old dusk tile was its
+contrast and the old mint eyes were its accent, and both are gone. Three
+things carry it instead, none of which assumes a background colour:
+
+  1. A 1px `ink5` KEYLINE around the whole silhouette. `ink5` is the brightest
+     indigo the hoodie tint reaches, and against black it is a 3.6:1 read and
+     against a #14131a dark Dock a 3.2:1 read — so the outline of the figure
+     is legible on the darkest ground it will ever sit on. On a white taskbar
+     the dark fabric body is the silhouette instead. This is the same
+     "screen glow wrapping the figure" rim the in-game character gets, now
+     closed into a full self-contained outline because there is no tile edge
+     left to do the job. `check_contrast` measures the black case.
+  2. INTERNAL VALUE RANGE, so the form reads by its own shading and not
+     against a tile: one key light from the upper left lifts the crown to
+     `ink5`/`ink4` while the shoulders and the fabric under the hood's overhang
+     fall to `ink2`/`ink3`. A flat indigo blob would be a lozenge; the shaded
+     one is unmistakably a domed hood over shoulders.
+  3. The OPENING stays a dark, empty `shadow` cavity — faceless, as asked —
+     and the `ink5` hem rolled around its inner edge puts the brightest ink in
+     the icon directly against the darkest, which is the crispest boundary
+     available and the thing that still says "hood, seen front on" at 16px
+     with no eyes to anchor it. `check_contrast` measures crown vs opening.
 
 Every colour is derived, not chosen:
 
@@ -78,30 +110,17 @@ Every colour is derived, not chosen:
     Those five hexes are, to the byte, what the running game multiplies onto
     `dev_form_*.png` for a player who has bought nothing. The icon is not
     "indigo-ish"; it is the same garment.
-  * the tile is `shadow` with a dithered `wall_dark`/`wall_light` glow pool
-    behind the crown — the room's own wall and its lamp bloom.
-  * the opening is `shadow` deepening under the brow into `hair`, which is
-    the palette entry whose v2 role is literally "hood interior".
-  * the eyes are `screen`; the drawstrings are `cream` with a `gold` aglet —
-    UI text colour and Dev Cash, the two things the product hands you.
+  * the opening is `shadow`, the palette's occlusion tone, as everywhere else.
+  * the drawstrings are `cream` with a `gold` aglet — UI text colour and Dev
+    Cash, the two things the product hands you.
 
 Light direction is `gen_assets.py`'s: one key light from the upper-left. The
 crown's upper-left arc carries the `ink5` specular, value falls off down and
-to the right, the hood casts a shadow band across the chest, and the tile's
-glow sits behind the head. Nothing here is lit from another angle.
-
-**Legibility on light AND dark backgrounds** is handled structurally, not
-hoped for. The tile is dark, so on a dark Dock or taskbar its silhouette
-comes from a 1px rim one step LIGHTER than its fill, all the way round (never
-a bottom-right shadow, which is invisible against black). The motif is
-light-on-dark, so on a white taskbar the tile itself is the silhouette. And
-the hood's own outer edge is clamped to `ink4`-or-brighter for its full
-perimeter — a rim light justified by the screen glow wrapping the figure, and
-the reason the bust does not dissolve into the tile at the bottom right where
-the shading has gone dark. `check_contrast` measures all three.
+to the right, and the hood casts a shadow band across the chest. Nothing here
+is lit from another angle.
 
 --------------------------------------------------------------------------
-FOUR MASTERS, INTEGER UPSCALES ONLY
+FIVE MASTERS, INTEGER UPSCALES ONLY
 --------------------------------------------------------------------------
 
 Rule 1 of pixel-art authoring is "authored at native size, never resampled"
@@ -123,22 +142,20 @@ the way Apple's and Microsoft's own icons are — this per-size reduction is
 the whole difference between an icon set and a resized picture:
 
     M64  the hero. Dithered fabric shading across all five ink steps, a 1px
-         `ink5` hem around the opening, 5x5 rounded eyes with a 1px `lamp`
-         glint, 2px drawstrings with a `gold` aglet, and the tile's
-         two-colour dithered glow pool.
-    M48  the same, one notch down: 4x4 eyes, a smaller glow.
-    M32  half of M64's resolution and half its detail: 2x3 eyes, no glint,
-         1px drawstrings, a one-colour glow, dithering still on.
-    M24  ordered dithering is OFF below 32px (at that scale a Bayer pattern
-         is not a gradient, it is four stray pixels of noise): hard-edged
-         bands only. 2x2 eyes, no glow, no drawstrings.
+         `ink5` hem around the opening, 2px drawstrings with a `gold` aglet,
+         and the full `ink5` keyline.
+    M48  the same, one notch down: a smaller drawstring spread.
+    M32  half of M64's resolution and half its detail: 1px drawstrings,
+         dithering still on, the keyline and hem still on.
+    M24  ordered dithering is OFF below 32px (at that scale a Bayer pattern is
+         not a gradient, it is four stray pixels of noise): hard-edged bands
+         only, no drawstrings, hem and keyline still on.
     M16  the reduction, and the size the mark was designed against first.
-         Flat bands, no glow, no drawstrings, no hem, and 2x2 eyes that fill
-         the opening either side of a 2px gap — the opposite of the larger
-         masters' margin, chosen by rendering both at true size. The fabric
-         also rides brighter than the other masters, because at 16px the
-         silhouette has to win outright and there is no room left for a
-         subtle one.
+         Flat bands, no drawstrings, no hem (with only ~2px of fabric between
+         the opening and the keyline, an `ink5` hem inside an `ink5` keyline
+         would leave one mid pixel between two highlights and read as a
+         mis-registration). The fabric also rides brighter than the other
+         masters, because at 16px the ring has to win outright.
 """
 from __future__ import annotations
 
@@ -274,40 +291,14 @@ ICNS_ARGB: dict[bytes, int] = {b"ic04": 16, b"ic05": 32}
 # Geometry helpers — hard-edged rasterisation, pixel CENTRES
 # --------------------------------------------------------------------------
 
-def rounded_rect(x0: int, y0: int, x1: int, y1: int, r: int) -> set[tuple[int, int]]:
-    """The point set of a hard-edged rounded square — the icon tile.
-
-    A pixel is kept when its CENTRE, continuous (x+0.5, y+0.5) with the rect
-    spanning [x0, x1+1), falls within `r` of the nearest corner circle's
-    centre at (x0+r, y0+r) and its three mirrors. No `ImageDraw` anywhere:
-    that would anti-alias the curve.
-
-    Rasterising centres rather than indices is what makes the corner
-    staircase MONOTONE. `Sprite.ellipse`'s 1.05 outward fudge is right for
-    the tiny filled blobs it was written for and wrong here: at r=13 it
-    produces a 3px jump, a stall, then another stall, which at 1024px reads
-    as visibly chewed corners.
-    """
-    pts: set[tuple[int, int]] = set()
-    lo_x, hi_x = x0 + r, x1 + 1 - r
-    lo_y, hi_y = y0 + r, y1 + 1 - r
-    for y in range(y0, y1 + 1):
-        for x in range(x0, x1 + 1):
-            dx = (x + 0.5) - min(max(x + 0.5, lo_x), hi_x)
-            dy = (y + 0.5) - min(max(y + 0.5, lo_y), hi_y)
-            if dx * dx + dy * dy <= r * r:
-                pts.add((x, y))
-    return pts
-
-
 def rim_of(pts: set[tuple[int, int]]) -> set[tuple[int, int]]:
     """The 1px outermost ring of a point set — every member with at least one
     of its EIGHT neighbours outside it. Derived from the shape actually
     painted, the same way `outline_from_mask` derives sprite outlines, so it
-    cannot go stale when a radius or a profile changes.
+    cannot go stale when a profile changes.
 
-    Eight and not four: on the diagonal staircase of a rounded corner a pixel
-    on the true edge can still have all four orthogonal neighbours inside the
+    Eight and not four: on the diagonal staircase of a curved edge a pixel on
+    the true edge can still have all four orthogonal neighbours inside the
     shape, so a 4-neighbour test leaves the rim full of holes at every corner.
     """
     return {
@@ -316,18 +307,6 @@ def rim_of(pts: set[tuple[int, int]]) -> set[tuple[int, int]]:
         if any((x + dx, y + dy) not in pts
                for dx in (-1, 0, 1) for dy in (-1, 0, 1) if (dx, dy) != (0, 0))
     }
-
-
-def dilate(pts: set[tuple[int, int]], n: int) -> set[tuple[int, int]]:
-    """`pts` grown by `n` pixels in every direction (Chebyshev). Used to keep
-    the tile's glow pool a fixed gap clear of the motif: the glow is there to
-    lift the field BEHIND the character, and a lit pixel touching the hood's
-    rim would eat the very contrast step the rim exists to provide."""
-    out = set(pts)
-    for _ in range(n):
-        out |= {(x + dx, y + dy) for (x, y) in out
-                for dx in (-1, 0, 1) for dy in (-1, 0, 1)}
-    return out
 
 
 def span(cx: float, hw: float, edge: int) -> tuple[int, int] | None:
@@ -360,19 +339,17 @@ def superellipse_hw(dy: float, b: float, a: float, n: float) -> float:
 
 
 # --------------------------------------------------------------------------
-# One master, four times: the per-size design spec
+# One master, five times: the per-size design spec
 # --------------------------------------------------------------------------
 #
 # Every number a master differs by lives in one of these. The builder below
 # reads them and nothing else, so "hand-tuned per size" means editing a table
-# rather than forking a drawing — and the four specs sit next to each other
+# rather than forking a drawing — and the five specs sit next to each other
 # where the progressive simplification is visible at a glance.
 
 @dataclass(frozen=True)
 class Spec:
     edge: int              # canvas (and delivered) size
-    inset: int             # tile inset from the canvas on all four sides
-    radius: int            # tile corner radius (~22% of the tile edge)
 
     crown: int             # topmost hood row
     dome_c: int            # row where the crown's curve hands over to straight sides
@@ -390,132 +367,94 @@ class Spec:
     a_cav: float           # opening half-width
     n_cav: float           # opening superellipse exponent
 
-    eye_w: int
-    eye_h: int
-    eye_gap: int           # dark pixels between the two eyes (even, for symmetry)
-    eye_top: int
-    eye_round: bool        # clip the eye's four corners
-    glint: int             # `lamp` glint edge in px, 0 = none
-
     hem: bool              # 1px `ink5` rolled edge around the opening
-    lining: int            # `hair` lining depth under the brow, 0 = none
     string: tuple[int, int, int, int] | None  # (width, top, bottom, gap apart)
     aglet: bool            # `gold` tip on the last row of each drawstring
-    glow: tuple[float, float, float, float] | None  # (r_dark, gain, r_light, gap)
-    dither: bool           # ordered dithering on the fabric and the glow
+    dither: bool           # ordered dithering on the fabric
     base_v: float          # fabric ramp position at the form's mid tone
 
 
 SPECS: dict[int, Spec] = {
     # ---------------------------------------------------------------- M64 --
     # The hero, and the master every size from 64px up is an integer upscale
-    # of. Tile 2..61 (60px) with r=13 = 21.7% of the tile edge, the macOS Big
-    # Sur proportion. The motif's bounding box is 46x43 inside that 60x60
-    # tile — 77% of the tile wide, 72% tall, 7px of air left and right and
-    # 8/9px top and bottom, so the mark is optically centred rather than
-    # merely arithmetically centred.
+    # of. With the dusk tile gone the mark is no longer inset — it FILLS the
+    # canvas: the bust's bounding box is 58x57 in the 64x64 frame (91% wide,
+    # 89% tall) with a 3px margin every side, so it reads big in a Dock and
+    # still keeps a hair of air a plate-compositing desktop can round off.
     #
-    # PROPORTION PASS — this is the difference between a hoodie and a ghost,
-    # and it took three rounds of looking at the review sheet to find.
-    # The first version gave the opening a 27px width against a 38px hood: a
-    # thin ring around a big round void, which rendered as a spectre, not a
-    # garment. Three numbers fixed it. The opening came in to 19px so the
-    # crown carries EIGHT rows of fabric above the brow — a hood's mass is
-    # the thing that says "hood", and the opening is now one pixel taller
-    # than it is wide, which is a face rather than a porthole. The shoulders
-    # flare from 34px to 46px over eight rows and then run straight down, so
-    # the outline STEPS OUT at the hem: a ghost has no shoulders, and that
-    # step is what stops a viewer resolving the silhouette as one. And the
-    # drawstrings start ON the hem row and hang at a 12px spread, where a
-    # real hoodie's eyelets are — the two rejected alternatives both misread
-    # unmistakably, a close narrow pair as fangs and a long wide pair as
-    # tusks.
+    # PROPORTION — a hood's MASS is the thing that says "hood", so the crown
+    # carries ten rows of fabric above the brow and the opening (24px wide,
+    # 26px tall) is one pixel taller than it is wide, a face rather than a
+    # porthole. The shoulders flare from 42px to 58px over eleven rows and
+    # then run straight down to the hem, so the outline STEPS OUT at the
+    # bottom: a ghost has no shoulders, and that step is what stops a viewer
+    # resolving the silhouette as one. The drawstrings start on the hem and
+    # hang at a 13px spread, where a real hoodie's eyelets are.
     64: Spec(
-        edge=64, inset=2, radius=13,
-        crown=10, dome_c=26, hood_bot=38, sh_bot=46, bust_bot=52,
-        a_hood=17.0, a_sh=23.0, n_dome=1.85, flare=0.72, taper=(0, 1, 2),
-        cav_top=18, cav_bot=38, a_cav=9.5, n_cav=2.2,
-        eye_w=5, eye_h=5, eye_gap=4, eye_top=24, eye_round=True, glint=1,
-        hem=True, lining=0, string=(2, 39, 45, 12), aglet=True,
-        glow=(22.0, 1.0, 11.0, 2.0), dither=True, base_v=3.45,
+        edge=64,
+        crown=3, dome_c=22, hood_bot=37, sh_bot=48, bust_bot=59,
+        a_hood=21.0, a_sh=29.0, n_dome=1.85, flare=0.72, taper=(0, 1, 2),
+        cav_top=13, cav_bot=38, a_cav=12.0, n_cav=2.2,
+        hem=True, string=(2, 39, 49, 13), aglet=True,
+        dither=True, base_v=3.4,
     ),
     # ---------------------------------------------------------------- M48 --
     # Windows Explorer's "medium icons" size, the freedesktop 48px slot, and
     # an .ico frame — the most-seen size on Windows after 16. It gets its own
     # master rather than being M24 doubled, because at 48px there is room for
-    # the glint, the gold aglet and the dithered glow that M24 cannot hold,
-    # and doubling M24 would have thrown all three away at the one size where
-    # they still register.
+    # the gold aglet and the dithered shading that M24 cannot hold, and
+    # doubling M24 would have thrown both away at the one size where they
+    # still register.
     48: Spec(
-        edge=48, inset=1, radius=10,
-        crown=8, dome_c=20, hood_bot=29, sh_bot=35, bust_bot=39,
-        a_hood=12.5, a_sh=17.0, n_dome=1.85, flare=0.72, taper=(0, 1, 2),
-        cav_top=13, cav_bot=29, a_cav=7.0, n_cav=2.2,
-        eye_w=4, eye_h=4, eye_gap=4, eye_top=18, eye_round=True, glint=1,
-        hem=True, lining=0, string=(2, 30, 34, 8), aglet=True,
-        glow=(18.0, 0.95, 10.0, 2.0), dither=True, base_v=3.45,
+        edge=48,
+        crown=2, dome_c=16, hood_bot=28, sh_bot=36, bust_bot=44,
+        a_hood=15.5, a_sh=21.5, n_dome=1.85, flare=0.72, taper=(0, 1, 2),
+        cav_top=9, cav_bot=28, a_cav=9.0, n_cav=2.2,
+        hem=True, string=(2, 29, 36, 10), aglet=True,
+        dither=True, base_v=3.4,
     ),
     # ---------------------------------------------------------------- M32 --
-    # Every anchor is M64's halved and then rounded to a whole pixel, so the
-    # two read as the same drawing; the detail budget halves with it (no
-    # glint, 1px four-row strings, a single-colour glow).
-    #
-    # The eyes are 2x3 — TALLER than wide, and 4px apart rather than 2. The
-    # obvious 3x3-at-2px-apart fills the same opening more completely and was
-    # rejected off the sheet: at 32px two 3px-wide blocks that close read as
-    # one pair of goggles, and the whole point of the eyes is that they are a
-    # pair. Keeping them narrow and separated matches the proportion M48 and
-    # M64 get for free from having more pixels.
+    # Every anchor is roughly M64's halved and rounded to a whole pixel, so
+    # the two read as the same drawing; the detail budget halves with it
+    # (1px four-row strings).
     32: Spec(
-        edge=32, inset=1, radius=7,
-        crown=5, dome_c=13, hood_bot=19, sh_bot=23, bust_bot=26,
-        a_hood=8.5, a_sh=11.5, n_dome=1.85, flare=0.72, taper=(0, 1),
-        cav_top=9, cav_bot=19, a_cav=5.0, n_cav=2.2,
-        eye_w=2, eye_h=3, eye_gap=4, eye_top=12, eye_round=False, glint=0,
-        hem=True, lining=0, string=(1, 20, 23, 6), aglet=True,
-        glow=(12.0, 0.8, 0.0, 1.0), dither=True, base_v=3.5,
+        edge=32,
+        crown=2, dome_c=11, hood_bot=19, sh_bot=24, bust_bot=29,
+        a_hood=10.5, a_sh=14.0, n_dome=1.85, flare=0.72, taper=(0, 1),
+        cav_top=6, cav_bot=19, a_cav=6.0, n_cav=2.2,
+        hem=True, string=(1, 20, 24, 6), aglet=True,
+        dither=True, base_v=3.5,
     ),
     # ---------------------------------------------------------------- M24 --
     # The tray/tab size on a HiDPI screen and an .ico frame. Ordered
     # dithering is OFF from here down: at this scale a 4x4 Bayer pattern is
     # not a gradient, it is four stray pixels of noise. The drawstrings go
     # too — 1px of `cream` on the chest at 24px is a speck of dirt, not a
-    # detail — and the eyes drop to 2x2, the smallest block that still reads
-    # as a pair rather than as dust.
+    # detail — but the hem and the keyline stay: they are the whole reason the
+    # faceless ring still reads without a tile behind it.
     24: Spec(
-        edge=24, inset=1, radius=5,
-        crown=4, dome_c=10, hood_bot=14, sh_bot=17, bust_bot=20,
-        a_hood=6.5, a_sh=8.5, n_dome=1.85, flare=0.72, taper=(0, 1),
-        cav_top=8, cav_bot=14, a_cav=4.0, n_cav=2.1,
-        eye_w=2, eye_h=2, eye_gap=2, eye_top=10, eye_round=False, glint=0,
-        hem=True, lining=0, string=None, aglet=False,
-        glow=None, dither=False, base_v=3.55,
+        edge=24,
+        crown=1, dome_c=8, hood_bot=14, sh_bot=18, bust_bot=22,
+        a_hood=8.0, a_sh=11.0, n_dome=1.85, flare=0.72, taper=(0, 1),
+        cav_top=5, cav_bot=14, a_cav=4.5, n_cav=2.1,
+        hem=True, string=None, aglet=False,
+        dither=False, base_v=3.55,
     ),
     # ---------------------------------------------------------------- M16 --
-    # The tab/tray size. Full-bleed tile (inset 0): at 16px a 1px margin is
-    # 12% of the icon's width thrown away, and every tray pads its own slots
-    # anyway. Flat bands, no glow, no drawstrings, no hem — with only two
-    # pixels of fabric between the tile edge and the opening, an `ink5` ring
-    # inside the opening and the `ink5` rim outside the hood would leave one
-    # mid pixel between two highlights and read as a mis-registration.
-    #
-    # The eyes are 2x2 and therefore span the opening's full width either
-    # side of a 2px gap, with no `shadow` margin between eye and fabric. That
-    # is the deliberate opposite of the choice every larger master makes, and
-    # it was made by rendering both at true 16px side by side: the 1x2
-    # version keeps its margin and its eyes then read as two specks of dust,
-    # while 2x2 reads as a face at a glance. At 16px legibility outranks
-    # tidiness. The fabric rides brighter here too, for the same reason —
-    # the silhouette has to win outright and there is no room left for a
-    # subtle one.
+    # The tab/tray size, and the size the mark was designed against first.
+    # Flat bands, no drawstrings, no hem — with only ~2px of fabric between the
+    # opening and the keyline, an `ink5` hem inside an `ink5` keyline leaves
+    # one mid pixel between two highlights and reads as a mis-registration, so
+    # the keyline alone carries the outer edge and the flat `shadow` opening
+    # carries the middle. The fabric rides brighter here too, because at 16px
+    # the ring has to win outright and there is no room left for a subtle one.
     16: Spec(
-        edge=16, inset=0, radius=3,
-        crown=2, dome_c=7, hood_bot=10, sh_bot=12, bust_bot=14,
-        a_hood=5.0, a_sh=6.5, n_dome=1.85, flare=0.72, taper=(0,),
-        cav_top=5, cav_bot=10, a_cav=3.0, n_cav=2.1,
-        eye_w=2, eye_h=2, eye_gap=2, eye_top=7, eye_round=False, glint=0,
-        hem=False, lining=0, string=None, aglet=False,
-        glow=None, dither=False, base_v=3.85,
+        edge=16,
+        crown=1, dome_c=6, hood_bot=10, sh_bot=13, bust_bot=14,
+        a_hood=5.5, a_sh=7.0, n_dome=1.85, flare=0.72, taper=(0,),
+        cav_top=4, cav_bot=10, a_cav=3.0, n_cav=2.1,
+        hem=False, string=None, aglet=False,
+        dither=False, base_v=3.9,
     ),
 }
 
@@ -531,11 +470,10 @@ def hood_hw(sp: Spec, y: int) -> float:
     The shoulders widen over `hood_bot`..`sh_bot` only and then run straight
     down to the bottom edge, which is the shape a shoulder actually has: it
     leaves the neck fast and then the torso goes vertical. Spreading the same
-    widening across the whole lower half instead (the first version's
-    quarter-ellipse to `bust_bot`) produced a bell — a cape or a chess pawn,
-    not a person, and a silhouette a viewer resolves as "ghost". `flare`
-    tunes the slope: 1.0 is a straight diagonal, below 1.0 rounds the
-    deltoid corner outward.
+    widening across the whole lower half instead (a quarter-ellipse to
+    `bust_bot`) produced a bell — a cape or a chess pawn, not a person, and a
+    silhouette a viewer resolves as "ghost". `flare` tunes the slope: 1.0 is a
+    straight diagonal, below 1.0 rounds the deltoid corner outward.
 
     The hood's own sides are dead straight between `dome_c` and `hood_bot`:
     that flat vertical run is the "cheek" of the hood and it is the feature
@@ -568,17 +506,15 @@ def cav_hw(sp: Spec, y: int) -> float:
     return superellipse_hw(y - c, b, sp.a_cav, sp.n_cav)
 
 
-def masks(sp: Spec) -> tuple[set, set, set, set, set]:
-    """(tile, bust, cavity, eyes, strings) as point sets.
+def masks(sp: Spec) -> tuple[set, set, set]:
+    """(bust, cavity, strings) as point sets.
 
-    Computed before anything is painted, because the tile's glow needs to
-    know where the motif is, the fabric needs to know where the opening is,
-    and the self-checks need all five independently of the colours that
-    ended up on them.
+    Computed before anything is painted, because the fabric needs to know
+    where the opening is and the self-checks need each independently of the
+    colours that ended up on them. There is no tile and there are no eyes any
+    more: the opaque footprint of the icon is exactly `bust`.
     """
     cx = sp.edge / 2.0
-    tile = rounded_rect(sp.inset, sp.inset,
-                        sp.edge - 1 - sp.inset, sp.edge - 1 - sp.inset, sp.radius)
 
     bust: set[tuple[int, int]] = set()
     for y in range(sp.crown, sp.bust_bot + 1):
@@ -593,21 +529,6 @@ def masks(sp: Spec) -> tuple[set, set, set, set, set]:
             cavity |= {(x, y) for x in range(s[0], s[1] + 1)}
     cavity &= bust          # an opening is a hole in the garment, by definition
 
-    eyes: set[tuple[int, int]] = set()
-    inner = int(cx + sp.eye_gap / 2)          # first fabric-side column right of centre
-    for dx in range(sp.eye_w):
-        for y in range(sp.eye_top, sp.eye_top + sp.eye_h):
-            xr = inner + dx
-            eyes.add((xr, y))
-            eyes.add((sp.edge - 1 - xr, y))
-    if sp.eye_round and sp.eye_w >= 4 and sp.eye_h >= 4:
-        x0, x1 = inner, inner + sp.eye_w - 1
-        y0, y1 = sp.eye_top, sp.eye_top + sp.eye_h - 1
-        for (x, y) in ((x0, y0), (x1, y0), (x0, y1), (x1, y1)):
-            eyes.discard((x, y))
-            eyes.discard((sp.edge - 1 - x, y))
-    eyes &= cavity          # an eye outside the opening is a bug, not a feature
-
     strings: set[tuple[int, int]] = set()
     if sp.string:
         w, top, bot, gap = sp.string
@@ -619,7 +540,7 @@ def masks(sp: Spec) -> tuple[set, set, set, set, set]:
                 strings.add((sp.edge - 1 - xr, y))
     strings &= bust - cavity
 
-    return tile, bust, cavity, eyes, strings
+    return bust, cavity, strings
 
 
 # --------------------------------------------------------------------------
@@ -632,10 +553,12 @@ def fabric_v(sp: Spec, x: int, y: int) -> float:
 
     `nx` is signed horizontal position normalised by the shoulder half-width
     and `ny` vertical position through the bust, so the same expression
-    produces the same LOOK at every master size instead of needing four sets
+    produces the same LOOK at every master size instead of needing five sets
     of magic rows. The chest term is the only local one: the hood physically
     overhangs the chest, so the rows just under the opening drop away and
-    that dark band is what stops the bust reading as one flat plate.
+    that dark band is what stops the bust reading as one flat plate — and,
+    now that there is no tile, it is half of the internal value range that
+    makes the domed form read at all.
     """
     cx = sp.edge / 2.0
     nx = (x + 0.5 - cx) / sp.a_sh
@@ -648,86 +571,47 @@ def fabric_v(sp: Spec, x: int, y: int) -> float:
 
 
 def paint(sp: Spec) -> Sprite:
-    """One master, painted back to front: tile, glow, tile rim, fabric,
-    fabric rim light, opening, hem, drawstrings, eyes."""
+    """One master, painted back to front on TRANSPARENCY: fabric, the outer
+    keyline, the opening, the hem, the drawstrings. Nothing paints outside
+    `bust`, so every other pixel stays alpha 0."""
     s = Sprite(sp.edge, sp.edge, palette=ICON_PALETTE)
-    tile, bust, cavity, eyes, strings = masks(sp)
+    bust, cavity, strings = masks(sp)
     cx = sp.edge / 2.0
     fabric = bust - cavity
-
-    # ---- tile ---------------------------------------------------------
-    for (x, y) in tile:
-        s.dot(x, y, "shadow")
-
-    # The room's glow pool, behind the crown: `wall_dark` at a radial density
-    # over the `shadow` field, with a tighter `wall_light` core at the larger
-    # sizes. Held `gap` px clear of the motif so the halo never touches the
-    # hood's rim light — light-dark-light across that boundary is what makes
-    # the crown pop instead of dissolving into its own backdrop.
-    if sp.glow:
-        r_dark, gain, r_light, gap = sp.glow
-        keep_clear = dilate(bust, int(gap))
-        gy = sp.dome_c
-        for (x, y) in sorted(tile - keep_clear):
-            d = ((x + 0.5 - cx) ** 2 + (y + 0.5 - gy) ** 2) ** 0.5
-            t = max(0.0, 1.0 - d / r_dark)
-            if bayer_mix(x, y, min(1.0, t ** 1.3 * gain), "a", "b") == "b":
-                s.dot(x, y, "wall_dark")
-                if r_light > 0:
-                    u = max(0.0, 1.0 - d / r_light)
-                    if bayer_mix(x, y, u ** 1.6 * 0.55, "a", "b") == "b":
-                        s.dot(x, y, "wall_light")
-
-    # The tile's own edge light, one step above its fill, all the way round —
-    # not a bottom-right drop shadow, which would be invisible on the dark
-    # taskbars this icon has to survive.
-    for (x, y) in rim_of(tile):
-        s.dot(x, y, "wall_light")
-
-    # ---- the hood -----------------------------------------------------
     cav_rim = rim_of(cavity) if cavity else set()
+
+    # ---- the hood fabric ----------------------------------------------
+    # Banded ink shading (one key light, upper left, plus the chest cast
+    # shadow): the internal value range that lets the domed form read without
+    # a tile behind it.
     for (x, y) in sorted(fabric):
         s.dot(x, y, ink_at(x, y, fabric_v(sp, x, y), sp.dither))
 
-    # Rim light: the outer 1px of the garment is clamped to `ink4` or
-    # brighter, and to `ink5` on the arc facing the key light. The clamp is
-    # not decoration — the shading legitimately reaches `ink2` at the bottom
-    # right, `ink2` on `shadow` is a 1.7:1 read, and without the clamp the
-    # bust's lower corners melt into the tile. `check_contrast` measures it.
-    mid_y = (sp.crown + sp.bust_bot) / 2.0
+    # ---- the keyline --------------------------------------------------
+    # A 1px `ink5` outline around the WHOLE silhouette — the brightest indigo
+    # the tint reaches, a 3.6:1 read on black and 3.2:1 on a dark Dock. With
+    # the dusk tile gone this closed outline is the only thing holding the
+    # figure's edge against a dark ground; on a white taskbar the dark fabric
+    # body is the silhouette instead. `check_contrast` measures the black case.
     for (x, y) in rim_of(bust):
         if (x, y) in cavity:
             continue
-        lit = (x + 0.5 - cx) / sp.a_sh + (y - mid_y) / (sp.bust_bot - sp.crown) <= -0.1
-        base = fabric_v(sp, x, y)
-        s.dot(x, y, ink_at(x, y, 4.0 if lit else max(base, 3.0), sp.dither))
+        s.dot(x, y, "ink5")
 
     # ---- the opening --------------------------------------------------
+    # Flat `shadow`: a dark, empty, FACELESS cavity (owner direction — the
+    # mint eyes are gone). Opaque, not transparent, so the opening reads as an
+    # occluded interior on a light ground instead of punching a bright hole
+    # through the hood; on a dark ground it simply recedes.
     for (x, y) in sorted(cavity):
         s.dot(x, y, "shadow")
-    if sp.lining:
-        # `hair` is the palette entry whose v2 role IS "hood interior", so a
-        # band of it inside the opening is the same depth cue
-        # `dev_base_*.png` paints — and being warm, it stops the opening
-        # reading as a hole punched clean through to the tile behind.
-        #
-        # Under the BROW, hugging the top of the opening, taken per column so
-        # the band follows the curve. The first version put it along the
-        # bottom instead: a warm arc directly under two eyes is a mouth, and
-        # the 256px render grinned. At the top it is what it physically is,
-        # the lining of the hood lit from below by the screen.
-        by_col: dict[int, int] = {}
-        for (x, y) in cavity:
-            by_col[x] = min(by_col.get(x, sp.edge), y)
-        for (x, y) in sorted(cavity):
-            if y < by_col[x] + sp.lining:
-                s.dot(x, y, "hair")
     if sp.hem:
         # The rolled front edge of the hood, 1px of `ink5` on the fabric side
         # of the opening. Two jobs: it says "garment with a thickness", and it
         # puts the brightest ink directly against the darkest pixel in the
         # icon, which is the crispest boundary available and the one that
-        # makes the ring read as a hood at a glance.
+        # makes the ring read as a hood at a glance — the job the eyes used to
+        # do, now done by the edge of the opening itself.
         for (x, y) in sorted(cav_rim):
             for dx in (-1, 0, 1):
                 for dy in (-1, 0, 1):
@@ -744,34 +628,6 @@ def paint(sp: Spec) -> Sprite:
             for (x, y) in sorted(strings):
                 if y == bot:
                     s.dot(x, y, "gold")
-
-    # ---- eyes ---------------------------------------------------------
-    for (x, y) in sorted(eyes):
-        s.dot(x, y, "screen")
-    if sp.glint:
-        # The same key light as everything else: up and to the left inside
-        # each eye — mirrored to each eye's OWN left edge rather than
-        # mirrored across the icon, because one light source means both
-        # highlights sit on the same side of their eye.
-        #
-        # Anchored one column in when the eye is corner-clipped: the eye's
-        # literal top-left pixel is exactly the pixel `eye_round` removed, so
-        # anchoring there made a 1px glint paint nothing at all and vanish
-        # without any assertion noticing.
-        inner = int(cx + sp.eye_gap / 2)
-        off = 1 if sp.eye_round else 0
-        painted = 0
-        for gx in range(sp.glint):
-            for gy in range(sp.glint):
-                for q in ((inner + off + gx, sp.eye_top + gy),
-                          (sp.edge - 1 - (inner + sp.eye_w - 1 - off - gx),
-                           sp.eye_top + gy)):
-                    if q in eyes:
-                        s.dot(q[0], q[1], "lamp")
-                        painted += 1
-        assert painted == 2 * sp.glint ** 2, (
-            f"M{sp.edge}: {painted} of {2 * sp.glint ** 2} glint px landed "
-            f"inside an eye — the glint is being clipped away")
     return s
 
 
@@ -929,7 +785,9 @@ def check_palette(img: Image.Image, label: str) -> dict[str, int]:
     colours at full opacity, and return a name -> count census. Same
     guarantee `gen_assets.py` gives every sprite: art that drifted
     off-palette, or that some resampler quietly anti-aliased on the way out,
-    fails the build instead of shipping."""
+    fails the build instead of shipping. Binary alpha is load-bearing here —
+    the mark is transparent pixel art, so a single midtone edge pixel is a
+    halo the OS would composite as fringe, and this is where it dies."""
     rgba = img.convert("RGBA")
     px = rgba.load()
     w, h = rgba.size
@@ -950,27 +808,54 @@ def check_palette(img: Image.Image, label: str) -> dict[str, int]:
 
 
 def check_footprint(img: Image.Image, sp: Spec) -> str:
-    """Assert the master's opaque footprint is EXACTLY its tile — nothing
-    outside it and no hole inside it.
+    """Assert the master's opaque footprint is EXACTLY its hooded bust — every
+    bust pixel painted, and NOTHING outside it painted, so the icon sits on
+    true transparency with no stray tile pixel and no leak past the silhouette.
 
-    Both halves matter. A hole means a tile pixel was never painted. Anything
-    outside means an element leaked past the rounded corner, which at icon
-    scale does not read as a bold overhang, it reads as a chipped icon. This
-    is what lets the bust's shoulders be widened without re-deriving the
-    corner arithmetic by hand each time.
+    This is the assertion that used to read "footprint == tile"; now that the
+    tile is gone it is the thing that guarantees the background really is
+    empty. Both halves matter: a hole means a bust pixel was never painted, and
+    anything outside `bust` is a pixel the OS would frame as part of the mark.
     """
     px = img.convert("RGBA").load()
     opaque = {(x, y) for y in range(sp.edge) for x in range(sp.edge)
               if px[x, y][3] != 0}
-    tile = rounded_rect(sp.inset, sp.inset,
-                        sp.edge - 1 - sp.inset, sp.edge - 1 - sp.inset, sp.radius)
-    if opaque - tile:
-        raise AssertionError(f"M{sp.edge}: {len(opaque - tile)} px outside the tile, "
-                             f"e.g. {sorted(opaque - tile)[:4]}")
-    if tile - opaque:
-        raise AssertionError(f"M{sp.edge}: {len(tile - opaque)} unpainted tile px, "
-                             f"e.g. {sorted(tile - opaque)[:4]}")
-    return f"footprint == tile ({len(tile)} px)"
+    bust, _, _ = masks(sp)
+    if opaque - bust:
+        raise AssertionError(f"M{sp.edge}: {len(opaque - bust)} px outside the bust, "
+                             f"e.g. {sorted(opaque - bust)[:4]}")
+    if bust - opaque:
+        raise AssertionError(f"M{sp.edge}: {len(bust - opaque)} unpainted bust px, "
+                             f"e.g. {sorted(bust - opaque)[:4]}")
+    return f"footprint == bust ({len(bust)} px), background fully transparent"
+
+
+# The mark must OWN the canvas now that no tile pads it, but keep a hair of
+# margin so a plate-compositing desktop (GNOME sometimes composites an icon on
+# a rounded plate) never clips the silhouette.
+FILL_FLOOR = 0.80          # bbox is at least this fraction of the edge, each axis
+MARGIN_MIN = 1             # ...and at least this many clear px on every side
+
+
+def check_fill(img: Image.Image, sp: Spec) -> str:
+    """Assert the mark fills the frame (>= FILL_FLOOR in both axes) yet keeps
+    at least MARGIN_MIN px of clear transparency on every side. This is the
+    'raise' — with the tile's padding gone a free-standing mark should occupy
+    more of the canvas — made into a number so a future edit that shrinks the
+    mark back into a stamp, or lets it bleed to the very edge, fails."""
+    px = img.convert("RGBA").load()
+    xs = [x for y in range(sp.edge) for x in range(sp.edge) if px[x, y][3]]
+    ys = [y for y in range(sp.edge) for x in range(sp.edge) if px[x, y][3]]
+    x0, x1, y0, y1 = min(xs), max(xs), min(ys), max(ys)
+    fw, fh = (x1 - x0 + 1) / sp.edge, (y1 - y0 + 1) / sp.edge
+    margin = min(x0, y0, sp.edge - 1 - x1, sp.edge - 1 - y1)
+    if fw < FILL_FLOOR or fh < FILL_FLOOR:
+        raise AssertionError(f"M{sp.edge}: mark fills only {fw:.0%}x{fh:.0%} "
+                             f"(floor {FILL_FLOOR:.0%})")
+    if margin < MARGIN_MIN:
+        raise AssertionError(f"M{sp.edge}: mark leaves only {margin}px margin "
+                             f"(min {MARGIN_MIN})")
+    return f"fills {fw:.0%}x{fh:.0%} of the frame, {margin}px clear margin"
 
 
 def check_symmetry(sp: Spec) -> str:
@@ -978,22 +863,19 @@ def check_symmetry(sp: Spec) -> str:
 
     Not the colours: the shading is directional on purpose (one key light,
     upper left) and asserting symmetric pixels would forbid it. But an
-    off-by-one in a span, an odd `eye_gap`, or a drawstring pair that drifted
-    a column apart are all invisible at 16px and glaring at 512, and this is
-    the assertion that catches them.
+    off-by-one in a span or a drawstring pair that drifted a column apart are
+    invisible at 16px and glaring at 512, and this is the assertion that
+    catches them.
     """
-    tile, bust, cavity, eyes, strings = masks(sp)
-    for label, pts in (("tile", tile), ("bust", bust), ("cavity", cavity),
-                       ("eyes", eyes), ("strings", strings)):
+    bust, cavity, strings = masks(sp)
+    for label, pts in (("bust", bust), ("cavity", cavity), ("strings", strings)):
         flip = {(sp.edge - 1 - x, y) for (x, y) in pts}
         if flip != pts:
             raise AssertionError(
                 f"M{sp.edge}: {label} is not mirror-symmetric "
                 f"({len(pts ^ flip)} px differ)")
-    if sp.eye_gap % 2:
-        raise AssertionError(f"M{sp.edge}: eye_gap must be even to stay centred")
     return (f"mirror-symmetric: bust {len(bust)}, opening {len(cavity)}, "
-            f"eyes {len(eyes)}, strings {len(strings)}")
+            f"strings {len(strings)}")
 
 
 def _lum(rgb: tuple[int, int, int]) -> float:
@@ -1009,28 +891,34 @@ def contrast(a: tuple[int, int, int], b: tuple[int, int, int]) -> float:
     return (max(la, lb) + 0.05) / (min(la, lb) + 0.05)
 
 
-# The three reads the icon lives or dies by, as measured ratios rather than
-# as an opinion. `hood/tile` is the silhouette (the rim-light clamp exists to
-# hold it), `eyes/opening` is the feature that has to survive to 16px, and
-# `tile rim/black` is whether the icon has an edge at all on a black taskbar.
+# The two reads a tile-less, faceless mark lives or dies by, as measured
+# ratios rather than as an opinion. `keyline vs black` is the whole silhouette
+# on the darkest Dock it will ever sit on — the make-or-break, since there is
+# no tile left to carry it. `crown vs opening` is whether the hood reads as a
+# lit ring around a dark hole, the job the mint eyes used to do.
 CONTRAST_FLOORS: dict[str, float] = {
-    "hood rim vs tile": 2.0,
-    "eye vs opening": 8.0,
-    "tile rim vs black": 1.5,
+    "keyline (ink5) vs black": 2.0,
+    "crown (ink5) vs opening (shadow)": 2.0,
 }
 
 
 def check_contrast() -> list[str]:
     got = {
-        "hood rim vs tile": contrast(INK["ink4"], PALETTE["shadow"]),
-        "eye vs opening": contrast(PALETTE["screen"], PALETTE["shadow"]),
-        "tile rim vs black": contrast(PALETTE["wall_light"], (0, 0, 0)),
+        "keyline (ink5) vs black": contrast(INK["ink5"], (0, 0, 0)),
+        "crown (ink5) vs opening (shadow)": contrast(INK["ink5"], PALETTE["shadow"]),
     }
     lines = []
     for k, floor in CONTRAST_FLOORS.items():
         if got[k] < floor:
             raise AssertionError(f"contrast {k} = {got[k]:.2f}:1, floor {floor}:1")
         lines.append(f"{k}: {got[k]:.2f}:1 (floor {floor}:1)")
+    # Reported, not floored: the dark-Dock read (#14131a) the sheet is judged
+    # against, and the light-taskbar read (the dark fabric body is the
+    # silhouette there, so it is measured against white).
+    lines.append(f"  (informational) keyline vs #14131a dark Dock: "
+                 f"{contrast(INK['ink5'], (0x14, 0x13, 0x1a)):.2f}:1")
+    lines.append(f"  (informational) fabric body (ink1) vs white taskbar: "
+                 f"{contrast(INK['ink1'], (0xff, 0xff, 0xff)):.2f}:1")
     return lines
 
 
@@ -1040,11 +928,16 @@ def check_not_downscaled(masters: dict[int, Image.Image]) -> str:
     The brief this icon was built to calls per-size authoring "what separates
     industry-standard icons from resized ones", so the claim gets an
     assertion: against nearest, box and lanczos reductions of the hero
-    master, more than a quarter of M16's 256 pixels must differ. In practice
-    it is far more than that — the small masters drop the glow and the
-    drawstrings, and re-cut the eyes — and the floor is set low
-    deliberately, to fail only if someone actually replaces a master with a
-    resize.
+    master, more than 15% of M16's 256 pixels must differ. The floor was 25%
+    while the tile, the mint eyes, the glow pool and the drawstrings all
+    diverged the small end hard; a transparent, faceless, tile-less mark is
+    simpler and converges more, so a nearest shrink now lands 23% away
+    (60 of 256 px) rather than far more. That is still a real, hand-authored
+    gap — M16 rides the fabric brighter (base_v 3.9), drops the hem, and
+    re-cuts the opening and shoulders — and nearest is the ONLY resize that
+    preserves the hard pixel-art edges (box lands 48% away, lanczos 85%), so
+    it is the meaningful comparison. The floor is set to fail only if someone
+    actually replaces a master with a resize, which would read ~0%.
     """
     small = masters[16].convert("RGBA")
     out = []
@@ -1053,7 +946,7 @@ def check_not_downscaled(masters: dict[int, Image.Image]) -> str:
         naive = masters[64].convert("RGBA").resize((16, 16), f)
         diff = sum(1 for a, b in zip(pixels(small), pixels(naive)) if a != b)
         frac = diff / 256.0
-        if frac <= 0.25:
+        if frac <= 0.15:
             raise AssertionError(
                 f"M16 differs from a {name} downscale of M64 in only "
                 f"{frac:.0%} of pixels — it is a resize, not a master")
@@ -1070,12 +963,13 @@ def sha(path: Path) -> str:
 # --------------------------------------------------------------------------
 
 def review_sheet(masters: dict[int, Image.Image], out: Path) -> None:
-    """The contact sheet this icon was judged on: every delivered size over a
-    dark and a light backdrop, the three small masters magnified so their
-    individual pixels can be inspected, and mock taskbar/dock rows in both
-    themes. Not a build artifact — it is written only when `--sheet` asks for
-    it, and it exists so the verdict on this icon is made by looking at it at
-    the sizes people will actually see."""
+    """The contact sheet this icon is judged on: every delivered size over a
+    dark, a light and a mid-grey strip AND a transparency checkerboard —
+    because the mark is transparent and faceless now, the dark-ground read is
+    make-or-break and the sheet has to make that obvious — the five masters
+    magnified so their individual pixels can be inspected, and mock
+    dock/taskbar/dash rows. Not a build artifact — written only when `--sheet`
+    asks for it."""
     from PIL import ImageDraw, ImageFont
 
     try:
@@ -1085,41 +979,61 @@ def review_sheet(masters: dict[int, Image.Image], out: Path) -> None:
         font = small = ImageFont.load_default()
 
     DARK, LIGHT, MID = (0x14, 0x13, 0x1A), (0xF4, 0xF2, 0xEE), (0x80, 0x80, 0x88)
-    sizes = (16, 24, 32, 48, 64, 128, 256)
-    W = 1180
-    sheet = Image.new("RGB", (W, 1560), (0x24, 0x24, 0x2C))
+    sizes = (16, 24, 32, 48, 64, 128, 256, 512)
+    W = 1420
+
+    def checker_bg(x0: int, y0: int, w: int, h: int, cell: int = 12) -> None:
+        a, b = (0xCF, 0xCF, 0xD6), (0xA6, 0xA6, 0xB0)
+        for yy in range(0, h, cell):
+            for xx in range(0, w, cell):
+                c = a if ((xx // cell + yy // cell) % 2 == 0) else b
+                d.rectangle([x0 + xx, y0 + yy,
+                             min(x0 + xx + cell - 1, x0 + w - 1),
+                             min(y0 + yy + cell - 1, y0 + h - 1)], fill=c)
+
+    sheet = Image.new("RGB", (W, 2200), (0x24, 0x24, 0x2C))
     d = ImageDraw.Draw(sheet)
 
     def label(x: int, y: int, text: str, fill=(0xF2, 0xE0, 0xC9), f=None) -> None:
         d.text((x, y), text, fill=fill, font=f or small)
 
-    def strip(y: int, bg, title: str, fg) -> int:
-        d.rectangle([0, y, W - 1, y + 300], fill=bg)
+    def strip(y: int, bg, title: str, fg, checker=False) -> int:
+        H = 300
+        if checker:
+            checker_bg(0, y, W, H)
+        else:
+            d.rectangle([0, y, W - 1, y + H], fill=bg)
         label(24, y + 12, title, fg, font)
         x = 24
         for sz in sizes:
             img = render(sz, masters)
-            sheet.paste(img, (x, y + 300 - 24 - sz), img)
-            label(x, y + 300 - 20, f"{sz}", fg)
-            x += max(sz, 34) + 26
-        return y + 300
+            ps = min(sz, 256)
+            paste = img if sz <= 256 else img.resize((ps, ps), Image.NEAREST)
+            sheet.paste(paste, (x, y + H - 24 - ps), paste)
+            label(x, y + H - 20, f"{sz}", fg)
+            x += max(ps, 34) + 24
+        return y + H
 
     y = 0
-    label(24, y + 8, "dexel app icon - review sheet. Every image below is a "
-                     "hand-authored master or an integer nearest upscale of one.",
-          f=font)
+    label(24, y + 8, "dexel app icon - review sheet. Transparent, faceless, no "
+                     "tile. Dark-ground legibility is make-or-break: judge the "
+                     "top strip first. (512 shown at 256.)", f=font)
     y += 34
-    y = strip(y, DARK, "on dark  #14131a", (0xF2, 0xE0, 0xC9))
+    y = strip(y, DARK, "on dark  #14131a  (the make-or-break: a dark Dock)",
+              (0xF2, 0xE0, 0xC9))
     y = strip(y, LIGHT, "on light  #f4f2ee", (0x24, 0x1F, 0x2E))
     y = strip(y, MID, "on mid grey  #808088", (0x14, 0x13, 0x1A))
+    y = strip(y, None, "on transparency (checkerboard = alpha 0)",
+              (0x1A, 0x1A, 0x22), checker=True)
 
-    # ---- pixel-peep: the small masters magnified ------------------------
+    # ---- pixel-peep: the masters magnified over a checkerboard ----------
     d.rectangle([0, y, W - 1, y + 330], fill=(0x1C, 0x1A, 0x24))
-    label(24, y + 12, f"the {len(MASTERS)} masters, magnified (each drawn at its "
-                      f"own size, never resized)", f=font)
+    label(24, y + 12, f"the {len(MASTERS)} masters, magnified over a checkerboard "
+                      f"(each drawn at its own size, never resized)", f=font)
     x = 24
     for edge in MASTERS:
-        zoom = max(2, 192 // edge)
+        zoom = max(2, 176 // edge)
+        checker_bg(x, y + 44, edge * zoom, edge * zoom)
         img = masters[edge].convert("RGBA").resize((edge * zoom, edge * zoom),
                                                    Image.NEAREST)
         sheet.paste(img, (x, y + 44), img)
@@ -1127,7 +1041,7 @@ def review_sheet(masters: dict[int, Image.Image], out: Path) -> None:
         x += edge * zoom + 22
     y += 330
 
-    # ---- fake taskbar / dock -------------------------------------------
+    # ---- mock OS context rows ------------------------------------------
     def bar(y: int, bg, neighbours, title: str, sz: int, pad: int) -> int:
         h = sz + pad * 2
         label(24, y + 6, title, f=small)
@@ -1138,7 +1052,7 @@ def review_sheet(masters: dict[int, Image.Image], out: Path) -> None:
             if i == 2:
                 img = render(sz, masters)
                 sheet.paste(img, (x, y + pad), img)
-            else:
+            elif col is not None:
                 d.rounded_rectangle([x, y + pad, x + sz - 1, y + pad + sz - 1],
                                     radius=max(2, sz // 5), fill=col)
             x += sz + pad + 6
@@ -1148,12 +1062,14 @@ def review_sheet(masters: dict[int, Image.Image], out: Path) -> None:
                (0x4E, 0x8B, 0x4F), (0xE0, 0xB0, 0x40), (0x60, 0x60, 0x68)]
     nb_light = [(0x2A, 0x5E, 0x95), (0xD0, 0xD0, 0xD8), None, (0xB0, 0x40, 0x30),
                 (0x3E, 0x7B, 0x3F), (0xD0, 0xA0, 0x30), (0xA0, 0xA0, 0xA8)]
+    y = bar(y, (0x22, 0x24, 0x2E), nb_dark,
+            "mock macOS dock (dark)  64px", 64, 10)
     y = bar(y, (0x1B, 0x1B, 0x20), nb_dark,
-            "mock dark taskbar (24px tray/tab size)", 24, 6)
+            "mock Windows taskbar (dark)  24px", 24, 6)
     y = bar(y, (0xE8, 0xE8, 0xEC), nb_light,
-            "mock light taskbar (24px tray/tab size)", 24, 6)
-    y = bar(y, (0x28, 0x26, 0x32), nb_dark,
-            "mock dock (64px)", 64, 10)
+            "mock Windows taskbar (light)  24px", 24, 6)
+    y = bar(y, (0x2C, 0x2A, 0x36), nb_dark,
+            "mock GNOME dash (dark)  48px", 48, 8)
 
     sheet = sheet.crop((0, 0, W, min(y + 8, sheet.height)))
     out.parent.mkdir(parents=True, exist_ok=True)
@@ -1188,10 +1104,12 @@ def main() -> int:
         census = check_palette(img, f"M{edge}")
         try:
             foot = check_footprint(img, sp)
+            fill = check_fill(img, sp)
             sym = check_symmetry(sp)
         except AssertionError as exc:
-            ok, foot, sym = False, f"FAIL: {exc}", ""
+            ok, foot, fill, sym = False, f"FAIL: {exc}", "", ""
         print(f"  M{edge:<4} {edge}x{edge}  {len(census)} colours  {foot}")
+        print(f"        {fill}")
         print(f"        {sym}")
 
     print("\n-- legibility (measured, not asserted by eye) --")
@@ -1326,7 +1244,7 @@ def main() -> int:
     listed = [p for p in TAURI_ICON if f'"{p}"' in conf]
     if len(listed) != len(TAURI_ICON):
         ok = False
-        print("  FAIL: tauri.conf.json no longer lists", 
+        print("  FAIL: tauri.conf.json no longer lists",
               sorted(set(TAURI_ICON) - set(listed)))
     else:
         print(f"  tauri.conf.json's bundle.icon lists {len(listed)} files, all present")
