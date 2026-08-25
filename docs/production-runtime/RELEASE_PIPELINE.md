@@ -406,6 +406,30 @@ against the same live release, with a throwaway `HOME` and `XDG_DATA_HOME`:
   dot-sourcing. **The `WScript.Shell` shortcut creation itself is unverified**
   — there is no Windows host in this environment.
 
+**Amendment — `install.sh` now delegates to `install.ps1` on Git Bash/MSYS2/
+Cygwin instead of just printing the PowerShell one-liner.** `uname -s`
+answering `MINGW*`/`MSYS*`/`CYGWIN*` used to be an immediate exit 3 with
+instructions; it now locates `powershell.exe`/`pwsh.exe` (PATH, then the
+usual Git-Bash/Cygwin absolute path), downloads `install.ps1` from the same
+`$REPO` + `main` ref this file already treats as canonical, converts the
+temp path with `cygpath -w` when available, and runs it with
+`-NoProfile -ExecutionPolicy Bypass -File`, ending with its exit code. This
+makes `curl \| bash` genuinely one command everywhere bash exists, including
+a stock Windows box with only Git Bash installed — the exit-3 message is
+now the fallback for when no PowerShell can be found, not the default for
+being on Windows at all. WSL is untouched: its `uname -s` answers `Linux`,
+so it already took (and still takes) the normal Linux branch, which is the
+right outcome for a WSL user, not a gap. install.ps1 has no checksum sidecar
+of its own, so fetching it is the same `curl \| sh` trust level this file
+already accepts, extended one hop, not a new weaker one. Verified: `--dry-run`
+against the live release (unchanged, Linux path); `shellcheck -s sh` clean;
+parses under `dash -n`/`bash -n`/`busybox ash -n`; the delegation path itself
+was simulated with a stub `powershell.exe` + stub `cygpath` on `PATH` and
+`DEXEL_UNAME_S=MINGW64_NT-...` (no Windows host exists in this environment)
+— confirmed it downloads `install.ps1` for real, converts the path, invokes
+the stub with the documented flags and env, and propagates both a `0` and a
+`7` stub exit code unchanged.
+
 ---
 
 ## 6. `scripts/install.sh`

@@ -38,13 +38,24 @@ has an icon in your desktop's app grid (Linux) or Start Menu (Windows), and
 then starts the runtime and opens the game. No `sudo`, no elevation, no
 autostart.
 
-**Linux** (amd64 or arm64):
+**Linux and Windows via Git Bash/MSYS2/Cygwin** (amd64 or arm64) — the same
+one line everywhere bash exists (macOS runs the same script too, see the note
+below on why it isn't installable yet):
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/jawwadzafar/dexel/main/install.sh | bash
 ```
 
-**Windows** (amd64 or arm64), in PowerShell:
+On a real Windows box, running that inside Git Bash (or plain MSYS2, or
+Cygwin) does not just print instructions and stop: `install.sh` detects it,
+finds `powershell.exe`/`pwsh.exe`, downloads `install.ps1` and hands off to
+it automatically, so it finishes the same install `install.ps1` itself would
+have done. If no PowerShell can be found on that box, it falls back to
+printing the one-liner below instead of guessing. (WSL is unaffected either
+way — WSL is Linux, so it just takes the normal Linux path above.)
+
+**Stock PowerShell** (amd64 or arm64), if you'd rather run it directly
+instead of through Git Bash:
 
 ```powershell
 irm https://raw.githubusercontent.com/jawwadzafar/dexel/main/install.ps1 | iex

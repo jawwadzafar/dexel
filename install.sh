@@ -45,6 +45,16 @@
 #     which is a supported front door and not a consolation prize.
 # All of it lives under $HOME, is idempotent, and is skippable.
 #
+# ON GIT BASH / MSYS2 / CYGWIN — a real Windows box whose `uname -s` answers
+# MINGW*/MSYS*/CYGWIN* — this script does not just print the PowerShell
+# one-liner and stop. It finds powershell.exe or pwsh.exe, downloads
+# install.ps1 from this same repo + ref, and runs it, so `curl | bash` is
+# one command that works there too. WSL is deliberately NOT this case: its
+# `uname -s` answers Linux, so a WSL shell already takes the normal Linux
+# path above (see the comment inside detect_platform for why that is the
+# right call, not an oversight). If no PowerShell can be found, the exit-3
+# message with the one-liner below is still the fallback.
+#
 # Options (flags, or the environment):
 #   --dry-run                resolve + download + verify, then stop. No writes
 #                            outside the temp dir. This is the mode CI runs.
@@ -170,16 +180,35 @@ cleanup() {
 
 detect_platform() {
     _uname_s="${DEXEL_UNAME_S:-$(uname -s)}"
-    _uname_m="${DEXEL_UNAME_M:-$(uname -m)}"
 
     case "$_uname_s" in
         Linux)  OS=linux ;;
         Darwin) OS=darwin ;;
         MINGW*|MSYS*|CYGWIN*|Windows_NT)
-            die "$E_PLATFORM" "this is Windows ($_uname_s). install.sh is for Linux and macOS;
-on Windows run the PowerShell one-liner instead:
-
-  irm https://raw.githubusercontent.com/${REPO}/main/install.ps1 | iex"
+            # Bash actually running ON Windows (Git Bash, plain MSYS2,
+            # Cygwin) reports one of these. Hand off to delegate_windows
+            # (called from main) instead of dying here, and return before
+            # the arch case below gets a chance to reject an `uname -m`
+            # spelling it does not recognise on a platform this script is
+            # not even going to install onto — install.ps1 detects the
+            # architecture its own way, from real Windows environment
+            # variables, not from `uname -m`.
+            #
+            # WSL is deliberately NOT matched here. WSL's `uname -s` answers
+            # "Linux" — it runs a real Linux kernel/userspace, not an
+            # emulation layer — so it already takes the Linux branch above
+            # with no special-casing needed. That is the right call, not an
+            # oversight: a WSL user overwhelmingly wants dexel *inside* WSL
+            # (their $PATH, their terminal, their files), not a redirect out
+            # to a Windows-side PowerShell install. The unambiguous way to
+            # tell WSL apart from a bare Windows shell would be
+            # `grep -qi microsoft /proc/version`, but there is nothing to do
+            # differently once told apart — the Linux branch already does
+            # the right thing for WSL — so that check is not added: dead
+            # code that only a comment would explain is worse than the
+            # comment alone.
+            OS=windows
+            return 0
             ;;
         *)
             die "$E_PLATFORM" "unsupported operating system: $_uname_s
@@ -188,6 +217,7 @@ Build from source instead: https://github.com/${REPO}#building-from-source"
             ;;
     esac
 
+    _uname_m="${DEXEL_UNAME_M:-$(uname -m)}"
     case "$_uname_m" in
         x86_64|amd64)          ARCH=amd64 ;;
         aarch64|arm64|armv8*)  ARCH=arm64 ;;
@@ -205,14 +235,23 @@ Build from source instead: https://github.com/${REPO}#building-from-source"
 
 have() { command -v "$1" >/dev/null 2>&1; }
 
-check_tools() {
+# pick_http_client — sets HTTP_CLIENT, or returns 1 and sets nothing.
+# Factored out of check_tools so delegate_windows (below) can ask the same
+# question without also demanding sha256sum/tar/etc., none of which the
+# Windows-delegation path uses.
+pick_http_client() {
     if have curl; then
         HTTP_CLIENT=curl
     elif have wget; then
         HTTP_CLIENT=wget
     else
-        die "$E_TOOL" "need curl or wget to download anything. Install one and re-run."
+        return 1
     fi
+}
+
+check_tools() {
+    pick_http_client ||
+        die "$E_TOOL" "need curl or wget to download anything. Install one and re-run."
 
     if have sha256sum; then
         SHA_TOOL=sha256sum
@@ -291,6 +330,141 @@ token_hint() {
         say "  ${REPO} may still be private. Export a token that can read it:"
         say "      GH_TOKEN=\"\$(gh auth token)\""
     fi
+}
+
+# ---------------------------------------------------------------------------
+# Windows delegation (Git Bash / MSYS2 / Cygwin) — install.sh's exit-3
+# platform check for MINGW*/MSYS*/CYGWIN* used to just print the PowerShell
+# one-liner and stop (see detect_platform). Now it calls here instead: find
+# powershell.exe/pwsh.exe, fetch install.ps1, run it, and finish with its
+# exit code, so `curl | bash` is one command that works on a stock Windows
+# box with only Git Bash installed. Reaching this function at all already
+# means detect_platform saw MINGW*/MSYS*/CYGWIN* — it is never called for
+# WSL, which detect_platform's comment explains.
+# ---------------------------------------------------------------------------
+
+# find_powershell — the first working PowerShell, checked in the order a
+# modern-first install should prefer it. Git Bash does not put System32 on
+# PATH by default, which is why the two absolute fallbacks exist; MSYS2/Git
+# Bash and Cygwin mount the C: drive at different points, so both are tried.
+find_powershell() {
+    for _cand in pwsh pwsh.exe powershell powershell.exe; do
+        if have "$_cand"; then
+            printf '%s\n' "$_cand"
+            return 0
+        fi
+    done
+    for _cand in \
+        /c/Windows/System32/WindowsPowerShell/v1.0/powershell.exe \
+        /cygdrive/c/Windows/System32/WindowsPowerShell/v1.0/powershell.exe
+    do
+        if [ -x "$_cand" ]; then
+            printf '%s\n' "$_cand"
+            return 0
+        fi
+    done
+    return 1
+}
+
+# to_windows_path PATH — a Windows-shaped path for a POSIX-shaped one, for
+# anything powershell.exe has to read back as a path: the -File argument
+# itself, and DEXEL_INSTALL_DIR / DEXEL_ARCHIVE / DEXEL_HOME if the caller
+# set one.
+#
+# `cygpath -w`, where present, is authoritative and unambiguous, so prefer
+# it. Without it, MSYS2 (Git Bash's own shell) is documented to
+# auto-convert an absolute-looking POSIX argument or environment value when
+# the program being run is a real Windows binary rather than another MSYS
+# one — that heuristic is the only option left on a cygpath-less box, so the
+# path is passed through unconverted and left for MSYS2 to translate.
+# Cygwin's bash does NOT do this auto-conversion, but every Cygwin install
+# ships cygpath, so it is the first branch, not this one, that fires there.
+to_windows_path() {
+    if have cygpath; then
+        cygpath -w "$1"
+    else
+        printf '%s\n' "$1"
+    fi
+}
+
+delegate_windows() {
+    _psbin=$(find_powershell) ||
+        die "$E_PLATFORM" "this is Windows ($_uname_s), and neither pwsh.exe nor powershell.exe
+could be found on PATH or at the usual Git-Bash/Cygwin location, so
+install.sh cannot delegate to install.ps1 automatically from here.
+
+Run the PowerShell one-liner yourself instead:
+
+  irm https://raw.githubusercontent.com/${REPO}/main/install.ps1 | iex"
+
+    pick_http_client ||
+        die "$E_TOOL" "need curl or wget to download install.ps1. Install one, or run the
+PowerShell one-liner yourself:
+
+  irm https://raw.githubusercontent.com/${REPO}/main/install.ps1 | iex"
+    resolve_token
+    make_tempdir
+
+    # Same $REPO, same hardcoded "main" that this script's own die messages
+    # already point at elsewhere (see detect_platform, and the fallback
+    # above): a script read from stdin via `curl | sh` has no way to know
+    # the URL it was itself fetched from, so "the same source" means the
+    # same repo + ref this file already treats as canonical everywhere else
+    # — including a DEXEL_REPO override for a fork, which applies here too.
+    _ps1_url="https://raw.githubusercontent.com/${REPO}/main/install.ps1"
+    _ps1_path="$TMPD/install.ps1"
+
+    say "==> Windows detected ($_uname_s) — delegating to install.ps1 via $_psbin"
+    say "==> downloading install.ps1"
+    # Honesty check: install.ps1 has no checksum sidecar of its own — only
+    # the release ARCHIVE is sha256-verified, by both scripts. Fetching this
+    # file over HTTPS from a pinned raw.githubusercontent.com URL is the
+    # SAME trust level this very install.sh arrived under via `curl | sh`;
+    # this is extending that trust one hop, not introducing a weaker one.
+    http_get "$_ps1_url" "$_ps1_path" "*/*" ||
+        die "$E_NETWORK" "download of install.ps1 failed."
+
+    _win_ps1=$(to_windows_path "$_ps1_path")
+
+    # Flags this script already parsed, translated to the env vars
+    # install.ps1 reads — a piped `| iex` cannot take arguments, so
+    # install.ps1 is env-var-only, exactly like this script's own env
+    # equivalents. DEXEL_VERSION, DEXEL_REPO, GH_TOKEN/GITHUB_TOKEN and
+    # DEXEL_NO_PATH need no translation here: if the caller set them, they
+    # are already in this process's environment, every child process
+    # inherits them unchanged, and install.ps1 reads those exact names too.
+    if [ "$NO_START" = 1 ]; then DEXEL_NO_START=1; export DEXEL_NO_START; fi
+    if [ "$NO_DESKTOP" = 1 ]; then DEXEL_NO_DESKTOP=1; export DEXEL_NO_DESKTOP; fi
+    if [ "$DRY_RUN" = 1 ]; then DEXEL_DRY_RUN=1; export DEXEL_DRY_RUN; fi
+    if [ "$NO_APP" = 1 ] || [ "$FORCE_APP" = 1 ]; then
+        warn "--no-app/--app (the Linux AppImage desktop shell) have no Windows
+       equivalent; install.ps1 has no such shell to skip or force. Ignoring."
+    fi
+
+    # Paths, which — unlike the flags above — have to cross the POSIX/
+    # Windows boundary translated, not just inherited untouched.
+    if [ -n "${DEXEL_INSTALL_DIR:-}" ]; then
+        DEXEL_INSTALL_DIR=$(to_windows_path "$DEXEL_INSTALL_DIR")
+        export DEXEL_INSTALL_DIR
+    fi
+    if [ -n "${DEXEL_ARCHIVE:-}" ]; then
+        DEXEL_ARCHIVE=$(to_windows_path "$DEXEL_ARCHIVE")
+        export DEXEL_ARCHIVE
+    fi
+    if [ -n "${DEXEL_HOME:-}" ]; then
+        DEXEL_HOME=$(to_windows_path "$DEXEL_HOME")
+        export DEXEL_HOME
+    fi
+
+    # Deliberately not the shell's `exec` builtin: replacing this process's
+    # image would skip the EXIT trap that removes $TMPD (install.ps1 has
+    # already been read off disk by then, but the temp dir itself would
+    # leak). Running it as a normal foreground command keeps that cleanup,
+    # and set -eu means a nonzero exit right here still ends install.sh
+    # with that SAME code and no extra "dexel install failed" wrapper of
+    # our own — install.ps1 already printed its own diagnosis, and doubling
+    # it would only confuse whoever is reading the output.
+    "$_psbin" -NoProfile -ExecutionPolicy Bypass -File "$_win_ps1"
 }
 
 # ---------------------------------------------------------------------------
@@ -1135,6 +1309,13 @@ main() {
     if [ "${DEXEL_APP:-}" = 1 ]; then FORCE_APP=1; fi
 
     detect_platform                        # 1
+    if [ "$OS" = windows ]; then
+        # Git Bash / MSYS2 / Cygwin: hand off to install.ps1 and stop here.
+        # A successful delegation falls through to `return 0`; a failed one
+        # already ended the script via set -eu inside delegate_windows.
+        delegate_windows
+        return 0
+    fi
     check_tools                            # 2
     detect_session
     resolve_token
