@@ -2272,10 +2272,44 @@ on every focus, so the preference rides that call:
   computed or withheld behind it.
 * The shell applies it at **window creation** (`WebviewWindowBuilder::always_on_top`),
   so the first frame is already right and there is never a flash of a
-  pinned window followed by a correction; and again on its existing focus
-  re-resolve, calling `set_always_on_top` **only when the value changed**
+  pinned window followed by a correction; and afterwards whenever the value
+  changes, calling `set_always_on_top` **only when the value changed**
   from what it last applied. A refused call is logged and not retried
   optimistically — the last-applied value only advances on success.
+* **A change is delivered by watching `config.json`, not by waiting for
+  focus** (`watch_prefs_file`). `status --json` also carries `stateDir`
+  (not `omitempty`, present on both branches), which is the only thing that
+  tells the shell where `config.json` lives without re-implementing
+  `app/internal/paths`' per-OS rules in Rust; the shell joins
+  `config.json` onto it and polls that one file's mtime+length twice a
+  second, reading the contents only when one of them moves. The focus
+  re-resolve still applies prefs as a backstop, and both paths share ONE
+  "last applied" record so they cannot disagree.
+
+  Note the two SHAPES of the same flag, which is the trap here:
+  `status --json` nests it (`{"prefs":{"alwaysOnTop":true}}`) while
+  `config.json` is flat (`{"alwaysOnTop":true}`). Reading one with the
+  other's accessor yields `false` with no error — a watcher that says
+  "off" forever — so the shell has a separate parser per shape and a test
+  asserting they are not interchangeable.
+
+**Why focus alone was not enough — the "reversed toggle".** Delivery used to
+ride the focus re-resolve only, and that produced a bug whose report looked
+nothing like its cause: users on Linux said the toggle was *inverted*, and
+on macOS that it did *nothing*. Neither was true. A stacking preference can
+only be OBSERVED once the window is no longer focused, and focus was exactly
+when the new value arrived — so the user always saw the previous setting:
+
+```
+toggle ON  -> click away -> not applied yet -> window drops behind   ("reversed")
+toggle OFF -> click away -> still applied   -> window stays on top   ("reversed")
+```
+
+It was latency, not an inverted boolean, and it was never platform-specific
+— the Linux report was reproduced verbatim on macOS with a CGWindowList
+z-order dump. Anyone tempted to "fix" a future report like this by negating
+a value should read this paragraph first: that would break the platform that
+was working.
 
 **The hardcode is gone.** That line was `.always_on_top(true)`, on ADR
 0007's reasoning ("a companion the editor buries never gets seen"). The

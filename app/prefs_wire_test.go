@@ -224,6 +224,48 @@ func TestStatusPrefsJSONTagsAreTheContractTheShellReads(t *testing.T) {
 	}
 }
 
+// TestStatusStateDirIsPublishedForTheShellsSettingsWatcher pins `stateDir`
+// as the second thing the desktop shell reads out of `status --json`.
+//
+// The shell used to apply a preference only when the window regained focus,
+// which meant a stacking preference was always observed one step stale — it
+// read to users as "the always-on-top toggle is reversed". The fix
+// (`watch_prefs_file` in desktop/src-tauri/src/lib.rs) watches config.json
+// directly and applies the change when it happens, and it locates that file
+// by joining "config.json" onto THIS field. So `stateDir` is no longer
+// merely informational output for a human reading a terminal; it is the
+// shell's only way to find the file without duplicating
+// app/internal/paths' per-OS rules in Rust.
+//
+// Two properties, both load-bearing, both silent if broken:
+//   - the key is spelled `stateDir`
+//   - it carries NO omitempty, so it is present on the not-running branch
+//     too — a preference is config, and the shell honours it with no
+//     runtime at all (see prefsJSON's comment).
+func TestStatusStateDirIsPublishedForTheShellsSettingsWatcher(t *testing.T) {
+	// Not running, and every other optional field empty: this is the
+	// leanest answer `status --json` ever prints, and stateDir must
+	// survive it.
+	raw, err := json.Marshal(statusJSON{Running: false, StateDir: "/tmp/dexel-state"})
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if !strings.Contains(string(raw), `"stateDir":"/tmp/dexel-state"`) {
+		t.Fatalf("status --json does not publish stateDir the way the desktop shell reads it: %s", raw)
+	}
+
+	// And it is not dropped when empty — an absent key and an empty string
+	// are different answers to the shell, which skips its watcher on the
+	// latter rather than watching the wrong path.
+	empty, err := json.Marshal(statusJSON{})
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if !strings.Contains(string(empty), `"stateDir":""`) {
+		t.Fatalf("stateDir gained an omitempty; the desktop shell reads it unconditionally: %s", empty)
+	}
+}
+
 // prefOnTheWire reads one preference back out of the ONE place a client can
 // see it — the `config` block of a `state` broadcast — by its wire key.
 // Keyed by string rather than switched by name on purpose: it then works for
