@@ -197,22 +197,149 @@ unsure).
 
 ---
 
-## VERDICT — fill this in and report back
+## VERDICT — 2026-08-25, run on the owner's Mac (macOS 26.6.2, arm64, M-series)
 
-Write your findings here (and/or a sibling `VERDICT-<date>.md`), then tell the
-owner. Be specific and honest — "it built" is not a verdict; "the window came up
-frameless, screenshot attached, and install.sh now installs it" is.
+**Headline: the frameless shell works correctly on macOS. There was no macOS
+bug to fix. What the owner saw was a STALE `/Applications/Dexel.app` built a day
+before the frameless work existed.** Phases 0, 1 and 3 are done and verified on
+screen. Phase 2 (install.sh) is NOT done — stopped there at the owner's request.
 
-- HEAD commit investigated:
-- Phase 0 — did `dexel open` open the browser (confirming the gap)? 
-- Phase 1 — did a built `/Applications/Dexel.app` come up **frameless**? Which
-  of the checklist items passed/failed? (attach/point to screenshots)
-- Any real macOS bug found + how you fixed it:
-- Phase 2 — does `install.sh` now build + install `Dexel.app` on a Mac clone?
-  Proven how? Does `dexel uninstall` remove it?
-- Phase 3 — always-on-top on a FRESH Mac build: does ON pin above / OFF return
-  to normal? Was it a stale build, a Mac bug you fixed, or a Linux-only quirk
-  to hand back? (screenshots of both states)
-- Gates: which passed, which you couldn't run and why:
-- Commits pushed (SHAs) or left uncommitted (why):
-- Anything still needing the owner's decision:
+- **HEAD investigated:** `b97a156`, tree clean, in sync with `origin/main`.
+
+- **Phase 0 — did `dexel open` open the browser?** **No — the brief's premise was
+  wrong for this machine.** `/Applications/Dexel.app` *did* exist (dated
+  2026-08-24 10:34) and `dexel open` launched it. It was simply **pre-frameless**:
+  the frameless commit is `70b5409` (2026-08-25 16:03), a day later. Proven two
+  ways — the timestamps, and the stale binary containing **none** of the frameless
+  markers (`shell=1`, `remote-urls`, `core:window:allow-minimize`,
+  `core:window:allow-start-dragging`). Screenshot `00-stale-applications-app.png`
+  shows it with a **native macOS title bar and red/yellow/green traffic lights**.
+  A second stale shell (pid 1815) was also running from
+  `desktop/src-tauri/target/…`, started 15:59 — four minutes before the frameless
+  commit. Both are the whole explanation for "not frameless like Linux".
+
+- **Phase 1 — did a fresh `/Applications/Dexel.app` come up frameless? YES.**
+  Built with `bash scripts/build-sidecar.sh` then `cargo tauri build`, installed
+  to `/Applications`. Checklist, each verified by me:
+  - [x] No native title bar, **no traffic lights**, square corners.
+  - [x] dexel's own pixel titlebar with `☰` `−` `✕` (all three at the right; the
+        left holds the coin/LV HUD — the brief said `☰` was on the left, it is not).
+  - [x] `−` minimizes (`AXMinimized` false→true); `✕` closes the window, the shell
+        process exits, and **the runtime keeps running** (`running: true`) — the
+        "window is a view" contract holds.
+  - [x] Dragging the pixel titlebar moves the window (+100,+100 → exact);
+        dragging **on a button does not move it**.
+  - [x] Game fills the window edge-to-edge, no letterbox. Opens at 1280×800
+        (2× the 640×400 surface). A shrink-drag **snapped to exactly 640×400**,
+        and dragging far inside the minimum **clamped at 640×400**.
+  - [ ] **Not verified: sound and click-to-react.** Audio can't be judged from a
+        screenshot and I stopped before testing it. The only unverified line.
+  - Note: the **1920×1200 maximum could not be exercised** — this display is
+    1800×1169 logical, so there is no room to reach it.
+  - Screenshots in `/tmp/dexel-mac-shots/` (`02-fresh-fullscreen.png` is the
+    money shot; `00-stale-applications-app.png` is the before).
+
+- **Any real macOS bug found?** **None in the frameless shell.** Two things worth
+  the owner's attention, neither a defect in the Mac port:
+  1. **The always-on-top toggle only takes effect on the window's next focus
+     event**, not the instant you flip it. This is *documented design*, not an
+     oversight: the shell has no IPC into the page (deliberately — the loopback
+     origin is denied `shell:allow-execute`), so it re-reads prefs by running
+     `status --json` on `WindowEvent::Focused(true)` (`watch_for_a_moved_runtime`
+     in `lib.rs`). Consequence: flip the toggle, look at the window, nothing
+     appears to happen — which is **exactly the "it did nothing" the owner
+     reported**. Worth fixing only if the owner wants it; it needs a poll or a
+     channel, i.e. a real design decision, so it is left for them.
+  2. **A modal `<dialog>` makes the titlebar unclickable.** With Settings open,
+     its backdrop renders the page inert and `−`/`✕` stop responding. On a
+     decorated window the native buttons would still work; on a frameless one the
+     titlebar is the *only* way to close, so an open modal traps the window until
+     Esc/G. Cost me a false "✕ is broken" reading mid-test. Minor, but real.
+
+- **Phase 2 — install.sh:** **NOT DONE.** Not started; stopped at the owner's
+  "leaving it for now". `install.sh` still installs no `Dexel.app` on macOS.
+  Note for whoever picks it up: the brief suggests `scripts/mac-release.sh` as a
+  possible path — it exists (45KB) but is the **tagged, signed, notarized,
+  uploading** release path and is the wrong tool for a local unsigned install.
+  The right recipe is the one used here: `bash scripts/build-sidecar.sh` (host
+  triple by default) then `cargo tauri build`, then copy the bundle.
+
+- **Phase 3 — always-on-top on a FRESH Mac build: NOT inverted. It is correct.**
+  Measured objectively with a CGWindowList z-order dump, not by eye:
+  - OFF (baseline): Dexel `layer=0`; raising iTerm2 puts iTerm2 in front. Correct.
+  - ON: after the next focus, Dexel goes to **`layer=5`** and **stays in front of
+    iTerm2** when iTerm2 is raised. Correct.
+  - Back to OFF: returns to **`layer=0`** and sits **directly behind the app you
+    just raised, still above Music/Finder/Brave** — it does **not** sink to the
+    bottom. Correct.
+  - The Settings label tracked the truth at every step (OFF/ON/OFF), so the UI is
+    not inverted either.
+  - **CORRECTION (same session, after the fix below).** The bullet that stood
+    here said the Linux inversion was "a Linux/GTK problem, not dexel's". That
+    was **wrong**, and the evidence contradicting it was already in this
+    session's own transcript. It was dexel's, it was not an inversion, and it
+    was not platform-specific — see the next section.
+  - The Mac's earlier "toggle does nothing" was the **stale build**, compounded
+    by the focus-lag, which turned out to be the whole story on Linux too.
+
+## THE LINUX FIX — "reversed toggle" was latency, and it is now fixed
+
+**Root cause.** `apply_prefs` ran only on `WindowEvent::Focused(true)`. But a
+stacking preference can only be OBSERVED once the window is NOT focused — so
+the user always saw the PREVIOUS setting:
+
+```
+toggle ON  -> click away -> not applied yet -> window drops behind   ("reversed")
+toggle OFF -> click away -> still applied   -> window stays on top   ("reversed")
+```
+
+Those two lines are the owner's Linux report verbatim. **Reproduced on macOS**
+with a CGWindowList z-order dump — so it was never a GTK quirk, and negating a
+value to "fix" Linux would have broken the Mac exactly as feared, while leaving
+the real bug in place on both.
+
+**Fix** (`desktop/src-tauri/src/lib.rs`): `watch_prefs_file` watches
+`config.json` — the file every `SET_PREF` writes through to immediately — and
+applies the preference when it CHANGES. Focus remains the backstop; both paths
+share one "last applied" record so they cannot disagree. The state directory
+comes from `status --json`'s `stateDir`, so no per-OS path logic is duplicated
+in Rust. Cost when idle: a `stat` of one file twice a second — no process, no
+loopback round-trip, which is why a poll is acceptable here and still refused
+for the moved-runtime check next door.
+
+**The trap it had to avoid:** the same flag has two shapes —
+`status --json` nests it under `prefs`, `config.json` is flat. Crossing them
+returns `false` with no error (a watcher stuck on "off" forever). Separate
+parser per shape, plus a test asserting they are not interchangeable.
+
+**Verified on the real running app**, three flips, no focus event at any point:
+
+```
+start (pref false): layer=0
+after ON          : layer=5     <- rose with no click
+after OFF         : layer=0     <- returned to normal, did not sink
+log: always-on-top is now on  (from config.json)
+     always-on-top is now off (from config.json)
+```
+
+**Gates, all run and green:** `go build ./... && go vet ./...`;
+`bash scripts/test-race.sh` (all packages ok); `npx tsc --noEmit` +
+`npm run build` with **no bundle drift**; `cargo fmt --check`,
+`cargo clippy --all-targets -- -D warnings`, `cargo test` (46 passed).
+
+**Not verified by me:** that the fix behaves on an actual Linux desktop. The
+mechanism is platform-neutral (it changes *when* `set_always_on_top` is called,
+not what it is called with) and the Mac proves the delivery path, but a GNOME
+session is still the honest confirmation and I cannot run one here.
+
+- **Still open:**
+  1. **An open modal makes the titlebar unclickable.** Settings is a native
+     `<dialog>`; its backdrop renders the page inert, so `−`/`✕` stop
+     responding and a frameless window has no other close affordance until
+     Esc/G. Left alone deliberately — it is a frontend change needing its own
+     visual gate, and it is not what was asked for here.
+  2. **Phase 2** (install.sh builds + installs `Dexel.app` on macOS) — still to
+     do. Note the brief suggests `scripts/mac-release.sh`; that exists but is
+     the tagged/signed/notarized/uploading path and is the wrong tool. The
+     right recipe is `bash scripts/build-sidecar.sh` then `cargo tauri build`.
+  3. Sound and click-to-react on macOS remain unverified (audio, not visual).
