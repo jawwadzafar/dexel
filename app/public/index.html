@@ -55,6 +55,12 @@
         <button id="activity-open" class="nes-btn menu-item">[A] ACTIVITY</button>
         <button id="history-open" class="nes-btn menu-item">[H] HISTORY</button>
         <button id="sessions-open" class="nes-btn menu-item">[W] SESSIONS</button>
+        <!-- SET-1 (docs/ui-spec.md §11): [G] for the gear. S/A/H/W/M/P and
+             Tab were already taken; G is free and is the one letter this
+             app's audience already associates with a settings gear. Owned
+             by features/settings-modal.ts (click -> open()), like every
+             other launcher in this panel. -->
+        <button id="settings-open" class="nes-btn menu-item">[G] SETTINGS</button>
         <!-- PR-5 (docs/production-runtime/MIGRATION_PLAN.md §PR-5):
              label toggles PAUSE/RESUME and the click action flips with
              it — both driven by live state.paused, read fresh from the
@@ -123,7 +129,13 @@
         <div class="activity-row"><span class="label">KEYSTROKES</span><span class="value" id="stat-today-keystrokes">0</span></div>
         <div class="activity-row"><span class="label">MOUSE ACTIVE</span><span class="value" id="stat-today-mouse">0s</span></div>
         <div class="activity-row"><span class="label">ACTIVE TIME</span><span class="value" id="stat-today-active">0m 0s</span></div>
-        <div class="activity-row"><span class="label">IDLE TIME</span><span class="value" id="stat-today-idle">0m 0s</span></div>
+        <!-- SET-1 (docs/ui-spec.md §11.3): the row a user used to read as
+             "IDLE TIME" now says AWAY, and it is HIDDEN unless
+             config.showAwayTime is true (features/activity-modal.ts owns
+             that toggle via #activity-row-today-away). The underlying wire
+             field is still `stats.today.idleSeconds` and it is still
+             recorded and still sent — only the DISPLAY is optional. -->
+        <div class="activity-row" id="activity-row-today-away"><span class="label">AWAY</span><span class="value" id="stat-today-away">0m 0s</span></div>
         <div class="activity-row"><span class="label">SPRINTS DONE</span><span class="value" id="stat-today-sprints">0</span></div>
         <div class="activity-row"><span class="label">FOCUS SESSIONS</span><span class="value" id="stat-today-focus-sessions">0</span></div>
         <div class="activity-row"><span class="label">APP SWITCHES</span><span class="value" id="stat-today-app-switches">0</span></div>
@@ -134,7 +146,7 @@
         <div class="activity-row"><span class="label">KEYSTROKES</span><span class="value" id="stat-life-keystrokes">0</span></div>
         <div class="activity-row"><span class="label">MOUSE ACTIVE</span><span class="value" id="stat-life-mouse">0s</span></div>
         <div class="activity-row"><span class="label">ACTIVE TIME</span><span class="value" id="stat-life-active">0m 0s</span></div>
-        <div class="activity-row"><span class="label">IDLE TIME</span><span class="value" id="stat-life-idle">0m 0s</span></div>
+        <div class="activity-row" id="activity-row-life-away"><span class="label">AWAY</span><span class="value" id="stat-life-away">0m 0s</span></div>
         <div class="activity-row"><span class="label">SPRINTS DONE</span><span class="value" id="stat-life-sprints">0</span></div>
         <div class="activity-row"><span class="label">FOCUS SESSIONS</span><span class="value" id="stat-life-focus-sessions">0</span></div>
         <div class="activity-row"><span class="label">APP SWITCHES</span><span class="value" id="stat-life-app-switches">0</span></div>
@@ -223,6 +235,54 @@
       </div>
 
       <div id="sessions-help">W / ESC CLOSE</div>
+    </dialog>
+
+    <!-- SET-1 — The Settings modal (docs/ui-spec.md §11). Same mechanics
+         as every modal above (native <dialog> + showModal(), the shared
+         #scrim, one 'close' event every dismissal path funnels through).
+         Three sections, one job each: rename the dexel (reusing the
+         EXISTING SET_NAME action — no new wire), the window's always-on-top
+         preference, and the away-time display preference. Gates nothing —
+         no open/close action is ever sent, the same call the Sessions
+         modal makes for its own text input (§11.6). -->
+    <dialog id="settings" class="nes-dialog is-dark">
+      <div id="settings-title">SETTINGS</div>
+      <button id="settings-close" class="nes-btn">X</button>
+
+      <div id="settings-body">
+        <div class="settings-section-title">NAME</div>
+        <!-- The live, server-authored name. Filled by settings-modal.ts on
+             every state tick, so it stays true even while the input below
+             holds an unsaved edit. -->
+        <div id="settings-name-current"><span class="label">CURRENTLY </span><span class="value"></span></div>
+        <label id="settings-name-label" for="settings-name">RENAME YOUR DEXEL</label>
+        <input id="settings-name" type="text" maxlength="24" autocomplete="off"
+               spellcheck="false" placeholder="dexel">
+        <button id="settings-name-save" class="nes-btn">SAVE NAME</button>
+
+        <div class="settings-section-title">WINDOW</div>
+        <div class="settings-row">
+          <span class="label">ALWAYS ON TOP</span>
+          <button id="settings-ontop" class="nes-btn settings-toggle">OFF</button>
+        </div>
+        <div class="settings-note">Keeps the desktop app above other windows.</div>
+
+        <div class="settings-section-title">PRIVACY</div>
+        <div class="settings-row">
+          <span class="label">SHOW AWAY TIME</span>
+          <button id="settings-away" class="nes-btn settings-toggle">OFF</button>
+        </div>
+        <!-- The owner's own words, split across two lines to fit the
+             modal's 448px inner width, with an ASCII "-" in place of an em
+             dash: Press Start 2P has no dash glyph beyond the hyphen, and
+             a missing glyph falls back to a thin system font that
+             anti-aliases to near-invisibility at 8px/1x (the A2 arrow
+             lesson, docs/ui-spec.md §11.3). -->
+        <div class="settings-note">Away time is always recorded, never judged -</div>
+        <div class="settings-note">show it here or keep it private.</div>
+      </div>
+
+      <div id="settings-help">G / ESC CLOSE</div>
     </dialog>
 
     <!-- Phase P1 — Identity & first minutes (docs/ui-spec.md §7). Opened

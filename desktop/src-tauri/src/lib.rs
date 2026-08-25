@@ -36,6 +36,10 @@
 //!    lock-taking, `runtime.json`-writing runtime the CLI starts, not a
 //!    private child — and asks again for the URL.
 //! 3. It builds the single window on that URL via [`tauri::WebviewUrl::External`].
+//!    The same `status --json` call also carries the user's window
+//!    PREFERENCES (`prefs.alwaysOnTop`, SET-1 / docs/ui-spec.md §11), which
+//!    is why this shell needs no IPC into the page to honour a setting the
+//!    page owns — see [`Prefs`] and [`apply_prefs`].
 //!    Because the page's origin IS the server's origin, the frontend's
 //!    `location.host`-derived WebSocket URL is already correct and the
 //!    server's same-origin check accepts it with no `-insecure-origin` and no
@@ -204,6 +208,67 @@ fn resolve_driver() -> Driver {
     Driver::Bundled
 }
 
+/// The user preferences this shell acts on, as published by
+/// `dexel status --json`'s `prefs` block (`app/cmd_lifecycle.go`).
+///
+/// # Why the CLI, and not the page
+///
+/// The window's page is loaded from the runtime's own origin, so this shell
+/// has no IPC channel into it (the same constraint
+/// [`watch_for_a_moved_runtime`] documents). It does already run
+/// `status --json` — at launch, and again on every window focus — so a
+/// preference the SHELL has to act on rides that call. `status` reads it
+/// straight out of `config.json`, the file every `SET_PREF` writes through
+/// to immediately, so this is fresh without polling anything.
+///
+/// # `Default` is the honest default, and it is FALSE
+///
+/// This shell hardcoded `always_on_top(true)` for its whole life, on ADR
+/// 0007's reasoning ("a companion the editor buries never gets seen").
+/// The reasoning stands; forcing it on everyone did not — on macOS a window
+/// that will not go behind anything is an obstruction, not a companion. So
+/// the behaviour is kept and the DEFAULT is inverted: off unless the user
+/// turns it on in Settings. `Default::default()` is therefore also the right
+/// answer for an older `dexel` whose `status --json` has no `prefs` block at
+/// all — an unconfigured window is an ordinary window.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+struct Prefs {
+    always_on_top: bool,
+}
+
+/// Read [`Prefs`] out of a parsed `status --json` object.
+///
+/// Every field degrades to `false` independently: a missing `prefs` block, a
+/// missing key inside it, or a value of the wrong JSON type all mean "not
+/// configured", which is exactly what an absent preference means. This
+/// never fails, because a status answer that is useful for finding the
+/// runtime must not be thrown away over a preference.
+fn prefs_from_status(parsed: &serde_json::Value) -> Prefs {
+    let flag = |name: &str| {
+        parsed
+            .get("prefs")
+            .and_then(|p| p.get(name))
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false)
+    };
+    Prefs {
+        always_on_top: flag("alwaysOnTop"),
+    }
+}
+
+/// What `status --json` said: where the runtime is (`None` = nothing
+/// running, a normal answer) and what the user's preferences are.
+///
+/// The two are deliberately carried together, and `prefs` is populated on
+/// BOTH branches: a preference lives in `config.json` and is just as true
+/// with nothing running, so this shell never has to spawn a second process
+/// to learn it, and never has to wait for a runtime to exist before honouring
+/// it.
+struct Discovery {
+    url: Option<String>,
+    prefs: Prefs,
+}
+
 /// What one short-lived `dexel <args>` run said.
 ///
 /// `code` is deliberately kept and reported rather than turned into an error
@@ -366,7 +431,7 @@ fn run_bundled(app: &tauri::AppHandle, args: &[&str]) -> Result<CliOutput, Strin
 /// `status` also verifies liveness by
 /// round-tripping an HTTP call to the runtime it found, so a `true` here means
 /// a server that actually answers, not just a pid file.
-fn discover_runtime(app: &tauri::AppHandle, driver: &Driver) -> Result<Option<String>, String> {
+fn discover_runtime(app: &tauri::AppHandle, driver: &Driver) -> Result<Discovery, String> {
     let out = run_cli(app, driver, &["status", "--json"])?;
     let parsed: serde_json::Value = serde_json::from_str(out.stdout.trim()).map_err(|e| {
         format!(
@@ -374,12 +439,15 @@ fn discover_runtime(app: &tauri::AppHandle, driver: &Driver) -> Result<Option<St
             out.stdout
         )
     })?;
+    // Read before the running check: a preference lives in config.json, so
+    // it is answered identically either way (see `Discovery`).
+    let prefs = prefs_from_status(&parsed);
 
     if parsed.get("running").and_then(|v| v.as_bool()) != Some(true) {
         if let Some(reason) = parsed.get("reason").and_then(|v| v.as_str()) {
             log::info!("no runtime yet: {reason}");
         }
-        return Ok(None);
+        return Ok(Discovery { url: None, prefs });
     }
     let url = parsed.get("url").and_then(|v| v.as_str()).ok_or_else(|| {
         format!(
@@ -387,22 +455,27 @@ fn discover_runtime(app: &tauri::AppHandle, driver: &Driver) -> Result<Option<St
             out.stdout
         )
     })?;
-    Ok(Some(url.to_string()))
+    Ok(Discovery {
+        url: Some(url.to_string()),
+        prefs,
+    })
 }
 
-/// The URL to open the window on: an already-running runtime if there is one,
-/// otherwise a freshly started one.
+/// The URL to open the window on — an already-running runtime if there is
+/// one, otherwise a freshly started one — plus the user's window
+/// preferences, which `status --json` answers in the same breath.
 ///
 /// `start` is the CLI's own detached-runtime path — it takes the lock, writes
 /// `runtime.json` and waits for readiness — so a runtime started here is
 /// indistinguishable from one started by `dexel start` in a terminal, and
 /// outlives this window exactly the same way.
-fn runtime_url(app: &tauri::AppHandle) -> Result<String, String> {
+fn runtime_url(app: &tauri::AppHandle) -> Result<(String, Prefs), String> {
     let driver = resolve_driver();
     log::info!("driving {}", driver.describe());
-    if let Some(url) = discover_runtime(app, &driver)? {
+    let found = discover_runtime(app, &driver)?;
+    if let Some(url) = found.url {
         log::info!("attaching to the running dexel runtime at {url} (this window owns nothing)");
-        return Ok(url);
+        return Ok((url, found.prefs));
     }
 
     log::info!("no runtime running; starting the detached runtime via `start`");
@@ -415,15 +488,50 @@ fn runtime_url(app: &tauri::AppHandle) -> Result<String, String> {
         ));
     }
 
-    match discover_runtime(app, &driver)? {
+    let started = discover_runtime(app, &driver)?;
+    match started.url {
         Some(url) => {
             log::info!("started the dexel runtime at {url}");
             log::info!("it keeps running after this window closes — `dexel stop` is what stops it");
-            Ok(url)
+            Ok((url, started.prefs))
         }
         None => {
             Err("`start` reported success but no runtime was discoverable afterwards".to_string())
         }
+    }
+}
+
+/// Apply [`Prefs`] to the window, calling into the platform ONLY for what
+/// actually changed.
+///
+/// `applied` is what this shell last told the window, not what it wishes were
+/// true, and the comparison against it is the whole point: this runs on every
+/// window focus, and re-asserting `set_always_on_top` on a window that is
+/// already there is a pointless trip into the window manager several times a
+/// minute. Same discipline as [`re_point_if_moved`]'s "an unchanged URL means
+/// no navigation at all".
+///
+/// A failure is logged and NOT propagated: this shell's job is to show the
+/// game, and a window manager that refuses a hint is not a reason to take the
+/// window away. `applied` is only advanced on success, so the next focus
+/// retries rather than believing a call that failed.
+fn apply_prefs(window: &tauri::WebviewWindow, wanted: Prefs, applied: &Mutex<Prefs>) {
+    let mut applied = applied.lock().unwrap_or_else(|p| p.into_inner());
+    if applied.always_on_top == wanted.always_on_top {
+        return;
+    }
+    match window.set_always_on_top(wanted.always_on_top) {
+        Ok(()) => {
+            log::info!(
+                "always-on-top is now {} (from `status --json`'s prefs.alwaysOnTop)",
+                if wanted.always_on_top { "on" } else { "off" }
+            );
+            applied.always_on_top = wanted.always_on_top;
+        }
+        Err(e) => log::warn!(
+            "could not set always-on-top to {}: {e}",
+            wanted.always_on_top
+        ),
     }
 }
 
@@ -464,7 +572,7 @@ const RERESOLVE_MIN_INTERVAL: Duration = Duration::from_secs(2);
 /// It deliberately does NOT start a runtime. `dexel stop` means stopped, and a
 /// window that resurrected the daemon every time it was clicked would be its
 /// own bug.
-fn watch_for_a_moved_runtime(app: &tauri::App, loaded: tauri::Url) {
+fn watch_for_a_moved_runtime(app: &tauri::App, loaded: tauri::Url, loaded_prefs: Prefs) {
     let Some(window) = app.get_webview_window(WINDOW_LABEL) else {
         log::warn!(
             "no window labelled {WINDOW_LABEL} to watch; it will not notice a moved runtime"
@@ -480,6 +588,10 @@ fn watch_for_a_moved_runtime(app: &tauri::App, loaded: tauri::Url) {
     let checking = Arc::new(AtomicBool::new(false));
     let last = Arc::new(Mutex::new(None::<Instant>));
     let target = window.clone();
+    // SET-1: what this shell has last told the window about its preferences,
+    // seeded with what `build_window` already applied at creation time — so
+    // the first focus does not re-assert a setting the builder just made.
+    let applied_prefs = Arc::new(Mutex::new(loaded_prefs));
 
     window.on_window_event(move |event| {
         if !matches!(event, tauri::WindowEvent::Focused(true)) {
@@ -503,53 +615,72 @@ fn watch_for_a_moved_runtime(app: &tauri::App, loaded: tauri::Url) {
         let target = target.clone();
         let current = current.clone();
         let checking = checking.clone();
+        let applied_prefs = applied_prefs.clone();
         std::thread::spawn(move || {
-            re_point_if_moved(&handle, &target, &current);
+            re_resolve(&handle, &target, &current, &applied_prefs);
             checking.store(false, Ordering::SeqCst);
         });
     });
 }
 
-/// One re-resolve: ask the CLI where the runtime is and navigate only if that
-/// is somewhere other than where this webview already is.
-fn re_point_if_moved(
+/// One re-resolve: ask the CLI where the runtime is and what the user's
+/// preferences are, then navigate only if the runtime moved and touch the
+/// window's flags only if a preference changed.
+///
+/// The two halves are deliberately independent. The preference half runs on
+/// EVERY answer, including "nothing is running" — a preference lives in
+/// `config.json`, so a toggle flipped in the page (or by hand in that file)
+/// must reach the window on the next focus whether or not the daemon
+/// happens to be up. The navigation half is unchanged: it fires only for a
+/// genuinely moved runtime, and never starts one.
+fn re_resolve(
     app: &tauri::AppHandle,
     window: &tauri::WebviewWindow,
     current: &Mutex<tauri::Url>,
+    applied_prefs: &Mutex<Prefs>,
 ) {
     let driver = resolve_driver();
-    match discover_runtime(app, &driver) {
-        Ok(Some(found)) => {
-            let parsed = match tauri::Url::parse(&found) {
-                Ok(u) => u,
-                Err(e) => {
-                    log::warn!("`status --json` reported an unparseable URL {found:?}: {e}");
-                    return;
-                }
-            };
-            let mut cur = current.lock().unwrap_or_else(|p| p.into_inner());
-            if *cur == parsed {
-                return; // the overwhelmingly common case: nothing moved
-            }
-            log::info!(
-                "the runtime moved from {} to {parsed} — re-pointing this window",
-                *cur
-            );
-            if let Err(e) = window.navigate(parsed.clone()) {
-                log::error!("could not navigate the window to {parsed}: {e}");
-                return;
-            }
-            *cur = parsed;
+    let found = match discover_runtime(app, &driver) {
+        Ok(found) => found,
+        Err(e) => {
+            log::warn!("could not ask where the runtime is: {e}");
+            return;
         }
+    };
+
+    apply_prefs(window, found.prefs, applied_prefs);
+
+    let Some(url) = found.url else {
         // Not an error and not something to fix from here: `dexel stop` means
         // stopped, and this shell does not resurrect the daemon.
-        Ok(None) => log::info!("no runtime is running; leaving this window as it is"),
-        Err(e) => log::warn!("could not ask where the runtime is: {e}"),
+        log::info!("no runtime is running; leaving this window where it is");
+        return;
+    };
+    let parsed = match tauri::Url::parse(&url) {
+        Ok(u) => u,
+        Err(e) => {
+            log::warn!("`status --json` reported an unparseable URL {url:?}: {e}");
+            return;
+        }
+    };
+    let mut cur = current.lock().unwrap_or_else(|p| p.into_inner());
+    if *cur == parsed {
+        return; // the overwhelmingly common case: nothing moved
     }
+    log::info!(
+        "the runtime moved from {} to {parsed} — re-pointing this window",
+        *cur
+    );
+    if let Err(e) = window.navigate(parsed.clone()) {
+        log::error!("could not navigate the window to {parsed}: {e}");
+        return;
+    }
+    *cur = parsed;
 }
 
-/// Build dexel's one window, pointed at the runtime's loopback URL.
-fn build_window(app: &tauri::App, url: tauri::Url) -> tauri::Result<()> {
+/// Build dexel's one window, pointed at the runtime's loopback URL and
+/// carrying the user's preferences from the first frame.
+fn build_window(app: &tauri::App, url: tauri::Url, prefs: Prefs) -> tauri::Result<()> {
     WebviewWindowBuilder::new(app, WINDOW_LABEL, WebviewUrl::External(url))
         .title(WINDOW_TITLE)
         .inner_size(WINDOW_W, WINDOW_H)
@@ -557,8 +688,18 @@ fn build_window(app: &tauri::App, url: tauri::Url) -> tauri::Result<()> {
         // reflow, so shrinking below this would clip it rather than adapt.
         .min_inner_size(WINDOW_W, WINDOW_H)
         .resizable(true)
-        // ADR 0007: a companion the editor buries never gets seen.
-        .always_on_top(true)
+        // SET-1 (docs/ui-spec.md §11): the USER's choice, applied at creation
+        // so the very first frame is already right — never a flash of a
+        // pinned window followed by a correction.
+        //
+        // This used to be a hardcoded `true`, on ADR 0007's reasoning ("a
+        // companion the editor buries never gets seen"). That reasoning is
+        // still why the capability exists; what changed is who decides. A
+        // window that cannot be put behind anything is an obstruction on
+        // macOS, and forcing it on every user was the wrong way to act on a
+        // good idea — so the behaviour is kept, the DEFAULT is off, and
+        // Settings owns the switch.
+        .always_on_top(prefs.always_on_top)
         // Native frame in Phase 1 — free drag/close. The in-page wordmark
         // titlebar stays; a frameless look is Phase 2 polish.
         .decorations(true)
@@ -583,7 +724,7 @@ pub fn run() {
             let handle = app.handle().clone();
             // `?` converts String into Box<dyn Error> for us. A failure here
             // aborts startup loudly instead of showing an empty window.
-            let url = runtime_url(&handle)?;
+            let (url, prefs) = runtime_url(&handle)?;
             let url = tauri::Url::parse(&url)
                 .map_err(|e| format!("runtime reported an unparseable URL {url:?}: {e}"))?;
 
@@ -591,8 +732,8 @@ pub fn run() {
             // own or terminate. If the window fails to build we simply fail —
             // the runtime is not ours to clean up, and killing it would be
             // exactly the bug this shell was rewritten to remove.
-            build_window(app, url.clone())?;
-            watch_for_a_moved_runtime(app, url);
+            build_window(app, url.clone(), prefs)?;
+            watch_for_a_moved_runtime(app, url, prefs);
             Ok(())
         })
         .build(tauri::generate_context!())
@@ -608,6 +749,66 @@ pub fn run() {
                 );
             }
         });
+}
+
+// ---------------------------------------------------------------------------
+// SET-1 — the `prefs` block this shell reads out of `dexel status --json`.
+// ---------------------------------------------------------------------------
+
+/// `prefs_from_status` is a pure function over the JSON `app/cmd_lifecycle.go`
+/// prints, so it is tested against literal status payloads rather than only
+/// exercised by launching a window. The Go side pins the same strings from its
+/// end (`app/prefs_wire_test.go`); these are the two halves of one contract
+/// that crosses a process boundary, and neither language can check the other.
+#[cfg(test)]
+mod prefs_parsing {
+    use super::{prefs_from_status, Prefs};
+
+    fn parse(raw: &str) -> Prefs {
+        prefs_from_status(&serde_json::from_str(raw).expect("test payload is not valid JSON"))
+    }
+
+    #[test]
+    fn reads_always_on_top_from_a_real_status_payload() {
+        let got = parse(
+            r#"{"running":true,"pid":42,"url":"http://127.0.0.1:8080",
+                "version":"v","prefs":{"alwaysOnTop":true,"showAwayTime":false}}"#,
+        );
+        assert!(got.always_on_top);
+    }
+
+    #[test]
+    fn a_false_pref_is_off() {
+        let got = parse(r#"{"running":true,"prefs":{"alwaysOnTop":false,"showAwayTime":true}}"#);
+        assert!(!got.always_on_top);
+    }
+
+    /// The default matters more than it looks: it is what a user who never
+    /// opened Settings gets, and SET-1 exists precisely because that used to
+    /// be a forced-on-top window.
+    #[test]
+    fn every_way_of_saying_nothing_means_off() {
+        for raw in [
+            r#"{"running":true}"#,                               // pre-SET-1 dexel
+            r#"{"running":true,"prefs":{}}"#,                    // block, no keys
+            r#"{"running":true,"prefs":{"alwaysOnTop":null}}"#,  // explicit null
+            r#"{"running":true,"prefs":{"alwaysOnTop":"yes"}}"#, // wrong type
+            r#"{"running":true,"prefs":"nonsense"}"#,            // block is not an object
+            r#"{"running":false,"reason":"no runtime.json"}"#,   // nothing running
+        ] {
+            assert_eq!(parse(raw), Prefs::default(), "payload: {raw}");
+        }
+    }
+
+    /// A preference is config, not a property of a live process — so it is
+    /// read on the not-running branch too, which is what lets the window
+    /// honour a setting made while the daemon was stopped.
+    #[test]
+    fn prefs_are_read_even_when_nothing_is_running() {
+        let got =
+            parse(r#"{"running":false,"reason":"no runtime.json","prefs":{"alwaysOnTop":true}}"#);
+        assert!(got.always_on_top);
+    }
 }
 
 // ---------------------------------------------------------------------------

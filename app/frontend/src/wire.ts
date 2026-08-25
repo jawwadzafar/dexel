@@ -169,6 +169,25 @@ export interface Stats {
 // be empty.
 export interface ConfigView {
   name: string;
+  // SET-1 (docs/ui-spec.md §11) — the two user PREFERENCES, both
+  // defaulting to false. Optional here for the same stale-server reason
+  // `config` itself is optional on StateMessage: a pre-SET-1 server sends
+  // neither, and `!!undefined` is false, which is exactly the right
+  // degradation (window unpinned, away time private).
+  //
+  // `alwaysOnTop` is not consumed by this page at all — the desktop shell
+  // reads it out of `dexel status --json` (app/cmd_lifecycle.go). It rides
+  // this block so the Settings modal can render the toggle's position from
+  // SERVER truth rather than from a value it remembered locally, the same
+  // rule every other control in this app follows.
+  alwaysOnTop?: boolean;
+  // `showAwayTime` gates whether the Activity modal DISPLAYS its away
+  // rows. Note what it is not: the away durations themselves
+  // (`StatBlock.idleSeconds` and friends) are recorded and SENT either
+  // way — hiding them is this client's rendering decision, driven by this
+  // field. See docs/ui-spec.md §11.3 for why recording is deliberately
+  // untouched.
+  showAwayTime?: boolean;
 }
 
 // Phase P2 — Sessions (docs/plan/P2-design.md §6.1). The counters are
@@ -329,6 +348,18 @@ export type ClientAction =
   // rejects an empty result (game.NormalizeName) — the client's own
   // trim/maxlength are a courtesy, never the validation.
   | { action: 'SET_NAME'; name: string }
+  // SET-1 (docs/ui-spec.md §6.2/§11.4). ONE keyed action for every
+  // preference rather than one action per checkbox — the `key` is
+  // validated SERVER-side against game.PrefKeys()'s allow-list, so an
+  // unknown key is an error flash and no state change. The union of
+  // literal keys here is the client-side half of that: a typo is a
+  // compile error rather than a round-trip that quietly fails.
+  //
+  // `value` is a plain boolean because every dexel preference is an
+  // on/off choice; a future non-boolean preference is a deliberate wire
+  // change (see app/internal/game/prefs.go), not something this type
+  // should leave loose now.
+  | { action: 'SET_PREF'; key: 'alwaysOnTop' | 'showAwayTime'; value: boolean }
   // Phase P2 (docs/plan/P2-design.md §6.2). Names PINNED: SESSION_START /
   // SESSION_STOP (the imperative pair matches the UI's Start/Stop buttons
   // and the STORE_OPEN/STORE_CLOSE verb-pair precedent). `name` is raw

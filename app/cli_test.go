@@ -396,6 +396,7 @@ func TestStatusJSONShape(t *testing.T) {
 	data, err := json.Marshal(statusJSON{
 		Running: true, Pid: 1, Port: 2, URL: "u", Version: "v", Commit: "c",
 		StartedAt: "s", Uptime: 3, StateDir: "sd", LogPath: "lp", Cleaned: true, Reason: "r",
+		Prefs: prefsJSON{AlwaysOnTop: true, ShowAwayTime: true},
 	})
 	if err != nil {
 		t.Fatalf("marshal: %v", err)
@@ -404,7 +405,7 @@ func TestStatusJSONShape(t *testing.T) {
 	if err := json.Unmarshal(data, &m); err != nil {
 		t.Fatalf("unmarshal: %v", err)
 	}
-	want := []string{"running", "pid", "port", "url", "version", "commit", "startedAt", "uptimeSeconds", "stateDir", "logPath", "cleanedStaleRuntimeFile", "reason"}
+	want := []string{"running", "pid", "port", "url", "version", "commit", "startedAt", "uptimeSeconds", "stateDir", "logPath", "cleanedStaleRuntimeFile", "reason", "prefs"}
 	if len(m) != len(want) {
 		t.Fatalf("status --json has %d keys (%v), want exactly %d (%v)", len(m), m, len(want), want)
 	}
@@ -436,6 +437,19 @@ func TestStatusJSONShape(t *testing.T) {
 	for _, k := range []string{"stateDir", "logPath"} {
 		if _, ok := m[k]; !ok {
 			t.Fatalf("a not-running status omits %q, which is the one thing a user needs", k)
+		}
+	}
+	// SET-1 (docs/ui-spec.md §11.5): `prefs` is NOT omitempty and is NOT
+	// conditional on `running`. A preference lives in config.json, so it
+	// is just as true with nothing running, and the desktop shell reads
+	// this block without having to branch on `running` first.
+	prefs, ok := m["prefs"].(map[string]any)
+	if !ok {
+		t.Fatalf("a not-running status omits `prefs` (%v) — a preference is config, not a property of a live process", m["prefs"])
+	}
+	for _, k := range []string{"alwaysOnTop", "showAwayTime"} {
+		if _, ok := prefs[k]; !ok {
+			t.Fatalf("status --json's prefs block is missing %q", k)
 		}
 	}
 }

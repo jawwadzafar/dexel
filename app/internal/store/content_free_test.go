@@ -173,12 +173,24 @@ func contentFreeRegistry() contentfree.Registry {
 		// persistence (design §1.1, P2-design.md §2.7) — both cited
 		// exceptions below. Autostart is a closed-set string written
 		// only by `dexel autostart enable/disable`.
+		//
+		// AlwaysOnTop/ShowAwayTime (SET-1, docs/ui-spec.md §11) are user
+		// PREFERENCES: one bit each, written by the user through the
+		// Settings modal (SET_PREF) or by hand in this very file. A bool
+		// cannot carry a window title, a path or typed text, and neither
+		// says anything about the work — one is a window property, the
+		// other decides whether the Activity modal DISPLAYS durations that
+		// are recorded and persisted either way (recording is unchanged:
+		// StatCountersSave.IdleSeconds above keeps its own entry, and
+		// nothing in SaveData branches on this field).
 		"store.ConfigData": {
 			Sample: ConfigData{},
 			Allowed: map[string]string{
 				"Name":         "string",
 				"SessionNames": "map[string]string",
 				"Autostart":    "string",
+				"AlwaysOnTop":  "bool",
+				"ShowAwayTime": "bool",
 			},
 			Exceptions: map[string]string{
 				"Name": "ADR 0014 (docs/adr/0014-save-integrity-hmac-and-config-split.md): " +

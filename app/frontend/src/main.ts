@@ -13,6 +13,8 @@
 //                   (Phase P1's first-launch identity modal),
 //                   features/sessions-modal.ts (Phase P2's Sessions
 //                   modal + session-complete card),
+//                   features/settings-modal.ts (SET-1's Settings modal:
+//                   rename, always-on-top, away-time display),
 //                   features/menu.ts (the title-bar hamburger menu),
 //                   features/keybindings.ts —
 //                   each owns its own DOM/UI state, reads the store, and
@@ -34,6 +36,7 @@ import * as activityModal from './features/activity-modal';
 import * as historyModal from './features/history-modal';
 import * as onboardingModal from './features/onboarding-modal';
 import * as sessionsModal from './features/sessions-modal';
+import * as settingsModal from './features/settings-modal';
 // Wires #menu-open/#menu-panel as a side effect on import. PR-5
 // (docs/production-runtime/MIGRATION_PLAN.md §PR-5) gave it one piece
 // of store-derived state to render — the pause/resume label — via the
@@ -54,6 +57,11 @@ function renderAll(): void {
   activityModal.refreshIfOpen();
   historyModal.refreshIfOpen();
   sessionsModal.refreshIfOpen();
+  // SET-1 (docs/ui-spec.md §11): the Settings modal's two toggles and its
+  // name echo are pure functions of state.config, so they ride the same
+  // per-state render pass as everything else and stay right if the name or
+  // a preference changes in another tab.
+  settingsModal.refreshIfOpen();
   // Phase P1: the onboarding modal is opened and closed by the server's
   // `onboarding` flag alone (no button, no key), so its open/close
   // decision rides the same per-state render pass as everything else.

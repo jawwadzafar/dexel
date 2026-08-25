@@ -176,18 +176,40 @@ func loadOrInitConfig() (string, store.ConfigData) {
 	return cfgPath, cfg
 }
 
+// configPrefs is the set of SET-1 user preferences main.go writes through
+// to config.json (docs/ui-spec.md §11). A named struct rather than two
+// more bool parameters on writeConfigThrough: two adjacent bare bools at
+// a call site are indistinguishable to a reader and trivially swappable
+// by a future edit, and the whole point of this function is that a write
+// of one field must never quietly corrupt another.
+type configPrefs struct {
+	AlwaysOnTop  bool
+	ShowAwayTime bool
+}
+
 // writeConfigThrough is persistConfig's pure core: the read-modify-write
-// that keeps the two halves main.go owns from disturbing the rest of
+// that keeps the halves main.go owns from disturbing the rest of
 // config.json. Lifted to package scope for the same reason
 // browserOpenCommand and paths.binDirFor are — so it is directly testable
 // with a temp file instead of only through a running action loop.
-func writeConfigThrough(cfgPath, name string, sessionNames map[string]string) error {
+//
+// READ-MODIFY-WRITE, always. store.SaveConfig marshals the WHOLE struct,
+// so anything not re-stated here would be written back as its zero value.
+// That is not hypothetical: building a fresh ConfigData here once erased
+// `autostart` on every SET_NAME (see persistConfig's own comment in
+// main.go). SET-1's two preference fields join the same discipline —
+// every field this function does not own is loaded and left alone, and
+// every field it does own is set from the live game, never from a
+// remembered copy.
+func writeConfigThrough(cfgPath, name string, sessionNames map[string]string, prefs configPrefs) error {
 	cfg, err := store.LoadConfig(cfgPath)
 	if err != nil {
 		return fmt.Errorf("read config before write-through: %w", err)
 	}
 	cfg.Name = name
 	cfg.SessionNames = sessionNames
+	cfg.AlwaysOnTop = prefs.AlwaysOnTop
+	cfg.ShowAwayTime = prefs.ShowAwayTime
 	return store.SaveConfig(cfgPath, cfg)
 }
 

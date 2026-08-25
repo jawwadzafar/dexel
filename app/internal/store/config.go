@@ -59,10 +59,43 @@ import (
 // file, a hand-edited config.json, a platform switch), the same
 // "config.json can desync and that is accepted and honest" posture
 // SessionNames' doc comment above already describes for its own field.
+//
+// AlwaysOnTop and ShowAwayTime (SET-1, docs/ui-spec.md §11) are the
+// "future cosmetic prefs" this struct's doc comment anticipated, now
+// real, and they are the FIRST fields here a running dexel writes on a
+// user's say-so through the UI rather than through a CLI verb (SET_PREF,
+// §6.2). Both are plain bools and both default to FALSE — which is the
+// Go zero value, so an absent field, a fresh config.json and a
+// hand-deleted key all mean the same honest thing and no defaulting code
+// is needed anywhere:
+//
+//   - AlwaysOnTop: whether the desktop shell pins its window above other
+//     windows (desktop/src-tauri/src/lib.rs reads it via
+//     `dexel status --json`'s `prefs` block). It replaces a hardcoded
+//     always_on_top(true) in that shell — ADR 0007 argued "a companion
+//     the editor buries never gets seen", which is true, but forcing it
+//     on every user was the wrong way to act on it, so the behaviour is
+//     kept and the DEFAULT is inverted to off. A web-only user may still
+//     set it; it simply persists and nothing consumes it, which is
+//     harmless rather than a lie (nothing on screen claims otherwise).
+//   - ShowAwayTime: whether the Activity modal DISPLAYS the away-time
+//     rows. It is a PRESENTATION preference and nothing else: away time
+//     is recorded exactly as before whatever this says (ADR 0010/0013 are
+//     untouched, StatCounters.IdleSeconds still accrues every second and
+//     still crosses the wire), because a counter that silently stopped
+//     counting when hidden would make every derived total quietly wrong
+//     and would be the dishonesty this project refuses. Hiding is the
+//     client's rendering decision, driven by this field arriving over the
+//     wire in ConfigView.
+//
+// Neither is protected state: like Name, they are the user's to hand-edit
+// (the file is unsigned by design), and neither can influence the economy.
 type ConfigData struct {
 	Name         string            `json:"name"`
 	SessionNames map[string]string `json:"sessionNames"`
 	Autostart    string            `json:"autostart"`
+	AlwaysOnTop  bool              `json:"alwaysOnTop"`
+	ShowAwayTime bool              `json:"showAwayTime"`
 }
 
 // ConfigPath returns <StateDir>/config.json — the same directory as

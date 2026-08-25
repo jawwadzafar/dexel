@@ -375,6 +375,12 @@ func runServe(mode serveMode, args []string) {
 	cfgPath, cfg := loadOrInitConfig()
 	g.RestoreConfigName(cfg.Name)
 	g.RestoreSessionNames(store.SessionNamesFromConfig(cfg))
+	// SET-1 (docs/ui-spec.md §11): the two user preferences ride the same
+	// config.json load as the name, so a restart comes back with the
+	// settings the user chose — and, since both default to false, a fresh
+	// install comes back with away time private and the window unpinned
+	// without any defaulting code here.
+	g.RestorePrefs(cfg.AlwaysOnTop, cfg.ShowAwayTime)
 	if g.ConfigName() != "" {
 		log.Printf("dexel name: %q", g.ConfigName())
 	}
@@ -553,10 +559,12 @@ func runServe(mode serveMode, args []string) {
 		cancel()
 	}
 
-	// persistConfig writes BOTH halves of config.json through to disk
-	// IMMEDIATELY: the dexel's own name (Phase P1, after SET_NAME) and
-	// the P2 per-session project-name map (docs/plan/P2-design.md §2.7,
-	// after SESSION_START) — deliberately not on the 30s autosave timer
+	// persistConfig writes EVERY half of config.json this process owns
+	// through to disk IMMEDIATELY: the dexel's own name (Phase P1, after
+	// SET_NAME), the P2 per-session project-name map
+	// (docs/plan/P2-design.md §2.7, after SESSION_START) and SET-1's user
+	// preferences (docs/ui-spec.md §11, after SET_PREF)
+	// — deliberately not on the 30s autosave timer
 	// the protected save uses, and deliberately as ONE write for the one
 	// shared file, so writing either half never clobbers the other.
 	// Naming something (a dexel, or a session) is a one-shot
@@ -566,10 +574,11 @@ func runServe(mode serveMode, args []string) {
 	// criterion — and P2's "a declared intention that silently fails to
 	// survive a crash is worse than no name at all" — both forbid.
 	//
-	// This is the ONLY place either half is written, and it writes
-	// game.Game.ConfigName()/SessionNames() — values NormalizeName/
-	// NormalizeSessionName already sanitised — never a raw client
-	// payload. cfgPath == "" means the home directory could not be
+	// This is the ONLY place any of them is written, and it writes
+	// game.Game.ConfigName()/SessionNames()/AlwaysOnTop()/ShowAwayTime()
+	// — the values NormalizeName/NormalizeSessionName already sanitised,
+	// and the bools game.Game.SetPref already checked against its
+	// key allow-list — never a raw client payload. cfgPath == "" means the home directory could not be
 	// resolved at boot (already logged there); the game still runs, the
 	// name(s) just cannot outlive the process.
 	//
@@ -595,7 +604,10 @@ func runServe(mode serveMode, args []string) {
 		if cfgPath == "" {
 			return errors.New("no config path (home directory unresolved at startup)")
 		}
-		return writeConfigThrough(cfgPath, g.ConfigName(), store.SessionNamesToConfig(g.SessionNames()))
+		return writeConfigThrough(cfgPath, g.ConfigName(), store.SessionNamesToConfig(g.SessionNames()), configPrefs{
+			AlwaysOnTop:  g.AlwaysOnTop(),
+			ShowAwayTime: g.ShowAwayTime(),
+		})
 	}
 
 	// Single-owner loop: every mutation of g happens on this goroutine
@@ -690,12 +702,23 @@ func runServe(mode serveMode, args []string) {
 			// replaced by an error flash, because a warm "hello"/"session
 			// started" for a name that silently will not survive a
 			// restart is a lie.
-			if mutated && (req.msg.Action == actionSetName || req.msg.Action == actionSessionStart) {
+			if mutated && (req.msg.Action == actionSetName || req.msg.Action == actionSessionStart || req.msg.Action == actionSetPref) {
 				if err := persistConfig(); err != nil {
 					log.Printf("save config failed: %v", err)
 					errText := "could not save name"
-					if req.msg.Action == actionSessionStart {
+					switch req.msg.Action {
+					case actionSessionStart:
 						errText = "could not save session name"
+					case actionSetPref:
+						// SET-1: a setting that silently will not survive
+						// a restart is the same lie a lost name is, so
+						// SET_PREF joins the immediate write-through and
+						// the same honest failure. The in-memory value
+						// still stands, so the session behaves as asked —
+						// the toast is what stops us pretending it was
+						// saved. (This is also SET_PREF's ONLY flash: a
+						// successful one is answered by `state` alone.)
+						errText = "could not save settings"
 					}
 					flash = &flashMessage{Type: "flash", Kind: "error", Text: errText}
 				}

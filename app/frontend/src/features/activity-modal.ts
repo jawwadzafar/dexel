@@ -11,6 +11,17 @@
 // open the store already does); this page never simulates or
 // double-counts a keystroke on top of that by rendering the dialog, so
 // there is no separate inflation risk to gate against.
+//
+// SET-1 (docs/ui-spec.md §11.3) gave this modal its one piece of
+// conditional rendering: the two AWAY rows (formerly labelled "IDLE
+// TIME") are shown only when the server says `config.showAwayTime`. Read
+// the direction of that carefully, because it is the whole point —
+// nothing about RECORDING changes. `stats.today.idleSeconds` and
+// `stats.lifetime.idleSeconds` still accrue every away second, still
+// arrive on every broadcast, and are still written into the rows below
+// whether or not the rows are visible. Hiding is a display choice the
+// user made, and it is driven by a field the SERVER sends, not by
+// anything this module decided on its own. ADR 0010/0013 are untouched.
 import { byId } from '../dom';
 import * as store from '../state/store';
 import { fmtDuration, fmtInt } from '../format';
@@ -24,14 +35,19 @@ const el = {
   statTodayKeystrokes: byId('stat-today-keystrokes'),
   statTodayMouse: byId('stat-today-mouse'),
   statTodayActive: byId('stat-today-active'),
-  statTodayIdle: byId('stat-today-idle'),
+  statTodayAway: byId('stat-today-away'),
   statTodaySprints: byId('stat-today-sprints'),
   statTodayFocusSessions: byId('stat-today-focus-sessions'),
   statTodayAppSwitches: byId('stat-today-app-switches'),
+  // The two AWAY ROWS themselves (not just their values) — SET-1 hides
+  // the whole row, label included, so a hidden away time leaves no trace
+  // of itself rather than an orphaned "AWAY" with a blank beside it.
+  rowTodayAway: byId('activity-row-today-away'),
+  rowLifeAway: byId('activity-row-life-away'),
   statLifeKeystrokes: byId('stat-life-keystrokes'),
   statLifeMouse: byId('stat-life-mouse'),
   statLifeActive: byId('stat-life-active'),
-  statLifeIdle: byId('stat-life-idle'),
+  statLifeAway: byId('stat-life-away'),
   statLifeSprints: byId('stat-life-sprints'),
   statLifeFocusSessions: byId('stat-life-focus-sessions'),
   statLifeAppSwitches: byId('stat-life-app-switches'),
@@ -97,14 +113,14 @@ export function renderActivity(): void {
   el.statTodayKeystrokes.textContent = fmtInt(today?.keystrokes);
   el.statTodayMouse.textContent = fmtDuration(today?.mouseActiveSeconds);
   el.statTodayActive.textContent = fmtDuration(today?.activeSeconds);
-  el.statTodayIdle.textContent = fmtDuration(today?.idleSeconds);
+  el.statTodayAway.textContent = fmtDuration(today?.idleSeconds);
   el.statTodaySprints.textContent = fmtInt(today?.sprintsCompleted);
   el.statTodayFocusSessions.textContent = fmtInt(today?.focusSessions);
   el.statTodayAppSwitches.textContent = fmtInt(today?.appSwitches);
   el.statLifeKeystrokes.textContent = fmtInt(life?.keystrokes);
   el.statLifeMouse.textContent = fmtDuration(life?.mouseActiveSeconds);
   el.statLifeActive.textContent = fmtDuration(life?.activeSeconds);
-  el.statLifeIdle.textContent = fmtDuration(life?.idleSeconds);
+  el.statLifeAway.textContent = fmtDuration(life?.idleSeconds);
   el.statLifeSprints.textContent = fmtInt(life?.sprintsCompleted);
   el.statLifeFocusSessions.textContent = fmtInt(life?.focusSessions);
   el.statLifeAppSwitches.textContent = fmtInt(life?.appSwitches);
@@ -112,6 +128,22 @@ export function renderActivity(): void {
   setValue(el.coinsTodayMouse, coinsOnlyNode(coins?.mouse));
   setValue(el.coinsTodayFocusSessions, countToCoinsNode(today?.focusSessions, coins?.focusSessions));
   setValue(el.coinsTodayAppSwitches, coinsOnlyNode(coins?.appSwitches));
+
+  // SET-1 (docs/ui-spec.md §11.3): the away rows appear only when the
+  // server says so. Written LAST, and as its own step, so it is obvious
+  // that the values above were computed unconditionally — the rows are
+  // filled in either way and the only thing this decides is whether they
+  // are on screen.
+  //
+  // `display: none` rather than `visibility: hidden`: the rows sit in
+  // normal flow inside .activity-section, so collapsing them closes the
+  // gap instead of leaving a blank stripe where a number used to be. The
+  // section's own top is fixed in CSS, so the rows below simply move up
+  // and the section ends 12px shorter — no overflow, and nothing else in
+  // the modal moves.
+  const showAway = !!(state.config && state.config.showAwayTime);
+  el.rowTodayAway.style.display = showAway ? '' : 'none';
+  el.rowLifeAway.style.display = showAway ? '' : 'none';
 }
 
 export function refreshIfOpen(): void {

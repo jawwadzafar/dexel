@@ -246,7 +246,7 @@ func TestConfigWriteThroughPreservesAutostart(t *testing.T) {
 
 	// The runtime names a session (the SESSION_START path) and renames the
 	// dexel (the SET_NAME path).
-	if err := writeConfigThrough(cfgPath, "Zaphod", map[string]string{"7": "Fix Bug #404"}); err != nil {
+	if err := writeConfigThrough(cfgPath, "Zaphod", map[string]string{"7": "Fix Bug #404"}, configPrefs{}); err != nil {
 		t.Fatalf("writeConfigThrough: %v", err)
 	}
 
@@ -265,12 +265,75 @@ func TestConfigWriteThroughPreservesAutostart(t *testing.T) {
 	}
 }
 
+// TestConfigWriteThroughCarriesPrefsWithoutClobberingTheOtherFields is the
+// SET-1 (docs/ui-spec.md §11) half of the lesson above, from both
+// directions: a SET_PREF write must carry the preferences AND leave the
+// name/sessionNames/autostart it does not own exactly as it found them,
+// and a SET_NAME write must not silently switch the preferences back off.
+//
+// The second half is the one that would actually bite: `alwaysOnTop` and
+// `showAwayTime` both DEFAULT to false, so a construct-and-overwrite bug
+// here would look exactly like "the user never set it" — the quietest
+// possible regression, and the reason both directions are pinned rather
+// than just the new one.
+func TestConfigWriteThroughCarriesPrefsWithoutClobberingTheOtherFields(t *testing.T) {
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "config.json")
+
+	if err := store.SaveConfig(cfgPath, store.ConfigData{
+		Name:      "Marvin",
+		Autostart: "launchd",
+	}); err != nil {
+		t.Fatalf("seed config: %v", err)
+	}
+
+	// The SET_PREF path: both preferences on, everything else untouched.
+	if err := writeConfigThrough(cfgPath, "Marvin", map[string]string{"3": "docs pass"}, configPrefs{
+		AlwaysOnTop:  true,
+		ShowAwayTime: true,
+	}); err != nil {
+		t.Fatalf("writeConfigThrough (prefs): %v", err)
+	}
+	got, err := store.LoadConfig(cfgPath)
+	if err != nil {
+		t.Fatalf("reload config: %v", err)
+	}
+	if !got.AlwaysOnTop || !got.ShowAwayTime {
+		t.Errorf("prefs = {alwaysOnTop:%v showAwayTime:%v}, want both true", got.AlwaysOnTop, got.ShowAwayTime)
+	}
+	if got.Autostart != "launchd" || got.Name != "Marvin" || got.SessionNames["3"] != "docs pass" {
+		t.Errorf("a prefs write-through disturbed another field: %+v", got)
+	}
+
+	// The SET_NAME path, carrying the live prefs as main.go's
+	// persistConfig does: the preferences must survive a rename.
+	if err := writeConfigThrough(cfgPath, "Zaphod", map[string]string{"3": "docs pass"}, configPrefs{
+		AlwaysOnTop:  true,
+		ShowAwayTime: true,
+	}); err != nil {
+		t.Fatalf("writeConfigThrough (rename): %v", err)
+	}
+	got, err = store.LoadConfig(cfgPath)
+	if err != nil {
+		t.Fatalf("reload config: %v", err)
+	}
+	if got.Name != "Zaphod" {
+		t.Errorf("name = %q, want %q", got.Name, "Zaphod")
+	}
+	if !got.AlwaysOnTop || !got.ShowAwayTime {
+		t.Errorf("prefs = {alwaysOnTop:%v showAwayTime:%v} after a rename, want both still true", got.AlwaysOnTop, got.ShowAwayTime)
+	}
+	if got.Autostart != "launchd" {
+		t.Errorf("autostart = %q after a rename, want %q", got.Autostart, "launchd")
+	}
+}
+
 // TestConfigWriteThroughOnAMissingFileStillWrites pins the first-run path:
 // no config.json yet is not an error (LoadConfig returns a zero value), so
 // the write-through must create the file rather than refuse.
 func TestConfigWriteThroughOnAMissingFileStillWrites(t *testing.T) {
 	cfgPath := filepath.Join(t.TempDir(), "config.json")
-	if err := writeConfigThrough(cfgPath, "Ford", nil); err != nil {
+	if err := writeConfigThrough(cfgPath, "Ford", nil, configPrefs{}); err != nil {
 		t.Fatalf("writeConfigThrough on a missing file: %v", err)
 	}
 	got, err := store.LoadConfig(cfgPath)

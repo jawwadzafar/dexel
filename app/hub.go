@@ -25,6 +25,20 @@ type actionMessage struct {
 	// characters dropped, trimmed, capped at game.MaxNameLen runes,
 	// empty rejected) inside game.Game.SetConfigName.
 	Name string `json:"name,omitempty"`
+	// Key/Value are SET_PREF's payload (SET-1, docs/ui-spec.md §6.2/§11.4).
+	// Key names the preference and is validated against
+	// game.Game.SetPref's allow-list — an unknown key is rejected, so this
+	// string can never become a way to write an arbitrary field.
+	//
+	// Value is deliberately a plain bool, not a json.RawMessage or an
+	// `any`: every preference dexel has is an on/off choice, and typing
+	// the field as a bool means a malformed value is refused by
+	// encoding/json at the door rather than being re-validated by hand
+	// per key. A future non-boolean preference is a deliberate wire
+	// change to make then (see game/prefs.go's prefTargets comment), not
+	// something to leave a hole open for now.
+	Key   string `json:"key,omitempty"`
+	Value bool   `json:"value,omitempty"`
 }
 
 // flashMessage is the transient toast (docs/ui-spec.md §6.1 "flash").

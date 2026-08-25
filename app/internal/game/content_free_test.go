@@ -105,11 +105,28 @@ func contentFreeRegistry() contentfree.Registry {
 			},
 		},
 
-		// ConfigView (Phase P1): exactly one field, the user-authored
-		// dexel name (ADR 0014's different-category rationale).
+		// ConfigView (Phase P1 + SET-1): the user-authored dexel name
+		// (ADR 0014's different-category rationale) plus SET-1's two user
+		// PREFERENCES (docs/ui-spec.md §11). Both preferences are plain
+		// bools — a single bit each, chosen by the user about their own
+		// dexel, incapable of carrying an observation of any kind:
+		//
+		//   - AlwaysOnTop: whether the desktop shell pins its window.
+		//     Says nothing about the user's work; it is a window property.
+		//   - ShowAwayTime: whether the Activity modal DISPLAYS the
+		//     already-sent, already-content-free away durations. Note the
+		//     direction: this field adds no data to the wire and removes
+		//     none — IdleSeconds keeps its own entries on
+		//     StatCounters/DayStat/SessionView above, untouched, because
+		//     recording is deliberately unchanged (ADR 0010/0013) and only
+		//     presentation is the user's call.
 		"game.ConfigView": {
-			Sample:     ConfigView{},
-			Allowed:    map[string]string{"Name": "string"},
+			Sample: ConfigView{},
+			Allowed: map[string]string{
+				"Name":         "string",
+				"AlwaysOnTop":  "bool",
+				"ShowAwayTime": "bool",
+			},
 			Exceptions: nameException(),
 		},
 

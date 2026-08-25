@@ -1,15 +1,16 @@
 // FEATURE/LOGIC layer — the title-bar hamburger menu. Owns exactly two DOM
 // nodes: #menu-open (the hamburger button) and #menu-panel (the dropdown
 // list of section launchers) — nothing else. It never reaches into the
-// store/activity/history modal modules and never calls their open()
-// itself: those buttons (#store-open / #activity-open / #history-open)
-// live inside #menu-panel in index.html and already carry their own
-// click -> open() wiring from their own feature modules. This module's
-// only job on a pick is to close ITSELF, which it does generically by
-// listening for a click that lands on anything carrying the shared
-// `.menu-item` class inside the panel — so a future entry (Sessions,
-// Goals, ...) is just one more `.menu-item` button in index.html; this
-// file needs zero changes to support it.
+// store/activity/history/sessions/settings modal modules and never calls
+// their open() itself: those buttons (#store-open / #activity-open /
+// #history-open / #sessions-open / #settings-open) live inside #menu-panel
+// in index.html and already carry their own click -> open() wiring from
+// their own feature modules. This module's only job on a pick is to close
+// ITSELF, which it does generically by listening for a click that lands on
+// anything carrying the shared `.menu-item` class inside the panel — so a
+// new entry is just one more `.menu-item` button in index.html; this file
+// needs zero changes to support it, which SET-1's [G] SETTINGS entry
+// (docs/ui-spec.md §11) is the proof of: it added none.
 //
 // PR-5 (docs/production-runtime/MIGRATION_PLAN.md §PR-5) is the one
 // exception to "never reaches into ... modules": pause/resume has no

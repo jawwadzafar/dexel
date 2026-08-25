@@ -1593,6 +1593,210 @@ img, .sprite {
   text-align: right;
 }
 
+/* ================= settings modal ================= */
+/* SET-1 — The Settings modal (docs/ui-spec.md §11). Same mechanics as
+   #store/#activity/#history/#sessions above (native <dialog>,
+   showModal(), the shared #scrim), and deliberately the same box as
+   #sessions: 480x300 at left 80, top 50 — a geometry already proven to
+   sit under BUG-8's ~362px browser dialog:modal height cap, so this modal
+   inherits that headroom instead of re-deriving it.
+
+   Children flow normally inside one #settings-body box rather than each
+   being absolutely positioned, the idiom .sessions-view and
+   .activity-section already use. Vertical budget inside that box
+   (top:32, footer at top:280, so 248px available):
+
+     NAME title        12 + 4 margin   = 16
+     current name      10 + 4          = 14
+     rename label      10 + 2          = 12
+     name input        20 + 6          = 26
+     SAVE NAME         20              = 20   ->  88
+     WINDOW title      8 + 12 + 4      = 24   -> 112
+     on-top row        20 + 2          = 22   -> 134
+     window note       10              = 10   -> 144
+     PRIVACY title     8 + 12 + 4      = 24   -> 168
+     away row          20 + 2          = 22   -> 190
+     two privacy notes 10 + 10         = 20   -> 210
+
+   210 of 248 — 38px of slack, which is what makes room for a fourth
+   preference later without touching the modal's box. The 8px inter-section
+   gap is a margin-top on .settings-section-title, so adding or removing a
+   note line never needs a second spacing edit.
+
+   Line lengths are checked against the 448px inner width at 8px/char
+   (Press Start 2P advances exactly one em): the longest line here is the
+   44-character privacy line at 352px. */
+#settings {
+  position: fixed;
+  /* Authored position inside the 640x400 layout. Consumed by the
+     shared window-fit transform above, NOT by left/top. */
+  --dlg-x: 80px;
+  --dlg-y: 50px;
+  width: 480px;
+  height: 300px;
+  margin: 0;
+  padding: 12px;
+  border: 4px solid var(--wall-light);
+  background: var(--metal);
+  color: var(--cream);
+  z-index: 1000;
+}
+#settings::backdrop { background: transparent; }
+
+#settings-title {
+  position: absolute;
+  left: 12px;
+  top: 12px;
+  width: 400px;
+  height: 16px;
+  font-size: 8px;
+  color: var(--cream);
+  line-height: 16px;
+}
+#settings-close {
+  position: absolute;
+  left: 444px;
+  top: 12px;
+  width: 16px;
+  height: 16px;
+  padding: 0;
+  font-size: 8px;
+  line-height: 6px;
+}
+
+#settings-body { position: absolute; left: 12px; top: 32px; width: 448px; }
+
+/* Same section-title idiom as .activity-section-title /
+   .sessions-section-title — small pixel caps, dim, a bottom rule. */
+.settings-section-title {
+  height: 12px;
+  line-height: 12px;
+  font-size: 8px;
+  color: var(--screen-dim);
+  border-bottom: 2px solid var(--wall-light);
+  margin-bottom: 4px;
+  /* The inter-section gap lives HERE, on the heading, rather than as a
+     bottom margin on whatever happens to be the last element of the
+     previous section — so a section can gain or lose a note line without
+     the spacing needing a second edit (and without the two-notes case
+     needing a special rule to stay flush). */
+  margin-top: 8px;
+}
+.settings-section-title:first-child { margin-top: 0; }
+
+/* The live name echo. Kept as its own line rather than only seeding the
+   input, so the SERVER's current name stays on screen while the input
+   holds an unsaved edit — the modal never has to choose between showing
+   the truth and letting you type. */
+#settings-name-current {
+  height: 10px;
+  line-height: 10px;
+  font-size: 8px;
+  white-space: nowrap;
+  overflow: hidden;
+  margin-bottom: 4px;
+}
+#settings-name-current .label { color: var(--screen-dim); }
+#settings-name-current .value { color: var(--cream); }
+
+#settings-name-label {
+  display: block;
+  height: 10px;
+  line-height: 10px;
+  font-size: 8px;
+  color: var(--cream);
+  margin-bottom: 2px;
+  white-space: nowrap;
+}
+/* Styled from scratch, the same reasoning #onboarding-name and
+   #sessions-name record (ui-spec.md §1: replace NES.css's .nes-input
+   border-image/rem padding at this fixed pixel size). */
+#settings-name {
+  display: block;
+  box-sizing: border-box;
+  width: 300px;
+  height: 20px;
+  margin: 0 0 6px;
+  padding: 0 4px;
+  font-family: 'Press Start 2P', monospace;
+  font-size: 8px;
+  line-height: 18px;
+  color: var(--cream);
+  background: var(--shadow);
+  border: 2px solid var(--wall-light);
+  border-radius: 0;
+  caret-color: var(--gold);
+  -webkit-font-smoothing: none;
+}
+#settings-name::placeholder { color: var(--screen-dim); }
+#settings-name:focus { outline: 2px solid var(--gold); outline-offset: 0; }
+
+#settings-name-save {
+  display: block;
+  width: 160px;
+  height: 20px;
+  padding: 0;
+  font-size: 8px;
+}
+
+/* One row per preference: the label on the left, ONE button on the right
+   whose text is a pure function of the server's value (the store modal's
+   §4.3 one-action-button idea, applied to a two-state control). */
+.settings-row {
+  position: relative;
+  height: 20px;
+  margin-bottom: 2px;
+  white-space: nowrap;
+}
+.settings-row .label {
+  line-height: 20px;
+  font-size: 8px;
+  /* CREAM, not the dim colour .activity-row/.sessions-row use for THEIR
+     labels — and the difference is deliberate. There, dim-label/cream-value
+     works because the value beside it is the content. Here the "value" is a
+     button, and the row is followed by a dim explanatory note; rendering
+     the setting's NAME in the same dim as its explanation flattened the two
+     into one grey paragraph (seen in the real running modal, not guessed).
+     Cream name, dim note is the hierarchy that reads. */
+  color: var(--cream);
+}
+.settings-toggle {
+  position: absolute;
+  right: 0;
+  top: 0;
+  width: 56px;
+  height: 20px;
+  padding: 0;
+  font-size: 8px;
+}
+/* ON is called out in the same gold DevCash and the session pill use.
+   Colour is the only safe emphasis lever here: Press Start 2P is a single
+   400-weight face and synthetic bold at 8px reads muddy (the A2 lesson
+   .coins-row .coin-amt already records). */
+.settings-toggle.is-on { color: var(--gold); }
+
+/* The explanatory lines under each preference. Dim, one line each, no
+   wrapping (each line is authored to fit — see the budget above). */
+.settings-note {
+  height: 10px;
+  line-height: 10px;
+  font-size: 8px;
+  color: var(--screen-dim);
+  white-space: nowrap;
+}
+
+#settings-help {
+  position: absolute;
+  left: 12px;
+  top: 280px;
+  width: 448px;
+  height: 10px;
+  line-height: 10px;
+  font-size: 8px;
+  color: var(--screen-dim);
+  text-align: right;
+}
+
 /* ================= onboarding modal ================= */
 /* Phase P1 — Identity & first minutes (docs/plan/PRODUCT-EVOLUTION.md §5,
    docs/ui-spec.md §7). Same mechanics as #store/#activity/#history above

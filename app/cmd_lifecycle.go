@@ -54,6 +54,7 @@ import (
 
 	"github.com/jawwadzafar/dexel/app/internal/lifecycle"
 	"github.com/jawwadzafar/dexel/app/internal/paths"
+	"github.com/jawwadzafar/dexel/app/internal/store"
 )
 
 // startTimeout bounds how long `dexel start` waits for the detached child
@@ -479,7 +480,64 @@ type statusJSON struct {
 	LogPath  string `json:"logPath"`
 	Cleaned  bool   `json:"cleanedStaleRuntimeFile,omitempty"`
 	Reason   string `json:"reason,omitempty"`
+	// Prefs (SET-1, docs/ui-spec.md §11.5) is how a user preference
+	// reaches the DESKTOP SHELL. The shell (desktop/src-tauri/src/lib.rs)
+	// already runs `status --json` to find the runtime's URL — at launch
+	// and again on every window focus — so the preferences it has to act
+	// on ride that call rather than needing an IPC channel into a page
+	// served from the runtime's own origin (which the shell does not
+	// have; see that file's "Why focus, and not a timer or a WS hook").
+	//
+	// NOT omitempty, and present whether or not a runtime is running: a
+	// preference is CONFIG (ADR 0014), it lives in config.json, and it is
+	// just as true with nothing running as with a live daemon. A consumer
+	// that reads `prefs` therefore never has to branch on `running` to
+	// find out what the user asked for.
+	Prefs prefsJSON `json:"prefs"`
 }
+
+// prefsJSON is `status --json`'s `prefs` block — SET-1's user preferences
+// (docs/ui-spec.md §11.5), read STRAIGHT OUT OF config.json rather than
+// out of the live runtime.
+//
+// Reading the file is the right call here, not a shortcut around the
+// live-probe path `paused` uses, and the two fields differ in a way that
+// decides it: `paused` is a fact about a PROCESS (is it sampling right
+// now?), which only that process can answer, so it must come from
+// GET /api/lifecycle/status. A preference is a fact about the USER's
+// CONFIGURATION, whose authority is config.json itself — the file every
+// SET_PREF writes through to immediately (app/main.go's persistConfig),
+// and the file ADR 0014 deliberately leaves hand-editable. So reading it
+// here is both fresher (a hand edit is seen at once) and honest with no
+// runtime at all, and it keeps a user preference out of the token-gated
+// lifecycle control plane, which is about controlling the daemon.
+type prefsJSON struct {
+	AlwaysOnTop  bool `json:"alwaysOnTop"`
+	ShowAwayTime bool `json:"showAwayTime"`
+}
+
+// readPrefs loads the `prefs` block from config.json under stateDir.
+//
+// It cannot fail into an error: store.LoadConfig already degrades a
+// missing or malformed config.json to defaults (both preferences false)
+// rather than erroring, which is exactly the answer `status` should give
+// — "nothing configured" is a real, correct answer, and a status command
+// that refused to print because a hand-edited config file had a stray
+// comma would be useless at the one moment it is needed. A genuine read
+// failure (a permission problem) is logged nowhere and degrades the same
+// way for the same reason: the rest of the status answer is still true.
+func readPrefs(stateDir string) prefsJSON {
+	cfg, _ := store.LoadConfig(filepath.Join(stateDir, configFileName))
+	return prefsJSON{AlwaysOnTop: cfg.AlwaysOnTop, ShowAwayTime: cfg.ShowAwayTime}
+}
+
+// configFileName is config.json's basename, pinned by store.ConfigPath()
+// (and asserted equal to it by TestReadPrefsReadsTheSameFileStoreWrites).
+// Joined onto cliEnv.stateDir rather than calling store.ConfigPath()
+// directly so `status` reads the state dir it already resolved once,
+// never a second independent resolution that could drift from it — the
+// same rule lifecycleStatusHandler follows for statePath/logPath.
+const configFileName = "config.json"
 
 // cmdStatus answers "is a dexel running here" by round-trip
 // (ARCHITECTURE.md Decision 6), and cleans up a runtime.json it cannot
@@ -513,6 +571,9 @@ func cmdStatus(args []string) int {
 		StateDir: env.stateDir,
 		LogPath:  env.logPath,
 		Cleaned:  st.Cleaned,
+		// SET-1: read from config.json, so it is answered identically
+		// whether or not a runtime is running (see prefsJSON).
+		Prefs: readPrefs(env.stateDir),
 	}
 	if st.Running {
 		out.Pid = st.Runtime.Pid
@@ -569,6 +630,14 @@ func cmdStatus(args []string) int {
 	}
 	fmt.Fprintf(env.out, "  state     %s\n", out.StateDir)
 	fmt.Fprintf(env.out, "  log       %s\n", out.LogPath)
+	// SET-1: printed for the same reason `paused` is (Decision 16's "a
+	// paused-and-forgotten dexel must be obvious, never mute") — a window
+	// that will not come to the front, or away rows that are not on
+	// screen, should be explicable from a terminal instead of looking like
+	// a bug. Printed unconditionally, below the two paths, because these
+	// are config facts and do not depend on anything running.
+	fmt.Fprintf(env.out, "  on top    %s\n", yesNo(out.Prefs.AlwaysOnTop))
+	fmt.Fprintf(env.out, "  away time %s\n", shownHidden(out.Prefs.ShowAwayTime))
 	return 0
 }
 
@@ -589,6 +658,26 @@ func uptimeSeconds(startedAt string, now time.Time) int64 {
 		return 0
 	}
 	return int64(d / time.Second)
+}
+
+// yesNo/shownHidden render SET-1's two preferences for the human-readable
+// `dexel status` output. Separate wordings on purpose: "on top: yes/no" is
+// a property of the window, while away time is either "shown" or "hidden"
+// — and calling the hidden case "no" would read as "not recorded", which
+// is precisely the thing that is NOT true (docs/ui-spec.md §11.3: away
+// time is always recorded, only its display is a choice).
+func yesNo(v bool) string {
+	if v {
+		return "yes"
+	}
+	return "no"
+}
+
+func shownHidden(v bool) string {
+	if v {
+		return "shown in the activity log"
+	}
+	return "hidden (still recorded)"
 }
 
 func firstNonEmpty(values ...string) string {

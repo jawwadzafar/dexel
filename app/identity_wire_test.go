@@ -131,7 +131,13 @@ func TestSetNameShowsOnTheWire(t *testing.T) {
 	if err != nil {
 		t.Fatalf("marshal fresh state: %v", err)
 	}
-	if !strings.Contains(string(fresh), `"config":{"name":""}`) {
+	// The whole block, verbatim: SET-1 (docs/ui-spec.md §11) added two
+	// preference fields alongside the name, and both must be present and
+	// FALSE on a fresh game — that default is the feature, not an
+	// implementation detail (an on-top window nobody asked for, and away
+	// time shown to a user who never chose to see it, are exactly what
+	// SET-1 exists to stop).
+	if !strings.Contains(string(fresh), `"config":{"name":"","alwaysOnTop":false,"showAwayTime":false}`) {
 		t.Fatalf(`a fresh state is missing the empty config block: %s`, fresh)
 	}
 	if !strings.Contains(string(fresh), `"onboarding":false`) {

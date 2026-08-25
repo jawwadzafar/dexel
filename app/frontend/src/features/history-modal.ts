@@ -13,6 +13,18 @@
 // that modal, this one deliberately sends no open/close action to the
 // server.
 //
+// SET-1 (docs/ui-spec.md §11.3) audited this modal for away-derived
+// display and found NONE, which is why `config.showAwayTime` gates
+// nothing here and this file needed no change. Every number on screen is
+// derived from a signal other than away time: the 7-day bars and the
+// BUSIEST DAY insight read `activeSeconds`, the 30-day strip reads the
+// server's own `isActive` flag, LONGEST FOCUS reads
+// `longestFocusBlockSeconds`/`focusSessions`, and the streak is rendered
+// verbatim. `DayStat.idleSeconds` arrives on every entry and is never
+// read by this file — deliberately left that way: a future addition here
+// that DOES surface away time has to honour the preference, and this note
+// is where that obligation is recorded.
+//
 // Chart tech is CSS block bars (div height/class), never canvas —
 // A3-design.md §6.2: canvas fills/strokes anti-alias at this app's 1x DPI,
 // exactly the blur the A2 gate already caught on the "→" glyph. Bars are

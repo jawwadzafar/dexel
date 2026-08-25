@@ -144,6 +144,8 @@ verification harness and the spec both address elements by id.
         <button id="activity-open" class="nes-btn menu-item">[A] ACTIVITY</button>
         <button id="history-open"  class="nes-btn menu-item">[H] HISTORY</button>
         <!-- P2: #sessions-open joins here, §9.1 -->
+        <!-- SET-1: #settings-open ([G] SETTINGS) joins here, §11.1 -->
+        <!-- PR-5: #pause-toggle joins here, §2.4 -->
       </div>
     </div>
 
@@ -167,6 +169,7 @@ verification harness and the spec both address elements by id.
     <dialog id="activity" class="nes-dialog is-dark"> … §6.1 … </dialog>
     <dialog id="history" class="nes-dialog is-dark"> … §6.1 … </dialog>
     <!-- P2: <dialog id="sessions"> joins here, §9.2 -->
+    <!-- SET-1: <dialog id="settings"> joins here, §11.2 -->
     <dialog id="onboarding" class="nes-dialog is-dark"> … §7 … </dialog>
   </div>
 </body>
@@ -232,7 +235,7 @@ after) is zero titlebar layout work.
 | `#menu-open` | 600, 4, 32, 16 | hamburger button, `padding: 0`. Icon is three plain 1px-tall `.bar` divs inside `.menu-icon` (16x7), **not** a `☰` glyph — a fancy character renders blurry/inconsistent at this app's 1x DPI in the pixel font, the same lesson A2 already recorded for `→` |
 | `#menu-panel` | 496, 26, 136, auto | dropdown opened by `#menu-open`, closed by default (`display:none`, shown via `.visible`); right edge (632) lines up with `#menu-open`'s right edge (632) so it never overflows the 640px titlebar |
 | `#menu-panel-title` | inside `#menu-panel`, 128 x 16 | static `MENU`, replaced by the Dexel's name once set (§7.4), 8px `var(--screen-dim)`, bottom rule separating it from the items |
-| `.menu-item` (×N) | inside `#menu-panel`, 128 x 20 each, 4px gap | one `nes-btn` per launcher, in menu order: `#store-open` (`[S] STORE`), `#activity-open` (`[A] ACTIVITY`), `#history-open` (`[H] HISTORY`), `#sessions-open` (`[W] SESSIONS`, P2, §9.1), and (PR-5, §2.4) `#pause-toggle` — label and action both flip live between `[P] PAUSE` (sends `PAUSE`) and `[P] RESUME` (sends `RESUME`), decided by `state.paused` read fresh from the store at click time, never assumed from the label |
+| `.menu-item` (×N) | inside `#menu-panel`, 128 x 20 each, 4px gap | one `nes-btn` per launcher, in menu order: `#store-open` (`[S] STORE`), `#activity-open` (`[A] ACTIVITY`), `#history-open` (`[H] HISTORY`), `#sessions-open` (`[W] SESSIONS`, P2, §9.1), `#settings-open` (`[G] SETTINGS`, SET-1, §11.1), and (PR-5, §2.4) `#pause-toggle` — label and action both flip live between `[P] PAUSE` (sends `PAUSE`) and `[P] RESUME` (sends `RESUME`), decided by `state.paused` read fresh from the store at click time, never assumed from the label |
 | `#paused-badge` | 380, 8, 96, 8 | (PR-5, §2.4) the always-visible paused indicator — an 8px dim solid square (`#paused-badge-dot`) + `PAUSED`, 8px `var(--screen-dim)`. Empty/hidden (`display:none` / `.visible`, same idiom as `#session-pill`) unless `state.paused` is true. Sits clear of both `#hud-level` (ends 120) and `#session-pill`'s box (132..372, §9.5) — a session can be active *and* paused at the same time, so both must stay visible together |
 
 Dev Cash lives in the titlebar, next to Level. **[DESIGN CALL]** the mockups
@@ -607,7 +610,12 @@ Main screen:
 |---|---|
 | `S` | open the store |
 | `Tab` | open the store (`preventDefault()` so focus does not move) |
+| `A` | open the activity log |
+| `H` | open the history modal |
 | `W` | open the Sessions modal (P2, §9.1 — "work session"; `S`/`Tab`/`A`/`H`/`M` are taken) |
+| `G` | open the Settings modal (SET-1, §11.1 — `G` for the *gear*; `S`/`A`/`H`/`W`/`M`/`P` and `Tab` were all taken) |
+| `M` | toggle the hamburger menu |
+| `P` | pause / resume tracking (PR-5, §2.4) |
 
 Store modal open:
 
@@ -655,8 +663,21 @@ Sessions modal open (P2, §9):
   reach a launcher even when focus sits on one of that modal's buttons.
   `Esc` needs no exception: a native `<dialog>` handles `Esc` itself, above
   this listener.
-* Window-level shortcuts (always-on-top toggle, quit) belong to the Wails
-  shell, not to this document.
+Settings modal open (SET-1, §11):
+
+| Key | Action |
+|---|---|
+| any printable key | *while the rename field is focused*: goes to `#settings-name`; **no global shortcut fires** (the field is not focused on open — see §11.2) |
+| `Enter` | rename field focused: save the name — same as `SAVE NAME` |
+| `Space` / `Enter` | a toggle button focused: flip that preference (native `<button>` activation) |
+| `G` / `Esc` | close |
+
+* Window-level shortcuts (quit, minimise) belong to the desktop shell, not
+  to this document. **Always-on-top is no longer one of them:** it was a
+  hardcoded `always_on_top(true)` in `desktop/src-tauri/src/lib.rs`, and
+  SET-1 made it a user preference the *page* owns and the shell obeys
+  (§11.4, §11.5). (This bullet also used to say "Wails shell" — the shell
+  has been Tauri since ADR 0015.)
 
 ### 5.3 Shopping must not count as work — hard requirement
 
@@ -830,7 +851,7 @@ second to reflect a click.
     ],
     "streak": {"current": 6, "longest": 14}
   },
-  "config": {"name": "Pixel"},
+  "config": {"name": "Pixel", "alwaysOnTop": false, "showAwayTime": false},
   "sessions": {
     "active": {
       "id": 28,
@@ -956,10 +977,34 @@ Field notes the implementers must not improvise on:
   All five/four values render with `fmtInt`; nothing is formatted
   server-side.
 * `config` — Phase P1 (Identity & first minutes,
-  `docs/plan/PRODUCT-EVOLUTION.md` §5). Exactly one field today,
+  `docs/plan/PRODUCT-EVOLUTION.md` §5), extended by SET-1 (§11).
   `config.name`: the Dexel's name, **user-authored**, `""` when unset. The
   server always sends the block; it is optional client-side
   (`wire.ts: config?`) only so a pre-P1 server degrades to "unnamed".
+
+  SET-1 adds two **preferences**, both `bool` and both defaulting to
+  `false` — which is also what an absent field means, so a pre-SET-1
+  server degrades to exactly the right thing (an unpinned window, away
+  time private):
+
+  * `config.alwaysOnTop` — whether the **desktop shell** pins its window
+    above other windows. Nothing on this page consumes it; the shell reads
+    it from `dexel status --json` (§11.5). It rides this block anyway so
+    the Settings modal can render the toggle's position from *server*
+    truth like every other control, never from a value it remembered
+    locally.
+  * `config.showAwayTime` — whether the Activity modal **displays** its
+    two AWAY rows (§11.3). This is a **presentation** switch and nothing
+    else: `stats.*.idleSeconds` is recorded exactly as before and is sent
+    on every broadcast whatever this says. Hiding is the client's
+    rendering decision, driven by this field. A counter that stopped
+    counting when hidden would make every total derived from it silently
+    wrong, which is the dishonesty ADR 0010/0013 forbid — so recording is
+    deliberately untouched.
+
+  Both live in the same `~/.config/dexel/config.json` as the name (ADR
+  0014's config side), are written by `SET_PREF` (§6.2) and are freely
+  hand-editable.
 
   This is the **one free-text string anywhere on this wire**, and it is
   legitimate for a reason that must not be generalised: it lives on the
@@ -1119,6 +1164,7 @@ replaces the old.
 {"action": "STORE_OPEN"}
 {"action": "STORE_CLOSE"}
 {"action": "SET_NAME",   "name": "Pixel"}
+{"action": "SET_PREF",   "key": "alwaysOnTop", "value": true}
 {"action": "SESSION_START", "name": "auth refactor"}   // name optional
 {"action": "SESSION_STOP"}
 {"action": "PAUSE"}
@@ -1150,7 +1196,34 @@ replaces the old.
   but the toast becomes a `flash: error` — a warm hello for a name that will
   silently not survive a restart is a lie.
   `SET_NAME` is not restricted to onboarding: a later Settings surface can
-  rename with the same action and no new wire.
+  rename with the same action and no new wire. **SET-1 is that surface**
+  (§11.2) and it took that route exactly: the Settings modal's rename field
+  sends this same action, with no second rename path and no new validation.
+* `SET_PREF` (SET-1, §11.4) sets one user **preference**. `key` is
+  validated server-side against `game.PrefKeys()`'s allow-list
+  (`alwaysOnTop`, `showAwayTime` today) and `value` is a **bool** — every
+  dexel preference is an on/off choice, so a malformed value is refused by
+  the JSON decode itself rather than re-checked per key. An unknown or
+  missing `key` is a `flash: error` with **no state change**, so a client
+  can never invent a preference or write an arbitrary field.
+
+  **One keyed action, not one action per preference.** Preferences are the
+  part of a UI that grows fastest and matters least individually; a
+  per-preference action would add a wire literal, a server case and a
+  frontend call per checkbox. A single keyed action with a strict
+  server-side allow-list keeps the wire flat without loosening validation.
+
+  **No flash on success** — the `PAUSE`/`STORE_OPEN` precedent: a
+  preference is a state, not an event, so success is answered by the
+  `state` broadcast alone and the toggle re-rendering from it *is* the
+  feedback. Setting a preference to the value it already holds is a
+  genuine server-side no-op (no broadcast, no second config write), the
+  same idempotence `PAUSE` has. Like `SET_NAME`, a successful `SET_PREF` is
+  written through to `config.json` **immediately**, and a failed write
+  becomes a `flash: error` while the in-memory value stands — a setting
+  that silently will not survive a restart is the same lie a lost name is.
+  A future non-boolean preference is a deliberate wire change to make then,
+  not a hole to leave open now.
 * `SESSION_START` / `SESSION_STOP` (Phase P2, §9.6) — names **pinned**
   exactly as written. PRODUCT-EVOLUTION §2.1 wrote `SESSION_START`/
   `SESSION_END`; the imperative pair became `SESSION_START`/`SESSION_STOP` to
@@ -1381,6 +1454,12 @@ Named explicitly so nobody re-derives them as missing features.
   never allowed to imply they describe the user's real work.
 * **Resizing, multiple windows, and any responsive behaviour** — out of scope.
   640x400 fixed.
+* **A Settings modal** was deferred here and by ADR 0014's own closing note
+  ("surfacing the name in the UI (a Settings modal + a WS field) is a
+  follow-up feature — SEC-1 only provisions the config slot"). **SET-1 built
+  it** — see §11. Still deferred from it, and named so nobody re-derives
+  them: a theme picker, an audio section (there is no audio, §8 above), and
+  any preference that would need a non-boolean `SET_PREF` value.
 
 ## 9. The Sessions modal
 
@@ -1727,3 +1806,235 @@ real browser, and judged from the pixels rather than from the code:
   clean; `tools/gen_assets.py` deterministic (a re-run rewrites identical
   bytes and touches none of the pre-P3 sprites) and its self-check green,
   including the new lift ladder and the cheer hand-placement assertions.
+
+## 11. The Settings modal
+
+SET-1 — three owner-requested capabilities in one surface: **rename the
+dexel**, **the window's always-on-top preference**, and **away-time
+privacy**. ADR 0014 named this modal as the follow-up that would finally
+surface the config slot SEC-1 provisioned; this is that follow-up.
+
+The mechanics are the ones every modal here shares (§4, and the
+`add-a-menu-modal` skill): a native `<dialog>` opened with `showModal()`,
+the shared `#scrim`, mouse **and** keyboard **and** `Esc`, and one `'close'`
+event that every dismissal path funnels through. What follows is only what
+is specific to this one.
+
+**It gates nothing.** It owns a text input, which is the question
+`add-a-menu-modal` §4 asks — and the answer is the one P2 already gave for
+the Sessions modal's project-name field (§9.7): the store's gate exists
+because keyboard-driven *shopping* is a self-feeding money loop, and there
+is no economy path in here at all — no purchase, no equip, no cash.
+Typing a name is a real keystroke on the user's real machine and is
+honestly counted as one, exactly as pressing `[G]` to get here is. So no
+`SETTINGS_OPEN`/`SETTINGS_CLOSE` action is sent, and nothing freezes.
+
+### 11.1 Opening it
+
+- **Menu entry:** `#settings-open` (`nes-btn menu-item`, label
+  `[G] SETTINGS`), placed in `#menu-panel` after `#sessions-open` and
+  before `#pause-toggle` (§2.1). No CSS was needed for it — the panel is a
+  flex column and `#menu-panel .menu-item` targets the class, so a new
+  entry really is one button in `index.html`.
+- **Key:** `[G]`. `S`, `Tab`, `A`, `H`, `W`, `M` and `P` were already
+  taken (§5.2), and `G` is the letter this app's audience already reads as
+  the settings *gear*. While the modal is open, `[G]` closes it — the same
+  toggle every other modal's own letter performs.
+- The modal claims the **keyboard-ownership tier** while open, for the same
+  reason onboarding and Sessions do: it owns an input, so a bare letter must
+  not reach a launcher even when focus sits on one of its buttons.
+
+### 11.2 Geometry and the three sections
+
+`#settings` is **480 x 300 at left 80, top 50** — deliberately the same box
+as `#sessions` (§9.2), a geometry already proven to sit under BUG-8's
+~362px browser `dialog:modal` height cap, so this modal inherits that
+headroom instead of re-deriving it. `#settings-title` and
+`#settings-close` follow §9.2's positions exactly.
+
+Everything else lives in one `#settings-body` box (`left: 12, top: 32,
+width: 448`) whose children **flow normally** rather than being
+individually absolute-positioned — the idiom `.sessions-view` and
+`.activity-section` already use. The 8px inter-section gap is a
+`margin-top` on `.settings-section-title`, so a section can gain or lose a
+note line without a second spacing edit. The vertical budget is 210px of
+the 248px available (the full ledger is in `game.css`'s own comment),
+leaving room for a fourth preference without touching the box.
+
+| Section | Contents |
+|---|---|
+| `NAME` | `#settings-name-current` (`CURRENTLY <name>`, the live server-authored name), `#settings-name-label`, `#settings-name` (an `<input maxlength="24">`), `#settings-name-save` (`SAVE NAME`) |
+| `WINDOW` | one `.settings-row`: label `ALWAYS ON TOP` + `#settings-ontop`, then one `.settings-note` |
+| `PRIVACY` | one `.settings-row`: label `SHOW AWAY TIME` + `#settings-away`, then two `.settings-note` lines |
+
+**[DESIGN CALL] The current name is shown on its own line, and the input is
+a draft.** The input is seeded from `state.config.name` on **open** and
+never again — this modal re-renders on every ~1 Hz `state` broadcast, and
+re-seeding the field on each one would delete whatever the user was
+halfway through typing. So the server's actual name is rendered separately,
+above it, and nothing on screen ever claims a name the server did not send.
+Renaming leaves the modal **open** (a settings panel is a place you are,
+not a question you answered); the `CURRENTLY` line updates from the
+broadcast that answers `SET_NAME`.
+
+**[DESIGN CALL] Focus is NOT forced into the input on open**, unlike
+onboarding (§7.1) and Sessions (§9.3). Those modals are *about* their one
+field; this one is three sections, and grabbing the caret would make `[G]`,
+`Esc` and both toggle buttons unreachable from the keyboard until the user
+clicked away. The bare-letter guard (§5.2) still applies whenever the field
+*is* focused — verified in the real app by typing a name made of nothing
+but global shortcut letters and watching no modal stack up.
+
+**Each preference is ONE button whose label and colour are a pure function
+of the server's value** — the store's §4.3 one-action-button idea reduced to
+its smallest case. `ON` (gold, `aria-pressed="true"`) or `OFF`; no third
+state and no "pending" look, because a `SET_PREF` is answered by a full
+`state` broadcast and pretending otherwise would be the optimistic local
+edit §6.2 forbids. A click sends the **opposite of what the server
+currently says**, read fresh at click time — never the opposite of what the
+button last painted (the same rule `#pause-toggle` follows, §2.1).
+
+### 11.3 Away-time privacy — recording is untouched
+
+The owner's requirement, verbatim: *"we can record not working but not show
+user."* That sentence is a split, and both halves are load-bearing.
+
+**Recording does not change. At all.** `StatCounters.IdleSeconds` accrues
+every away second exactly as before, in the today bucket, the lifetime
+bucket, every day bucket and every session record; it is persisted; and it
+is **still sent on every `state` broadcast** whatever the preference says.
+ADR 0010 (the honest mood machine) and ADR 0013 (analytics) are unchanged
+by SET-1, and a structural test pins it: `TestShowAwayTimeNeverChangesWhatIsRecorded`
+ticks the same fixture with the preference on and off and requires the two
+counter sets to be byte-identical. A counter that stopped counting when
+hidden would make every total derived from it silently wrong for anyone who
+kept the default — the worst possible version of this feature.
+
+**Presentation changes in three ways:**
+
+1. **`IDLE TIME` is now `AWAY`.** Both rows in the Activity modal
+   (§4-adjacent, `#activity-today` / `#activity-lifetime`) are relabelled,
+   and their value ids are `#stat-today-away` / `#stat-life-away` to match.
+   The wire field they render is still `idleSeconds` — the *recording*
+   vocabulary is unchanged; only the word shown to a person is.
+2. **When `config.showAwayTime` is false, the two AWAY rows are hidden
+   entirely** — label included, via `display: none` on
+   `#activity-row-today-away` / `#activity-row-life-away`, so a hidden away
+   time leaves no trace of itself rather than an orphaned `AWAY` beside a
+   blank. `display: none` and not `visibility: hidden`: the rows sit in
+   normal flow inside `.activity-section`, whose own `top` is fixed, so
+   collapsing them closes the gap and the section simply ends 12px
+   shorter — nothing else in the modal moves and nothing overflows. The
+   values are computed **unconditionally**; only their visibility is
+   conditional.
+3. **The History modal is unaffected, and that was audited, not assumed.**
+   Every number it shows comes from a signal other than away time: the
+   7-day bars and `BUSIEST DAY` read `activeSeconds`, the 30-day strip
+   reads the server's own `isActive` flag, `LONGEST FOCUS` reads
+   `longestFocusBlockSeconds`/`focusSessions`, and the streak is rendered
+   verbatim. `DayStat.idleSeconds` arrives on every entry and is read by
+   nothing. A note in `features/history-modal.ts` records the obligation
+   for whoever adds an away-derived number there later.
+
+**What deliberately stays:** the sleeping dexel and the `On break` status
+line. Those are the character's body language and mood, not a number — the
+cozy half of ADR 0010, and the thing the away-time preference is *not*
+about. The terminal's `-- idle --` sentinel (§3.2) stays for the same
+reason: scene dressing, not a metric.
+
+The modal says all of this in one line, in the owner's own words:
+
+> Away time is always recorded, never judged -
+> show it here or keep it private.
+
+Two authored lines rather than one wrapped one (each fits the 448px inner
+width at 8px/char), and an ASCII `-` in place of an em dash: Press Start
+2P has no dash glyph beyond the hyphen, and a missing glyph falls back to a
+thin system font that anti-aliases to near-invisibility at 8px/1x — the
+same lesson the A2 `→` glyph taught (§4's coins row).
+
+### 11.4 Actions
+
+Both controls reuse or extend the existing wire; neither invents a second
+path.
+
+| Control | Action | Notes |
+|---|---|---|
+| `SAVE NAME` / `Enter` in the field | `{"action":"SET_NAME","name":"<raw>"}` | The **existing** P1 action (§6.2), unchanged. Server-side `game.NormalizeName` is still the only door: trim, drop control characters, cap at 24 runes, reject empty. The client trims and sends nothing for an empty result purely so it never fires an action it knows would be rejected. |
+| `ALWAYS ON TOP` toggle | `{"action":"SET_PREF","key":"alwaysOnTop","value":<bool>}` | See §6.2 for the full contract: server-side key allow-list, no success flash, immediate `config.json` write-through, honest error flash if that write fails. |
+| `SHOW AWAY TIME` toggle | `{"action":"SET_PREF","key":"showAwayTime","value":<bool>}` | Same. |
+
+**Web-only users** can set `alwaysOnTop` and nothing consumes it — the
+preference simply persists. That is harmless rather than a lie: no text on
+this page claims the window moved, and the same `config.json` is read the
+moment the desktop shell *is* used.
+
+### 11.5 How `alwaysOnTop` reaches the window
+
+The desktop shell (`desktop/src-tauri/src/lib.rs`) loads its page from the
+runtime's own origin, so it has **no IPC channel into the page** — the same
+constraint that made window *focus* the trigger for its moved-runtime
+re-resolve. It does already run `dexel status --json`, at launch and again
+on every focus, so the preference rides that call:
+
+* `dexel status --json` gains a **`prefs`** block — `{"alwaysOnTop": bool,
+  "showAwayTime": bool}` — read straight out of `config.json`.
+* `prefs` is **not `omitempty`** and is **not conditional on `running`**. A
+  preference is *config* (ADR 0014); it is just as true with nothing
+  running, so a consumer never has to branch on `running` to find out what
+  the user asked for. This is also why it is read from the file rather than
+  from the token-gated live probe that answers `paused`: `paused` is a fact
+  about a *process* and only that process can answer it, whereas a
+  preference's authority is the file itself — the file every `SET_PREF`
+  writes through to immediately, and the file ADR 0014 deliberately leaves
+  hand-editable. Reading it is therefore both fresher (a hand edit is seen
+  at once) and answerable with no runtime at all.
+* `dexel status` (text) prints `on top yes|no` and
+  `away time shown in the activity log | hidden (still recorded)`, for the
+  same reason it prints `paused` (ARCHITECTURE.md Decision 16: never mute).
+  The away wording is deliberately not "yes/no" — "no" would read as *not
+  recorded*, which is exactly what is not true.
+* The shell applies it at **window creation** (`WebviewWindowBuilder::always_on_top`),
+  so the first frame is already right and there is never a flash of a
+  pinned window followed by a correction; and again on its existing focus
+  re-resolve, calling `set_always_on_top` **only when the value changed**
+  from what it last applied. A refused call is logged and not retried
+  optimistically — the last-applied value only advances on success.
+
+**The hardcode is gone.** That line was `.always_on_top(true)`, on ADR
+0007's reasoning ("a companion the editor buries never gets seen"). The
+reasoning is still why the capability exists; what changed is *who
+decides*. A window that cannot be put behind anything is an obstruction on
+macOS, not a companion, and forcing it on every user was the wrong way to
+act on a good idea. So the behaviour is kept, the **default is off**, and
+Settings owns the switch.
+
+### 11.6 Verified in the real running game
+
+Built and run with the fake provider under a throwaway `$HOME`, driven with
+real clicks and real per-character keystrokes, and judged from the pixels
+(the `feature-build-and-verify` gate):
+
+* **Opens both ways.** `[G]` and the `[G] SETTINGS` menu entry both open it;
+  `[G]`, `Esc` and `X` all close it. `#settings-body`'s measured
+  `scrollHeight` is **210px** — exactly the authored budget, no overflow.
+* **Rename round-trips.** Typing a new name and pressing `SAVE NAME`
+  changed `#menu-panel-title`, `#status-name` and the modal's own
+  `CURRENTLY` line together, and `config.json` on disk carried the new
+  `name` alongside both preferences.
+* **The focus guard holds.** `Washgmps` — every bare global shortcut letter
+  — typed character by character into the rename field landed in the field
+  intact, with the store, activity, history and sessions dialogs all still
+  closed and the menu still hidden.
+* **Away rows.** With `showAwayTime` false the Activity modal showed **no**
+  AWAY row in either section (computed value present in the DOM, row
+  `display: none`); toggling it on made both appear, labelled `AWAY`, with
+  the sections tightening cleanly and nothing clipping.
+* **Both preferences survive a restart.** Killed and relaunched on the same
+  state dir: the modal came back with both toggles `ON` in gold and the
+  away rows visible.
+* **`status --json` carries `prefs`** both with a live runtime and with
+  nothing running.
+* **Clean.** Zero page errors or console errors across every run;
+  `tsc --noEmit` clean; `cargo check` and `cargo clippy -D warnings` green
+  for the shell change.

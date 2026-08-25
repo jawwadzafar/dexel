@@ -47,8 +47,33 @@ type SprintView struct {
 // about their own pet, not surveillance of their work". It is therefore
 // allow-listed in content_free_test.go with that citation, and it must
 // never be sourced from anything the activity provider saw.
+//
+// AlwaysOnTop and ShowAwayTime (SET-1, docs/ui-spec.md §11) are the two
+// user PREFERENCES this block gained, and they are here — on the wire —
+// for one reason: the client must render per the user's preferences
+// without ever deciding them itself. The server owns them (they live in
+// the same config.json as Name), so they arrive here alongside it and the
+// frontend reads them the way it reads everything else, verbatim.
+//
+// ShowAwayTime in particular is a DISPLAY switch and nothing more. The
+// counters it hides (StatCounters.IdleSeconds, and its per-day and
+// per-session equivalents) keep being recorded and keep being SENT
+// whatever it says — they are content-free durations, and a counter that
+// stopped counting when hidden would silently corrupt every total derived
+// from it. "We can record not working but not show user" is exactly what
+// that split implements: recording is untouched (ADR 0010/0013),
+// presentation is the user's call.
 type ConfigView struct {
 	Name string `json:"name"`
+	// AlwaysOnTop is consumed by the desktop shell, not by the page — it
+	// rides this block anyway so the Settings modal can render the
+	// toggle's current position from server truth like every other
+	// control in this app, rather than from a value it remembered
+	// locally.
+	AlwaysOnTop bool `json:"alwaysOnTop"`
+	// ShowAwayTime gates the Activity modal's away rows client-side. See
+	// this type's doc comment for why hiding is presentation-only.
+	ShowAwayTime bool `json:"showAwayTime"`
 }
 
 // StateMessage is the exact `"type":"state"` WebSocket payload
@@ -332,6 +357,25 @@ type Game struct {
 	// by SetConfigName. Never set by a client.
 	configName string
 	onboarding bool
+
+	// prefAlwaysOnTop/prefShowAwayTime are SET-1's user preferences
+	// (docs/ui-spec.md §11), and they live here for exactly the reasons
+	// configName above does: they are user-authored CONFIG, they are
+	// persisted to the unsigned config.json and never to the protected
+	// SaveData (ADR 0014's split — internal/store.Snapshot must never
+	// learn about them), and this package, being pure, never touches that
+	// file itself. The server seeds both from store.LoadConfig at boot
+	// (RestorePrefs) and writes them back through store.SaveConfig after
+	// SetPref.
+	//
+	// Both default to FALSE, which is the zero value, so a fresh game and
+	// a fresh config.json agree with no defaulting code. prefShowAwayTime
+	// changes NOTHING about what this package records: every away second
+	// still lands in statsToday/statsLifetime.IdleSeconds and still
+	// crosses the wire. It is read by the frontend as a rendering
+	// instruction and by nothing else here.
+	prefAlwaysOnTop  bool
+	prefShowAwayTime bool
 
 	// paused is PR-5's pause state (docs/production-runtime/
 	// ARCHITECTURE.md §6). Unlike onboarding it IS persisted
@@ -1033,8 +1077,12 @@ func (g *Game) State() StateMessage {
 			History:    g.buildHistoryView(),
 			Streak:     g.buildStreakView(),
 		},
-		Sessions:   g.sessionsView(),
-		Config:     ConfigView{Name: g.configName},
+		Sessions: g.sessionsView(),
+		Config: ConfigView{
+			Name:         g.configName,
+			AlwaysOnTop:  g.prefAlwaysOnTop,
+			ShowAwayTime: g.prefShowAwayTime,
+		},
 		Onboarding: g.onboarding,
 		Paused:     g.paused,
 	}

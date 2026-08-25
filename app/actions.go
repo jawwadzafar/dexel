@@ -17,6 +17,12 @@ import (
 // in order to know a config write is owed.
 const actionSetName = "SET_NAME"
 
+// actionSetPref is SET_PREF's wire literal (docs/ui-spec.md §6.2/§11.4),
+// named once for exactly the reason actionSetName is: applyAction handles
+// it, and main's action loop has to recognise the SAME literal to know a
+// config write-through is owed.
+const actionSetPref = "SET_PREF"
+
 // actionSessionStart/actionSessionStop are SESSION_START/SESSION_STOP's
 // wire literals (docs/plan/P2-design.md §6.2, docs/ui-spec.md §9.6),
 // PINNED names per §8's contract seam. Named once for the same reason
@@ -104,6 +110,31 @@ func applyAction(g *game.Game, msg actionMessage, connID uint64) (mutated bool, 
 			return false, errFlash(err)
 		}
 		return true, &flashMessage{Type: "flash", Kind: "welcome", Text: "Hello, " + name + "!"}
+
+	case actionSetPref:
+		// SET-1 (docs/ui-spec.md §11.4, §6.2 SET_PREF). Server-side
+		// validation is game.Game.SetPref's: the key must be on that
+		// file's allow-list, so a client can never create a preference
+		// this build does not know about — an unknown key is an ordinary
+		// error flash with NO state change.
+		//
+		// NO FLASH on success, following the PAUSE/STORE_OPEN precedent
+		// (§6.2): a preference is a state, not an event. The toggle
+		// re-rendering from the state broadcast this returns IS the
+		// feedback, and a toast for every checkbox would be noise. The
+		// one thing that DOES produce a flash here is a failed config
+		// write — main's action loop turns that into an error, because a
+		// setting that silently will not survive a restart is a lie
+		// (the same reasoning SET_NAME's write-through already applies).
+		//
+		// Setting a preference to the value it already has reports
+		// mutated=false, which makes a repeat send a genuine no-op: no
+		// broadcast, and no second config write in the loop below.
+		mutated, err := g.SetPref(msg.Key, msg.Value)
+		if err != nil {
+			return false, errFlash(err)
+		}
+		return mutated, nil
 
 	case actionPause, actionResume:
 		// PR-5 (ARCHITECTURE.md §6). This is the whole of pause's
