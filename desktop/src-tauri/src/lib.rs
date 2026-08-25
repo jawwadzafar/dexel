@@ -287,7 +287,24 @@ fn resolve_driver() -> Driver {
 /// `status --json` — at launch, and again on every window focus — so a
 /// preference the SHELL has to act on rides that call. `status` reads it
 /// straight out of `config.json`, the file every `SET_PREF` writes through
-/// to immediately, so this is fresh without polling anything.
+/// to immediately.
+///
+/// # Focus alone was too late, and it read as an INVERSION
+///
+/// Riding the focus call was the whole delivery mechanism until
+/// [`watch_prefs_file`] was added, and it produced a bug that looked nothing
+/// like its cause. `apply_prefs` ran only on `Focused(true)`, but the moment a
+/// stacking preference becomes OBSERVABLE is the moment the window loses
+/// focus — so the user always saw the PREVIOUS setting:
+///
+///   toggle ON  -> click away -> not yet applied -> window drops behind
+///   toggle OFF -> click away -> still applied   -> window stays on top
+///
+/// which is exactly "the toggle is reversed", reported from a Linux desktop
+/// and reproduced verbatim on macOS with a CGWindowList z-order dump. It is
+/// not a platform quirk and not an inverted boolean anywhere: it is latency.
+/// [`watch_prefs_file`] closes it by applying the preference when it CHANGES,
+/// and focus stays as the backstop.
 ///
 /// # `Default` is the honest default, and it is FALSE
 ///
@@ -324,6 +341,31 @@ fn prefs_from_status(parsed: &serde_json::Value) -> Prefs {
     }
 }
 
+/// Read [`Prefs`] straight out of a parsed `config.json`.
+///
+/// The SAME preference, in a DIFFERENT shape, which is why this is its own
+/// function rather than a reuse of [`prefs_from_status`]. `status --json`
+/// nests the flags under a `prefs` object because that payload also carries
+/// `running`, `url`, `pid` and the rest; `config.json` is nothing but
+/// settings, so the flags sit at the top level:
+///
+///   status --json   {"running":true,"url":"…","prefs":{"alwaysOnTop":true}}
+///   config.json     {"name":"","autostart":"launchd","alwaysOnTop":true}
+///
+/// Reading the nested path against a config file would silently return
+/// `false` forever — a watcher that always says "off" is worse than no
+/// watcher — so the two shapes are pinned by tests on both sides.
+///
+/// Degrades to `false` per field for the same reason [`prefs_from_status`]
+/// does: a missing key means "not configured", and a half-written file (the
+/// watcher can observe one mid-write) must never take the window away.
+fn prefs_from_config(parsed: &serde_json::Value) -> Prefs {
+    let flag = |name: &str| parsed.get(name).and_then(|v| v.as_bool()).unwrap_or(false);
+    Prefs {
+        always_on_top: flag("alwaysOnTop"),
+    }
+}
+
 /// What `status --json` said: where the runtime is (`None` = nothing
 /// running, a normal answer) and what the user's preferences are.
 ///
@@ -335,6 +377,13 @@ fn prefs_from_status(parsed: &serde_json::Value) -> Prefs {
 struct Discovery {
     url: Option<String>,
     prefs: Prefs,
+    /// The runtime's state directory, as `status --json` reports it
+    /// (`stateDir`) — the one thing that tells this shell where
+    /// `config.json` lives without duplicating `app/internal/paths`'
+    /// per-OS rules in Rust. `None` for an older `dexel` that does not
+    /// print it, which costs only [`watch_prefs_file`]; every other path
+    /// is unaffected.
+    state_dir: Option<PathBuf>,
 }
 
 /// What one short-lived `dexel <args>` run said.
@@ -508,14 +557,25 @@ fn discover_runtime(app: &tauri::AppHandle, driver: &Driver) -> Result<Discovery
         )
     })?;
     // Read before the running check: a preference lives in config.json, so
-    // it is answered identically either way (see `Discovery`).
+    // it is answered identically either way (see `Discovery`). The state
+    // directory is read here for the same reason — `dexel status` prints it
+    // whether or not a runtime holds the lock.
     let prefs = prefs_from_status(&parsed);
+    let state_dir = parsed
+        .get("stateDir")
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.is_empty())
+        .map(PathBuf::from);
 
     if parsed.get("running").and_then(|v| v.as_bool()) != Some(true) {
         if let Some(reason) = parsed.get("reason").and_then(|v| v.as_str()) {
             log::info!("no runtime yet: {reason}");
         }
-        return Ok(Discovery { url: None, prefs });
+        return Ok(Discovery {
+            url: None,
+            prefs,
+            state_dir,
+        });
     }
     let url = parsed.get("url").and_then(|v| v.as_str()).ok_or_else(|| {
         format!(
@@ -526,6 +586,7 @@ fn discover_runtime(app: &tauri::AppHandle, driver: &Driver) -> Result<Discovery
     Ok(Discovery {
         url: Some(url.to_string()),
         prefs,
+        state_dir,
     })
 }
 
@@ -537,13 +598,17 @@ fn discover_runtime(app: &tauri::AppHandle, driver: &Driver) -> Result<Discovery
 /// `runtime.json` and waits for readiness — so a runtime started here is
 /// indistinguishable from one started by `dexel start` in a terminal, and
 /// outlives this window exactly the same way.
-fn runtime_url(app: &tauri::AppHandle) -> Result<(String, Prefs), String> {
+fn runtime_url(app: &tauri::AppHandle) -> Result<Attachment, String> {
     let driver = resolve_driver();
     log::info!("driving {}", driver.describe());
     let found = discover_runtime(app, &driver)?;
     if let Some(url) = found.url {
         log::info!("attaching to the running dexel runtime at {url} (this window owns nothing)");
-        return Ok((url, found.prefs));
+        return Ok(Attachment {
+            url,
+            prefs: found.prefs,
+            state_dir: found.state_dir,
+        });
     }
 
     log::info!("no runtime running; starting the detached runtime via `start`");
@@ -561,12 +626,27 @@ fn runtime_url(app: &tauri::AppHandle) -> Result<(String, Prefs), String> {
         Some(url) => {
             log::info!("started the dexel runtime at {url}");
             log::info!("it keeps running after this window closes — `dexel stop` is what stops it");
-            Ok((url, started.prefs))
+            Ok(Attachment {
+                url,
+                prefs: started.prefs,
+                state_dir: started.state_dir,
+            })
         }
         None => {
             Err("`start` reported success but no runtime was discoverable afterwards".to_string())
         }
     }
+}
+
+/// What [`runtime_url`] resolved: the runtime this window will attach to.
+///
+/// Unlike [`Discovery`], the URL here is not optional — this is the answer
+/// after "start one if none is running", so an absent URL is a hard error
+/// rather than a normal state, and the type says so.
+struct Attachment {
+    url: String,
+    prefs: Prefs,
+    state_dir: Option<PathBuf>,
 }
 
 /// Apply [`Prefs`] to the window, calling into the platform ONLY for what
@@ -583,7 +663,7 @@ fn runtime_url(app: &tauri::AppHandle) -> Result<(String, Prefs), String> {
 /// game, and a window manager that refuses a hint is not a reason to take the
 /// window away. `applied` is only advanced on success, so the next focus
 /// retries rather than believing a call that failed.
-fn apply_prefs(window: &tauri::WebviewWindow, wanted: Prefs, applied: &Mutex<Prefs>) {
+fn apply_prefs(window: &tauri::WebviewWindow, wanted: Prefs, applied: &Mutex<Prefs>, source: &str) {
     let mut applied = applied.lock().unwrap_or_else(|p| p.into_inner());
     if applied.always_on_top == wanted.always_on_top {
         return;
@@ -591,7 +671,7 @@ fn apply_prefs(window: &tauri::WebviewWindow, wanted: Prefs, applied: &Mutex<Pre
     match window.set_always_on_top(wanted.always_on_top) {
         Ok(()) => {
             log::info!(
-                "always-on-top is now {} (from `status --json`'s prefs.alwaysOnTop)",
+                "always-on-top is now {} (from {source})",
                 if wanted.always_on_top { "on" } else { "off" }
             );
             applied.always_on_top = wanted.always_on_top;
@@ -640,7 +720,17 @@ const RERESOLVE_MIN_INTERVAL: Duration = Duration::from_secs(2);
 /// It deliberately does NOT start a runtime. `dexel stop` means stopped, and a
 /// window that resurrected the daemon every time it was clicked would be its
 /// own bug.
-fn watch_for_a_moved_runtime(app: &tauri::App, loaded: tauri::Url, loaded_prefs: Prefs) {
+///
+/// `applied_prefs` is SHARED with [`watch_prefs_file`] rather than owned here.
+/// Two independent "what have I already told the window" records would drift
+/// the moment either path applied something, and `apply_prefs` early-returns
+/// on equality — so a drifted pair does not merely duplicate work, it can
+/// swallow a real change. One record, two writers.
+fn watch_for_a_moved_runtime(
+    app: &tauri::App,
+    loaded: tauri::Url,
+    applied_prefs: Arc<Mutex<Prefs>>,
+) {
     let Some(window) = app.get_webview_window(WINDOW_LABEL) else {
         log::warn!(
             "no window labelled {WINDOW_LABEL} to watch; it will not notice a moved runtime"
@@ -656,10 +746,6 @@ fn watch_for_a_moved_runtime(app: &tauri::App, loaded: tauri::Url, loaded_prefs:
     let checking = Arc::new(AtomicBool::new(false));
     let last = Arc::new(Mutex::new(None::<Instant>));
     let target = window.clone();
-    // SET-1: what this shell has last told the window about its preferences,
-    // seeded with what `build_window` already applied at creation time — so
-    // the first focus does not re-assert a setting the builder just made.
-    let applied_prefs = Arc::new(Mutex::new(loaded_prefs));
 
     window.on_window_event(move |event| {
         if !matches!(event, tauri::WindowEvent::Focused(true)) {
@@ -716,7 +802,12 @@ fn re_resolve(
         }
     };
 
-    apply_prefs(window, found.prefs, applied_prefs);
+    apply_prefs(
+        window,
+        found.prefs,
+        applied_prefs,
+        "`status --json`'s prefs.alwaysOnTop",
+    );
 
     let Some(url) = found.url else {
         // Not an error and not something to fix from here: `dexel stop` means
@@ -746,6 +837,105 @@ fn re_resolve(
         return;
     }
     *cur = parsed;
+}
+
+/// How often [`watch_prefs_file`] looks at `config.json`'s metadata.
+///
+/// A `stat` of one file, not a process and not a loopback round-trip — some
+/// three orders of magnitude cheaper than the `status --json` call the focus
+/// path makes, which is the whole reason a poll is acceptable HERE and is
+/// still rejected for the moved-runtime check next door. Half a second is
+/// under the threshold at which a settings toggle reads as "instant" while
+/// leaving the idle cost unmeasurable.
+const PREFS_POLL_INTERVAL: Duration = Duration::from_millis(500);
+
+/// Apply a preference when it CHANGES, by watching the file it is stored in.
+///
+/// # Why this exists
+///
+/// Because focus was too late, and being too late looked like being backwards.
+/// [`Prefs`]' doc comment has the full account; the short version is that
+/// `apply_prefs` ran only on `Focused(true)`, so every observation of a
+/// stacking preference — which can only be made once the window is NOT focused
+/// — showed the previous setting. Users on two platforms reported "the toggle
+/// is reversed"; nothing was reversed.
+///
+/// # Why a poll, when this file's other watcher explicitly refuses one
+///
+/// [`watch_for_a_moved_runtime`] rejects a timer because its check costs a
+/// spawned process and a loopback round-trip. This one reads
+/// `fs::metadata` — modified time and length — and touches the file's
+/// CONTENTS only when one of them moves. Idle cost is a `stat` twice a
+/// second. The objection next door does not transfer, and the alternative (an
+/// inotify/FSEvents crate) would add a dependency and a per-platform failure
+/// mode to save nothing measurable.
+///
+/// mtime AND length together, rather than mtime alone: a coarse filesystem
+/// timestamp can hide a same-second rewrite, and a toggle flipped twice
+/// quickly is exactly the case that must not be missed.
+///
+/// # What it deliberately does not do
+///
+/// It never navigates, never starts a runtime, and never reports a missing or
+/// malformed `config.json` as an error — `apply_prefs` is the only thing it
+/// can cause. A file that vanishes (a `dexel uninstall` mid-session) simply
+/// stops producing changes; the window keeps whatever it last had, which is
+/// the same posture `apply_prefs` takes toward a window manager that refuses
+/// a hint.
+fn watch_prefs_file(app: &tauri::App, state_dir: PathBuf, applied_prefs: Arc<Mutex<Prefs>>) {
+    let Some(window) = app.get_webview_window(WINDOW_LABEL) else {
+        log::warn!("no window labelled {WINDOW_LABEL} to watch; settings will apply on focus only");
+        return;
+    };
+    let path = state_dir.join("config.json");
+    log::info!("watching {} for settings changes", path.display());
+
+    let spawned = std::thread::Builder::new()
+        .name("dexel-prefs-watch".into())
+        .spawn(move || {
+            // Seeded from the CURRENT stamp, not from zero: the file already
+            // matches what `build_window` applied, so the first tick must not
+            // re-assert a setting that is already correct.
+            let mut stamp = stamp_of(&path);
+            loop {
+                std::thread::sleep(PREFS_POLL_INTERVAL);
+                let latest = stamp_of(&path);
+                if latest == stamp {
+                    continue;
+                }
+                stamp = latest;
+                // A read can land mid-write and yield truncated JSON. That is
+                // not an error worth logging every time; the next change
+                // brings the settled file, and until then the window keeps
+                // what it has.
+                let Ok(raw) = std::fs::read_to_string(&path) else {
+                    continue;
+                };
+                let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&raw) else {
+                    continue;
+                };
+                apply_prefs(
+                    &window,
+                    prefs_from_config(&parsed),
+                    &applied_prefs,
+                    "config.json",
+                );
+            }
+        });
+    if let Err(e) = spawned {
+        log::warn!("could not start the settings watcher ({e}); settings will apply on focus only");
+    }
+}
+
+/// The change stamp [`watch_prefs_file`] compares: modified time and length,
+/// or `None` when the file cannot be stat'd at all.
+///
+/// `None` is a legitimate value and compares equal to itself, so a file that
+/// is absent for a while produces no churn, and its reappearance is a change
+/// like any other.
+fn stamp_of(path: &std::path::Path) -> Option<(std::time::SystemTime, u64)> {
+    let meta = std::fs::metadata(path).ok()?;
+    Some((meta.modified().ok()?, meta.len()))
 }
 
 /// The runtime URL with [`SHELL_QUERY`] on it — what this window actually
@@ -1351,9 +1541,11 @@ pub fn run() {
             let handle = app.handle().clone();
             // `?` converts String into Box<dyn Error> for us. A failure here
             // aborts startup loudly instead of showing an empty window.
-            let (url, prefs) = runtime_url(&handle)?;
-            let url = tauri::Url::parse(&url)
-                .map_err(|e| format!("runtime reported an unparseable URL {url:?}: {e}"))?;
+            let attached = runtime_url(&handle)?;
+            let raw = attached.url;
+            let url = tauri::Url::parse(&raw)
+                .map_err(|e| format!("runtime reported an unparseable URL {raw:?}: {e}"))?;
+            let prefs = attached.prefs;
 
             // No managed child, no guard: there is nothing for this shell to
             // own or terminate. If the window fails to build we simply fail —
@@ -1361,7 +1553,22 @@ pub fn run() {
             // exactly the bug this shell was rewritten to remove.
             build_window(app, url.clone(), prefs)?;
             keep_the_game_filling_the_window(app);
-            watch_for_a_moved_runtime(app, url, prefs);
+
+            // SET-1: what this shell has last told the window about its
+            // preferences, seeded with what `build_window` just applied at
+            // creation time — so neither watcher re-asserts a setting the
+            // builder already made. Shared by both, deliberately; see
+            // `watch_for_a_moved_runtime`.
+            let applied_prefs = Arc::new(Mutex::new(prefs));
+            watch_for_a_moved_runtime(app, url, applied_prefs.clone());
+            match attached.state_dir {
+                Some(dir) => watch_prefs_file(app, dir, applied_prefs),
+                // An older `dexel` whose `status --json` omits `stateDir`.
+                // Settings still arrive, just on the next focus.
+                None => log::info!(
+                    "`status --json` reported no stateDir; settings will apply on focus only"
+                ),
+            }
             Ok(())
         })
         .build(tauri::generate_context!())
@@ -1436,6 +1643,75 @@ mod prefs_parsing {
         let got =
             parse(r#"{"running":false,"reason":"no runtime.json","prefs":{"alwaysOnTop":true}}"#);
         assert!(got.always_on_top);
+    }
+}
+
+/// The OTHER shape of the same preference: `config.json` on disk, which
+/// [`watch_prefs_file`] reads directly.
+///
+/// These tests exist because the two payloads differ in exactly one way that
+/// fails SILENTLY. `status --json` nests the flags under `prefs`; `config.json`
+/// puts them at the top level. Read a config file with the nested accessor and
+/// every answer is `false` — no error, no log line, just a watcher that
+/// reports "off" forever and a toggle that appears dead. The literal payloads
+/// below are copied from a real `config.json` written by
+/// `app/main.go`'s `persistConfig`.
+#[cfg(test)]
+mod config_prefs_parsing {
+    use super::{prefs_from_config, prefs_from_status, Prefs};
+
+    fn parse(raw: &str) -> Prefs {
+        prefs_from_config(&serde_json::from_str(raw).expect("test payload is not valid JSON"))
+    }
+
+    /// A verbatim `config.json`, `autostart` and `sessionNames` included, so
+    /// this fails if the Go side ever moves the flag under a sub-object.
+    #[test]
+    fn reads_always_on_top_from_a_real_config_file() {
+        let got = parse(
+            r#"{"name":"","sessionNames":{"1":"read v2"},"autostart":"launchd",
+                "alwaysOnTop":true,"showAwayTime":false,"soundEnabled":true}"#,
+        );
+        assert!(got.always_on_top);
+    }
+
+    #[test]
+    fn a_false_pref_is_off() {
+        let got = parse(r#"{"name":"","alwaysOnTop":false,"soundEnabled":true}"#);
+        assert!(!got.always_on_top);
+    }
+
+    /// The watcher can read a file mid-write, so malformed and partial input
+    /// is a normal event rather than an error — every one of these must mean
+    /// "off" and none may panic.
+    #[test]
+    fn every_way_of_saying_nothing_means_off() {
+        for raw in [
+            r#"{}"#,                          // empty object
+            r#"{"name":"dexel"}"#,            // no pref key at all
+            r#"{"alwaysOnTop":null}"#,        // explicit null
+            r#"{"alwaysOnTop":"yes"}"#,       // wrong type
+            r#"{"alwaysOnTop":1}"#,           // truthy, but not a bool
+            r#"{"prefs":{"alwaysOnTop":1}}"#, // the STATUS shape, wrongly fed here
+        ] {
+            assert_eq!(parse(raw), Prefs::default(), "payload: {raw}");
+        }
+    }
+
+    /// The trap itself, stated as an assertion: each parser reads its own
+    /// shape and neither reads the other's. If someone ever "simplifies" these
+    /// two functions into one, this is what fails.
+    #[test]
+    fn the_two_shapes_are_not_interchangeable() {
+        let config = serde_json::from_str(r#"{"alwaysOnTop":true}"#).unwrap();
+        let status = serde_json::from_str(r#"{"prefs":{"alwaysOnTop":true}}"#).unwrap();
+
+        assert!(prefs_from_config(&config).always_on_top);
+        assert!(prefs_from_status(&status).always_on_top);
+
+        // Crossed over, both read as "not configured" — silently.
+        assert!(!prefs_from_status(&config).always_on_top);
+        assert!(!prefs_from_config(&status).always_on_top);
     }
 }
 
