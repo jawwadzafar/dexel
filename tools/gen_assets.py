@@ -872,8 +872,9 @@ def build_monitor() -> Sprite:
 #
 # PROPORTION PASS (this revision). The shape was right but the SCALE was
 # not: the hands are correctly sized against the keyboard keys they rest on
-# (21x10 each) and everything else was drawn about 1.45x too small, so the
-# figure read as a small person with huge hands, lost against a 320x200
+# (21x10 each then; the hand-narrowing pass below takes them to 17x10) and
+# everything else was drawn about 1.45x too small, so the figure read as a
+# small person with huge hands, lost against a 320x200
 # room. The fix scales the BODY up to the hands rather than shrinking the
 # hands: hood 34x25 -> 48x34 px, shoulders 64 -> 92 px wide, arms 7..11 ->
 # 11..19 px thick, and every chair up with it.
@@ -884,7 +885,8 @@ def build_monitor() -> Sprite:
 # behind/elevated camera, the hands on the keys and the mouse pose, the hood
 # identity, the hand size):
 #   1. the shoulders were 92px across - 4.4 hand-widths, the top of the human
-#      range - so they came down to 76px (3.6 hand-widths, still human, still
+#      range - so they came down to 76px (3.6 hand-widths against the 21px
+#      hand of the time, 4.5 against today's 17px one - still human, still
 #      1.65x the hood as it then was, which is what keeps the hooded read
 #      (the hood-narrowing pass below takes that ratio to 1.81x);
 #   2. the torso was a STRAIGHT SLAB at full shoulder width for every row the
@@ -912,11 +914,24 @@ def build_monitor() -> Sprite:
 #
 # 42 rather than 40 was chosen by rendering 46/42/40 in the real game and
 # looking at all three: 42 already reads as a clear narrowing at 1x (2px a
-# side is a visible change against a 21px hand), it keeps the hood at 2.0
-# hand-widths and shoulder:hood at 76:42 = 1.81x, and it leaves the panel
-# seams 5..7px inside the silhouette so they still read as SEAMS. At 40 the
+# side is a visible change against what was then a 21px hand), it keeps the
+# hood at 2.0 hand-widths of that hand (2.5 of today's 17px one) and
+# shoulder:hood at 76:42 = 1.81x, and it leaves the panel seams 5..7px
+# inside the silhouette so they still read as SEAMS. At 40 the
 # crown starts to pinch and those seams crowd the outline - a strictly worse
 # hood for a difference barely visible at 1x.
+#
+# HAND-NARROWING PASS (this revision; owner: "make hands a bit smaller, like
+# 20% less wide"). The slim body and the narrow hood were approved, which left
+# the hands as the last oversized part: 21px wide against 76px shoulders is
+# 3.6 hand-widths, the LOW end of the human range, so the figure still read
+# slightly mitten-handed. Hands are now 17x10 (DEV_HAND_W/H, see "--- HANDS"),
+# which puts shoulder:hand at 76:17 = 4.5 - the anthropometric ratio - and
+# hood:hand at 42:17 = 2.5. Only the hands moved: shoulders, waist, hood,
+# chairs and every arm control point are byte-identical to the two passes
+# before this one. Each hand also kept its CENTRE, which is why the keyboard
+# contact points and the mouse landing are exactly where they were - the
+# hands closed in around them rather than sliding.
 #
 # Vertical budget (why everything is where it is): the SPRINT/STATUS panels
 # cover the scene below room y161 (they are opaque from room y161 to y198,
@@ -1005,10 +1020,11 @@ DEV_KB_GUARD_ROW = 7
 # would have stretched the dome into an egg. 12/20 holds the same crown
 # curvature 13/22 had, and the apex row is unchanged at half-width 6.
 #
-# 42 wide is 2.0 hand-widths (a hand is 21px) - still unmistakably bigger than
-# either hand, which was half of the original "FAT" complaint - and 76:42 =
-# 1.81x against the shoulders, the ratio that carries the hooded read. The hem stops at room y140 rather than reaching for
-# the chair line: the OTHER half of the complaint was that the shoulders were
+# 42 wide is 2.5 hand-widths (a hand is DEV_HAND_W = 17px) - still
+# unmistakably bigger than either hand, which was half of the original
+# "FAT" complaint - and 76:42 = 1.81x against the shoulders, the ratio that
+# carries the hooded read. The hem stops at room y140 rather than reaching
+# for the chair line: the OTHER half of the complaint was that the shoulders were
 # a sliver, and the only way to buy them a readable band in a scene whose
 # vertical budget is fixed (keyboard above, HUD below) is to spend rows on the
 # upper back instead of on more hood. The split that reads best in the live
@@ -1027,10 +1043,12 @@ assert min(_HOOD_HW) == _HOOD_TOP and max(_HOOD_HW) == _HOOD_BOT
 _HOOD_HEM_HW = 21             # widest row; the hem arc below is anchored on it
 
 # --- BACK / SHOULDERS -----------------------------------------------------
-# 76px across at the shoulder line (half-width 38, down from 46) - 3.6
-# hand-widths, which is what a real biacromial span is against a hand, and
-# 1.81x the hood's 42: a lean upper body under a head, where 4.4 hand-widths
-# of straight slab read as a fat one. Starts at local row 44 INSIDE the hood
+# 76px across at the shoulder line (half-width 38, down from 46) - 4.5
+# hand-widths against the 17px hand, which is what a real biacromial span is
+# against a real hand, and 1.81x the hood's 42: a lean upper body under a
+# head, where 4.4 hand-widths of straight SLAB read as a fat one (it was the
+# slab that read as fat, not the number - this is a taper now).
+# Starts at local row 44 INSIDE the hood
 # hem and widens monotonically (no dip -> no notch; the hood-narrowing pass
 # makes the first step out of the hem 21 -> 26 instead of 23 -> 26, which is
 # still a widening, i.e. still a shoulder and not a notch), steeply enough (26 -> 38
@@ -1113,6 +1131,36 @@ def _back_span(y: int, sdy: int):
     return DEV_CX - hw, DEV_CX + hw - 1
 
 
+# --- HANDS ----------------------------------------------------------------
+# A hand is DEV_HAND_W x DEV_HAND_H px, and every hand in every frame is that
+# same rect moved around - the pose changes where a hand IS, never how big it
+# is. Rects are therefore declared as (CENTRE x, top row) and expanded by
+# `_hand_rect`, because the centre is the part that carries meaning: it is the
+# world point the hand contacts (a key, the mouse), and a width pass has to
+# leave every one of those contact points exactly where it was.
+#
+# HAND-NARROWING PASS (owner: "make hands a bit smaller, like 20% less wide"):
+# 21 -> 17px wide, height held at 10. 20% off 21 is 16.8, and of the three
+# candidates 17 is both the closest and the one the finger geometry likes:
+# _dev_paint_hand splits the width into four finger runs at (w*k)//4, which
+# gives 4/3/3/4 at w=17 - symmetric, exactly like the 5/4/4/5 it replaces -
+# against a lopsided 4/3/3/3 at 16 and 4/4/3/4 at 18. The notches, the lit
+# knuckle edge and the shadow side are all derived from x0/x1/w, so they
+# rescale with the width instead of being cropped off the end of it.
+# Height stayed 10: this was a WIDTH note, a hand seen from above-behind is
+# wider than it is deep, and 17x10 (1.7:1) is still that - the pre-pass 2.1:1
+# was the flat, splayed shape the note was actually about.
+DEV_HAND_W, DEV_HAND_H = 17, 10
+
+
+def _hand_rect(cx: int, y0: int):
+    """(x0, x1, y0, y1) for a DEV_HAND_W x DEV_HAND_H hand centred on `cx`.
+    W is odd, so `cx` is a real pixel column and the rect is exactly centred
+    (which is what keeps a mirrored right hand centred on DEV_MIRROR - cx)."""
+    x0 = cx - (DEV_HAND_W - 1) // 2
+    return x0, x0 + DEV_HAND_W - 1, y0, y0 + DEV_HAND_H - 1
+
+
 # --- ARMS -----------------------------------------------------------------
 # LEFT-arm centreline as control points (x, y, half-thickness) listed from
 # the WRIST (top, under the hand on the keyboard) down to the shoulder. The
@@ -1134,8 +1182,17 @@ def _back_span(y: int, sdy: int):
 # deltoid moved to x69/row 55, flush with that edge instead of buried three
 # pixels inside a slab. Thickness came down one notch with it (wrist 5.5 ->
 # 4.8, deltoid 9.5 -> 8.0, i.e. 11..19px -> 10..16px), which holds the same
-# arm-to-torso ratio the proportion pass established. The WRIST rows and every
-# hand rect are UNTOUCHED: those are keyboard/mouse world positions.
+# arm-to-torso ratio the proportion pass established. The WRIST rows are
+# UNTOUCHED: those are keyboard/mouse world positions.
+#
+# HAND-NARROWING PASS: the arm control points are UNCHANGED, and that is a
+# result, not an omission. The taper still meets the hand cleanly, with room
+# to spare: the wrist stamp paints 9px across the rows the hand covers (10px
+# at its widest, on the `mouse` reach), so the forearm END is comfortably
+# INSIDE the 17px hand, and it only reaches 17px of its own down at row 45,
+# where it is already merging into the deltoid. A narrower hand did not need
+# a narrower wrist - it needed the wrist to stop being the wider of the two,
+# which it never was.
 # The right arm is the exact mirror for every frame but `mouse`.
 _ARM_BASE_LEFT = [
     (63, 20, 4.8),    # wrist, just under the hand
@@ -1143,7 +1200,7 @@ _ARM_BASE_LEFT = [
     (61, 43, 6.4),    # elbow, just OUTSIDE the shoulder, above the shoulder line
     (69, 55, 8.0),    # deltoid, flush with the shoulder edge
 ]
-_HAND_BASE_LEFT = (54, 74, 8, 17)       # x0, x1, y0, y1 (room x118..138, y100..109)
+_HAND_BASE_LEFT = _hand_rect(64, 8)     # room x120..136, y100..109 (centre room x128)
 
 # `mouse`: the right hand has left the keyboard for the mouse (room
 # x224..267). A longer, flatter reach - its own path, not an offset, because
@@ -1156,7 +1213,7 @@ _ARM_MOUSE_RIGHT = [
     (137, 48, 7.3),   # upper arm
     (122, 55, 8.0),   # deltoid (mirror of the left one)
 ]
-_HAND_MOUSE_RIGHT = (168, 188, 8, 17)   # room x232..252, y100..109
+_HAND_MOUSE_RIGHT = _hand_rect(178, 8)  # room x234..250, y100..109 (centre room x242)
 
 # P3 `cheer_a`/`cheer_b`: the celebration. Both arms open wide - a straight-ish
 # diagonal from the deltoid (which does NOT move sideways; a shoulder cannot)
@@ -1170,8 +1227,8 @@ _ARM_CHEER_LEFT = {
     "cheer_a": [(48, 20, 4.8), (54, 31, 5.5), (61, 42, 6.4), (69, 53, 8.0)],
     "cheer_b": [(42, 20, 4.8), (50, 31, 5.5), (59, 42, 6.4), (69, 51, 8.0)],
 }
-_HAND_CHEER_LEFT = {"cheer_a": (38, 58, 8, 17),    # room x102..122
-                    "cheer_b": (32, 52, 8, 17)}    # room x96..116
+_HAND_CHEER_LEFT = {"cheer_a": _hand_rect(48, 8),   # room x104..120
+                    "cheer_b": _hand_rect(42, 8)}   # room x98..114
 
 # `sleep`: the hands have slid forward-and-down OFF the keys onto the desk
 # lip, the forearms folded short into a slumped shoulder.
@@ -1181,7 +1238,7 @@ _ARM_SLEEP_LEFT = [
     (63, 50, 6.6),
     (69, 56, 8.0),
 ]
-_HAND_SLEEP_LEFT = (52, 72, 22, 31)     # room x116..136, y114..123
+_HAND_SLEEP_LEFT = _hand_rect(62, 22)   # room x118..134, y114..123
 
 # Per-frame (dx, dy) nudge of the HAND end, per side: the two hands alternate
 # which one is pressing (a 2px drop - clearly visible at the 5fps the
@@ -1475,7 +1532,14 @@ def _dev_paint_hand(s: Sprite, x0: int, x1: int, y0: int, y1: int) -> None:
     finger runs pointing AWAY from us (top rows, split by thin `shadow`
     notches), a solid back-of-hand below, a `cream` lit knuckle edge on the
     upper-left and a `shadow` edge down the lower-right - the same one
-    upper-left key light as every other sprite in the scene."""
+    upper-left key light as every other sprite in the scene.
+
+    Every mark is DERIVED from the rect, which is what let the hand-narrowing
+    pass rescale a hand instead of cropping one: the three notches sit at
+    (w*k)//4, so at DEV_HAND_W = 17 the four runs are 4/3/3/4 px (the widest
+    two outboard, like the 5/4/4/5 of the 21px hand - an index and a little
+    finger are the wide ones), the shadow side rides x1 and the lit knuckle
+    edge rides x0."""
     s.rect(x0, y0, x1, y1, "skin")
     w = x1 - x0 + 1
     for k in (1, 2, 3):
@@ -2869,6 +2933,14 @@ def assert_dev_hands(frame: str, s: Sprite) -> str:
                           (P3: a breath moves the SHOULDERS, not the hands)
       cheer_a/cheer_b     both hands flung OUT past the keyboard's two ends,
                           and the right one stops short of the mouse
+
+    Plus, in EVERY frame, the two SIZE facts a pose must not change: each
+    hand's skin bounding box is exactly DEV_HAND_W x DEV_HAND_H, and the pair
+    is separated by at least a full hand width of empty space. The size check
+    is what the hand-narrowing pass added - it is the difference between
+    "the hands are 17px wide" being true and being merely intended, and it
+    fails loudly if a future pose ever clips a hand against a canvas edge or
+    lets one drift on top of the other.
     """
     pts = _skin_pixels(s)
     if not pts:
@@ -2884,6 +2956,24 @@ def assert_dev_hands(frame: str, s: Sprite) -> str:
         raise AssertionError(
             f"dev_base_{frame}.png: {len(below)} hand px at/below the chair line "
             f"(room y{CHAIR_TOP_ROOM_Y}) would be occluded by the chair; first={below[0]}")
+
+    # SIZE + SEPARATION, checked from the pixels in every frame (a pose moves
+    # a hand; it must never resize or merge one).
+    for label, side in (("left", lo), ("right", hi)):
+        xs = [x for x, _y in side]
+        ys = [y for _x, y in side]
+        bw = max(xs) - min(xs) + 1
+        bh = max(ys) - min(ys) + 1
+        if (bw, bh) != (DEV_HAND_W, DEV_HAND_H):
+            raise AssertionError(
+                f"dev_base_{frame}.png: the {label} hand's skin bbox is {bw}x{bh}, "
+                f"not {DEV_HAND_W}x{DEV_HAND_H} (room x{min(xs)}..{max(xs)}, "
+                f"y{min(ys)}..{max(ys)}) - a pose must move a hand, not resize it")
+    gap = min(x for x, _y in hi) - max(x for x, _y in lo) - 1
+    if gap < DEV_HAND_W:
+        raise AssertionError(
+            f"dev_base_{frame}.png: only {gap}px between the two hands "
+            f"(want >= one hand width, {DEV_HAND_W}px) - they stop reading as two")
 
     def inside(rect, ps):
         x0, y0, x1, y1 = rect
@@ -2907,7 +2997,8 @@ def assert_dev_hands(frame: str, s: Sprite) -> str:
                 f"dev_base_{frame}.png: the right hand reaches room x{rmax}, "
                 f"onto the mouse slot (starts x{MOUSE_ROOM_RECT[0]})")
         return (f"dev_base_{frame}.png: hands flung out to room x{lmin} / x{rmax}, "
-                f"past both keyboard ends (x{kb_x0}..{kb_x1}), clear of the mouse")
+                f"past both keyboard ends (x{kb_x0}..{kb_x1}), clear of the mouse; "
+                f"both hands {DEV_HAND_W}x{DEV_HAND_H}, {gap}px apart")
 
     if frame == "sleep":
         if inside(KB_ROOM_RECT, pts) == len(pts):
@@ -2930,7 +3021,8 @@ def assert_dev_hands(frame: str, s: Sprite) -> str:
                 f"dev_base_{frame}.png: only {onkb}/{len(pts)} hand px land on the "
                 f"keyboard rect {KB_ROOM_RECT}")
         detail = f"both hands on the keys ({onkb}/{len(pts)}px inside the keyboard rect)"
-    return f"dev_base_{frame}.png: {detail}"
+    return (f"dev_base_{frame}.png: {detail}; "
+            f"both hands {DEV_HAND_W}x{DEV_HAND_H}, {gap}px apart")
 
 
 def check_monitor_screen_rect() -> str:
