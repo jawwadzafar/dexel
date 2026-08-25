@@ -36,7 +36,8 @@ Inside it:
 | `config.json` | the unsigned, hand-editable half — see §5 |
 | `runtime.json` | the running runtime's pid, url, version, token (mode `0600`) |
 | `runtime.lock` | the OS lock that makes single-instance real |
-| `logs/runtime.log` | the runtime log; rotated to `.1` at start when over 8 MiB |
+| `lastport` | the port the last runtime here bound, so a crash-restart (or `dexel restart`) comes back on it and open windows reconnect — advisory, mode `0600`, see PLATFORM_NOTES.md §5.1 |
+| `logs/runtime.log` | the runtime log; rotated to `.1` past 8 MiB — once by `dexel start`, and continuously by the runtime itself, which is the only rotation the supervised autostart paths ever get (PLATFORM_NOTES.md §4) |
 | `cache/` | computed by `paths.CacheDir()` — **no caller exists in this tree** |
 
 `BinDir()` is `~/.local/bin` on **both** Linux and macOS (never

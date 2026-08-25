@@ -20,12 +20,33 @@ export interface WsClientHandlers {
   // knows what to do with it (open the summary card). This module stays
   // wire-shape-only, same as every other handler here.
   onSessionComplete(msg: SessionCompleteMessage): void;
-  onConnecting(reconnecting: boolean): void;
+  // `stale` is docs/plan/BUGS-RESILIENCE.md R9's honest half: after
+  // STALE_AFTER_ATTEMPTS consecutive failed connects, this client stops
+  // implying that waiting will fix it and says the runtime is not there.
+  // It never stops retrying — with the runtime's sticky port, a
+  // supervisor's restart usually comes back on THIS port and the page
+  // reconnects on its own — but a page whose runtime really has moved or
+  // stopped has to say so instead of showing RECONNECTING... forever.
+  onConnecting(reconnecting: boolean, stale: boolean): void;
 }
+
+// STALE_AFTER_ATTEMPTS is how many consecutive failed connects it takes
+// before the overlay stops saying RECONNECTING... (R9). With the 500 ms
+// -> 8 s capped backoff below, six failures is ~23 s of a dead socket —
+// long enough that an ordinary server blip, a laptop lid, or a
+// supervisor's `RestartSec=5` restart has passed without ever showing
+// the harsher message, and short enough that a genuinely dead window
+// does not lie for minutes.
+const STALE_AFTER_ATTEMPTS = 6;
 
 let handlers: WsClientHandlers | null = null;
 let ws: WebSocket | null = null;
 let attempt = 0;
+// consecutiveFailures counts connects that never opened, and is reset by
+// `open`. Deliberately NOT `attempt`, which counts connects for the
+// CONNECTING/RECONNECTING distinction and must keep counting across a
+// successful connection for that wording to stay right.
+let consecutiveFailures = 0;
 let reconnectDelay = 500;
 let reconnectTimer: ReturnType<typeof setTimeout> | undefined;
 
@@ -100,7 +121,7 @@ function handleServerMessage(msg: ServerMessage | null | undefined): void {
 
 function connect(): void {
   if (!handlers) return;
-  handlers.onConnecting(attempt > 0);
+  handlers.onConnecting(attempt > 0, consecutiveFailures >= STALE_AFTER_ATTEMPTS);
   attempt++;
   const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
   let sock: WebSocket;
@@ -113,6 +134,7 @@ function connect(): void {
   ws = sock;
   sock.addEventListener('open', function () {
     reconnectDelay = 500;
+    consecutiveFailures = 0;
     // B2: a reconnect (server restart/blip, or this tab's own network
     // hiccup) gets a brand-new connID server-side — the OLD connID's
     // store-open hold was already released on disconnect
@@ -132,7 +154,8 @@ function connect(): void {
   sock.addEventListener('error', function () { /* 'close' follows */ });
 }
 function scheduleReconnect(): void {
-  handlers?.onConnecting(true);
+  consecutiveFailures++;
+  handlers?.onConnecting(true, consecutiveFailures >= STALE_AFTER_ATTEMPTS);
   clearTimeout(reconnectTimer);
   reconnectTimer = setTimeout(connect, reconnectDelay);
   reconnectDelay = Math.min(reconnectDelay * 2, 8000);

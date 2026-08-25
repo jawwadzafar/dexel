@@ -66,10 +66,12 @@
 //!   [`discover_runtime`].
 
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, RecvTimeoutError};
-use std::time::Duration;
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
-use tauri::{RunEvent, WebviewUrl, WebviewWindowBuilder};
+use tauri::{Manager, RunEvent, WebviewUrl, WebviewWindowBuilder};
 use tauri_plugin_shell::process::CommandEvent;
 use tauri_plugin_shell::ShellExt;
 
@@ -425,6 +427,127 @@ fn runtime_url(app: &tauri::AppHandle) -> Result<String, String> {
     }
 }
 
+/// How long the focus re-resolve waits before it will ask again. Focus fires
+/// on every alt-tab; one `status --json` per window activation is cheap (a
+/// short-lived process and one loopback round-trip) but not free, and nothing
+/// is gained by asking twice in the same second.
+const RERESOLVE_MIN_INTERVAL: Duration = Duration::from_secs(2);
+
+/// Re-point the window if the runtime moved (docs/plan/BUGS-RESILIENCE.md R9).
+///
+/// # What this is for
+///
+/// This shell resolves the runtime's URL exactly once, in `setup`, because the
+/// window cannot be created until the URL is known. That was also the whole
+/// bug: a runtime binds an ephemeral port, both supervisors restart it after a
+/// crash (systemd `Restart=on-failure`, launchd `KeepAlive`), and the page in
+/// this window would then retry a dead port forever while a perfectly healthy
+/// runtime answered on another one. The window was a grey box and the only
+/// recovery was for the user to close and reopen it.
+///
+/// The RUNTIME's own fix — a sticky port (`app/main.go`'s `listenRuntime`) —
+/// handles the common case, and handles it better than this can, because it
+/// also fixes a bookmarked browser tab that this shell knows nothing about.
+/// This is the backstop for when the old port was genuinely unavailable and
+/// the restarted runtime had to take a new one.
+///
+/// # Why focus, and not a timer or a WS hook
+///
+/// The page is loaded from the runtime's own origin, so this shell has no IPC
+/// channel into it and cannot be told "my WebSocket is down" — the frontend's
+/// reconnect loop is entirely inside the page. Window focus is the honest
+/// substitute: it is exactly the moment a human looks at the window, i.e. the
+/// only moment a stale page matters, and it costs nothing when nothing moved
+/// (an unchanged URL means no navigation at all, so a focused window is never
+/// reloaded out from under someone).
+///
+/// It deliberately does NOT start a runtime. `dexel stop` means stopped, and a
+/// window that resurrected the daemon every time it was clicked would be its
+/// own bug.
+fn watch_for_a_moved_runtime(app: &tauri::App, loaded: tauri::Url) {
+    let Some(window) = app.get_webview_window(WINDOW_LABEL) else {
+        log::warn!(
+            "no window labelled {WINDOW_LABEL} to watch; it will not notice a moved runtime"
+        );
+        return;
+    };
+    let handle = app.handle().clone();
+    // The URL the webview is actually on, so a re-resolve can tell "moved"
+    // from "same place".
+    let current = Arc::new(Mutex::new(loaded));
+    // One check at a time, and not more often than RERESOLVE_MIN_INTERVAL:
+    // focus events arrive in bursts and each check spawns a process.
+    let checking = Arc::new(AtomicBool::new(false));
+    let last = Arc::new(Mutex::new(None::<Instant>));
+    let target = window.clone();
+
+    window.on_window_event(move |event| {
+        if !matches!(event, tauri::WindowEvent::Focused(true)) {
+            return;
+        }
+        {
+            let mut last = last.lock().unwrap_or_else(|p| p.into_inner());
+            if let Some(when) = *last {
+                if when.elapsed() < RERESOLVE_MIN_INTERVAL {
+                    return;
+                }
+            }
+            *last = Some(Instant::now());
+        }
+        if checking.swap(true, Ordering::SeqCst) {
+            return; // a previous check is still running
+        }
+        // Off the event thread: `status --json` spawns a process and waits on
+        // a loopback round-trip, and blocking here would freeze the UI.
+        let handle = handle.clone();
+        let target = target.clone();
+        let current = current.clone();
+        let checking = checking.clone();
+        std::thread::spawn(move || {
+            re_point_if_moved(&handle, &target, &current);
+            checking.store(false, Ordering::SeqCst);
+        });
+    });
+}
+
+/// One re-resolve: ask the CLI where the runtime is and navigate only if that
+/// is somewhere other than where this webview already is.
+fn re_point_if_moved(
+    app: &tauri::AppHandle,
+    window: &tauri::WebviewWindow,
+    current: &Mutex<tauri::Url>,
+) {
+    let driver = resolve_driver();
+    match discover_runtime(app, &driver) {
+        Ok(Some(found)) => {
+            let parsed = match tauri::Url::parse(&found) {
+                Ok(u) => u,
+                Err(e) => {
+                    log::warn!("`status --json` reported an unparseable URL {found:?}: {e}");
+                    return;
+                }
+            };
+            let mut cur = current.lock().unwrap_or_else(|p| p.into_inner());
+            if *cur == parsed {
+                return; // the overwhelmingly common case: nothing moved
+            }
+            log::info!(
+                "the runtime moved from {} to {parsed} — re-pointing this window",
+                *cur
+            );
+            if let Err(e) = window.navigate(parsed.clone()) {
+                log::error!("could not navigate the window to {parsed}: {e}");
+                return;
+            }
+            *cur = parsed;
+        }
+        // Not an error and not something to fix from here: `dexel stop` means
+        // stopped, and this shell does not resurrect the daemon.
+        Ok(None) => log::info!("no runtime is running; leaving this window as it is"),
+        Err(e) => log::warn!("could not ask where the runtime is: {e}"),
+    }
+}
+
 /// Build dexel's one window, pointed at the runtime's loopback URL.
 fn build_window(app: &tauri::App, url: tauri::Url) -> tauri::Result<()> {
     WebviewWindowBuilder::new(app, WINDOW_LABEL, WebviewUrl::External(url))
@@ -468,7 +591,8 @@ pub fn run() {
             // own or terminate. If the window fails to build we simply fail —
             // the runtime is not ours to clean up, and killing it would be
             // exactly the bug this shell was rewritten to remove.
-            build_window(app, url)?;
+            build_window(app, url.clone())?;
+            watch_for_a_moved_runtime(app, url);
             Ok(())
         })
         .build(tauri::generate_context!())

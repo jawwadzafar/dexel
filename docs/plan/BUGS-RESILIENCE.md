@@ -483,6 +483,68 @@ keeps writing to the same inode now called `.1` — the same hazard
 rescan loop: `openMissing` closes every fd that loses its key check
 (`provider_linux.go:320-332`) and `deviceDied` closes the dead one.
 
+**FIXED 2026-08-25** — (a) rotation moved INTO the runtime, which is the only
+place it could go: `lifecycle.RotatingWriter` (`internal/lifecycle/rotate.go`)
+is an `io.Writer` over `runtime.log` that rotates on write against a byte
+counter seeded from the file's size at open — no goroutine, no timer, no
+dependency, an integer compare per line and one `stat` per 8 MiB. `app/main.go`'s
+`attachRuntimeLog` attaches it via `log.SetOutput` in **`runtime` mode only**,
+immediately after `runtime.lock` is held — deliberately after, because a SECOND
+`dexel runtime` dies at that lock and a process about to die must not take
+ownership of the live runtime's log file (it could rotate it out from under the
+running process, which would then append to a renamed inode nobody can see).
+Nothing is lost by waiting: a lock-failure message still goes wherever that
+mode's stderr points, which on the two paths that own the log file is that very
+file. The units are untouched — what a supervisor execs did not have to change.
+
+Investigating (a) turned up a second, unlisted lie that the fix also closes.
+The report says "the child holds the log as inherited stdout/stderr" — true for
+`dexel start` and for launchd, but **under systemd the log file had nobody
+writing to it at all**: `StandardOutput=journal` means fd 1/2 are a journald
+socket, the runtime never opened the file itself, and so `journalctl --user -u
+dexel` had everything while `dexel logs` was empty forever — while the unit's
+own comment claimed "the runtime writes its own log file; journald gets it too"
+and `dexel logs -h` told Linux users both existed. `attachRuntimeLog` therefore
+decides whether to **tee** by asking `os.SameFile` whether its own stderr
+already IS the log file (the descriptor, not a guess about which mechanism
+started us): same file → take `log`'s output over outright, because teeing would
+double every line; different file → tee, so the journal keeps every line and the
+file finally gets one. The unit's comment is now true, unchanged.
+`PLATFORM_NOTES.md` §4 was rewritten around the who-owns-fd-1/2 truth table
+whose absence hid all of this, and §4.2 states the one limitation honestly: a
+rename cannot move an open descriptor, so on the two paths where fd 1/2 ARE the
+log file, a panic traceback written straight to fd 2 after a rotation lands in
+`runtime.log.1`. Mid-run `dup2` stays rejected for the reasons §4 always gave.
+
+`DEXEL_MAX_LOG_BYTES` overrides the 8 MiB cap for one process (absent,
+unparseable or non-positive → 8 MiB), which is what lets a test watch a real
+runtime rotate a real log in milliseconds. It is read only by the runtime, never
+by `start`'s one-shot `RotateLog` — which is what makes the e2e assertion
+airtight: a `runtime.log.1` next to a fresh, tiny `runtime.log` can only be the
+runtime's own doing.
+
+(b) needed nothing: the in-flight provider fix landed the rate limiting this
+report asked for. `deviceDied` now reports only the FIRST death of a given node
+instance (`firstDeath`, `provider_linux.go:548-559`) and `retryBackoff` caps
+reopen attempts at one per 64s, and `openMissing`'s gain line fires only when it
+actually opened something. The pathological node is ~1 line/minute, not ~2/s.
+
+Tests: `internal/lifecycle/rotate_test.go` (threshold parsing incl. the
+env-var name; rotation at the cap; exactly two files, never a `.2`; a size
+inherited from a crashed predecessor rotating on the first line; a `dexel logs
+--truncate` underneath the writer NOT destroying the real `.1`; the
+`SameFileAs` tee decision), `resilience_test.go`'s
+`TestAttachRuntimeLogRotatesInProcess` and
+`TestAttachRuntimeLogSurvivesAnUnwritableLogDir` (logging that cannot be set up
+must never abort a runtime), and two e2e tests that stage both supervision
+shapes against a real binary on a throwaway `DEXEL_HOME`:
+`TestE2ESupervisedRuntimeRotatesItsOwnLog` (`dexel runtime` exec'd directly,
+fd 1/2 NOT the log file — asserts the rotation, that `dexel logs` now shows
+lines, and that the supervisor's own stdout still got them) and
+`TestE2EStartedRuntimeRotatesItsOwnLog` (fd 1/2 ARE the log file — asserts the
+rotation and that no line appears twice, i.e. it did not tee into its own
+stderr). Both fail on a tree with `attachRuntimeLog` disabled.
+
 ### R7 — A backward local-date step duplicates a history bucket and resets the streak
 
 Not suspend-specific, but squarely "a changing system", and the case
@@ -657,6 +719,76 @@ the shell re-resolve: on repeated WS failure (or on window focus), re-run
 `status --json` and navigate the webview to the new URL; owner
 `desktop/src-tauri/src/lib.rs`. (a) also fixes a bookmarked browser tab, which
 (b) cannot.
+
+**FIXED 2026-08-25** — both halves, plus the client half the sketch does not
+mention but the field needs.
+
+**(a) The port is sticky.** `<StateDir>/lastport` records the port a runtime
+actually bound (`internal/lifecycle/portfile.go`), and `app/main.go`'s
+`listenRuntime` tries to rebind it before falling back. Deliberately NOT a
+re-read of `runtime.json`, which the sketch suggests: that file is deleted on
+every clean exit, so it could only ever help a crash — a separate record that
+survives a clean exit also fixes `dexel restart` and the bookmarked tab. The
+semantics, pinned by `lifecycle.StickyAddr` and by test: `runtime` mode only and
+only for a port of 0 (an `-addr` with a typed port is never second-guessed);
+advisory, so an unavailable port means an ephemeral one plus a log line plus the
+record being overwritten with what we really got; written AFTER the bind
+succeeds, because a crash has no way out; and incapable of producing a second
+instance, since `runtime.lock` is taken before the listener is bound.
+`PLATFORM_NOTES.md` §5.1 states all of it, and §1's table gained the file.
+
+**(b) The Tauri shell re-resolves.** `desktop/src-tauri/src/lib.rs` gained
+`watch_for_a_moved_runtime`: on `WindowEvent::Focused(true)` it re-runs `status
+--json` off the event thread and calls `WebviewWindow::navigate` **only if the
+URL differs** from the one this webview is on, so a focused window is never
+reloaded out from under someone. Focus rather than a timer because the page is
+loaded from the runtime's own origin and this shell has no IPC channel into it —
+it cannot be told "my WebSocket is down" — and focus is exactly the moment a
+stale window matters. Single-flight plus a 2s minimum interval (focus arrives in
+bursts and each check spawns a process). It deliberately does not START a
+runtime: `dexel stop` means stopped.
+
+**(c) The client stops lying.** `frontend/src/state/ws-client.ts` counts
+consecutive failed connects and, after six (~23s on the existing 500ms→8s capped
+backoff), passes `stale` to `onConnecting`; `render/overlays.ts` then shows
+``CONNECTION LOST - RUN `dexel open` `` instead of `RECONNECTING...`. It keeps
+retrying underneath — with (a) in place a supervised restart usually returns to
+this very port and the overlay clears itself — so the message names the one
+action that fixes the case where it does not. No CSS change: it fits the
+existing 640px overlay on one line. `attempt` is untouched, so the
+CONNECTING/RECONNECTING wording still reads correctly; the new counter is
+separate because it must reset on a successful open and `attempt` must not.
+
+Tests: `internal/lifecycle/portfile_test.go` (round trip, missing record is not
+a failure, every nonsense record rejected, 0600 and no leftover `.tmp`, and the
+`StickyAddr` policy table), `resilience_test.go` (recorded+free → reused;
+recorded+occupied → ephemeral fallback AND the record updated; a corrupt record
+survived; an explicit `-addr` never overridden; `serve`/legacy never touch the
+record; the legacy `listen on %s: %v` message shape preserved), and
+`resilience_e2e_test.go`'s `TestE2ESupervisedRestartComesBackOnTheSamePort` —
+`dexel runtime` exec'd directly, a live WebSocket opened against it, SIGKILL,
+re-exec, then the SAME port, a new pid, and a fresh WS dial to the URL the dead
+page was still retrying. Plus `TestE2ERestartCommandKeepsThePort` for the clean
+stop/start path. Both fail on a tree with the sticky branch disabled.
+
+Verified in a real browser too (headless Chromium via Playwright, against the
+real binary with the rebuilt bundle): the page connected, SIGKILL → the overlay
+said `RECONNECTING...`, the supervisor's re-exec came back on the same port
+(`40947`), and the pre-opened page reconnected **by itself** with nothing
+re-pointing it; then a second SIGKILL with no restart drove the overlay to
+`CONNECTION LOST - RUN `dexel open`` after ~23s.
+
+**Unverified:** the Tauri half is compile-verified only (`cargo check
+--all-targets`, `cargo clippy -- -D warnings`, `cargo fmt --check` and
+`cargo test --lib` all clean on this Linux box). The window itself was not
+opened, because on this host the native Wayland backend segfaults before the
+window appears (`docs/plan/TAURI-FIRST-BUILD.md`), so "focus re-resolves and
+navigates" has not been seen happening. Note also, from the browser run: a
+native `showModal()` dialog (onboarding, the store) sits in the browser's TOP
+LAYER, above every z-index, so while any modal is open the connection overlay is
+invisible regardless of what it says. Out of scope here, and not a new
+regression — it is the same for `RECONNECTING...` — but it means R9's honest
+message can be hidden by a modal the user left open.
 
 ---
 
@@ -878,4 +1010,9 @@ Written for this report; none could execute. All are cheap.
    `kill -9` the runtime, let the supervisor restart it (or start it again by
    hand), and watch the window: it should keep saying `RECONNECTING...` against
    the old port forever while `dexel status` reports a healthy runtime on a new
-   one.
+   one. **Run 2026-08-25, post-fix** (headless Chromium against the real
+   binary): the restarted runtime came back on the SAME port and the open page
+   reconnected on its own within one backoff step. The remaining half of this
+   probe is the one no automated run can do here — the same sequence with the
+   real Tauri window, whose focus re-resolve is compile-verified only (this
+   host's Wayland backend segfaults before the window appears).

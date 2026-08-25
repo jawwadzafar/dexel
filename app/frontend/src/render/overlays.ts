@@ -8,8 +8,17 @@ import { DEV_MODE } from '../env';
 const connOverlay = byId<HTMLDivElement>('conn-overlay');
 const assetsErrorOverlay = byId<HTMLDivElement>('assets-error-overlay');
 
-export function showConnOverlay(reconnecting: boolean): void {
-  (connOverlay.querySelector('span') as HTMLElement).textContent = reconnecting ? 'RECONNECTING...' : 'CONNECTING...';
+// `stale` (docs/plan/BUGS-RESILIENCE.md R9) is set by the WS client after
+// enough consecutive failed connects that "RECONNECTING..." has stopped
+// being true: the runtime this page was loaded from is not answering on
+// this port any more. The page keeps retrying underneath — the runtime's
+// port is sticky, so a supervised crash-restart usually returns to THIS
+// port and the overlay clears itself — so this message names the one
+// action that fixes the case where it does not, instead of implying that
+// more waiting will.
+export function showConnOverlay(reconnecting: boolean, stale?: boolean): void {
+  const label = stale ? 'CONNECTION LOST - RUN `dexel open`' : (reconnecting ? 'RECONNECTING...' : 'CONNECTING...');
+  (connOverlay.querySelector('span') as HTMLElement).textContent = label;
   connOverlay.classList.add('visible');
 }
 export function hideConnOverlay(): void { connOverlay.classList.remove('visible'); }

@@ -136,8 +136,8 @@ if (DEV_MODE) {
       // already exercises.
       onSessionComplete(msg.session);
     },
-    onConnecting(reconnecting) {
-      showConnOverlay(reconnecting);
+    onConnecting(reconnecting, stale) {
+      showConnOverlay(reconnecting, stale);
     }
   });
 }

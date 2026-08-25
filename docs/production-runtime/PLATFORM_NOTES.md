@@ -33,6 +33,7 @@ user will file "dexel is broken".
 | config | `<StateDir>/config.json` | same | same |
 | discovery | `<StateDir>/runtime.json` (0600) | same | same |
 | lock | `<StateDir>/runtime.lock` | same | same |
+| sticky port | `<StateDir>/lastport` (0600) | same | same |
 | logs | `<StateDir>/logs/runtime.log` | same | same |
 | update cache | `<StateDir>/cache/` | same | same |
 | **BinDir** | `~/.local/bin` | `~/.local/bin` | `%LOCALAPPDATA%\dexel\bin` |
@@ -745,30 +746,84 @@ activity provider is blind anyway.
 ## 4. Logging
 
 One file: `<StateDir>/logs/runtime.log`, opened `O_APPEND|O_CREATE` at `0600`.
-Everything the runtime writes through the `log` package (stderr) plus anything a
-panic writes lands there, because `dexel start` points the child's stdout and
-stderr at it. Under launchd, launchd points them at the same path.
 
-**Rotation-lite, at start only.** Before opening, if the file exceeds **8 MiB**,
-rename it to `runtime.log.1` (replacing any existing `.1`); keep exactly two
-files. No goroutine, no timer, no mid-run reopen, no dependency.
+### 4.1 Who owns stdout/stderr, per supervision mode
 
-The accepted limit, stated rather than hidden: a runtime that runs for months
-without a restart can exceed the cap, because nothing rotates while it runs.
-This is tolerable because the runtime is nearly silent at steady state — reading
-`app/main.go`, a normal run logs ~8-10 lines at startup (provider, save load,
-config, listen, the two static-source lines) and then **only on failure**
-(`save failed`, `ws accept`, provider warnings). The 30s autosave logs nothing
-when it succeeds. Escape hatches: `dexel logs --truncate`, and `dexel restart`
-rotates on the way through.
+This is the table the first version of this section did not have, and its
+absence hid a real bug (`docs/plan/BUGS-RESILIENCE.md` R6). "Who owns fd 1/2"
+differs per mechanism, and everything about rotation follows from it.
 
-Rejected: a rotating-writer library (a dependency for a problem we do not have),
-and mid-run `dup2` of fd 2 onto a fresh file (platform-specific, and it fights
-the launchd/systemd redirections).
+| how the runtime was started | fd 1/2 point at | who writes `runtime.log` | rotated by |
+|---|---|---|---|
+| `dexel start` (also XDG autostart and the Windows Run key, whose entries run `start`) | the log file, opened by the CLI and inherited | the runtime, through the inherited descriptor | `start` once at spawn, **and the runtime itself while it runs** |
+| launchd (§3.1) — `ProgramArguments = [<exe>, runtime]` | the log file, opened by launchd (`StandardOutPath`/`StandardErrorPath`) | launchd's redirection | **the runtime itself** (no `start` ever runs on this path) |
+| systemd `--user` (§3.2) — `ExecStart=<exe> runtime` | a journald socket (`StandardOutput=journal`) | **the runtime, which tees** | **the runtime itself**; journald rotates the journal on its own |
+| a terminal (`dexel runtime`, `dexel serve`, the legacy shape) | the tty | the runtime tees in `runtime` mode; `serve`/legacy write to the terminal only | n/a for `serve`/legacy |
+
+Two consequences worth stating plainly:
+
+* **The two supervised paths never run `dexel start`.** Anything `start` does on
+  the way through — the lock pre-check, the rotation, the readiness report — is
+  simply absent for the mechanism most real users' dexel runs under. That is why
+  rotation had to move into the runtime and not into another CLI verb.
+* **Under systemd the log file used to get nothing at all.** The unit's own
+  comment claimed "the runtime writes its own log file; journald gets it too",
+  and until the runtime started teeing, that was false: `journalctl --user -u
+  dexel` had everything and `dexel logs` was empty forever. The comment is now
+  true.
+
+### 4.2 Rotation-lite: 8 MiB, two files, in the runtime
+
+If a write would take the file past **8 MiB**, it is renamed to `runtime.log.1`
+(replacing any existing `.1`) and reopened; exactly two files ever exist. No
+rotating-writer dependency, no goroutine and no timer — the check is a byte
+counter seeded from the file's size at open, tested on each write, so the cost
+is an integer compare per line and one `stat` per 8 MiB.
+
+It happens in **two** places, and the difference matters:
+
+* `lifecycle.RotateLog`, once, in `dexel start`, before the child is spawned.
+  Unchanged.
+* `lifecycle.RotatingWriter`, continuously, in the runtime — attached by
+  `app/main.go`'s `attachRuntimeLog` in `runtime` mode only. This is what makes
+  the cap true for a runtime that is up for weeks, and true at all on the
+  launchd and systemd paths.
+
+`attachRuntimeLog` decides whether to **tee** by asking `os.SameFile` whether
+its own stderr already IS the log file — the question the table above answers
+per mechanism, asked of the descriptor rather than guessed from the mechanism.
+Same file: take the `log` package's output over outright (teeing would write
+every line twice). Different file: tee, so the journal/terminal keeps every line
+and the file gets one too.
+
+`DEXEL_MAX_LOG_BYTES` overrides the 8 MiB cap for one process (an absent,
+unparseable or non-positive value leaves it at 8 MiB). It exists so a test can
+watch a real runtime rotate a real log in milliseconds, and for a field
+diagnosis on a box with a small partition. It is read only by the runtime;
+`start`'s one-shot rotation always uses the 8 MiB constant.
+
+**The limitation, stated rather than hidden.** Rotation moves the `log`
+package's output to the new file; it cannot move file descriptors 1 and 2,
+because a rename does not move an open descriptor. On the two paths where fd 1/2
+ARE the log file (`dexel start`, launchd), anything written *straight* to them —
+in practice a Go panic's traceback, and the `DEXEL_LISTENING` handshake line —
+lands in whichever file that descriptor was opened on, i.e. in `runtime.log.1`
+after a rotation. Mid-run `dup2` of fd 1/2 onto a fresh file is still rejected
+for the reasons it always was (platform-specific, and it fights the
+launchd/systemd redirections). A panic being one file over is a much smaller
+problem than a log that grows without bound for months, which is what the
+alternative measured out to: at the pathological ~2 lines/second a flapping
+input device can produce, 8 MiB is under half a day.
+
+Escape hatches, unchanged: `dexel logs --truncate` (which truncates rather than
+unlinks precisely so a running runtime's descriptor keeps working — the writer
+re-`stat`s before rotating so a truncate underneath it cannot destroy the real
+`.1`), and `dexel restart`.
 
 `dexel logs` is the interface: `-n N` tail, `-f` follow, `--path` print the
-path, `--truncate` empty it. On Linux-with-systemd, also mention
-`journalctl --user -u dexel` in the command's help, since both exist.
+path, `--truncate` empty it. On Linux-with-systemd it also mentions
+`journalctl --user -u dexel` in the command's help, since both exist — and
+since the tee, both really do have the lines.
 
 ---
 
@@ -795,6 +850,44 @@ instance next to a real one keeps working exactly as it does today.
 **Two state directories = two independent instances**, by design: `DEXEL_HOME`
 gives every instance its own lock, its own `runtime.json` and its own save. That
 is how the test suite and CI avoid touching a developer's real state.
+
+### 5.1 The sticky port
+
+A `runtime` binds an **ephemeral** port by default (`127.0.0.1:0`) so a
+background runtime nobody typed a port for never fights another process for
+8080. Both supervisors restart it after a crash — systemd `Restart=on-failure`,
+launchd `KeepAlive{SuccessfulExit:false}` — and a restart on a *different* port
+left every already-open page and window permanently dead, retrying an address
+nothing answers on, while a healthy runtime served another port
+(`docs/plan/BUGS-RESILIENCE.md` R9).
+
+So the port is **sticky**: `<StateDir>/lastport` records the port a runtime
+actually bound, and the next runtime in that state directory tries to bind it
+again before falling back to an OS-assigned one. The semantics, exactly:
+
+* **`runtime` mode only, and only for a port of 0.** An `-addr` a human or a
+  script typed a port into is never second-guessed.
+* **Advisory, never binding.** If the recorded port is unavailable the runtime
+  takes an ephemeral one, says so in the log, and overwrites the record with
+  what it really got. A sticky port can never stop the runtime from starting,
+  and can never be taken from whoever holds it — the bind either succeeds or it
+  does not.
+* **Written after the bind succeeds**, not on the way out: a crash has no way
+  out. The record therefore always names a port a runtime here really answered
+  on.
+* **It survives a clean exit**, unlike `runtime.json`, which is deleted on every
+  clean shutdown. That is the point of a separate file: `dexel restart` and a
+  bookmarked browser tab benefit as much as a crash-restart does.
+* **It cannot cause a second instance.** Layer 1 (`runtime.lock`) is taken
+  before the listener is bound, so a runtime that gets as far as binding is
+  already the only runtime in this state directory.
+* `DEXEL_HOME` isolation is unaffected: the record lives in the state
+  directory, so two state directories keep two independent ports.
+
+Rebinding a port a just-SIGKILLed process held works because Go sets
+`SO_REUSEADDR` on TCP listeners on Unix, so a `TIME_WAIT` left by that
+runtime's accepted connections does not block the new listener. Where it ever
+does not, the fallback covers it.
 
 ---
 

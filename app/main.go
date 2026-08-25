@@ -15,6 +15,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"log"
 	"net"
 	"net/http"
@@ -242,6 +243,24 @@ func runServe(mode serveMode, args []string) {
 		// SIGKILL); releasing it explicitly on a clean return is
 		// tidiness, not the mechanism.
 		defer func() { _ = lock.Release() }()
+
+		// R6 (docs/plan/BUGS-RESILIENCE.md): THE RUNTIME ROTATES ITS OWN
+		// LOG, because the systemd unit and the launchd agent exec
+		// `runtime` and `dexel start`'s one-shot rotation is therefore
+		// never on their path at all.
+		//
+		// Deliberately AFTER the lock, and this is the whole reason the
+		// call is inside this block rather than above it: a SECOND
+		// `dexel runtime` on this state dir dies at the lock above, and
+		// a process that is about to die must not take ownership of the
+		// live runtime's log file — it could rotate it out from under
+		// the running process, which would then be appending to a
+		// renamed inode nobody can see. Nothing is lost by waiting: the
+		// lock-failure message still goes wherever THIS mode's stderr
+		// points, which on the two paths that own the log file is that
+		// very file.
+		closeLog := attachRuntimeLog()
+		defer closeLog()
 	} else if mode == modeServe {
 		log.Print("serve: foreground dev mode — not taking runtime.lock and not writing runtime.json, so this instance is invisible to `dexel status`/`stop` and can run alongside a real runtime (ARCHITECTURE.md Decision 7)")
 	}
@@ -252,11 +271,20 @@ func runServe(mode serveMode, args []string) {
 	// before anything else needs it (wsOriginPatterns below, the stdout
 	// handshake, the human log line), and (b) a port-already-in-use error
 	// fails loudly right here instead of after the rest of startup runs.
-	ln, err := net.Listen("tcp", *addr)
+	ln, err := listenRuntime(mode, stateDir, *addr)
 	if err != nil {
-		log.Fatalf("listen on %s: %v", *addr, err)
+		log.Fatalf("%v", err)
 	}
 	actualAddr := ln.Addr().String()
+
+	// R9's other half: record the port we actually got, whether it came
+	// from the sticky record or from the OS, so the NEXT runtime in this
+	// state directory can try to land on it again. Written after the bind
+	// succeeded — the record is "the port a runtime here really answered
+	// on", never "the port one hoped for".
+	if mode == modeRuntime {
+		recordStickyPort(stateDir, ln)
+	}
 
 	// ARCHITECTURE.md Decision 6: runtime.json is written atomically
 	// "immediately after net.Listen succeeds" — i.e. right here, before
@@ -743,5 +771,148 @@ func runServe(mode serveMode, args []string) {
 			shutdown()
 			return
 		}
+	}
+}
+
+// ---------------------------------------------------------------------
+// R6 / R9 — what a SUPERVISED runtime has to do for itself
+// (docs/plan/BUGS-RESILIENCE.md).
+//
+// Both fixes exist because the two supervised autostart mechanisms —
+// the systemd user unit and the launchd agent — exec `dexel runtime`
+// directly, never `dexel start`. Everything the CLI's `start` path does
+// on the way through (rotate the log; nothing at all about the port) is
+// therefore absent on exactly the paths a real user's dexel runs on, and
+// a crash-restart by the supervisor lands in a runtime that has to be
+// self-sufficient.
+// ---------------------------------------------------------------------
+
+// attachRuntimeLog points the `log` package at a self-rotating writer on
+// <StateDir>/logs/runtime.log, and returns the closer for it.
+//
+// # Why the runtime, and not `dexel start`
+//
+// lifecycle.RotateLog runs once, in `dexel start`, before the child is
+// spawned. The systemd unit and the launchd plist both exec `runtime`,
+// so on those paths — the PRIMARY autostart paths on Linux and macOS —
+// it was never called at all, and a runtime that stays up for weeks had
+// nothing that would ever shrink its log (R6).
+//
+// # Why it tees, and when it must not
+//
+// The three supervision modes leave stderr pointing at three different
+// things, and this function's whole subtlety is telling them apart:
+//
+//	`dexel start` (and XDG autostart / the Windows Run key, which run
+//	`start`): the CLI opened the log file and handed it to us as fd 1
+//	AND fd 2. Our stderr already IS the log file, so teeing would write
+//	every line into it twice.
+//
+//	launchd: StandardOutPath/StandardErrorPath name the same log file,
+//	so launchd opened it and handed it to us. Same case as above.
+//
+//	systemd: StandardOutput/StandardError=journal, so stderr is a
+//	journald socket and the log FILE has nobody writing to it at all.
+//	Here we must tee — the journal keeps working (`journalctl --user -u
+//	dexel`) and `dexel logs` finally has content to show, which the
+//	unit's own comment always claimed and until now was not true of.
+//
+//	a terminal (`dexel runtime` run by hand): stderr is the tty. Tee, so
+//	the developer sees the lines AND the file records them.
+//
+// os.SameFile is the test, on the descriptor rather than on the path, so
+// it answers the real question ("is this the same inode?") and not a
+// re-derived guess about which mechanism started us.
+//
+// Nothing here is fatal. A log we cannot open leaves logging exactly
+// where it was — on the inherited stderr — and says so there.
+func attachRuntimeLog() func() {
+	path, err := paths.LogFile()
+	if err != nil {
+		log.Printf("resolve log path: %v — this runtime's log cannot be rotated in-process", err)
+		return func() {}
+	}
+	w, err := lifecycle.NewRotatingWriter(path, lifecycle.RotationThreshold(os.Getenv))
+	if err != nil {
+		log.Printf("%v — logging stays on the inherited stderr and nothing will rotate it", err)
+		return func() {}
+	}
+	if w.SameFileAs(os.Stderr) {
+		// Our stderr is this very file: take it over outright.
+		log.SetOutput(w)
+	} else {
+		log.SetOutput(io.MultiWriter(os.Stderr, w))
+	}
+	log.Printf("log: %s, rotated in-process at %d bytes (keeping one %s.1)", path, lifecycle.RotationThreshold(os.Getenv), lifecycle.LogFileName)
+	return func() { _ = w.Close() }
+}
+
+// listenRuntime binds the listener, preferring the port this state
+// directory's last runtime used (R9).
+//
+// # The bug this fixes
+//
+// A runtime binds an ephemeral port by design (serveMode.defaultAddr).
+// Both supervisors restart it after a crash — systemd `Restart=on-failure`,
+// launchd `KeepAlive{SuccessfulExit:false}` — and the restarted runtime
+// used to land on a DIFFERENT port. Every already-open page then retried
+// its dead `location.host` forever and the Tauri shell, which resolves
+// the URL once at startup, never re-resolved: a healthy runtime, and
+// every window a grey box.
+//
+// # The semantics, stated exactly
+//
+//   - modeRuntime only, and only when -addr's port is 0. An explicit
+//     -addr is never second-guessed (lifecycle.StickyAddr enforces both
+//     halves).
+//   - The record is advisory. If the port is not available the bind
+//     falls back to the requested address, i.e. to an OS-assigned port,
+//     and the record is then overwritten with what we actually got. A
+//     sticky port can never keep the runtime from starting, and can
+//     never be taken from whoever holds it.
+//   - The record survives a clean exit, unlike runtime.json, so `dexel
+//     restart` and a bookmarked browser tab benefit too — not only the
+//     crash-restart case.
+//   - Two runtimes cannot fight over it: runtime.lock (taken above) is
+//     what makes one-runtime-per-state-dir true, and it is taken before
+//     we get here.
+func listenRuntime(mode serveMode, stateDir, addr string) (net.Listener, error) {
+	if mode == modeRuntime {
+		sticky, err := lifecycle.ReadStickyPort(stateDir)
+		if err != nil {
+			// A corrupt record is said out loud and then ignored; it is
+			// a hint about a port, not state anything depends on.
+			log.Printf("sticky port: %v — taking an OS-assigned port", err)
+		} else if want, ok := lifecycle.StickyAddr(addr, sticky); ok {
+			stickyLn, stickyErr := net.Listen("tcp", want)
+			if stickyErr == nil {
+				log.Printf("sticky port: rebound %s, the port the last runtime here used — pages and windows opened against it reconnect on their own", want)
+				return stickyLn, nil
+			}
+			log.Printf("sticky port: %s is unavailable (%v) — taking an OS-assigned port instead; already-open pages will need `dexel open`", want, stickyErr)
+		}
+	}
+	ln, err := net.Listen("tcp", addr)
+	if err != nil {
+		// The exact message the pre-R9 inline net.Listen produced, kept
+		// verbatim: the legacy foreground shape's output is a
+		// compatibility contract (see serveMode's doc comment).
+		return nil, fmt.Errorf("listen on %s: %v", addr, err)
+	}
+	return ln, nil
+}
+
+// recordStickyPort persists the port ln actually bound, for the next
+// runtime in this state directory to try. Failure is logged and survived:
+// the worst case is that the next restart takes a fresh ephemeral port,
+// which is precisely today's behaviour.
+func recordStickyPort(stateDir string, ln net.Listener) {
+	tcp, ok := ln.Addr().(*net.TCPAddr)
+	if !ok {
+		log.Printf("sticky port: listener address %s is not TCP — not recording a port", ln.Addr())
+		return
+	}
+	if err := lifecycle.WriteStickyPort(stateDir, tcp.Port); err != nil {
+		log.Printf("sticky port: %v — the next restart will take a fresh OS-assigned port", err)
 	}
 }
