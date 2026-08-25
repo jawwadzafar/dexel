@@ -305,3 +305,18 @@ the moment the owner unfreezes versioning), or install from source.
   game surface preserving aspect — snapping to crisp multiples up to a sane
   max — then LETTERBOX (center with margins) instead of stretching further;
   never blur/distort the pixels. Applies to browser and shell alike.
+
+### INTERACTION-HARDENING (2026-08-25, owner) — folds into WINDOW-POLISH
+- Sprites must not be draggable (no drag-image-out-to-new-window), scene text
+  not selectable; clicks deliberate. CSS/attr hardening on the scene surface.
+- The server must NOT serve directory listings (/assets/ currently lists all
+  files via http.FileServer). Files only, no index pages, both embedded and
+  disk-override modes.
+
+### SCENE-REACTIONS (2026-08-25, owner) — the interactive world
+Clickable scene items with cozy reactions (client-side fun, no economy, no
+wire changes): click the dexel → a "hey!" flinch/react; click the monitor →
+it shakes; click the beverage → steam/sip; click the buddy/pet → it reacts.
+Art frames via gen_assets (deterministic, self-checked), hit-regions +
+reaction scheduler in scene.ts (reactions never override state-driven frames
+for long; cozy not slapstick). Foundation for future interactive items.
