@@ -841,7 +841,7 @@ def build_monitor() -> Sprite:
 #             the head (we are above it), and the fabric draping outward onto
 #             the shoulders at the hem.
 #   BACK      sloping shoulders CLEARLY wider than the hood (max half-width
-#             30 vs the hood's 18), widening from under the hood hem down to
+#             38 vs the hood's 21), widening from under the hood hem down to
 #             the shoulder line and tapering below - the upper back/trapezius
 #             we look down onto. Its LOWER half is OCCLUDED by the chair back
 #             (the chair now composites ON TOP of the developer, geometry.ts
@@ -885,7 +885,8 @@ def build_monitor() -> Sprite:
 # identity, the hand size):
 #   1. the shoulders were 92px across - 4.4 hand-widths, the top of the human
 #      range - so they came down to 76px (3.6 hand-widths, still human, still
-#      1.65x the hood, which is what keeps the hooded read);
+#      1.65x the hood as it then was, which is what keeps the hooded read
+#      (the hood-narrowing pass below takes that ratio to 1.81x);
 #   2. the torso was a STRAIGHT SLAB at full shoulder width for every row the
 #      player could see, so it now tapers 76 -> 66px across those same rows
 #      (_SH_HW below) - a waist, which is the single biggest part of the fix;
@@ -895,6 +896,27 @@ def build_monitor() -> Sprite:
 # deltoids flush with the new shoulder edge, 11..19 -> 10..16px thick) with
 # every WRIST and HAND left exactly where it was - the reach targets are fixed
 # world positions (the keys, the mouse) and are not negotiable.
+#
+# HOOD-NARROWING PASS (this revision). The slimming pass was approved, with
+# one residual note: "the head is still a little wider". So the HOOD alone
+# comes in - 46 -> 42px at its widest (body 44 -> 40, hem drape half-width 23
+# -> 21) - and NOTHING else moves. Hands, arms, shoulders (_SH_HW), the waist
+# taper and all four chairs are byte-for-byte the slim pass's; the only
+# numbers that change are the hood table, the crown's ellipse span
+# (_HOOD_ROUND 13 -> 12, so the dome stays a dome instead of stretching into
+# an egg over its unchanged 31 rows) and the marks that are PRINTED on the
+# hood - the panel seams, the hem arc, hoodie_cloak's drape folds and
+# hoodie_classic's drawstrings/yoke-seam ends - each rescaled by the same
+# 20/22 so nothing ends up floating beside the fabric (assert_hoodie_on_fabric
+# is what holds that honest for the overlays).
+#
+# 42 rather than 40 was chosen by rendering 46/42/40 in the real game and
+# looking at all three: 42 already reads as a clear narrowing at 1x (2px a
+# side is a visible change against a 21px hand), it keeps the hood at 2.0
+# hand-widths and shoulder:hood at 76:42 = 1.81x, and it leaves the panel
+# seams 5..7px inside the silhouette so they still read as SEAMS. At 40 the
+# crown starts to pinch and those seams crowd the outline - a strictly worse
+# hood for a difference barely visible at 1x.
 #
 # Vertical budget (why everything is where it is): the SPRINT/STATUS panels
 # cover the scene below room y161 (they are opaque from room y161 to y198,
@@ -962,7 +984,7 @@ DEV_FRAMES = ("idle", "type_a", "type_b", "mouse", "sleep") + \
 DEV_KB_GUARD_ROW = 7
 
 # --- HOOD (local row -> half-width) ---------------------------------------
-# 48x31 (local rows 18..48 = room y110..140), up from 34x25. Crown at local
+# 42x31 (local rows 18..48 = room y110..140). Crown at local
 # 18 = room y110, which is the keyboard case's own bottom bevel row: the
 # hood's `shadow` halo lands on it, so the head reads as being IN FRONT of
 # the keyboard's near edge - correct for a camera behind the developer, and
@@ -970,38 +992,48 @@ DEV_KB_GUARD_ROW = 7
 # rest on (room y95..107) are never touched.
 #
 # The dome is generated rather than hand-listed so the crown is a true
-# quarter-ellipse over 13 rows (a hand-typed table at this size wobbled):
-# half-width climbs 6 -> 22, holds 22 for the body, flares to 23 across the
-# hem where the fabric drapes onto the shoulders, then eases back in (the
-# SLIMMING PASS took that flare down from 24: two extra pixels of drape at the
-# exact row where head meets shoulders read as width on the whole
-# figure). 46 wide
-# is 2.3 hand-widths - the ratio a real hood has to a hand - and it is now
-# unmistakably bigger than either hand, which was half the complaint. The hem stops at room y140 rather than reaching for
+# quarter-ellipse (a hand-typed table at this size wobbled): half-width climbs
+# 6 -> 20, holds 20 for the body, flares to 21 across the hem where the fabric
+# drapes onto the shoulders, then eases back in (the SLIMMING PASS took that
+# flare down from 24 to 23: two extra pixels of drape at the exact row where
+# head meets shoulders read as width on the whole figure; the HOOD-NARROWING
+# PASS then took the whole table in by 2, flare included).
+#
+# _HOOD_ROUND came down 13 -> 12 with the body half-width, which is the part
+# that is easy to get wrong: the hood's 31 rows are FIXED by the vertical
+# budget, so narrowing the body without shortening the crown's ellipse span
+# would have stretched the dome into an egg. 12/20 holds the same crown
+# curvature 13/22 had, and the apex row is unchanged at half-width 6.
+#
+# 42 wide is 2.0 hand-widths (a hand is 21px) - still unmistakably bigger than
+# either hand, which was half of the original "FAT" complaint - and 76:42 =
+# 1.81x against the shoulders, the ratio that carries the hooded read. The hem stops at room y140 rather than reaching for
 # the chair line: the OTHER half of the complaint was that the shoulders were
 # a sliver, and the only way to buy them a readable band in a scene whose
 # vertical budget is fixed (keyboard above, HUD below) is to spend rows on the
 # upper back instead of on more hood. The split that reads best in the live
 # composite is hood 31 rows / bare upper back 11 rows / chair crown 11 rows.
 _HOOD_TOP, _HOOD_BOT = 18, 48
-_HOOD_BODY_HW = 22
-_HOOD_ROUND = 13              # rows the crown takes to reach the body width
+_HOOD_BODY_HW = 20
+_HOOD_ROUND = 12              # rows the crown takes to reach the body width
 _HOOD_HW = {}
 for _d in range(_HOOD_ROUND):
     _t = (_HOOD_ROUND - _d) / (_HOOD_ROUND + 0.5)
     _HOOD_HW[_HOOD_TOP + _d] = int(round(_HOOD_BODY_HW * (1.0 - _t * _t) ** 0.5))
 for _y in range(_HOOD_TOP + _HOOD_ROUND, 41):
     _HOOD_HW[_y] = _HOOD_BODY_HW
-_HOOD_HW.update({41: 22, 42: 23, 43: 23, 44: 23, 45: 23, 46: 22, 47: 21, 48: 19})
+_HOOD_HW.update({41: 20, 42: 21, 43: 21, 44: 21, 45: 21, 46: 20, 47: 19, 48: 17})
 assert min(_HOOD_HW) == _HOOD_TOP and max(_HOOD_HW) == _HOOD_BOT
-_HOOD_HEM_HW = 23             # widest row; the hem arc below is anchored on it
+_HOOD_HEM_HW = 21             # widest row; the hem arc below is anchored on it
 
 # --- BACK / SHOULDERS -----------------------------------------------------
 # 76px across at the shoulder line (half-width 38, down from 46) - 3.6
 # hand-widths, which is what a real biacromial span is against a hand, and
-# 1.65x the hood's 46: a lean upper body under a head, where 4.4 hand-widths
+# 1.81x the hood's 42: a lean upper body under a head, where 4.4 hand-widths
 # of straight slab read as a fat one. Starts at local row 44 INSIDE the hood
-# hem and widens monotonically (no dip -> no notch), steeply enough (26 -> 38
+# hem and widens monotonically (no dip -> no notch; the hood-narrowing pass
+# makes the first step out of the hem 21 -> 26 instead of 23 -> 26, which is
+# still a widening, i.e. still a shoulder and not a notch), steeply enough (26 -> 38
 # in six rows) that the widest part of the torso lands ABOVE the backrest
 # crown where the camera can actually see it.
 #
@@ -1019,7 +1051,7 @@ _BACK_BOT = 74
 # The shoulder ramp UP out of the hood hem (rows 44..49) and the waist taper
 # DOWN from it (rows 50..67), listed row by row because both halves are what
 # the eye reads and neither is a formula: the ramp has to start just wider
-# than the hood hem (23) so there is no notch where fabric meets body, and
+# than the hood hem (21) so there is no notch where fabric meets body, and
 # the taper has to lose a visible 5px per side across the nine BARE rows
 # (49..57) - that is the whole "lean, not slab" fix - then hold 33 through the
 # chair band so the shoulders keep peeking out at the sides of every backrest.
@@ -1399,14 +1431,17 @@ def build_dev_form(frame: str) -> Sprite:
 # --------------------------------------------------------------------------
 
 # The hood's two construction lines, LEFT half only (the right half is
-# mirrored about DEV_CX - 0.5, like every other piece of dev geometry).
-# Both scaled with the hood (1.45x wider, 34 rows tall instead of 25). The
-# hem is GENERATED as a quarter-ellipse arc rather than hand-listed: it has
-# to sit exactly one pixel inside a silhouette that now curves, and a typed
-# list of 24 points went stale the moment the hood profile moved.
-_HOOD_SEAM_L = ((-12, 23), (-13, 25), (-13, 27), (-14, 29), (-15, 31),
-                (-15, 33), (-16, 35), (-16, 37), (-17, 39), (-17, 41),
-                (-17, 43))
+# mirrored about DEV_CX - 0.5, like every other piece of dev geometry). Both
+# are rescaled every time the hood's width is (the HOOD-NARROWING PASS took
+# the seam in by the same 20/22 the body half-width moved, which keeps it
+# 5..7px inside the silhouette - close enough to read as a panel seam,
+# far enough not to read as a second outline). The hem is GENERATED as a
+# quarter-ellipse arc off _HOOD_HEM_HW rather than hand-listed: it has to sit
+# exactly one pixel inside a silhouette that curves, and a typed list of 24
+# points went stale the moment the hood profile moved.
+_HOOD_SEAM_L = ((-11, 23), (-12, 25), (-12, 27), (-13, 29), (-13, 31),
+                (-14, 33), (-14, 35), (-15, 37), (-15, 39), (-15, 41),
+                (-16, 43))
 _HEM_SIDE_ROW, _HEM_CENTRE_ROW = 43, 48     # hem is highest at the sides
 _HOOD_HEM_L = tuple(
     (-dx, _HEM_SIDE_ROW + int(round((_HEM_CENTRE_ROW - _HEM_SIDE_ROW)
@@ -1477,16 +1512,18 @@ def build_dev_base(frame: str) -> Sprite:
 #
 # Per art-direction "Character rules": overlays may paint only the hood and
 # back panel, which are static across the four non-sleep frames, so they are
-# authored once against the `idle` geometry (hood rows 18..51, x72..119 at its
-# widest; back rows 44..74, x50..141 at the shoulders; centre seam x95..96)
+# authored once against the `idle` geometry (hood rows 18..48, x75..116 at its
+# widest; back rows 44..74, x58..133 at the shoulders; centre seam x95..96)
 # and never reference the per-frame hand offsets. The sleep frame's 2-3px drop
 # of that geometry is a deliberate, documented simplification.
 #
 # The CHAIR draws on top of the developer from room y150 (local row 58) down,
 # so every identifying mark is kept at local row <= 57 - i.e. on the hood and
 # the exposed upper back, the part of the garment the player can actually
-# see. Every mark below was rescaled with the 1.45x bigger garment; a mark
-# authored for a 34px hood reads as a scratch on a 48px one.
+# see. Every mark below is rescaled whenever the garment is: a mark authored
+# for a 34px hood reads as a scratch on a 48px one, and a mark authored for a
+# 46px hood floats off the edge of a 42px one. assert_hoodie_on_fabric is the
+# check that catches the second case.
 
 def build_hoodie_classic() -> Sprite:
     """Two drawstrings hanging out from under the hood hem down the
@@ -1498,15 +1535,15 @@ def build_hoodie_classic() -> Sprite:
     # both where a drawstring actually is and the only place there is now room
     # for one: run up the hood instead (as they were before the shoulders grew
     # a readable band) they crossed the hem arc and the pair read as a cross.
-    s.vline(DEV_CX - 6, 48, 55, "shadow")
-    s.rect(DEV_CX - 7, 56, DEV_CX - 5, 57, "shadow")    # knot
-    s.vline(DEV_CX + 5, 48, 53, "shadow")
-    s.rect(DEV_CX + 4, 54, DEV_CX + 6, 55, "shadow")    # knot
+    s.vline(DEV_CX - 5, 48, 55, "shadow")
+    s.rect(DEV_CX - 6, 56, DEV_CX - 4, 57, "shadow")    # knot
+    s.vline(DEV_CX + 4, 48, 53, "shadow")
+    s.rect(DEV_CX + 3, 54, DEV_CX + 5, 55, "shadow")    # knot
     # The yoke seam picks up where the hood hem arc stops and runs OUT to the
     # shoulder tips, so hem + seam read as one shoulder yoke. Placed inboard
     # of the hem it just made a second horizontal bar under the first.
-    s.hline(49, DEV_CX - 33, DEV_CX - 20, "shadow")     # yoke seam, left
-    s.hline(49, DEV_CX + 19, DEV_CX + 32, "shadow")     # yoke seam, right
+    s.hline(49, DEV_CX - 33, DEV_CX - 18, "shadow")     # yoke seam, left
+    s.hline(49, DEV_CX + 17, DEV_CX + 32, "shadow")     # yoke seam, right
     return s
 
 
@@ -1548,9 +1585,9 @@ def build_hoodie_cloak() -> Sprite:
     # The folds hang DOWN the hood, inside its silhouette (five lines fanned
     # out directly below the middle of a dome read as whiskers), and the gold
     # trim crosses the now-visible upper back below the hem.
-    for x in (DEV_CX - 15, DEV_CX + 14):
+    for x in (DEV_CX - 14, DEV_CX + 13):
         s.vline(x, 30, 47, "shadow")                    # long drape folds
-    for x in (DEV_CX - 8, DEV_CX + 7):
+    for x in (DEV_CX - 7, DEV_CX + 6):
         s.vline(x, 36, 47, "shadow")                    # short drape folds
     s.hline(51, DEV_CX - 29, DEV_CX + 28, "gold")       # gold hem trim
     for x in (DEV_CX - 25, DEV_CX - 12, DEV_CX + 11, DEV_CX + 24):

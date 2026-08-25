@@ -27,10 +27,11 @@ export const SLOT_RECT: Record<string, Rect> = {
 // local 95.5), which is also what keeps the derived 40x40 hoodie store
 // thumbnails a centred crop of the hood.
 //
-// The rect is UNCHANGED by the proportion pass and by the SLIMMING pass that
-// followed it (the figure inside it now reads lean: a 46x31 hood at room
-// y110..140, 76px-wide shoulders tapering to a 66px waist, arms 10..17px
-// thick). It deliberately still stops at room y167 rather than being extended
+// The rect is UNCHANGED by the proportion pass, by the SLIMMING pass that
+// followed it, and by the HOOD-NARROWING pass after that (the figure inside it
+// now reads lean: a 42x31 hood at room y110..140 — 46 -> 42 when the owner
+// read the head as still a little wide — 76px-wide shoulders tapering to a
+// 66px waist, arms 10..17px thick). It deliberately still stops at room y167 rather than being extended
 // down behind the HUD: the panels are opaque from room y161 to y198 and the
 // 4px gap between them at room x158..161 is itself covered by the chair, so a
 // taller canvas would add no visible pixel — while pushing the derived hoodie
