@@ -326,6 +326,42 @@ func TestNonBlockingFdsStillDeliverEvents(t *testing.T) {
 		t.Skipf("mkfifo unavailable here: %v", err)
 	}
 
+	// A FIFO signals EOF (a Read returning 0 bytes, no error) precisely
+	// when it currently has zero writers — which is exactly the shape the
+	// real provider's readLoop treats as device death (provider_linux.go's
+	// "read returned 0 bytes" branch), correctly: on a real evdev node that
+	// only happens when the device is actually gone. But a FIFO passes
+	// through that same zero-writer state for a moment every time its two
+	// ends are opened independently, and that is not death, just plumbing.
+	// Without something already holding a read fd open, the provider's OWN
+	// first Read() can race the test's writer's open(): if it lands first,
+	// the provider sees EOF, decides the device died, and closes its fd —
+	// and the test's Write() below then finds no reader connected at all
+	// and fails with "broken pipe". keepAlive is a second, independent read
+	// fd held open for this FIFO's entire life so the pipe never legitimately
+	// has zero readers-that-matter around that race, and — combined with
+	// opening the writer before the provider ever touches the path, below —
+	// removes the race outright rather than narrowing its window.
+	keepAliveFd, err := syscall.Open(path, syscall.O_RDONLY|syscall.O_NONBLOCK, 0)
+	if err != nil {
+		t.Fatalf("open keep-alive reader: %v", err)
+	}
+	keepAlive := os.NewFile(uintptr(keepAliveFd), path)
+	defer func() { _ = keepAlive.Close() }()
+
+	// Opened here — before the provider exists at all — a blocking
+	// O_WRONLY open on a FIFO only waits for A reader to be present, and
+	// keepAlive already is one, so this returns immediately and the pipe
+	// has a connected writer from this point on. That means the provider's
+	// own read fd, opened by Start() below, can never observe "no writer"
+	// (EOF); at worst it sees "no data yet" (EAGAIN), which its readLoop
+	// already treats as pending, not death.
+	w, err := os.OpenFile(path, os.O_WRONLY, 0)
+	if err != nil {
+		t.Fatalf("open writer: %v", err)
+	}
+	defer func() { _ = w.Close() }()
+
 	p := NewLinuxProvider()
 	p.scanner = evdevScanner{glob: filepath.Join(dir, "event*")}
 	p.logf = func(format string, args ...any) { t.Logf(format, args...) }
@@ -334,12 +370,6 @@ func TestNonBlockingFdsStillDeliverEvents(t *testing.T) {
 		t.Fatalf("Start() over a FIFO node: %v", err)
 	}
 	t.Cleanup(func() { _ = p.Stop() })
-
-	w, err := os.OpenFile(path, os.O_WRONLY, 0)
-	if err != nil {
-		t.Fatalf("open writer: %v", err)
-	}
-	defer func() { _ = w.Close() }()
 
 	// Three presses, spaced past the anti-mash coalescing window
 	// (MouseSampleInterval) so all three are meant to count.
