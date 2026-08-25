@@ -20,15 +20,49 @@
 #     dies mid-download can never execute a half-parsed script;
 #   * `set -eu` (never `pipefail`, which `sh` lacks).
 #
-# Never uses sudo. Never writes outside $HOME. Never enables autostart and
-# never starts the runtime — `dexel` and `dexel autostart enable` are the
-# user's explicit, informed choices (ARCHITECTURE.md's consent rule).
+# Never uses sudo. Never writes outside $HOME. Never enables autostart —
+# `dexel autostart enable` stays the user's explicit, informed choice
+# (ARCHITECTURE.md's consent rule).
+#
+# It DOES start the runtime and open the game at the end, because "installed"
+# and "running" are not the same thing and a one-command install that leaves
+# you at a prompt has not finished the job. Starting a process you just asked
+# for is not the consent question; *enabling autostart* is, and that is still
+# off. `--no-start` opts out.
+#
+# ON LINUX IT ALSO DOES DESKTOP INTEGRATION, so dexel is in the app grid
+# rather than only in a terminal:
+#   * the launcher icon from the archive ->
+#     $XDG_DATA_HOME/icons/hicolor/128x128/apps/dexel.png
+#   * a launcher entry -> $XDG_DATA_HOME/applications/dexel.desktop, whose
+#     Exec is `<install-dir>/dexel open`
+#   * when a desktop session is detected, the optional GUI shell: the
+#     release's AppImage, placed at <install-dir>/dexel-desktop.AppImage with
+#     a small `dexel-desktop` shim beside it, which is the name `dexel open`
+#     already looks for (ARCHITECTURE.md Decision 17). The .deb on the same
+#     release is deliberately NOT used: dpkg needs root and this installer
+#     does not sudo, ever. Without the shell, `dexel open` uses the browser,
+#     which is a supported front door and not a consolation prize.
+# All of it lives under $HOME, is idempotent, and is skippable.
 #
 # Options (flags, or the environment):
 #   --dry-run                resolve + download + verify, then stop. No writes
 #                            outside the temp dir. This is the mode CI runs.
+#   --no-start               install everything, start nothing. The report
+#                            still tells you the command to run.
+#   --no-desktop             skip ALL desktop integration (icon, .desktop
+#                            entry, GUI shell). CLI + browser only.
+#   --no-app                 keep the icon and the launcher entry, skip only
+#                            the AppImage download (it is ~84 MB).
+#   --app                    download the AppImage even with no detected
+#                            desktop session (e.g. installing over ssh for a
+#                            desktop you will log into later).
 #   --help                   this text
 #   DEXEL_INSTALL_DIR=DIR    where the binary goes (default ~/.local/bin)
+#   DEXEL_NO_START=1         same as --no-start
+#   DEXEL_NO_DESKTOP=1       same as --no-desktop
+#   DEXEL_NO_APP=1           same as --no-app
+#   DEXEL_APP=1              same as --app
 #   DEXEL_VERSION=vX.Y.Z     install this tag instead of the latest release
 #   DEXEL_REPO=owner/name    resolve against a different repository
 #   DEXEL_ARCHIVE=FILE       use an archive already on disk instead of
@@ -73,6 +107,22 @@ SHA_TOOL=""      # sha256sum | shasum
 DRY_RUN=0
 STOPPED_RUNTIME=0
 
+NO_START=0
+NO_DESKTOP=0
+NO_APP=0
+FORCE_APP=0
+HAS_SESSION=0       # a graphical session looks present ($DISPLAY/$WAYLAND_DISPLAY)
+WANT_APP=0          # ...and we resolved a verifiable AppImage to install
+DATADIR=""          # $XDG_DATA_HOME, or ~/.local/share
+UNPACKED_DIR=""     # where install_binary found the binary (the icon is beside it)
+APPIMAGE_NAME=""
+APPIMAGE_PATH=""
+APPIMAGE_DIGEST=""
+ICON_INSTALLED=0
+DESKTOP_ENTRY=""
+SHIM_INSTALLED=0
+LAUNCHED=none       # none | open | start
+
 # ---------------------------------------------------------------------------
 # output helpers — every line is prefixed, because in a `curl | sh` the
 # user cannot tell our output from the shell's without one.
@@ -95,11 +145,13 @@ usage() {
     # script file to read, so fall back to the URL rather than printing
     # nothing at all.
     if [ -r "$0" ] && grep -q '^# install.sh' "$0" 2>/dev/null; then
-        sed -n '2,60p' "$0" | sed 's/^# \{0,1\}//'
+        sed -n '2,100p' "$0" | sed 's/^# \{0,1\}//'
     else
         say "dexel installer — see https://github.com/${REPO}#install"
-        say "options: --dry-run, --help; env: DEXEL_INSTALL_DIR, DEXEL_VERSION,"
-        say "DEXEL_REPO, DEXEL_ARCHIVE, GH_TOKEN/GITHUB_TOKEN"
+        say "options: --dry-run, --no-start, --no-desktop, --no-app, --app, --help"
+        say "env: DEXEL_INSTALL_DIR, DEXEL_VERSION, DEXEL_REPO, DEXEL_ARCHIVE,"
+        say "DEXEL_NO_START, DEXEL_NO_DESKTOP, DEXEL_NO_APP, DEXEL_APP,"
+        say "GH_TOKEN/GITHUB_TOKEN"
     fi
 }
 
@@ -279,6 +331,7 @@ resolve_release() {
         die "$E_NETWORK" "resolved tag \"$TAG\" is not a vX.Y.Z release tag."
 
     # name <TAB> asset-api-url <TAB> browser-download-url <TAB> sha256-digest
+    #      <TAB> size-in-bytes
     awk '
         function jstr(s, key,    re, rest) {
             re = "\"" key "\"[ \t]*:[ \t]*\""
@@ -286,6 +339,17 @@ resolve_release() {
             rest = substr(s, RSTART + RLENGTH)
             if (match(rest, /"/) == 0) return ""
             return substr(rest, 1, RSTART - 1)
+        }
+        # jnum is jstr for an unquoted JSON number. Only "size" is read this
+        # way, and within one asset record it appears after "name" and inside
+        # no sub-object (the nested "uploader" has no size field), so the
+        # first match belongs to this asset.
+        function jnum(s, key,    re, rest) {
+            re = "\"" key "\"[ \t]*:[ \t]*"
+            if (match(s, re) == 0) return ""
+            rest = substr(s, RSTART + RLENGTH)
+            if (match(rest, /^[0-9]+/) == 0) return ""
+            return substr(rest, 1, RLENGTH)
         }
         { doc = doc $0 "\n" }
         END {
@@ -299,8 +363,9 @@ resolve_release() {
                 if (name == "") continue
                 digest = jstr(rec, "digest")
                 sub(/^sha256:/, "", digest)
-                printf "%s\t%s/releases/assets/%s\t%s\t%s\n",
-                    name, api, id, jstr(rec, "browser_download_url"), digest
+                printf "%s\t%s/releases/assets/%s\t%s\t%s\t%s\n",
+                    name, api, id, jstr(rec, "browser_download_url"), digest,
+                    jnum(rec, "size")
             }
         }
     ' api="$API" "$TMPD/release.json" > "$TMPD/assets.tsv"
@@ -312,8 +377,8 @@ resolve_release() {
     info "assets    $(wc -l < "$TMPD/assets.tsv" | tr -d ' ')"
 }
 
-# asset_field NAME COLUMN — column 2 = api url, 3 = browser url, 4 = digest.
-# Empty output means "this release has no such asset".
+# asset_field NAME COLUMN — column 2 = api url, 3 = browser url, 4 = digest,
+# 5 = size in bytes. Empty output means "this release has no such asset".
 asset_field() {
     awk -F '\t' -v want="$1" -v col="$2" '$1 == want { print $col; exit }' "$TMPD/assets.tsv"
 }
@@ -461,6 +526,354 @@ $ARCHIVE_NAME. Refusing to install."
 }
 
 # ---------------------------------------------------------------------------
+# desktop integration (Linux)
+#
+# Three separate things, deliberately, because they cost wildly different
+# amounts and fail for different reasons:
+#
+#   1. the ICON      a ~1 KB PNG already inside the archive we verified
+#   2. the ENTRY     a ~400 byte .desktop file we write ourselves
+#   3. the SHELL     the release's ~84 MB AppImage, plus a `dexel-desktop`
+#                    shim so `dexel open` finds it (ARCHITECTURE.md
+#                    Decision 17 looks for that name on PATH, then in BinDir)
+#
+# 1 and 2 are free and always done on Linux; 3 is a real download and is
+# only done when there is a graphical session to run it in. Every one of
+# them is best-effort AFTER the binary is in place: a desktop environment
+# that will not take a launcher is not a reason to fail an install of a CLI
+# that works perfectly well from a terminal.
+#
+# The .deb on the same release is never used. dpkg needs root, and this
+# installer does not sudo — which is the whole reason the AppImage is the
+# no-sudo path for the GUI shell.
+# ---------------------------------------------------------------------------
+
+# detect_session — is there a graphical session to open a window into?
+#
+# $DISPLAY covers X11 and XWayland; $WAYLAND_DISPLAY covers a pure Wayland
+# session that never started XWayland. Neither is a guarantee (a forwarded
+# $DISPLAY over ssh sets it too) — which is exactly why this only chooses a
+# DEFAULT that --app and --no-app override.
+detect_session() {
+    if [ -n "${DISPLAY:-}" ] || [ -n "${WAYLAND_DISPLAY:-}" ]; then
+        HAS_SESSION=1
+    fi
+}
+
+human_mb() {
+    if [ -z "$1" ]; then
+        printf 'size unknown'
+        return 0
+    fi
+    awk -v b="$1" 'BEGIN { printf "%.0f MB", b / 1048576 }'
+}
+
+# find_appimage TOKEN1 TOKEN2 — the release's .AppImage for this arch.
+#
+# Matched by arch token rather than by a constructed name: Tauri names its
+# bundles from tauri.conf.json's productName and its own arch spelling
+# (`Dexel_0.1.0_amd64.AppImage`), which is neither the tag nor the Go arch
+# this script otherwise speaks. An AppImage whose arch we cannot confirm is
+# skipped rather than guessed at — a wrong-arch binary is not a launcher
+# problem, it is an Exec format error.
+find_appimage() {
+    awk -F '\t' -v a="$1" -v b="$2" '
+        $1 ~ /\.AppImage$/ && (index($1, a) > 0 || index($1, b) > 0) { print $1; exit }
+    ' "$TMPD/assets.tsv"
+}
+
+# decide_desktop — resolve WANT_APP before anything is downloaded, so an
+# 84 MB decision is announced and reversible rather than discovered.
+decide_desktop() {
+    DATADIR="${XDG_DATA_HOME:-$HOME/.local/share}"
+
+    if [ "$NO_DESKTOP" = 1 ]; then
+        info "desktop   skipped entirely (--no-desktop)"
+        return 0
+    fi
+    if [ "$OS" != linux ]; then
+        return 0
+    fi
+    if [ "$NO_APP" = 1 ]; then
+        info "shell     skipped (--no-app); \`dexel open\` will use your browser"
+        return 0
+    fi
+    if [ "$HAS_SESSION" = 0 ] && [ "$FORCE_APP" = 0 ]; then
+        info "shell     skipped (no \$DISPLAY or \$WAYLAND_DISPLAY; --app forces it)"
+        return 0
+    fi
+
+    case "$ARCH" in
+        amd64) APPIMAGE_NAME=$(find_appimage amd64 x86_64) ;;
+        arm64) APPIMAGE_NAME=$(find_appimage arm64 aarch64) ;;
+    esac
+    if [ -z "$APPIMAGE_NAME" ]; then
+        info "shell     release $TAG ships no $ARCH AppImage; \`dexel open\` will use your browser"
+        return 0
+    fi
+
+    APPIMAGE_DIGEST=$(asset_field "$APPIMAGE_NAME" 4)
+    if [ -z "$APPIMAGE_DIGEST" ]; then
+        warn "$APPIMAGE_NAME has no sha256 digest in release $TAG, and this
+       installer does not install unverified binaries. Skipping the desktop
+       shell — \`dexel open\` will use your browser, which works."
+        return 0
+    fi
+
+    WANT_APP=1
+    info "shell     $APPIMAGE_NAME ($(human_mb "$(asset_field "$APPIMAGE_NAME" 5)"))"
+}
+
+download_appimage() {
+    if [ "$WANT_APP" != 1 ]; then
+        return 0
+    fi
+    APPIMAGE_PATH="$TMPD/$APPIMAGE_NAME"
+    say "==> downloading $APPIMAGE_NAME — the optional desktop shell"
+    http_get "$(asset_url "$APPIMAGE_NAME")" "$APPIMAGE_PATH" "$(asset_accept)" ||
+        die "$E_NETWORK" "download of $APPIMAGE_NAME failed."
+}
+
+# verify_appimage — same refusal, one fewer witness.
+#
+# The archive is verified TWICE (sha256sums.txt, cross-checked against the
+# digest GitHub reports). The AppImage can only be verified ONCE, against
+# GitHub's digest, because build-release.sh's sha256sums.txt covers only the
+# archives that script builds itself — the Tauri bundles come from a
+# different release job and are absent from it. That was checked against the
+# live v0.1.0 release, not assumed: it lists four archives and no bundles.
+#
+# One witness is why the shell is optional and the CLI is not. It is still a
+# hard failure, and it happens BEFORE anything is installed, so a tampered
+# AppImage leaves the machine exactly as it was. If a future release does
+# list the AppImage in sha256sums.txt, that line becomes the second opinion
+# automatically, with no edit here.
+verify_appimage() {
+    if [ "$WANT_APP" != 1 ]; then
+        return 0
+    fi
+    _sums_want=$(awk -v f="$APPIMAGE_NAME" \
+        '$2 == f || $2 == "*" f { print $1; exit }' "$TMPD/sha256sums.txt")
+    if [ -n "$_sums_want" ] && [ "$_sums_want" != "$APPIMAGE_DIGEST" ]; then
+        say ""
+        say "  sha256sums.txt says  $_sums_want"
+        say "  the GitHub API says  $APPIMAGE_DIGEST"
+        die "$E_CHECKSUM" "the release's checksum file and GitHub disagree about
+$APPIMAGE_NAME. Refusing to install."
+    fi
+
+    _got=$(sha256_of "$APPIMAGE_PATH")
+    if [ "$APPIMAGE_DIGEST" != "$_got" ]; then
+        say ""
+        say "  expected  $APPIMAGE_DIGEST   (the digest GitHub reports for this asset)"
+        say "  actual    $_got   ($APPIMAGE_NAME)"
+        say ""
+        say "  Nothing was unpacked and nothing was installed."
+        die "$E_CHECKSUM" "sha256 mismatch on $APPIMAGE_NAME."
+    fi
+    say "==> sha256 verified (desktop shell)"
+    info "$_got"
+}
+
+# install_desktop_app — the AppImage, plus the shim that makes `dexel open`
+# find it. Runs only on already-verified bytes.
+install_desktop_app() {
+    if [ "$WANT_APP" != 1 ]; then
+        return 0
+    fi
+    _img="$BINDIR/dexel-desktop.AppImage"
+    if have install; then
+        if ! install -m 0755 "$APPIMAGE_PATH" "$_img"; then
+            warn "could not install $_img; skipping the desktop shell."
+            return 0
+        fi
+    else
+        if ! cp "$APPIMAGE_PATH" "$_img"; then
+            warn "could not install $_img; skipping the desktop shell."
+            return 0
+        fi
+        chmod 0755 "$_img" || true
+    fi
+    say "==> installed $_img"
+
+    # The shim's path is injected as a single-quoted literal, so nothing in
+    # it is re-expanded when the shim runs.
+    _shim="$BINDIR/dexel-desktop"
+    # Two quoted heredocs with one printf between them, rather than one
+    # unquoted heredoc: the shim's whole point is to contain literal `$@`
+    # and `$APPIMAGE`, and an unquoted heredoc would expand both HERE, at
+    # install time, into nothing.
+    if {
+        cat <<'SHIM_HEAD'
+#!/bin/sh
+# dexel-desktop — written by dexel's install.sh. Safe to delete.
+#
+# `dexel open` looks for an executable literally named `dexel-desktop` (on
+# PATH, then in the bin dir) and hands it the runtime URL. The GUI shell
+# dexel publishes for Linux is an AppImage — one file, different name — so
+# this is the adapter between the two.
+set -eu
+SHIM_HEAD
+        printf 'APPIMAGE=%s\n' "'$_img'"
+        cat <<'SHIM'
+if [ ! -x "$APPIMAGE" ]; then
+    echo "dexel-desktop: $APPIMAGE is missing or not executable." >&2
+    echo "dexel-desktop: re-run dexel's installer, or just use the browser." >&2
+    exit 127
+fi
+# An AppImage mounts itself with FUSE. Containers, minimal installs and some
+# hardened distros have no /dev/fuse and no fusermount, and there the mount
+# fails with a libfuse message instead of starting. The runtime's own
+# --appimage-extract-and-run unpacks to a temp dir and runs from there:
+# slower to start, works anywhere. `exec` either way, so `dexel open`'s
+# detached child is the shell itself and nothing double-launches.
+if [ -e /dev/fuse ] && { command -v fusermount3 || command -v fusermount; } >/dev/null 2>&1; then
+    exec "$APPIMAGE" "$@"
+fi
+exec "$APPIMAGE" --appimage-extract-and-run "$@"
+SHIM
+    } > "$_shim"; then
+        chmod 0755 "$_shim" || true
+        SHIM_INSTALLED=1
+        say "==> installed $_shim"
+        info "the name \`dexel open\` looks for, so the window is now the default"
+    else
+        warn "could not write $_shim; \`dexel open\` will use your browser."
+    fi
+}
+
+# install_icon — the PNG from the archive into the user's hicolor theme.
+#
+# No gtk-update-icon-cache: hicolor under $XDG_DATA_HOME has no index.theme
+# unless something else put one there, and the tool fails on a directory
+# without one. GTK and Qt both read the directory directly, so the cache is
+# an optimisation we do not need and cannot honestly claim to have built.
+install_icon() {
+    if [ -z "$UNPACKED_DIR" ] || [ ! -f "$UNPACKED_DIR/dexel.png" ]; then
+        info "icon      not in $ARCHIVE_NAME (a release from before the icon shipped);"
+        info "          the launcher will use your theme's fallback icon"
+        return 0
+    fi
+    _icon_dir="$DATADIR/icons/hicolor/128x128/apps"
+    if ! mkdir -p "$_icon_dir"; then
+        warn "could not create $_icon_dir; skipping the icon."
+        return 0
+    fi
+    if have install; then
+        if ! install -m 0644 "$UNPACKED_DIR/dexel.png" "$_icon_dir/dexel.png"; then
+            warn "could not write $_icon_dir/dexel.png; skipping the icon."
+            return 0
+        fi
+    else
+        if ! cp "$UNPACKED_DIR/dexel.png" "$_icon_dir/dexel.png"; then
+            warn "could not write $_icon_dir/dexel.png; skipping the icon."
+            return 0
+        fi
+        chmod 0644 "$_icon_dir/dexel.png" || true
+    fi
+    ICON_INSTALLED=1
+    say "==> installed $_icon_dir/dexel.png"
+}
+
+# write_desktop_file — the launcher entry.
+#
+# Exec is `dexel open`, never the AppImage directly: `open` starts the
+# runtime if it is not running and then shows the UI, falling back from the
+# shell to the browser on its own. Pointing the tile at the AppImage would
+# produce a window with nothing behind it whenever the runtime was down.
+#
+# The path is written to the temp dir and moved into place, so a desktop
+# environment watching the directory never sees a half-written entry.
+write_desktop_file() {
+    _appdir="$DATADIR/applications"
+    if ! mkdir -p "$_appdir"; then
+        warn "could not create $_appdir; skipping the launcher entry."
+        return 0
+    fi
+    _entry="$_appdir/dexel.desktop"
+    _tmp_entry="$TMPD/dexel.desktop"
+    {
+        say "[Desktop Entry]"
+        say "Type=Application"
+        say "Version=1.0"
+        say "Name=Dexel"
+        say "GenericName=Developer Companion"
+        say "Comment=A cozy pixel-art companion that works the day alongside you"
+        say "Exec=\"$BINDIR/dexel\" open"
+        say "TryExec=$BINDIR/dexel"
+        say "Icon=dexel"
+        say "Terminal=false"
+        say "Categories=Game;"
+        say "Keywords=dexel;companion;focus;typing;pixel;"
+        say "StartupNotify=false"
+        say "X-Dexel-Installed-By=install.sh"
+    } > "$_tmp_entry"
+
+    if ! mv "$_tmp_entry" "$_entry"; then
+        warn "could not write $_entry; dexel will not appear in your app grid."
+        return 0
+    fi
+    chmod 0644 "$_entry" || true
+    DESKTOP_ENTRY="$_entry"
+    say "==> installed $_entry"
+
+    # Best-effort, and genuinely optional: GNOME, KDE and most other
+    # environments notice a new .desktop file on their own. This only
+    # refreshes the MIME cache for environments that read it.
+    if have update-desktop-database; then
+        if ! update-desktop-database "$_appdir" >/dev/null 2>&1; then
+            info "update-desktop-database reported a problem; the entry is installed anyway"
+        fi
+    fi
+}
+
+install_desktop_entry() {
+    if [ "$NO_DESKTOP" = 1 ]; then
+        return 0
+    fi
+    if [ "$OS" != linux ]; then
+        return 0
+    fi
+    install_icon
+    write_desktop_file
+}
+
+# ---------------------------------------------------------------------------
+# just start
+#
+# The one thing this installer's older self refused to do, and the one thing
+# it was wrong about. Starting the runtime the user just asked for is not the
+# consent question — `dexel autostart enable`, which makes dexel start on
+# every login forever, is, and that is still untouched and still off.
+#
+# A failure here does not fail the install: the binary is on disk and works,
+# and `dexel open` failing because there is no browser to launch is a
+# different problem from a bad install.
+# ---------------------------------------------------------------------------
+
+launch() {
+    if [ "$NO_START" = 1 ]; then
+        return 0
+    fi
+    say ""
+    if [ "$HAS_SESSION" = 1 ]; then
+        say "==> starting dexel and opening the game"
+        if "$BINDIR/dexel" open; then
+            LAUNCHED=open
+            return 0
+        fi
+    else
+        say "==> starting the dexel runtime (no desktop session, so nothing is opened)"
+        if "$BINDIR/dexel" start; then
+            LAUNCHED=start
+            return 0
+        fi
+    fi
+    warn "dexel is installed, but starting it did not finish cleanly.
+       Check it yourself: $BINDIR/dexel status"
+}
+
+# ---------------------------------------------------------------------------
 # step 8 (idempotency) — a re-run is an upgrade in place
 #
 # `dexel status` exits 0 whether or not a runtime is running (it answers a
@@ -483,6 +896,9 @@ stop_running_runtime() {
         warn "could not stop the running runtime; upgrading anyway. Run
        \`dexel restart\` afterwards to pick up the new build."
     fi
+    # Unlike this script's older self, the restart is not left to the user:
+    # launch() below starts the new build. STOPPED_RUNTIME only changes what
+    # the report says about it.
 }
 
 # ---------------------------------------------------------------------------
@@ -512,6 +928,11 @@ install_binary() {
         _src=$(find "$TMPD/x" -type f -name dexel 2>/dev/null | head -n 1)
     fi
     [ -n "$_src" ] || die "$E_TOOL" "no \`dexel\` binary inside $ARCHIVE_NAME."
+
+    # The launcher icon rides in the same directory as the binary
+    # (scripts/build-release.sh stages `dexel.png` beside it), so remember
+    # where that was rather than unpacking the archive a second time.
+    UNPACKED_DIR=$(dirname "$_src")
 
     mkdir -p "$BINDIR" || die "$E_TOOL" "could not create $BINDIR."
     if have install; then
@@ -602,20 +1023,77 @@ report() {
     say ""
     say "$INSTALLED_VERSION"
     say "installed to $BINDIR/dexel"
-    say ""
-    if [ "$STOPPED_RUNTIME" = 1 ]; then
-        say "The runtime that was running before this upgrade was stopped, and this"
-        say "installer does not restart things for you. Start it again when you want it:"
-        say ""
+    if [ "$SHIM_INSTALLED" = 1 ]; then
+        say "desktop shell at $BINDIR/dexel-desktop.AppImage"
     fi
-    say "Next:"
+    if [ -n "$DESKTOP_ENTRY" ]; then
+        if [ "$ICON_INSTALLED" = 1 ]; then
+            say "in your app grid as \"Dexel\", with its own icon"
+        else
+            say "in your app grid as \"Dexel\""
+        fi
+    fi
+    say ""
+
+    case "$LAUNCHED" in
+        open)
+            say "dexel is RUNNING and the game is open. That is the install finished,"
+            say "not a side effect."
+            ;;
+        start)
+            say "The dexel runtime is RUNNING. Nothing was opened because no desktop"
+            say "session was detected — \`dexel open\` shows the game when you have one."
+            ;;
+        none)
+            if [ "$NO_START" = 1 ]; then
+                say "Nothing was started (--no-start). Run \`dexel\` when you want it."
+            else
+                say "Nothing is running. Run \`dexel\` to start it."
+            fi
+            ;;
+    esac
+    if [ "$STOPPED_RUNTIME" = 1 ] && [ "$LAUNCHED" = none ]; then
+        say ""
+        say "The runtime that was running before this upgrade was stopped and not"
+        say "restarted. Run \`dexel\` to bring the new build up."
+    fi
+    say ""
+    say "Commands:"
     say "  dexel                    start the runtime and open the game"
     say "  dexel status             is it running? what is it seeing?"
-    say "  dexel stop               shut it down (closing the tab does not)"
+    say "  dexel stop               shut it down (closing the window does not)"
     say "  dexel autostart enable   start dexel at login — NOT enabled, this is opt-in"
     say ""
-    say "Autostart is off and nothing is running: this installer started no"
-    say "processes and enabled no services."
+    if [ "$LAUNCHED" = none ]; then
+        say "Autostart is OFF and nothing is running: this installer enabled no"
+        say "services and registered no login items. Making dexel come back on every"
+        say "login is a separate, explicit \`dexel autostart enable\`."
+    else
+        say "Autostart is OFF. This installer started dexel because you just asked for"
+        say "dexel; it enabled no services and registered no login items. Making it come"
+        say "back on every login is a separate, explicit \`dexel autostart enable\`."
+    fi
+    if [ "$OS" = darwin ]; then
+        say ""
+        say "On macOS this installed the CLI only. The Dexel.app window is built and"
+        say "signed by scripts/mac-release.sh and ships as a .dmg; when a release"
+        say "carries one, drag Dexel.app into /Applications and \`dexel open\` finds"
+        say "it there on its own (ARCHITECTURE.md Decision 17). Until then \`dexel"
+        say "open\` uses your browser, which is a supported front door."
+    fi
+    say ""
+    say "Uninstall — no package manager was involved, so it is just files:"
+    say "  dexel stop && dexel autostart disable"
+    say "  rm -f $BINDIR/dexel"
+    if [ "$SHIM_INSTALLED" = 1 ]; then
+        say "  rm -f $BINDIR/dexel-desktop $BINDIR/dexel-desktop.AppImage"
+    fi
+    if [ -n "$DESKTOP_ENTRY" ]; then
+        say "  rm -f $DESKTOP_ENTRY"
+    fi
+    if [ "$ICON_INSTALLED" = 1 ]; then
+        say "  rm -f $DATADIR/icons/hicolor/128x128/apps/dexel.png"
+    fi
     say ""
     say "Your keystrokes are counted, never read — counts and durations only,"
     say "enforced by build-failing structural tests. Your data stays in"
@@ -632,6 +1110,10 @@ main() {
     while [ $# -gt 0 ]; do
         case "$1" in
             --dry-run) DRY_RUN=1 ;;
+            --no-start) NO_START=1 ;;
+            --no-desktop) NO_DESKTOP=1 ;;
+            --no-app) NO_APP=1 ;;
+            --app) FORCE_APP=1 ;;
             -h|--help) usage; return 0 ;;
             *) printf 'dexel install: unknown option %s\n' "$1" >&2
                printf 'try --help\n' >&2
@@ -642,28 +1124,51 @@ main() {
 
     BINDIR="${DEXEL_INSTALL_DIR:-$HOME/.local/bin}"
 
+    # Environment equivalents of the flags, for a `curl | sh` that cannot
+    # pass arguments. A flag already set stays set.
+    # `[ x ] && VAR=1` would be shorter and would also EXIT under `set -e`
+    # the moment the test was false, because a failed AND-list is a failed
+    # command. if/fi is the only spelling that is correct here.
+    if [ "${DEXEL_NO_START:-}" = 1 ]; then NO_START=1; fi
+    if [ "${DEXEL_NO_DESKTOP:-}" = 1 ]; then NO_DESKTOP=1; fi
+    if [ "${DEXEL_NO_APP:-}" = 1 ]; then NO_APP=1; fi
+    if [ "${DEXEL_APP:-}" = 1 ]; then FORCE_APP=1; fi
+
     detect_platform                        # 1
     check_tools                            # 2
+    detect_session
     resolve_token
     make_tempdir
     say "==> dexel installer — $OS-$ARCH"
     resolve_release                        # 3
     require_platform_asset                 # 3b: macOS/absent-build honesty
+    decide_desktop                         # 3c: what desktop integration to do
     download                               # 4, 5
     verify                                 # 6
+    download_appimage                      # 4, 5 (optional shell)
+    verify_appimage                        # 6   (optional shell)
 
+    # Everything above this line only reads and verifies. --dry-run stops
+    # here, which is why it is a complete test of the network, the release
+    # and every checksum without touching the machine.
     if [ "$DRY_RUN" = 1 ]; then
         say ""
         say "--dry-run: resolved, downloaded and verified $ARCHIVE_NAME."
+        if [ "$WANT_APP" = 1 ]; then
+            say "            ...and $APPIMAGE_NAME."
+        fi
         say "Nothing was installed."
         return 0
     fi
 
     stop_running_runtime                   # 8 (idempotent re-run)
     install_binary                         # 7
+    install_desktop_app                    # 7b: the AppImage + its shim
+    install_desktop_entry                  # 7c: the icon + the launcher
     make_state_dirs                        # 8
     verify_installed                       # 10
     path_advice                            # 9
+    launch                                 # 11: just start
     report                                 # 10
 }
 

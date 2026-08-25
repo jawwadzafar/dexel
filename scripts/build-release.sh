@@ -67,10 +67,24 @@
 #
 #   dexel-<version>-<os>-<arch>/
 #     dexel (or dexel.exe)
+#     dexel.png   (128x128, linux/darwin)  |  dexel.ico (windows)
 #     README.md
 #     LICENSE
 #     NOTICE
 #     THIRD-PARTY-LICENSES.md
+#
+# The icon is the ONE thing in here that the binary does not carry itself, and
+# it is not decoration: install.sh copies it to
+# ~/.local/share/icons/hicolor/128x128/apps/dexel.png and install.ps1 points a
+# Start Menu shortcut's IconLocation at it, so `dexel` shows up in the app grid
+# with its own face after a single install command. Shipping it INSIDE the
+# archive (rather than as a seventh release asset) means the installer needs no
+# second download and no second checksum to do desktop integration — the icon
+# is covered by the archive's existing sha256 like everything else.
+#
+# Both files are build artifacts of `python3 tools/gen_icon.py` that happen to
+# be committed under desktop/src-tauri/icons/ (ADR 0004); this script copies,
+# never generates, so a release never depends on Pillow being installed.
 #
 # Extract it anywhere — or copy just the binary out of it and delete the rest
 # — and run `./dexel` (or `dexel.exe`). It serves the whole game from its own
@@ -180,6 +194,20 @@ for f in "${license_files[@]}"; do
   fi
 done
 
+# The desktop-integration icon, checked with the same "fail before building the
+# whole matrix" discipline as the license files above. A missing icon would not
+# break the build — it would silently ship archives whose installers cannot
+# register a launcher, which is exactly the class of invisible incompleteness
+# the two checks below exist to prevent.
+ICON_PNG_SRC="$REPO_ROOT/desktop/src-tauri/icons/128x128.png"
+ICON_ICO_SRC="$REPO_ROOT/desktop/src-tauri/icons/icon.ico"
+for f in "$ICON_PNG_SRC" "$ICON_ICO_SRC"; do
+  if [ ! -f "$f" ]; then
+    echo "ERROR: $f not found - every release archive ships the launcher icon (regenerate with 'python3 tools/gen_icon.py')" >&2
+    exit 1
+  fi
+done
+
 # app/public and app/assets are go:embed inputs, not files to copy: if either
 # is missing or incomplete the build still SUCCEEDS and produces a binary
 # that silently serves an incomplete game. Check them here, before building.
@@ -248,6 +276,17 @@ build_one() {
   for f in "${license_files[@]}"; do
     cp "$REPO_ROOT/$f" "$stage/$f"
   done
+
+  # The launcher icon, in the one format that platform's installer can use:
+  # a PNG for the freedesktop hicolor theme, a multi-size .ico for a Windows
+  # shortcut's IconLocation. Named `dexel.png` / `dexel.ico` rather than
+  # `128x128.png` / `icon.ico` so the installers look for one fixed name and
+  # never have to guess which of gen_icon.py's outputs landed here.
+  if [ "$os" = "windows" ]; then
+    cp "$ICON_ICO_SRC" "$stage/dexel.ico"
+  else
+    cp "$ICON_PNG_SRC" "$stage/dexel.png"
+  fi
 
   local archive
   if [ "$os" = "windows" ]; then

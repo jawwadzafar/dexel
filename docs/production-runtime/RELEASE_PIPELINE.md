@@ -267,6 +267,7 @@ the GitHub API.**
 | artifact URL by convention | resolved from the release's asset list, so "no build for this platform in this release" is a *fact about the release* rather than a 404 guess. `install.sh` parses that list with `sed`/`awk` only (§ 6's no-jq rule); `install.ps1` uses `ConvertFrom-Json`, which is built into PowerShell |
 | §§ 3-5 R2 buckets, `manifest`, `deploy-installer.yml` | untouched and still the plan. When they land, `resolve_release` and `asset_url` are the only two functions that change |
 | `install.ps1` is "phase 2" | shipped in the same pass. Windows is half of the published artifacts, and a Windows user with no installer has no story at all |
+| "installs one binary", "starts no processes" | **superseded — see § 6-STAGE-1-DESKTOP below.** The scripts now also install an icon and a launcher entry, optionally the Linux GUI shell, and they start dexel at the end. `sudo`, elevation and *login autostart* are still never touched |
 | step 9 appends to the detected rc inside `# >>> dexel >>>` markers | **prints** the export line for the detected shell (`$SHELL` → bashrc/zshrc/fish) instead. A `curl \| sh` reader has no diff to review, and an installer that silently rewrites `~/.zshrc` is exactly the surprise the consent rule exists to prevent. Windows still writes the **user** PATH (HKCU, via `SetEnvironmentVariable(..., 'User')`), because there is no "paste this line" equivalent there and the write is a single reversible registry value |
 
 ### Private-repo reality, and why it is in the shipped script
@@ -297,6 +298,73 @@ runner publishes that asset, the normal install path takes over with no edit
 to either script — which is the same "omit the key, derive the truth"
 property § 7 wants from the manifest.
 
+### 6-STAGE-1-DESKTOP. One command installs everything, and it just starts
+
+**Amendment to § 6's step 7 and step 10.** § 6 said "installs one binary" and
+"starts no processes". Both were defensible and both were wrong about what a
+one-command install owes the user: a binary on `$PATH` that you then have to
+know to run, from a terminal, with no icon anywhere, is not an installed
+desktop application. The consent rule this was justified by is about
+*persistence* — a thing that comes back on every login forever — not about
+running the program the user just asked for. That distinction is now drawn
+where it belongs.
+
+What was added, per OS:
+
+| | Linux (`install.sh`) | Windows (`install.ps1`) | macOS |
+|---|---|---|---|
+| icon | `$XDG_DATA_HOME/icons/hicolor/128x128/apps/dexel.png` | `dexel.ico` next to `dexel.exe` (a `.lnk` stores an icon *path*, not pixels) | — |
+| launcher | `$XDG_DATA_HOME/applications/dexel.desktop`, `Exec="<bindir>/dexel" open`, `TryExec`, `Icon=dexel`, `Categories=Game;`. `update-desktop-database` best-effort | `Dexel.lnk` in `[Environment]::GetFolderPath('Programs')` — the **per-user** Start Menu, so no elevation — via `WScript.Shell`, targeting `dexel.exe` with `Arguments = open` | — |
+| GUI shell | the release's **AppImage** at `<bindir>/dexel-desktop.AppImage`, plus a `dexel-desktop` shim | none published yet; the shortcut targets `dexel open`, which uses the browser | `Dexel.app` from `mac-release.sh`'s `.dmg`, dragged to `/Applications` by the user |
+| start | `dexel open` with a desktop session, `dexel start` without | `dexel open` | `dexel open` |
+
+The parts that are decisions rather than plumbing:
+
+* **The icon ships INSIDE the release archive**, not as a seventh release
+  asset. `build-release.sh` stages `desktop/src-tauri/icons/128x128.png` as
+  `dexel.png` (and `icon.ico` as `dexel.ico` for the windows targets) beside
+  the binary. So the installer needs no second download and no second
+  checksum to do desktop integration — the icon is covered by the archive's
+  existing sha256 like everything else in it. An archive from before this
+  change simply has no `dexel.png`, and the installer says so and writes the
+  entry anyway with the theme's fallback icon.
+* **The AppImage, not the `.deb`.** Both are on the release. `dpkg -i` needs
+  root, and this installer does not `sudo`, ever — so the AppImage *is* the
+  no-sudo path to a real window. It is only fetched when `$DISPLAY` or
+  `$WAYLAND_DISPLAY` says there is a session to open into (`--app` forces,
+  `--no-app` skips), and its ~84 MB size is printed before the download
+  starts, not discovered during it.
+* **`dexel-desktop` is a shim, not a rename.** `dexel open` looks for an
+  executable named exactly `dexel-desktop` on `PATH` and then in `BinDir`
+  (ARCHITECTURE.md Decision 17). An AppImage is one file with a different
+  name, so the installer writes a four-line `sh` shim with that name which
+  `exec`s the AppImage. The shim also picks `--appimage-extract-and-run` when
+  `/dev/fuse` or `fusermount` is missing, because an AppImage on a FUSE-less
+  box otherwise fails with a libfuse message instead of starting.
+* **The AppImage is verified against ONE witness, and that is why it is
+  optional.** `build-release.sh`'s `sha256sums.txt` covers only the archives
+  that script builds — the Tauri bundles come from a different release job and
+  are *absent* from it (checked against the live `v0.1.0` release: it lists
+  four archives and no bundles). So the AppImage is verified against the
+  `digest` GitHub reports for the asset. Still a hard exit 6 on a mismatch,
+  still **before anything is installed**, so a tampered AppImage leaves the
+  machine exactly as it was. If a future release *does* list it in
+  `sha256sums.txt`, that line becomes the second opinion with no code change.
+  A release reporting no digest at all gets the browser front door rather than
+  an unverified binary.
+* **Ordering.** Every download and every checksum now happens before the
+  first write, which is what makes `--dry-run` a complete test of the release
+  — including the AppImage — while touching nothing.
+* **Login autostart is untouched.** `dexel autostart enable` is still the only
+  thing that makes dexel come back on its own, and the installer's report says
+  so explicitly.
+
+Opt-outs, because "installs everything" must be a default and not a
+mandate: `--no-start` / `--no-desktop` / `--no-app` / `--app` as flags on
+Linux, and `DEXEL_NO_START` / `DEXEL_NO_DESKTOP` / `DEXEL_NO_APP` /
+`DEXEL_APP` as environment variables on both platforms (a `| iex` one-liner
+cannot pass parameters).
+
 ### Testing
 
 Both scripts were run end to end against the live private `v0.1.0` release
@@ -310,6 +378,33 @@ is PSScriptAnalyzer-error-free, and every one of its functions was exercised
 on PowerShell 7 against the real release. `--dry-run` /
 `$env:DEXEL_DRY_RUN=1` stops after verification and is the mode a future
 `deploy-installer.yml` should run in CI.
+
+The desktop-integration and start behaviour was gated the same way, on Linux,
+against the same live release, with a throwaway `HOME` and `XDG_DATA_HOME`:
+
+* a full run installs the binary, writes `dexel.desktop` (which
+  `desktop-file-validate` accepts) and starts the runtime — confirmed
+  `"running": true` with a real pid and port via `dexel status --json`, then
+  stopped again.
+* with a session present, `Dexel_0.1.0_amd64.AppImage` (84 MB) downloads,
+  verifies against GitHub's digest, and lands with its `dexel-desktop` shim;
+  the shim is itself `shellcheck -s sh` clean, and `dexel-desktop
+  --appimage-offset` returns the squashfs offset and exit 0, which proves the
+  shim resolves and `exec`s a working AppImage runtime. **Rendering the actual
+  window is NOT verified** — that needs a human looking at a screen.
+* a second identical run leaves all four artifacts byte-for-byte identical
+  (binary, AppImage, shim, `.desktop`), and `update-desktop-database` is
+  observably reached (it leaves a `mimeinfo.cache`).
+* the icon path was exercised against a locally rebuilt archive that carries
+  `dexel.png`: it lands at
+  `$XDG_DATA_HOME/icons/hicolor/128x128/apps/dexel.png` byte-identical to
+  `desktop/src-tauri/icons/128x128.png`.
+* both tamper paths hard-fail with exit 6 and zero files written: a byte
+  appended to the archive, and a digest mismatch on the AppImage.
+* `install.ps1` is pure ASCII, parses clean on PowerShell 7.4, and has zero
+  PSScriptAnalyzer **errors**. Its new helpers were unit-tested by
+  dot-sourcing. **The `WScript.Shell` shortcut creation itself is unverified**
+  — there is no Windows host in this environment.
 
 ---
 

@@ -15,12 +15,29 @@
 # Every step lives in a function; the only top-level work is the `try` at
 # the very bottom, so a truncated download cannot half-install anything.
 #
-# Never elevates. Writes only under %LOCALAPPDATA% and HKCU. Never enables
-# autostart and never starts the runtime.
+# Never elevates. Writes only under %LOCALAPPDATA%, %APPDATA% and HKCU. Never
+# enables autostart.
+#
+# It DOES do desktop integration and it DOES start dexel, because "installed"
+# and "running" are not the same thing and a one-command install that leaves
+# you at a prompt has not finished the job:
+#   * dexel.ico is copied out of the archive next to dexel.exe
+#   * a Start Menu shortcut ("Dexel") is created in the PER-USER Programs
+#     folder via WScript.Shell, targeting `dexel.exe open` with that icon --
+#     so dexel is in the Start Menu and searchable, not only on PATH
+#   * `dexel open` runs at the end, which starts the runtime and shows the UI
+#
+# Starting a process you just asked for is not the consent question;
+# *enabling autostart* is, and that stays off and stays a separate explicit
+# `dexel autostart enable`. There is no Windows equivalent of the Linux
+# AppImage shell yet, so `dexel open` here opens your browser -- a supported
+# front door, not a consolation prize.
 #
 # Environment (a `| iex` one-liner cannot pass parameters, so everything is
 # an environment variable):
 #   $env:DEXEL_INSTALL_DIR   where dexel.exe goes (default %LOCALAPPDATA%\dexel\bin)
+#   $env:DEXEL_NO_START      "1" = install everything, start nothing
+#   $env:DEXEL_NO_DESKTOP    "1" = no icon and no Start Menu shortcut
 #   $env:DEXEL_VERSION       install this tag instead of the latest release
 #   $env:DEXEL_REPO          resolve against a different repository
 #   $env:DEXEL_ARCHIVE       use a .zip already on disk (checksum still verified)
@@ -48,6 +65,8 @@ $script:Repo = 'jawwadzafar/dexel'
 if ($env:DEXEL_REPO) { $script:Repo = $env:DEXEL_REPO }
 $script:Api = "https://api.github.com/repos/$($script:Repo)"
 $script:StoppedRuntime = $false
+$script:UnpackedDir = ''
+$script:Launched = 'none'
 
 function Say([string]$Text)  { Write-Host $Text }
 function Step([string]$Text) { Write-Host "==> $Text" }
@@ -354,6 +373,11 @@ function Install-Binary([string]$ArchivePath, [string]$BinDir, [string]$Tag, [st
         $src = $found.FullName
     }
 
+    # dexel.ico rides in the same directory as dexel.exe
+    # (scripts/build-release.sh stages it there), so remember where that was
+    # rather than unpacking the archive a second time to find it.
+    $script:UnpackedDir = Split-Path -Parent $src
+
     New-Item -ItemType Directory -Path $BinDir -Force | Out-Null
     $dest = Join-Path $BinDir 'dexel.exe'
     try {
@@ -366,6 +390,150 @@ If a dexel runtime is still running, run ``dexel stop`` and re-run this installe
     }
     Step "installed $dest"
     return $dest
+}
+
+# --------------------------------------------------------------------------
+# step 7b/7c -- desktop integration
+#
+# Two cheap things, both per-user and both plain files, so neither needs
+# elevation and neither can fail in a way that matters:
+#
+#   dexel.ico   copied out of the archive next to dexel.exe. A .lnk stores a
+#               PATH to its icon, not the pixels, so the file has to live
+#               somewhere permanent -- next to the exe it belongs to.
+#   Dexel.lnk   the Start Menu entry, in the PER-USER Programs folder.
+#
+# Both run AFTER the binary is in place and both are best-effort: a Start
+# Menu that will not take a shortcut is not a reason to fail an install of a
+# CLI that works fine from a terminal.
+#
+# There is no Windows analogue of install.sh's AppImage step. The Tauri
+# shell publishes no Windows bundle on the release yet, so the shortcut
+# targets `dexel.exe open`, which opens the browser -- and will silently
+# start opening a real window the day a `dexel-desktop.exe` appears beside
+# it, because that lookup lives in the binary (ARCHITECTURE.md Decision 17),
+# not here.
+# --------------------------------------------------------------------------
+
+function Install-ShortcutIcon([string]$BinDir) {
+    if (-not $script:UnpackedDir) { return '' }
+    $src = Join-Path $script:UnpackedDir 'dexel.ico'
+    if (-not (Test-Path -LiteralPath $src)) {
+        Note "icon      not in this archive (a release from before the icon shipped)"
+        return ''
+    }
+    $dest = Join-Path $BinDir 'dexel.ico'
+    try {
+        Copy-Item -LiteralPath $src -Destination $dest -Force
+    } catch {
+        Warn "could not write $dest ; the shortcut will use the default icon."
+        return ''
+    }
+    return $dest
+}
+
+# Get-ProgramsFolder -- the per-user Start Menu Programs directory.
+#
+# GetFolderPath('Programs') is the documented way and needs no elevation
+# (the ALL-USERS equivalent, CommonPrograms, would). The %APPDATA% fallback
+# exists because GetFolderPath returns an empty string rather than throwing
+# on a profile where the shell folder is not registered.
+function Get-ProgramsFolder {
+    $programs = ''
+    try { $programs = [Environment]::GetFolderPath('Programs') } catch { $programs = '' }
+    if ($programs) { return $programs }
+    if (-not $env:APPDATA) { return '' }
+    $p = Join-Path $env:APPDATA 'Microsoft'
+    $p = Join-Path $p 'Windows'
+    $p = Join-Path $p 'Start Menu'
+    return (Join-Path $p 'Programs')
+}
+
+function Install-StartMenuShortcut([string]$Exe, [string]$IconPath) {
+    $programs = Get-ProgramsFolder
+    if (-not $programs) {
+        Warn "could not locate your Start Menu folder; skipping the shortcut."
+        return ''
+    }
+    try {
+        New-Item -ItemType Directory -Path $programs -Force | Out-Null
+    } catch {
+        Warn "could not create $programs ; skipping the shortcut."
+        return ''
+    }
+
+    $lnk = Join-Path $programs 'Dexel.lnk'
+    # WScript.Shell rather than a .NET shortcut library: it is the COM object
+    # every supported Windows already has, it works identically on PowerShell
+    # 5.1 and 7, and it needs no assembly to load. Overwriting an existing
+    # .lnk is what makes a re-run idempotent.
+    try {
+        $wsh = New-Object -ComObject WScript.Shell
+        $sc = $wsh.CreateShortcut($lnk)
+        $sc.TargetPath = $Exe
+        $sc.Arguments = 'open'
+        $sc.WorkingDirectory = (Split-Path -Parent $Exe)
+        $sc.Description = 'Dexel -- a cozy pixel-art companion that works the day alongside you'
+        if ($IconPath) { $sc.IconLocation = "$IconPath,0" }
+        $sc.Save()
+    } catch {
+        Warn "could not create the Start Menu shortcut: $($_.Exception.Message)"
+        return ''
+    }
+    # No explicit ReleaseComObject: WScript.Shell is in-process, the RCW is
+    # collected with the runspace, and there is no external process to leave
+    # running. An installer is not a long-lived host.
+
+    Step "installed $lnk"
+    if ($IconPath) {
+        Note 'dexel is now in your Start Menu, with its own icon'
+    } else {
+        Note 'dexel is now in your Start Menu'
+    }
+    return $lnk
+}
+
+function Install-DesktopIntegration([string]$Exe, [string]$BinDir) {
+    if ($env:DEXEL_NO_DESKTOP -eq '1') {
+        Note 'desktop   skipped ($env:DEXEL_NO_DESKTOP = 1)'
+        return ''
+    }
+    $icon = Install-ShortcutIcon $BinDir
+    return (Install-StartMenuShortcut $Exe $icon)
+}
+
+# --------------------------------------------------------------------------
+# step 11 -- just start
+#
+# The one thing this installer's older self refused to do, and the one thing
+# it was wrong about. `dexel open` starts the runtime if it is not already up
+# and then shows the UI. Enabling autostart -- making dexel come back on
+# every login forever -- is the consent question, and it is untouched.
+#
+# A failure here does not fail the install. Out-Host keeps dexel's own
+# output on the console instead of letting it become this function's return
+# value, and the exit code is read from $LASTEXITCODE because a native
+# command that exits non-zero does not throw.
+# --------------------------------------------------------------------------
+
+function Start-Dexel([string]$Exe) {
+    $script:Launched = 'none'
+    if ($env:DEXEL_NO_START -eq '1') { return }
+    Say ''
+    Step 'starting dexel and opening the game'
+    try {
+        & $Exe open | Out-Host
+    } catch {
+        Warn "starting dexel did not finish cleanly: $($_.Exception.Message)"
+        Say "Check it yourself: $Exe status"
+        return
+    }
+    if ($LASTEXITCODE -eq 0) {
+        $script:Launched = 'open'
+        return
+    }
+    Warn "dexel is installed, but ``dexel open`` exited $LASTEXITCODE."
+    Say "Check it yourself: $Exe status"
 }
 
 # Step 8 of the contract: the state dir and its logs dir, so a first `dexel`
@@ -450,24 +618,42 @@ The archive may not match this machine's architecture.
     return $line
 }
 
-function Write-Report([string]$VersionLine, [string]$Exe, [string]$StateDir) {
+function Write-Report([string]$VersionLine, [string]$Exe, [string]$StateDir, [string]$Shortcut) {
     Say ''
     Say $VersionLine
     Say "installed to $Exe"
+    if ($Shortcut) { Say "in your Start Menu as `"Dexel`"" }
     Say ''
-    if ($script:StoppedRuntime) {
-        Say 'The runtime that was running before this upgrade was stopped, and this'
-        Say 'installer does not restart things for you. Start it again when you want it:'
-        Say ''
+
+    if ($script:Launched -eq 'open') {
+        Say 'dexel is RUNNING and the game is open. That is the install finished,'
+        Say 'not a side effect.'
+    } elseif ($env:DEXEL_NO_START -eq '1') {
+        Say 'Nothing was started ($env:DEXEL_NO_START = 1). Run `dexel` when you want it.'
+    } else {
+        Say 'Nothing is running. Run `dexel` to start it.'
     }
-    Say 'Next:'
+    if ($script:StoppedRuntime -and $script:Launched -eq 'none') {
+        Say ''
+        Say 'The runtime that was running before this upgrade was stopped and not'
+        Say 'restarted. Run `dexel` to bring the new build up.'
+    }
+    Say ''
+    Say 'Commands:'
     Say '  dexel                    start the runtime and open the game'
     Say '  dexel status             is it running? what is it seeing?'
-    Say '  dexel stop               shut it down (closing the tab does not)'
+    Say '  dexel stop               shut it down (closing the window does not)'
     Say '  dexel autostart enable   start dexel at login -- NOT enabled, this is opt-in'
     Say ''
-    Say 'Autostart is off and nothing is running: this installer started no'
-    Say 'processes and registered no login entries.'
+    if ($script:Launched -eq 'none') {
+        Say 'Autostart is OFF and nothing is running: this installer enabled no'
+        Say 'services and registered no login items. Making dexel come back on every'
+        Say 'login is a separate, explicit `dexel autostart enable`.'
+    } else {
+        Say 'Autostart is OFF. This installer started dexel because you just asked for'
+        Say 'dexel; it enabled no services and registered no login items. Making it come'
+        Say 'back on every login is a separate, explicit `dexel autostart enable`.'
+    }
     Say ''
     Say 'On Windows, read this before you play:'
     Say '  Activity tracking is NOT wired up yet. dexel has no native capture'
@@ -476,6 +662,11 @@ function Write-Report([string]$VersionLine, [string]$Exe, [string]$StateDir) {
     Say '  does not accrue and the companion will not claim a workday it cannot'
     Say '  see. That is the honest failure mode, not a bug to report. Linux and'
     Say '  macOS have real providers.'
+    Say ''
+    Say 'Uninstall -- no package manager was involved, so it is just files:'
+    Say '  dexel stop; dexel autostart disable'
+    Say "  Remove-Item `"$Exe`""
+    if ($Shortcut) { Say "  Remove-Item `"$Shortcut`"" }
     Say ''
     Say 'Your keystrokes are counted, never read -- counts and durations only,'
     Say 'enforced by build-failing structural tests. Your data stays in'
@@ -542,10 +733,12 @@ Build from source: https://github.com/$($script:Repo)#building-from-source
 
     Stop-RunningRuntime (Join-Path $binDir 'dexel.exe')              # 8
     $exe = Install-Binary $archivePath $binDir $tag $arch            # 7
+    $lnk = Install-DesktopIntegration $exe $binDir                   # 7b, 7c
     $state = New-StateDirectories                                    # 8
     $versionLine = Assert-Installed $exe $tag                        # 10
     Add-ToUserPath $binDir                                           # 9
-    Write-Report $versionLine $exe $state                            # 10
+    Start-Dexel $exe                                                 # 11
+    Write-Report $versionLine $exe $state $lnk                       # 10
 }
 
 try {

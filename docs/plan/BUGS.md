@@ -75,3 +75,9 @@ geometry), gated by real in-game renders judged by eye until it clearly reads as
   repo's Settings→Actions page for a banner.** All verification so far has
   been our local gates (real, but CI must come alive before production tag).
 - SF-1/3/4/5/6/7 + 10 NITs — queued into the post-PR-5 fix wave.
+
+- **BUG-9 — `dexel stop` escalates to SIGKILL consistently** (observed in every
+  installer gate: "did not exit within 5s… escalating"). The graceful path
+  (persist + shutdown) seems slower than the CLI's 5s patience, or something
+  blocks shutdown. Investigate: the provider Stop wg.Wait (known rough edge)?
+  the HTTP Shutdown? Raise the CLI wait or fix the slow path.

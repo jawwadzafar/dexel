@@ -31,9 +31,12 @@ Everything stays on your machine — see [Privacy](#privacy).
 
 ## Install
 
-One line. It resolves the latest release for your platform, verifies its
-sha256, and puts a single `dexel` binary in your user bin directory. No `sudo`,
-no autostart, no processes started for you.
+One line, and dexel is **installed, in your app grid, and running**. It
+resolves the latest release for your platform, verifies its sha256, installs
+the `dexel` binary into your user bin directory, registers a launcher so dexel
+has an icon in your desktop's app grid (Linux) or Start Menu (Windows), and
+then starts the runtime and opens the game. No `sudo`, no elevation, no
+autostart.
 
 **Linux** (amd64 or arm64):
 
@@ -70,6 +73,12 @@ needs to change in the installer when a macOS build appears: it checks the
 release for a `darwin` archive on every run, so the day one is published the
 normal install path takes over.
 
+When it does, the installer will place the CLI and start it, and say where the
+window comes from: `Dexel.app` is built and signed by `scripts/mac-release.sh`
+and ships as a `.dmg`, which is a drag-to-`/Applications` gesture rather than
+something a script should do behind your back. `dexel open` finds a bundle
+there on its own once it exists, so nothing has to be re-run.
+
 > [!WARNING]
 > **On Windows, activity tracking is not wired up yet.** Dexel has no native
 > capture provider for Windows, so it runs a deliberately *blind*, zero-signal
@@ -84,15 +93,25 @@ normal install path takes over.
 |---|---|
 | resolves | the latest GitHub release, or `DEXEL_VERSION` if you pin one |
 | verifies | sha256 against the release's `sha256sums.txt`, cross-checked against the digest GitHub reports for the same asset. A mismatch is a hard failure and nothing is unpacked |
-| installs | one binary: `~/.local/bin/dexel`, or `%LOCALAPPDATA%\dexel\bin\dexel.exe` |
+| installs | the binary: `~/.local/bin/dexel`, or `%LOCALAPPDATA%\dexel\bin\dexel.exe` |
+| installs | the launcher icon out of the archive — `~/.local/share/icons/hicolor/128x128/apps/dexel.png` on Linux, `dexel.ico` next to the exe on Windows |
+| installs | a launcher entry, so dexel is in your app grid / Start Menu and not only on your PATH: `~/.local/share/applications/dexel.desktop` (`Exec=dexel open`) on Linux, a `Dexel.lnk` in your **per-user** Start Menu on Windows |
+| installs | *on Linux, when a desktop session is detected*, the optional GUI shell — the release's AppImage, at `<install-dir>/dexel-desktop.AppImage` with a small `dexel-desktop` shim beside it, which is the name `dexel open` already looks for. It is ~84 MB, its size is announced before it is fetched, and `--no-app` skips it. The `.deb` on the same release is deliberately never used: `dpkg` needs root |
 | creates | your state directory and its `logs/` subdirectory, so the first run cannot trip over a missing folder |
-| **never** | uses `sudo`, elevates, or writes outside `$HOME` / `%LOCALAPPDATA%` + `HKCU` |
-| **never** | enables autostart — `dexel autostart enable` is a separate, explicit choice |
-| **never** | starts the runtime for you. The installer exits having started no processes |
+| **starts** | dexel, at the end — `dexel open` when there is a desktop session to open into, `dexel start` when there is not. That is the install finished, not a side effect. `--no-start` opts out |
+| **never** | uses `sudo`, elevates, or writes outside `$HOME` / `%LOCALAPPDATA%` + `%APPDATA%` + `HKCU` |
+| **never** | enables login autostart. Starting the thing you just asked for and making it come back on every login forever are different questions; the second one stays `dexel autostart enable` |
+| **never** | installs a binary it could not verify. The AppImage can only be checked against the digest GitHub reports (the Tauri bundles are not in `sha256sums.txt`), so a release that reports no digest for it gets the browser front door instead — one witness is why the GUI shell is optional and the CLI is not |
 | PATH | on Linux it *prints* the export line for your shell and lets you paste it — it does not edit your dotfiles. On Windows it appends to your **user** PATH (never the machine PATH), and only if the directory is not already there |
 
-Re-running is an upgrade in place: a live runtime is stopped first, the binary
-is replaced, and your save data is untouched.
+Everything it writes is a plain file under `$HOME` (or `%LOCALAPPDATA%` /
+`%APPDATA%`), and every step after the binary is best-effort: a desktop
+environment that will not take a launcher does not fail an install of a CLI
+that works fine from a terminal.
+
+Re-running is an upgrade in place: a live runtime is stopped first, every
+artifact is replaced byte-for-byte, your save data is untouched — and the new
+build is started again for you.
 
 <details>
 <summary><b>Knobs, exit codes, and dry runs</b></summary>
@@ -114,16 +133,45 @@ Environment knobs, on either platform: `DEXEL_INSTALL_DIR`, `DEXEL_VERSION`,
 `DEXEL_HOME`, `DEXEL_ARCHIVE` (install a `.tar.gz`/`.zip` you already have —
 the checksum is still verified), and `GH_TOKEN` / `GITHUB_TOKEN`. A dry run
 (`--dry-run` on Linux, `$env:DEXEL_DRY_RUN = '1'` on Windows) resolves,
-downloads, and verifies without installing anything.
+downloads, and verifies without installing anything — including the AppImage,
+which makes it a complete test of the release and every checksum in it.
+
+Turning the new behaviour off, as flags on Linux or environment variables on
+either platform:
+
+| Flag (Linux) | Environment | Effect |
+|---|---|---|
+| `--no-start` | `DEXEL_NO_START=1` | install everything, start nothing |
+| `--no-desktop` | `DEXEL_NO_DESKTOP=1` | no icon, no launcher entry, no GUI shell |
+| `--no-app` | `DEXEL_NO_APP=1` | keep the icon and the launcher, skip the ~84 MB AppImage |
+| `--app` | `DEXEL_APP=1` | fetch the AppImage even with no `$DISPLAY` — e.g. installing over ssh for a desktop you will log into later |
 
 </details>
 
 ### Uninstall
 
+No package manager was involved, so it is just files:
+
 ```bash
-dexel stop && dexel autostart disable && rm ~/.local/bin/dexel
+dexel stop && dexel autostart disable
+rm -f ~/.local/bin/dexel
+rm -f ~/.local/bin/dexel-desktop ~/.local/bin/dexel-desktop.AppImage  # if the GUI shell was installed
+rm -f ~/.local/share/applications/dexel.desktop
+rm -f ~/.local/share/icons/hicolor/128x128/apps/dexel.png
 rm -rf ~/.config/dexel   # optional: also drops your save
 ```
+
+On Windows, in PowerShell:
+
+```powershell
+dexel stop; dexel autostart disable
+Remove-Item "$env:LOCALAPPDATA\dexel\bin\dexel.exe", "$env:LOCALAPPDATA\dexel\bin\dexel.ico"
+Remove-Item (Join-Path ([Environment]::GetFolderPath('Programs')) 'Dexel.lnk')
+Remove-Item -Recurse "$env:LOCALAPPDATA\dexel"   # optional: also drops your save
+```
+
+The installer prints this same list, with your real paths filled in and only
+the lines that apply to what it actually installed.
 
 ## Features
 
