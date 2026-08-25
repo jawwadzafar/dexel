@@ -837,7 +837,7 @@ func browserOpenCommand(goos, url string) (string, []string) {
 //
 // binDir may be "" when it could not be resolved; that candidate is then
 // simply absent rather than becoming a relative path.
-func desktopAppCandidates(goos, binDir, localAppData string) []string {
+func desktopAppCandidates(goos, binDir, localAppData, homeDir string) []string {
 	exe := desktopAppName
 	if goos == "windows" {
 		exe += ".exe"
@@ -856,6 +856,22 @@ func desktopAppCandidates(goos, binDir, localAppData string) []string {
 		// "dexel.app" spelling usually still resolved — this is a
 		// correctness statement, not a bug fix.
 		out = append(out, "/Applications/Dexel.app")
+		// ~/Applications is the no-admin fallback, and it is SECOND for
+		// the same reason BinDir is first: /Applications is where a
+		// machine-wide install lands, and a user who has both should get
+		// the shared one rather than a personal copy that a second
+		// account cannot see. install.sh writes here only when
+		// /Applications is not writable without sudo — this installer
+		// does not sudo — so on most machines this candidate simply does
+		// not exist.
+		//
+		// The reversal already knows about it: cmd_uninstall.go's
+		// macAppBundleCandidates has listed both roots since it was
+		// written, so an app installed here is removed by
+		// `dexel uninstall` with no further change.
+		if homeDir != "" {
+			out = append(out, filepath.Join(homeDir, "Applications", "Dexel.app"))
+		}
 	case "windows":
 		if localAppData != "" {
 			out = append(out, filepath.Join(localAppData, "Programs", "dexel", exe))
@@ -870,7 +886,12 @@ func (e *cliEnv) findDesktopApp() string {
 	if p, err := exec.LookPath(desktopAppName); err == nil {
 		return p
 	}
-	for _, cand := range desktopAppCandidates(e.goos, e.binDir, os.Getenv("LOCALAPPDATA")) {
+	// os.UserHomeDir rather than os.Getenv("HOME"): it is the same answer
+	// on darwin, and the honest one on the platforms where it is not.
+	// An error here is not fatal — it drops one candidate, exactly the
+	// way an unresolved BinDir does.
+	homeDir, _ := os.UserHomeDir()
+	for _, cand := range desktopAppCandidates(e.goos, e.binDir, os.Getenv("LOCALAPPDATA"), homeDir) {
 		if _, err := os.Stat(cand); err == nil {
 			return cand
 		}

@@ -257,22 +257,32 @@ func TestBrowserOpenCommandPerOS(t *testing.T) {
 // should get the one the CLI manages.
 func TestDesktopAppCandidatesPerOS(t *testing.T) {
 	cases := []struct {
-		goos, binDir, localAppData string
-		want                       []string
+		goos, binDir, localAppData, homeDir string
+		want                                []string
 	}{
-		{"linux", "/home/u/.local/bin", "", []string{"/home/u/.local/bin/dexel-desktop"}},
-		{"darwin", "/Users/u/.local/bin", "", []string{"/Users/u/.local/bin/dexel-desktop", "/Applications/Dexel.app"}},
-		{"windows", `C:\Users\u\AppData\Local\dexel\bin`, `C:\Users\u\AppData\Local`, []string{
+		{"linux", "/home/u/.local/bin", "", "/home/u", []string{"/home/u/.local/bin/dexel-desktop"}},
+		// darwin: BinDir, then the SHARED bundle, then the personal one.
+		// The order is the contract — a machine with both should open the
+		// /Applications copy, which every account on it can see.
+		{"darwin", "/Users/u/.local/bin", "", "/Users/u", []string{
+			"/Users/u/.local/bin/dexel-desktop",
+			"/Applications/Dexel.app",
+			"/Users/u/Applications/Dexel.app",
+		}},
+		// An unresolvable home drops ~/Applications exactly the way an
+		// unresolvable BinDir drops its candidate — never a relative path.
+		{"darwin", "", "", "", []string{"/Applications/Dexel.app"}},
+		{"windows", `C:\Users\u\AppData\Local\dexel\bin`, `C:\Users\u\AppData\Local`, `C:\Users\u`, []string{
 			`C:\Users\u\AppData\Local\dexel\bin\dexel-desktop.exe`,
 			`C:\Users\u\AppData\Local\Programs\dexel\dexel-desktop.exe`,
 		}},
 		// An unresolvable BinDir must DROP that candidate rather than
 		// produce a relative path that would resolve against the cwd.
-		{"linux", "", "", nil},
+		{"linux", "", "", "/home/u", nil},
 	}
 	for _, tc := range cases {
 		t.Run(tc.goos+"/"+tc.binDir, func(t *testing.T) {
-			got := desktopAppCandidates(tc.goos, tc.binDir, tc.localAppData)
+			got := desktopAppCandidates(tc.goos, tc.binDir, tc.localAppData, tc.homeDir)
 			if len(got) != len(tc.want) {
 				t.Fatalf("candidates = %q, want %q", got, tc.want)
 			}
