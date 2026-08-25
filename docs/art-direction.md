@@ -594,6 +594,157 @@ Frame swapping must be driven by a fixed-interval timer, not by
 `requestAnimationFrame` deltas — a 5 fps loop that drifts with the display
 refresh reads as a stutter, not as typing.
 
+## The application icon
+
+The in-game art above is one artefact; the **app icon** is another, and it
+lives in `desktop/src-tauri/icons/`. Same rules (generator is the source,
+determinism, palette purity, integer nearest upscales, one key light from the
+upper left), different job: a scene has 320x200 to explain itself in, an icon
+has as little as 16x16 and no caption.
+
+Source of truth: **`tools/gen_icon.py`**. Regenerate with
+
+```
+python3 tools/gen_icon.py                      # writes + self-checks the set
+python3 tools/gen_icon.py --sheet /tmp/s.png   # ...and a review contact sheet
+```
+
+Never hand-edit an icon PNG, and never open one in an image editor to "just
+fix" a pixel — the next run overwrites it.
+
+### The mark
+
+**dexel, hooded, front on, lit by the screen.** A hooded bust centred on a
+dusk rounded-square tile: the indigo hood's crown and cheeks as a ring of
+fabric, a dark opening where a face would be, two mint eyes in it, two
+drawstrings hanging from the hem over the chest.
+
+The product's identity is a character, so the icon is the character rather
+than a rebus about it (a monitor, a coin, a terminal — the mark this one
+replaced was all three and said nothing about *whose* desk it is).
+
+* **[DESIGN CALL] The icon is front-facing, though the game is not.** The
+  scene camera is behind-the-shoulder and "the hood is a **dome**, not a
+  head: no face, no ears" (Character rules, above). That view does not
+  reduce: at 16px a dome from behind is a featureless bump on a trapezoid,
+  indistinguishable from a hundred other dark app icons. A front-facing
+  adaptation keeps every brand-carrying feature — the hood, the indigo, the
+  dusk, the screen's cool light — and adds the one thing a 16px tile can
+  still hold, a pair of eyes. The eyes are `screen` mint and not any warm
+  colour because they are not eye colour: they are **the monitor reflected**,
+  the same "one cool light in a warm frame" rule the room obeys.
+* **[DESIGN CALL] The hood's whole outer edge is rim-lit to `ink4` or
+  brighter.** Conventional shading would let the shadow side go dark, but the
+  tile is dark too, and `ink2` on `shadow` is a 1.7:1 read — the bust's lower
+  corners dissolved. The rim clamp is justified in-fiction as the screen glow
+  wrapping the figure, and `gen_icon.py`'s `check_contrast` measures the
+  result instead of trusting it.
+* **[DESIGN CALL] No `hair` inside the opening.** Two versions were rendered
+  and rejected off the review sheet: a warm arc along the *bottom* of the
+  opening reads as a mouth (the 256px render grinned), and along the *top* it
+  reads as a bowl-cut fringe, which Character rules forbid outright. The
+  opening is flat `shadow`.
+
+### Colour: derived, never picked
+
+| Element | Colour | Where it comes from |
+|---|---|---|
+| hood fabric | `ink1`..`ink5` | `round(indigo * RAMP[i] / 255)` — the **default hoodie tint** `#6a5aa0` composited over the 5-step ramp by the exact formula the CSS tint mechanism uses. To the byte, the garment a player with a fresh save is looking at. |
+| tile | `shadow`, + a dithered `wall_dark`/`wall_light` glow pool behind the crown | the room's wall and its lamp bloom |
+| tile rim (1px, all round) | `wall_light` | one step above the fill — see legibility, below |
+| the opening | `shadow` | occlusion, as everywhere else |
+| eyes | `screen` | the terminal's own green-mint, i.e. the monitor |
+| eye glint | `lamp` | the room's warm key light, in the one place a warm/cool pair reads |
+| drawstrings | `cream`, `gold` tip | UI text colour, and Dev Cash |
+
+The five ink hexes are **computed in `gen_icon.py` from `gen_assets.RAMP`**,
+not typed in, so re-cutting the ramp re-cuts the icon rather than silently
+desynchronising it. They are the only colours in the icon outside the 18, and
+they are the extension this document already sanctions: the tint table
+declares `indigo` precisely because "the palette has no bright indigo".
+
+### Five masters, integer upscales only
+
+An icon set spanning 16px to 1024px cannot come from one drawing, because
+rule 1 forbids resampling. It comes from five masters, each authored at its
+own size, and every delivered size is an integer nearest upscale of one:
+
+```
+16 <- M16 x1     48 <- M48 x1     256  <- M64 x4
+24 <- M24 x1     64 <- M64 x1     512  <- M64 x8
+32 <- M32 x1    128 <- M64 x2     1024 <- M64 x16
+```
+
+Downsampling appears nowhere. 24 and 48 exist as masters because the Windows
+`.ico` wants those frames and Explorer would otherwise be handed a resample.
+
+Per-size reduction — **this is the difference between an icon set and a
+resized picture**, and each row is a decision made by looking at the review
+sheet at true size, not by rule:
+
+| Master | What it drops, and why |
+|---|---|
+| M64 | nothing: 5x5 rounded eyes with a 1px `lamp` glint, the `ink5` hem around the opening, 2px drawstrings with a `gold` aglet, five-step banded fabric, the two-colour glow pool |
+| M48 | 4x4 eyes, a smaller glow |
+| M32 | no glint; eyes go to **2x3, four pixels apart** — the obvious 3x3-at-2px reads as one pair of goggles rather than two eyes; 1px drawstrings; single-colour glow |
+| M24 | **ordered dithering off** (at 24px a Bayer pattern is not a gradient, it is four stray pixels of noise), no glow, no drawstrings, 2x2 eyes |
+| M16 | no hem (an `ink5` ring 1px inside the `ink5` rim reads as a mis-registration), full-bleed tile, brighter fabric, and 2x2 eyes that fill the opening with **no shadow margin** — the deliberate opposite of every larger master, because at true 16px the 1x2 version with its margin reads as two specks of dust |
+
+### Shading: bands with dithered seams, not a dithered gradient
+
+The fabric uses the ink ramp with **`DITHER_SHARPNESS = 3.0`**, which squeezes
+each ordered-dither transition into the middle third of its step. Unsharpened
+(the `ramp_dither` behaviour that is correct for a 192x76 garment at 2x) a
+slow gradient is a 50% checkerboard over a wide area, and at 512px — where
+M64 x8 makes every dithered pixel an 8x8 block — that stops reading as cloth
+and starts reading as halftone. Sharpened, most of the hood is a SOLID band
+and only the transitions are mixed, which is what hand-drawn pixel-art
+shading looks like. This was found by rendering the 512 and looking at it; it
+is invisible at 64px and unmissable at 512.
+
+Below 32px ordered dithering is switched off entirely rather than sharpened.
+
+### The legibility contract
+
+Three reads carry the icon, and `gen_icon.py` asserts a measured floor for
+each rather than an opinion:
+
+| Read | Ratio | Floor | Why it matters |
+|---|---|---|---|
+| hood rim vs tile | 2.11:1 | 2.0:1 | the silhouette. The rim clamp exists to hold this number. |
+| eye vs opening | 9.23:1 | 8.0:1 | the feature that has to survive to 16px |
+| tile rim vs black | 1.82:1 | 1.5:1 | whether the icon has an edge at all on a black taskbar |
+
+The tile is dark, so on a dark Dock its edge comes from a rim one step
+**lighter** than its fill, all the way round — never a bottom-right drop
+shadow, which is invisible against black. The motif is light-on-dark, so on a
+white taskbar the tile itself is the silhouette. Both cases, plus mid grey,
+are on the review sheet.
+
+### Delivered files
+
+`bundle.icon` in `desktop/src-tauri/tauri.conf.json` lists five, and
+`gen_icon.py` asserts that list still matches at the end of every run:
+`32x32.png`, `128x128.png`, `128x128@2x.png`, `icon.icns`, `icon.ico`. Also
+written: `icon.png` (the 1024 master `tauri icon` re-derives from) and the
+freedesktop hicolor ladder as loose `16x16.png` ... `512x512.png` for future
+Linux packaging. No `Square*Logo` files — nothing consumes them.
+
+* **`icon.ico`** carries 7 frames (16/24/32/48/64/128/256), each handed to
+  Pillow at its exact size, because Pillow's ICO encoder LANCZOS-resamples
+  any size it was not given directly.
+* **`icon.icns`** is written by `gen_icon.py` itself, byte for byte, in the
+  shape `iconutil -c icns` produces: ten chunks, no TOC, PNG payloads for the
+  eight modern slots and RLE-compressed ARGB for `ic04`/`ic05`. Not
+  `iconutil`, which is macOS-only and therefore cannot run on the machine
+  that builds; and not Pillow's ICNS encoder, which omits `ic04`/`ic05` — the
+  two chunks that keep Finder's 16pt list view crisp instead of
+  smooth-downscaling a 32px slot.
+* The self-check decodes **every** `.ico` frame and **every** `.icns` chunk
+  back and compares it pixel for pixel against the master it came from. That
+  is the assertion that catches a silent resample, and it is the reason the
+  containers can be trusted from a Linux build host.
+
 ## Design calls
 
 Where the source mockups were ambiguous or self-contradicting, the call and
