@@ -247,10 +247,19 @@ setup()
   |
   3. WebviewWindowBuilder::new(app, "main",
   |        WebviewUrl::External(shell_url(url)))   // url + "?shell=1"
-  |      .title("Dexel").inner_size(660,460).min_inner_size(660,460)
+  |      .title("Dexel")
+  |      .inner_size(opening_size(..))             // WINDOW-FIT: 1280x800 on
+  |      .min_inner_size(640,400)                  //   a 1080p display; the
+  |      .max_inner_size(1920,1200)                //   range is 1x..3x of the
+  |      .maximizable(false)                       //   640x400 game surface
   |      .always_on_top(prefs.always_on_top)       // SET-1: the USER's choice
   |      .decorations(false)                       // WINDOW-POLISH: frameless
   |      .center().build()
+  |
+  4. keep_the_game_filling_the_window(app)   // WINDOW-FIT: after a resize
+  |                                          // settles (200ms), snap the
+  |                                          // inner size to the nearest
+  |                                          // crisp multiple of 640x400
   |
   v
 run(|_handle, event|)
@@ -472,14 +481,49 @@ need an owner with a visible window on macOS or X11:
    are visible but a click flashes an error, read the console message — it
    names which of the four config points failed.
 4. **Double-click-to-maximize** on the title bar (`internal_toggle_maximize`,
-   which is why that permission is in the capability). Maximizing is harmless
-   here: the layout letterboxes.
+   which is why that permission is in the capability). Since WINDOW-FIT this is
+   the one case that still letterboxes on purpose — see item 9.
 5. **Resizing a frameless window**, the one real regression risk. macOS and
    Windows still give an undecorated window draggable resize edges; on Linux
    this is up to the compositor and an undecorated GTK window may offer none.
    If Linux loses resizing, the options are a CSD/resize-grip in the page or
    `decorations(true)` on Linux only — do not guess, measure first.
 6. **No double title bar** anywhere, and no leftover native frame shadow.
+
+The next four are WINDOW-FIT (see "The window is sized to the game" below).
+Its arithmetic is pure and covered by 31 unit tests in `mod window_sizing`, so
+what is *not* verified is precisely the part that needs a screen: how the snap
+feels, and whether a real compositor honours the size hints.
+
+7. **The opening size, and that the game touches all four edges.** A fresh
+   window should open at 1280x800 on a 1080p display (640x400 on a small
+   laptop, 1280x800 even on a 4K one) with **no bezel at all** — no 10px
+   pillarbox, no 30px letterbox, no dead band anywhere. That band is the whole
+   bug this item fixes, so if any of it survives, WINDOW-FIT did not land.
+8. **The drag-resize snap feel.** Drag an edge or a corner around and let go:
+   the window should settle onto 640x400 / 1280x800 / 1920x1200 (plus 960x600
+   and 1600x1000 on a retina display) about a fifth of a second after the
+   pointer stops, with the game still filling it exactly. Watch for three
+   specific failures: a *tug-of-war* mid-drag (the snap firing before you let
+   go — `RESIZE_SETTLE` too short), a snap that *oscillates* between two sizes
+   (the loop guard not catching a compositor that answers `set_size` with
+   something else; `SnapGuard` gives up after 3 tries, so this should show as
+   at most three jumps and then a letterboxed window rather than a loop), and
+   a snap that grows the window **off the screen** (the work-area bound not
+   being read on this platform).
+9. **min/max enforcement, and maximize.** The window should refuse to be
+   dragged below 640x400 or beyond 1920x1200 — that is the OS honouring
+   `min_inner_size`/`max_inner_size`, and on Linux it is a GTK size *hint*,
+   which a tiling compositor may ignore. Then maximize it (double-click the
+   title bar, or the keyboard/WM shortcut — there is no maximize button):
+   expect either a window clamped to 1920x1200, or a full-screen-sized window
+   with the game letterboxed inside it. Both are acceptable; the snap
+   deliberately does **not** fire while maximized, because un-maximizing a
+   window the user just maximized would be worse than a letterbox. What is
+   *not* acceptable is the window fighting the compositor.
+10. **A second display, if there is one.** Drag the window to a monitor with a
+    different scale factor: `ScaleFactorChanged` should re-snap it onto the new
+    display's ladder (at dpr 2 that includes the half steps).
 
 ### Verified end to end on macOS (2026-08-23)
 
@@ -513,11 +557,14 @@ developer's real save was never opened. Full transcript in
    titled "Dexel", centred, `always_on_top`, native decorations — confirmed
    from the X server's own window tree.
 
-   > Two of those are historical as of this run's date. **SET-1** made
+   > Three of those are historical as of this run's date. **SET-1** made
    > always-on-top the *user's* preference (default **off**, read from
-   > `status --json`'s `prefs.alwaysOnTop`), and **WINDOW-POLISH** made the
+   > `status --json`'s `prefs.alwaysOnTop`), **WINDOW-POLISH** made the
    > window **frameless** (`decorations(false)`) — see "The frameless shell"
-   > above. The rest of this checklist stands unchanged.
+   > above — and **WINDOW-FIT** replaced the 660x460 default/minimum with a
+   > 1x..3x range of the 640x400 game surface (see "The window is sized to
+   > the game"). 660x460 was never a size the game could fill; that is what
+   > WINDOW-FIT fixes. The rest of this checklist stands unchanged.
 4. The webview holds seven keep-alive connections to the runtime (page, CSS,
    JS, sprite assets and the state WebSocket), and the window's compositor
    pixmap shows the finished pixel-art scene.
@@ -545,6 +592,104 @@ this work is insurance for a future `tauri://` variant and is *not used*.
 `capabilities/default.json` has **no `remote` field**, so that loopback page
 is granted nothing at all through Tauri's ACL. It does not need to be — it
 talks to the Go backend over plain HTTP/WebSocket and never uses Tauri IPC.
+
+## The window is sized to the game (WINDOW-FIT)
+
+`docs/ui-spec.md` §0.4 is the specification; this is the shell-side account of
+why it is implemented here and not in the page.
+
+### The bug
+
+The window opened at **660x460** and could be dragged to any size at all. The
+page (`app/frontend/src/render/viewport.ts`) scales the fixed 640x400 layout to
+fit whatever window it is given, snapping to a *crisp* factor — one where an
+art pixel covers a whole number of device pixels — and letterboxing the
+remainder in the layout's own `--shadow`. So at 660x460 it chose 1x and painted
+a 10px pillarbox and a 30px letterbox, and at every hand-dragged size it
+painted whatever was left over. The game never touched an edge of its own
+window, which the owner's screenshot shows as a dead band that reads as a
+rendering fault rather than as a bezel.
+
+Both halves were correct in isolation. 660x460 was a stale number — it dated
+from when the sprint/ticker chrome was believed to sit *outside* the 640x400
+root, which stopped being true in BUG-2 — and the letterbox is the right answer
+to "you have been given a size that is not a crisp multiple of the surface".
+What was missing is that **in a window this shell owns, being given such a size
+is avoidable**.
+
+### The fix, in one sentence
+
+Constrain the window, and the page's existing rule finds offsets of (0, 0) on
+its own. Nothing in `app/` changed.
+
+| | |
+| --- | --- |
+| `min_inner_size` | 640x400 — 1x, the surface itself |
+| `max_inner_size` | 1920x1200 — 3x, the same cap as the page's `MAX_SCALE` |
+| opening size | `opening_size()`: the largest crisp size that fits the **work area** of the primary monitor, capped at 2x |
+| on resize | `keep_the_game_filling_the_window()`: 200ms after the last resize event, `set_size` to `nearest_crisp_size()` |
+| maximize | `maximizable(false)` (macOS/Windows only per tauri 2.11.5) plus the max size; a maximized window is deliberately **not** snapped |
+
+The ladder is the *page's* ladder, derived from `devicePixelRatio` — 640x400 /
+1280x800 / 1920x1200 at dpr 1, with 960x600 and 1600x1000 added at dpr 2 — so
+the size this shell asks for is one the page already snaps to exactly. The
+dpr-3 case drops the thirds, because 640 * 4/3 = 853.33 is not a size a window
+can have and 853 rounds *down* through the page's `Math.floor` to 1x. §0.4 has
+the full table and the reasoning for nearest-vs-largest-that-fits.
+
+### The three things that are easy to get wrong here
+
+**1. Don't call a window getter from a window-event callback.** The callback
+runs *on* the event loop, and `inner_size()` / `scale_factor()` /
+`is_maximized()` are not local reads — tauri's `window_getter!` posts a message
+to the event loop and blocks on a channel. Calling one from the callback
+deadlocks the process. So the callback reads nothing but the event it was handed
+(`Resized` carries the new **physical** size) and the settle thread — which is
+not the event loop — does all the work.
+
+**2. There is no resize-END event.** `tauri::WindowEvent` has `Resized` and
+nothing else, on every platform, and it arrives once per frame while an edge is
+being dragged. Snapping per event fights the pointer. Hence the 200ms settle:
+events only push a timestamp, one thread waits for them to go quiet, and the
+snap happens once.
+
+**3. `set_size` produces a resize event.** Left alone that is an infinite loop,
+and a window manager that answers `set_size` with a *different* size (a tiling
+WM, an edge-tiled window) is a second one. `SnapGuard` closes both: a reported
+size that already is the target ends the chain and clears the retry counter,
+and the same unanswered target is asked for at most three times before this
+shell leaves the window alone. When it gives up, the page's letterbox is what
+the user sees — which is why that letterbox stays even though this window is
+now designed never to need it.
+
+### Why the page keeps its letterbox
+
+It is not dead code, and it is not a second implementation of the same rule:
+
+* a **browser tab** is any size at all, and the tab is a first-class way to run
+  dexel (`docs/plan/RUN-MODES.md`);
+* during the ~200ms of a live drag the window genuinely is a non-crisp size;
+* a **maximized** window is the display's shape, which an 8:5 game cannot fill;
+* and it is the honest fallback when a compositor refuses the size.
+
+The shell's job is to make sure that in the ordinary case — a window sitting
+where the user left it — the letterbox comes out 0px wide on both axes.
+
+### What is tested, and what needs eyes
+
+All of the arithmetic is pure functions over logical pixels, and
+`mod window_sizing` in `src-tauri/src/lib.rs` covers it with 31 tests: the
+per-dpr ladders, nearest-step selection (including ties, one-axis drags and
+the old 660x460 default), min/max clamping, the work-area bound, the opening
+size, and both feedback loops. Two of them are contract tests rather than
+arithmetic: one feeds every ladder size through a transcription of the page's
+own `chooseScale` and asserts the resulting letterbox is (0, 0), and one reads
+`app/frontend/src/render/viewport.ts` at compile time and fails if the page's
+`BASE_W`/`BASE_H`, `MAX_SCALE` or `crispStep` rule moves without this file
+moving with it.
+
+What no test can check is the feel of it on a real screen — see §5 above, items
+7 to 10.
 
 ---
 

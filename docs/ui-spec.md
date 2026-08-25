@@ -43,10 +43,18 @@ slots, prices, persistence).
 
 ### 0.1 Window fit — scaling the fixed layout to the real window
 
-The native window (ADR 0015 / F3-design.md §2) opens at an inner size of
-**660x460** and the user can resize it. §0's layout is 640x400 and does not
-reflow, so the two have to be reconciled somewhere. They are reconciled here,
-and only here.
+§0's layout is 640x400 and does not reflow; a window (or a browser tab) is
+whatever size it is. The two have to be reconciled somewhere, and they are
+reconciled here, and only here — by the page, in `render/viewport.ts`.
+
+**Two halves, and which one is load-bearing where.** The page scales-and-
+letterboxes (this section). The native shell additionally *constrains its own
+window* so that the letterbox comes out 0px wide — **§0.4**, WINDOW-FIT. In
+the shell at rest the game therefore touches all four window edges and none of
+the offsets below are ever painted; in a browser tab, during the ~200ms of a
+live drag, and in a maximized shell window, the letterbox is exactly what you
+see. Neither half is redundant: the shell cannot control a tab, and the page
+cannot resize a window it does not own.
 
 **The contract.** The 640x400 layout is scaled **as one unit** to fit the
 window: aspect ratio preserved exactly, never stretched on one axis, centred,
@@ -110,11 +118,18 @@ Measured in the real running game with headless Chromium at dpr 1:
 
 | window | exact | applied | offset | letterbox |
 | --- | --- | --- | --- | --- |
-| 660x460 (default) | 1.03125 | **1x** | (10, 30) | the shipping look, unchanged and centred |
+| 660x460 | 1.03125 | **1x** | (10, 30) | the shell's default until WINDOW-FIT — **this row is the bug §0.4 fixes** |
 | 700x500 | 1.09375 | **1x** | (30, 50) | small-window case |
 | 960x600 | 1.5 | **1x** | (160, 100) | 1.5x is not device-pixel-exact at dpr 1 |
 | 1280x800 | 2.0 | **2x** | (0, 0) | exact fit, no bars |
 | 1920x1080 | 2.7 | **2x** | (320, 140) | a wide letterbox, perfectly crisp |
+
+Since WINDOW-FIT the shell only ever hands this rule the sizes in §0.4's second
+table, all of which come out at offset (0, 0) — at dpr 1 that is 640x400 (1x),
+1280x800 (2x, the row above) and 1920x1200 (3x). Those two extra sizes are
+arithmetic rather than measurements from the run above; they are asserted in
+Rust instead, by feeding every one of them through a transcription of this
+rule (`mod window_sizing` in `desktop/src-tauri/src/lib.rs`).
 
 An earlier revision allowed a non-crisp `exact` whenever snapping cost more
 than 1/8 of the size, which is what put a 1920x1080 window at **2.7x** — every
@@ -244,6 +259,70 @@ is the ACL — hence `capabilities/loopback-window-controls.json`.
 `?shell=1` is set, even if the Tauri API is unreachable, and a click then reports
 the failure in the flash toast and the console. A frameless window with a
 silently dead close button is unclosable; a visible complaint is recoverable.
+
+**There is no maximize button, and that is now a decision rather than an
+omission** — see §0.4. `?shell=1` changes nothing else about sizing: the page
+runs the same §0.1 rule in both modes, and the shell simply never hands it a
+size that needs a letterbox.
+
+### 0.4 The shell window is constrained so the game fills it (WINDOW-FIT)
+
+§0.1 makes the page fit any window. This makes the *window* fit the page, in
+the one window this product owns. It is implemented entirely in
+`desktop/src-tauri/src/lib.rs` (`crisp_sizes` / `nearest_crisp_size` /
+`opening_size` / `SnapGuard`); the page is untouched.
+
+**What was wrong.** The window opened at **660x460** and could be dragged to
+anything, so the game was letterboxed inside its own frame — a 10px pillarbox
+and a 30px letterbox at the default size, and whatever was left over at every
+hand-dragged one. The game never touched a window edge. (660x460 dated from
+when the sprint/ticker chrome was believed to live *outside* the 640x400 root;
+it has been inside it since BUG-2.)
+
+**The rules.**
+
+| | |
+| --- | --- |
+| inner size range | **min 640x400 (1x)**, **max 1920x1200 (3x)**, via Tauri's `min_inner_size`/`max_inner_size` — the OS enforces it during a drag, so no size outside the range ever has to be corrected |
+| opening size | the largest crisp size that fits the monitor's **work area**, capped at **2x** (1280x800 on a 1080p display, 640x400 on a 1366x768 one). No size is remembered between launches |
+| after a resize | when resize events go quiet for **200ms**, the inner size is set to the **nearest crisp size** — Euclidean-nearest in logical pixels, ties to the smaller — bounded by the monitor's work area so a snap can never grow the window off the screen |
+| maximize / fullscreen | **not snapped.** `maximizable(false)` removes the gesture on macOS/Windows, `max_inner_size` caps how big a WM maximize can get, and the page's letterbox covers what is left (a keyboard/WM maximize on Linux). A maximized window is the display's shape, which is the one shape an 8:5 game cannot fill |
+
+**The ladder is §0.1's ladder**, derived from the display, because the whole
+point is to hand the page a size that is already on it:
+
+| `devicePixelRatio` | window sizes it can have |
+| --- | --- |
+| 1 | 640x400, 1280x800, 1920x1200 |
+| 2 | 640x400, 960x600, 1280x800, 1600x1000, 1920x1200 |
+| 3 | 640x400, 1280x800, 1920x1200 |
+| fractional (125%) | 640x400, 1280x800, 1920x1200 |
+
+The dpr-3 row is *not* a copy-paste of the dpr-1 row: a 1/3 step would put
+1.333x at 853.33 logical px, which is not a size a window can have, and a
+window rounded to 853 is a third of a logical pixel short — which §0.1's
+`Math.floor` reads as **1x**, making the perfect fit the case that looks
+worst. So steps whose
+logical size is not whole on both axes are dropped, which on a dpr-3 display
+leaves the whole scales.
+
+**Why nearest and not "the largest that fits".** The game's aspect ratio is
+fixed and a drag is not, so a drag has to resolve to one rung. Snapping down
+to what fits makes a big diagonal drag jump *backwards* (drag to 1200x750 at
+dpr 1 and the largest crisp size that fits is 640x400), which reads as the
+drag having failed. Nearest means a drag more than halfway to the next rung
+lands on it. The honest cost of nearest-in-pixel-space: a *big* one-axis drag
+takes the other axis with it — pulling the right edge to 1900 asks for 3x, and
+3x is 1920x**1200**. The work-area bound is what stops that leaving the screen.
+
+**Two feedback loops, both guarded** (`SnapGuard`). `set_size` produces a
+resize event, which would re-arm the settle timer forever: a reported size that
+already *is* the target ends the chain (and, being the definition of success,
+clears the retry counter). And a window manager that answers `set_size` with a
+different size — a tiling WM, an edge-tiled window — would otherwise be asked
+again every 200ms forever: the same unanswered target is asked for **3 times**,
+then this shell leaves the window alone and the page's letterbox is what the
+user sees. That fallback is not a consolation prize; it is why §0.1 stays.
 
 ## 1. DOM contract
 

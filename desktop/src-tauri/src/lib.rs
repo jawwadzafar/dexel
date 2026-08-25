@@ -48,6 +48,11 @@
 //!    ticking, keeps counting keystrokes and keeps autosaving. `dexel stop`
 //!    is the only thing that stops it — that is the whole point.
 //!
+//! One thing this shell does own outright: the window's SIZE. The game is a
+//! fixed 640x400 surface, so the window is constrained to whole multiples of
+//! it (1x..3x) and a settled resize snaps onto that ladder — see the
+//! "WINDOW-FIT" section, and `docs/ui-spec.md` §0.4.
+//!
 //! Since EMBED-1 (docs/plan/ROADMAP.md) the sidecar is a SELF-CONTAINED
 //! binary: it carries the frontend (`app/public`) and the sprites
 //! (`app/assets`) inside itself via `go:embed`, so there is nothing for this
@@ -139,11 +144,50 @@ const WINDOW_LABEL: &str = "main";
 /// and its doc comment says why: that filename IS display text, because
 /// System Settings names the login item after it.
 const WINDOW_TITLE: &str = "Dexel";
-/// The frontend root is a fixed 640x400 canvas plus its sprint/ticker chrome
-/// (~660x430). 660x460 is both the default AND the minimum, so the
-/// fixed-pixel layout can never be clipped (F3-design.md §5).
-const WINDOW_W: f64 = 660.0;
-const WINDOW_H: f64 = 460.0;
+/// The game surface, in logical (CSS) pixels: the fixed 640x400 layout
+/// `#root` declares in `app/public/css/game.css` and `docs/ui-spec.md` §0
+/// pins. Every size in this file is 640x400 times something.
+///
+/// It used to be 660x460 here — "the 640x400 canvas plus its sprint/ticker
+/// chrome". That was already wrong when it was written (the chrome moved
+/// INSIDE the 640x400 root in BUG-2) and the window has been 20x60 too big
+/// ever since: the page letterboxed the surface into it with a 10px pillarbox
+/// and a 30px letterbox, so the game did not touch a single window edge.
+/// WINDOW-FIT is the fix, and it fixes it from THIS side — the page's
+/// letterbox is left alone as the fallback it always was.
+const SURFACE_W: f64 = 640.0;
+const SURFACE_H: f64 = 400.0;
+
+/// The scale range the WINDOW may be sized to: 1x (640x400) to 3x
+/// (1920x1200), enforced by `min_inner_size`/`max_inner_size` so the OS —
+/// not this code — is what stops a drag at the ends.
+///
+/// The floor is the surface itself: the layout is fixed-pixel and does not
+/// reflow, so below 1x there is nothing to give. (The page would scale down
+/// to fit rather than clip, but a window smaller than the game is not a shape
+/// this product wants, and a min size is the honest way to say so.)
+///
+/// The ceiling is `render/viewport.ts`'s `MAX_SCALE`, and it is a PRODUCT
+/// decision, not a technical one — dexel's 8px type stops reading as cozy
+/// somewhere past 3x. The two numbers must agree: a window the page refuses
+/// to fill is exactly the letterbox this item exists to remove.
+const MIN_SCALE: f64 = 1.0;
+const MAX_SCALE: f64 = 3.0;
+
+/// The largest scale a FRESH window opens at, as opposed to the largest it
+/// can be dragged to. 2x (1280x800) is a companion-sized window on a 1080p
+/// screen; 3x (1920x1200) is most of one, and a first launch that fills the
+/// display reads as an app that thinks it is the main event. The user can
+/// still drag to 3x, and this shell does not remember that they did — see
+/// `opening_size`.
+const DEFAULT_MAX_SCALE: f64 = 2.0;
+
+/// How long after the LAST resize event the snap fires. tao exposes no
+/// resize-END event on any platform (`tauri::WindowEvent` has only
+/// `Resized`), so "the user let go" has to be inferred from the events going
+/// quiet. Long enough not to fight a slow drag, short enough that the snap
+/// feels like part of releasing the mouse rather than a later correction.
+const RESIZE_SETTLE: Duration = Duration::from_millis(200);
 
 /// WINDOW-POLISH (docs/plan/ROADMAP.md) — the one bit of information this
 /// shell tells the page about itself, appended to the loopback URL it loads.
@@ -728,16 +772,515 @@ fn shell_url(url: &tauri::Url) -> tauri::Url {
     shell
 }
 
+// ---------------------------------------------------------------------------
+// WINDOW-FIT — the window is constrained so the GAME fills it, edge to edge.
+// ---------------------------------------------------------------------------
+//
+// ## What was wrong
+//
+// The window opened at 660x460 and could be dragged to anything. The page's
+// job (`app/frontend/src/render/viewport.ts`) is to scale the fixed 640x400
+// layout to fit whatever window it is given, snapping to a CRISP factor —
+// one where an art pixel covers a whole number of device pixels — and
+// letterboxing the remainder in the layout's own `--shadow`. So at 660x460 it
+// chose 1x and painted a 10px pillarbox and a 30px letterbox, and at every
+// other hand-dragged size it painted whatever was left over. The screenshot
+// the owner sent is that: a game that never touches the edges of its own
+// window, framed by dead space that reads as a rendering fault rather than as
+// a bezel.
+//
+// Both halves are correct in isolation. The letterbox is the right answer to
+// "you have been given a window that is not a crisp multiple of the surface",
+// and it MUST stay: it is the whole of the browser-tab story (a tab is any
+// size at all), and it is what covers the moments during a drag before the
+// snap lands. What was missing is that in a window this shell OWNS, being
+// given a non-crisp size is avoidable.
+//
+// ## What this does instead
+//
+// Constrain the window, and let the page's existing rule find offsets of
+// (0, 0) on its own:
+//
+//   * `min_inner_size` = 640x400 (1x), `max_inner_size` = 1920x1200 (3x).
+//     The OS/window manager enforces the range during a drag, so there is no
+//     size to "correct" outside it and no fight with the compositor.
+//   * a fresh window opens at the largest crisp size that fits the monitor's
+//     work area, capped at 2x (`opening_size`).
+//   * after a user resize SETTLES, the window's inner size is set to the
+//     nearest crisp size (`nearest_crisp_size`), so the surface fills it
+//     exactly. The page then computes `exact = 1/1.5/2/...`, snaps to itself,
+//     and the letterbox it draws is 0px wide on both axes.
+//
+// The result is that the letterbox logic is untouched and *unreachable* in
+// this window at rest — the game touches all four edges — while staying the
+// fallback for a browser tab, for a maximized window (see `snap_once`) and
+// for the ~200ms of a live drag.
+//
+// ## The ladder is the PAGE's ladder, derived from the display
+//
+// `viewport.ts`'s `crispStep()` is `dpr >= 1 && dpr is whole ? 1/dpr : 1`, so
+// the crisp scales are `1, 1+step, 1+2*step, ... <= 3`:
+//
+//   dpr 1            step 1     1x, 2x, 3x           640x400, 1280x800, 1920x1200
+//   dpr 2            step 0.5   1x, 1.5x, 2x, ...    640x400, 960x600, 1280x800,
+//                                                    1600x1000, 1920x1200
+//   dpr 3            step 1/3   1x, 1.33x, ...       see the integer filter below
+//   dpr 1.25 (125%)  step 1     1x, 2x, 3x           no crisp increment exists
+//
+// Those are the same numbers the page will choose, which is the point: this
+// shell hands the page a size that is already on its ladder.
+//
+// **The integer filter.** A window's inner size is whole pixels, and every
+// length in this design is an integer (ui-spec.md §0). At dpr 3 a step of 1/3
+// makes 640 * 4/3 = 853.33 logical px — not a size a window can have, and
+// rounding it to 853 would hand the page a viewport a third of a logical pixel
+// (one whole device pixel) short of 1.333x, which its `Math.floor` then reads
+// as **1x**: the perfect fit would be the case that looks worst. So
+// `crisp_sizes` keeps only the
+// steps whose logical size is whole on both axes, which on a dpr-3 display
+// leaves exactly the integer scales (1x, 2x, 3x) and on dpr 1 and 2 leaves
+// the whole ladder. Stated as a cost: on a dpr-3 phone-class display the
+// window snaps in bigger jumps than the page could technically render.
+//
+// ## Why logical pixels everywhere
+//
+// `min_inner_size`, `max_inner_size` and `LogicalSize` are all logical, and
+// logical px == CSS px is what the page measures with
+// `documentElement.clientWidth`. `WindowEvent::Resized` is the one PHYSICAL
+// value in the loop, and `snap_once` converts it once, immediately, using the
+// window's own scale factor.
+
+/// A window inner size in LOGICAL (CSS) pixels — the unit both ends of this
+/// contract speak. Deliberately a plain pair: every function below is pure
+/// arithmetic over it, so the whole of the snap decision is testable without
+/// a window (which matters more than usual here — see ../README.md §5, this
+/// project's Linux box cannot display one at all).
+type Logical = (u32, u32);
+
+/// Is `v` a whole number of pixels? The tolerance is far below any real step
+/// (the smallest is 1/3 of a pixel-scale, i.e. 213.33 px) and exists only to
+/// absorb the float division in `crisp_step`.
+fn is_whole(v: f64) -> bool {
+    (v - v.round()).abs() < 1e-6
+}
+
+/// The smallest scale increment that still lands art pixels on whole DEVICE
+/// pixels. Mirrors `crispStep()` in `app/frontend/src/render/viewport.ts`
+/// exactly, and must keep mirroring it: this shell's whole job here is to
+/// hand the page a size the page will not have to letterbox.
+fn crisp_step(scale_factor: f64) -> f64 {
+    if scale_factor >= 1.0 && is_whole(scale_factor) {
+        1.0 / scale_factor
+    } else {
+        // A fractional device-pixel-ratio (a Windows 125% display) has no
+        // crisp increment at all, so whole CSS pixels are the best available.
+        1.0
+    }
+}
+
+/// Every crisp inner size from 1x up to `cap`, ascending, in logical px.
+///
+/// Never empty: 1x is 640x400, which is whole at any scale factor.
+fn crisp_sizes(scale_factor: f64, cap: f64) -> Vec<Logical> {
+    let step = crisp_step(scale_factor);
+    let mut sizes = Vec::new();
+    let mut i = 0u32;
+    loop {
+        let scale = MIN_SCALE + step * f64::from(i);
+        // The epsilon is on the CAP comparison, not on the scale: 1 + 2 * 0.5
+        // can land a hair above 2.0 and a bare `>` would drop 2x from a dpr-2
+        // ladder capped at 2x.
+        if scale > cap + 1e-9 {
+            break;
+        }
+        let (w, h) = (SURFACE_W * scale, SURFACE_H * scale);
+        if is_whole(w) && is_whole(h) {
+            sizes.push((w.round() as u32, h.round() as u32));
+        }
+        i += 1;
+    }
+    sizes
+}
+
+/// The ladder restricted to the sizes that fit inside `bound` — the monitor's
+/// work area, when this shell could read one.
+///
+/// The 1x floor is kept even when it does not fit, because it is the window's
+/// `min_inner_size`: on a display too small for 640x400 the honest answer is
+/// "the smallest window this game has", not "no size at all".
+fn crisp_sizes_within(scale_factor: f64, cap: f64, bound: Option<Logical>) -> Vec<Logical> {
+    let all = crisp_sizes(scale_factor, cap);
+    let Some((bw, bh)) = bound else {
+        return all;
+    };
+    let fitting: Vec<Logical> = all
+        .iter()
+        .copied()
+        .filter(|(w, h)| *w <= bw && *h <= bh)
+        .collect();
+    if fitting.is_empty() {
+        all.into_iter().take(1).collect()
+    } else {
+        fitting
+    }
+}
+
+/// Squared distance between two sizes, in logical pixels.
+fn distance2(a: Logical, b: Logical) -> f64 {
+    let dw = f64::from(a.0) - f64::from(b.0);
+    let dh = f64::from(a.1) - f64::from(b.1);
+    dw * dw + dh * dh
+}
+
+/// The crisp size NEAREST to what the user dragged the window to.
+///
+/// # Why nearest, and nearest by what
+///
+/// Nearest, not "the largest that fits": the game's aspect ratio is fixed and
+/// the user's drag is not, so a drag that grows one axis a long way and the
+/// other not at all has to resolve to one of them. Snapping DOWN to what fits
+/// makes a big diagonal drag collapse the window (drag to 1200x750 on a dpr-1
+/// display and the largest crisp size that fits is 1x — a window that jumps
+/// backwards, which reads as the drag having failed). Snapping to the nearest
+/// size means a drag more than halfway to the next step lands on it.
+///
+/// Nearest in PIXEL space — plain Euclidean distance between the two sizes —
+/// rather than nearest in scale space, so the axis the user actually dragged
+/// dominates the choice by how far they dragged it. Ties go to the SMALLER
+/// size (the ladder is ascending and the comparison is strict), which is the
+/// safe direction: it can never push the window past the edge of the screen.
+///
+/// `bound` keeps the answer on the monitor: without it a drag to the bottom
+/// of a 1920x1080 screen is nearest to 1920x1200 and the snap would make the
+/// window taller than the display it is on.
+fn nearest_crisp_size(reported: Logical, scale_factor: f64, bound: Option<Logical>) -> Logical {
+    let ladder = crisp_sizes_within(scale_factor, MAX_SCALE, bound);
+    let mut best = ladder[0]; // `crisp_sizes_within` never returns empty
+    let mut best_distance = distance2(best, reported);
+    for candidate in &ladder[1..] {
+        let distance = distance2(*candidate, reported);
+        if distance < best_distance {
+            best = *candidate;
+            best_distance = distance;
+        }
+    }
+    best
+}
+
+/// The size a fresh window opens at: the largest crisp size that fits the
+/// monitor, capped at [`DEFAULT_MAX_SCALE`].
+///
+/// This shell deliberately does NOT remember the last size. A remembered size
+/// is a file to write, a file to migrate and a file to be wrong (a size
+/// remembered from a 4K monitor is off the screen of the laptop the user
+/// opens the lid on), and the value it buys is small when every available
+/// size is one of three or five. What it does instead is open at a size that
+/// is right for the display it is actually on, every time.
+fn opening_size(scale_factor: f64, bound: Option<Logical>) -> Logical {
+    let ladder = crisp_sizes_within(scale_factor, DEFAULT_MAX_SCALE, bound);
+    *ladder
+        .last()
+        .unwrap_or(&(SURFACE_W as u32, SURFACE_H as u32))
+}
+
+/// How far a reported size may be from the size this shell asked for and
+/// still be the same size. One logical pixel, because the round trip through
+/// physical pixels (`Resized` is physical, `set_size` is logical) can lose a
+/// fraction at a non-integer scale factor.
+const ECHO_TOLERANCE: u32 = 1;
+
+/// Is this reported size just this shell's own `set_size` coming back?
+fn is_own_echo(reported: Logical, target: Option<Logical>) -> bool {
+    match target {
+        Some((w, h)) => {
+            reported.0.abs_diff(w) <= ECHO_TOLERANCE && reported.1.abs_diff(h) <= ECHO_TOLERANCE
+        }
+        None => false,
+    }
+}
+
+/// How many times in a row this shell will ask for a size the window never
+/// reports before it gives up on that size.
+const MAX_UNANSWERED: u32 = 3;
+
+/// The loop guard: the pure decision "given what the window reports and what
+/// I last asked for, do I call `set_size`?".
+///
+/// # The two loops it exists to prevent
+///
+/// 1. **Our own echo.** `set_size` produces a `Resized` event, which re-arms
+///    the settle timer, which snaps again. That one is benign (the second
+///    pass computes the same target) but it would run forever, so a reported
+///    size that already IS the target ends the chain — and, because reaching
+///    the target is the definition of success, it also clears `unanswered`.
+/// 2. **A window manager that says no.** If the compositor answers a
+///    `set_size` with a different size (a tiling WM, a snapped/edge-tiled
+///    window, a size hint it declines), the chain above never terminates:
+///    every pass computes the same target and asks again, forever, ~200ms
+///    apart. So asking for the SAME target without ever seeing it is counted,
+///    and after [`MAX_UNANSWERED`] tries this shell stops asking and leaves
+///    the window alone. The page's letterbox is then what the user sees,
+///    which is exactly the fallback it is there to be.
+#[derive(Debug, Default)]
+struct SnapGuard {
+    /// The size this shell last asked the window manager for.
+    target: Option<Logical>,
+    /// How many times in a row it has asked for `target` without the window
+    /// ever reporting it.
+    unanswered: u32,
+}
+
+impl SnapGuard {
+    /// The settle timer fired on a window reporting `reported`, and
+    /// `nearest_crisp_size` chose `target`. `true` if `set_size(target)` is
+    /// worth calling; records the ask when it is.
+    fn should_ask_for(&mut self, target: Logical, reported: Logical) -> bool {
+        if is_own_echo(reported, Some(target)) {
+            // Already exactly there — including the case where the user
+            // dragged to a crisp size by hand, and the echo of our own
+            // successful `set_size`. Loop 1 ends here.
+            self.unanswered = 0;
+            return false;
+        }
+        if self.target == Some(target) {
+            if self.unanswered >= MAX_UNANSWERED {
+                return false; // loop 2: asked, unanswered, stop asking
+            }
+            self.unanswered += 1;
+        } else {
+            self.target = Some(target);
+            self.unanswered = 1;
+        }
+        true
+    }
+}
+
+/// The shared state behind the settle timer. Not part of the pure math: the
+/// arithmetic above is what the tests exercise, and this is only the plumbing
+/// that decides *when* to run it.
+struct ResizeWatch {
+    guard: Mutex<SnapGuard>,
+    /// When the newest resize event arrived.
+    last_event: Mutex<Instant>,
+    /// Whether a settle thread is already waiting, so a burst of resize
+    /// events (one per frame of a drag) starts exactly one.
+    armed: AtomicBool,
+}
+
+/// The monitor's usable area as a logical size, or `None` if it is not a
+/// usable bound.
+///
+/// The WORK area and not the full resolution: a window as tall as the display
+/// is a window with its bottom edge behind the taskbar/dock. `None` rather
+/// than a guess when the compositor reports something smaller than the game
+/// itself (some Wayland compositors report a zero-sized work area before the
+/// first surface is mapped) — a bogus bound would pin the window at 1x
+/// forever, which is worse than not bounding it at all.
+fn work_area_bound(monitor: &tauri::window::Monitor) -> Option<Logical> {
+    let scale_factor = monitor.scale_factor();
+    if scale_factor <= 0.0 || !scale_factor.is_finite() {
+        return None;
+    }
+    let area = monitor.work_area().size;
+    let w = (f64::from(area.width) / scale_factor).floor();
+    let h = (f64::from(area.height) / scale_factor).floor();
+    if w >= SURFACE_W && h >= SURFACE_H {
+        Some((w as u32, h as u32))
+    } else {
+        None
+    }
+}
+
+/// Keep the game filling the window: after every resize settles, set the
+/// window's inner size to the nearest crisp size.
+///
+/// # Why a debounce and not a per-event snap
+///
+/// `WindowEvent::Resized` arrives once per frame while an edge is being
+/// dragged, and tao/tauri expose no resize-END event on any platform. Calling
+/// `set_size` mid-drag fights the pointer: the window is snapped out from
+/// under the edge the user is still holding, and on X11 that produces a
+/// visible tug-of-war. So the events only push a timestamp, and the snap
+/// happens once, [`RESIZE_SETTLE`] after the last one.
+///
+/// # Why the work happens on another thread
+///
+/// This callback runs ON the event loop. `inner_size()`, `scale_factor()` and
+/// `is_maximized()` are not local reads — tauri's `window_getter!` posts a
+/// message to the event loop and blocks on a channel — so calling one from
+/// here would deadlock the process. The callback therefore reads nothing but
+/// the event it was handed, and the settle thread (which is not the event
+/// loop) does all of it.
+fn keep_the_game_filling_the_window(app: &tauri::App) {
+    let Some(window) = app.get_webview_window(WINDOW_LABEL) else {
+        log::warn!("no window labelled {WINDOW_LABEL} to keep crisp; a resize will letterbox");
+        return;
+    };
+    let watch = Arc::new(ResizeWatch {
+        guard: Mutex::new(SnapGuard::default()),
+        last_event: Mutex::new(Instant::now()),
+        armed: AtomicBool::new(false),
+    });
+    let target = window.clone();
+    window.on_window_event(move |event| {
+        let size = match event {
+            tauri::WindowEvent::Resized(size) => size,
+            // A move to a display with a different device-pixel-ratio changes
+            // the LADDER (see this section's table), so the size that was
+            // crisp on the old monitor usually is not on the new one.
+            tauri::WindowEvent::ScaleFactorChanged { new_inner_size, .. } => new_inner_size,
+            _ => return,
+        };
+        // Minimizing reports 0x0 (and, on some compositors, 1x1) — not a size
+        // to snap to, and not a resize the user performed.
+        if size.width <= 1 || size.height <= 1 {
+            return;
+        }
+        {
+            let mut last = watch.last_event.lock().unwrap_or_else(|p| p.into_inner());
+            *last = Instant::now();
+        }
+        if watch.armed.swap(true, Ordering::SeqCst) {
+            return; // a settle thread is already waiting for the drag to end
+        }
+        let watch = watch.clone();
+        let target = target.clone();
+        std::thread::spawn(move || {
+            loop {
+                let waited = {
+                    let last = watch.last_event.lock().unwrap_or_else(|p| p.into_inner());
+                    last.elapsed()
+                };
+                match RESIZE_SETTLE.checked_sub(waited) {
+                    Some(remaining) if !remaining.is_zero() => std::thread::sleep(remaining),
+                    _ => break,
+                }
+            }
+            // Disarmed BEFORE the snap, so an event that arrives while we are
+            // in it arms a fresh thread rather than being dropped. The worst
+            // case is two threads computing the same target, and `SnapGuard`
+            // is behind a mutex, so the second one sees the first one's ask.
+            watch.armed.store(false, Ordering::SeqCst);
+            snap_once(&target, &watch.guard);
+        });
+    });
+}
+
+/// One settled resize: read the window, choose the nearest crisp size, and
+/// ask for it unless [`SnapGuard`] says the ask is a loop.
+fn snap_once(window: &tauri::WebviewWindow, guard: &Mutex<SnapGuard>) {
+    // MAXIMIZE / FULLSCREEN — the honest decision. A maximized window is the
+    // window manager's size, not the user's drag, and `set_size` on one
+    // either un-maximizes it (macOS, Windows) or is refused (most Linux
+    // WMs) — so snapping here would either undo a deliberate maximize or
+    // start the loop `SnapGuard` exists to break. `max_inner_size` already
+    // caps how big a maximize can get, `maximizable(false)` removes the
+    // gesture entirely where the platform supports it, and there is no
+    // maximize button in the page's own title bar. In the case that is left
+    // (a keyboard/WM maximize on Linux) the page letterboxes, which is
+    // precisely what its letterbox is for. See ../README.md §5.
+    if window.is_maximized().unwrap_or(false) || window.is_fullscreen().unwrap_or(false) {
+        log::debug!("the window is maximized or fullscreen; leaving its size to the compositor");
+        return;
+    }
+    let physical = match window.inner_size() {
+        Ok(size) => size,
+        Err(e) => {
+            log::warn!("could not read the window's inner size, so not snapping it: {e}");
+            return;
+        }
+    };
+    let scale_factor = match window.scale_factor() {
+        Ok(scale_factor) if scale_factor > 0.0 => scale_factor,
+        Ok(scale_factor) => {
+            log::warn!("the window reported a scale factor of {scale_factor}; not snapping");
+            return;
+        }
+        Err(e) => {
+            log::warn!("could not read the window's scale factor, so not snapping it: {e}");
+            return;
+        }
+    };
+    if physical.width == 0 || physical.height == 0 {
+        return; // minimized between the event and here
+    }
+    let reported = (
+        (f64::from(physical.width) / scale_factor).round() as u32,
+        (f64::from(physical.height) / scale_factor).round() as u32,
+    );
+    let bound = window
+        .current_monitor()
+        .ok()
+        .flatten()
+        .as_ref()
+        .and_then(work_area_bound);
+    let target = nearest_crisp_size(reported, scale_factor, bound);
+    {
+        let mut guard = guard.lock().unwrap_or_else(|p| p.into_inner());
+        if !guard.should_ask_for(target, reported) {
+            return;
+        }
+        // The lock is released here on purpose: `set_size` is an event-loop
+        // round trip, and holding it across one would serialise a second
+        // settle thread behind a blocking call for no reason.
+    }
+    log::info!(
+        "resize settled at {}x{} logical; snapping to {}x{} so the game fills the window",
+        reported.0,
+        reported.1,
+        target.0,
+        target.1
+    );
+    if let Err(e) = window.set_size(tauri::LogicalSize::new(target.0, target.1)) {
+        log::warn!(
+            "could not resize the window to {}x{}: {e}",
+            target.0,
+            target.1
+        );
+    }
+}
+
 /// Build dexel's one window, pointed at the runtime's loopback URL and
 /// carrying the user's preferences from the first frame.
 fn build_window(app: &tauri::App, url: tauri::Url, prefs: Prefs) -> tauri::Result<()> {
+    // WINDOW-FIT. The window this builds can only ever be a whole number of
+    // art pixels wide: it OPENS on a crisp size, its min/max pin the range to
+    // 1x..3x, and `keep_the_game_filling_the_window` puts every hand-dragged
+    // size back on the ladder. See that section for the whole argument.
+    //
+    // The monitor here is the PRIMARY one, because the window does not exist
+    // yet and so has no `current_monitor()` to ask. On a multi-head setup
+    // whose displays differ, the first size can therefore be one step off for
+    // the display the window is actually centred on — which the first resize
+    // (or the `ScaleFactorChanged` that a cross-display move fires) corrects.
+    // A first frame at a crisp size beats a correct size applied one frame
+    // late: the alternative is a visible resize at every launch.
+    let monitor = app.primary_monitor().ok().flatten();
+    let scale_factor = monitor.as_ref().map_or(1.0, |m| m.scale_factor());
+    let bound = monitor.as_ref().and_then(work_area_bound);
+    let (open_w, open_h) = opening_size(scale_factor, bound);
+    log::info!(
+        "opening the window at {open_w}x{open_h} logical px \
+         (scale factor {scale_factor}, work area {bound:?})"
+    );
+
     WebviewWindowBuilder::new(app, WINDOW_LABEL, WebviewUrl::External(shell_url(&url)))
         .title(WINDOW_TITLE)
-        .inner_size(WINDOW_W, WINDOW_H)
-        // Same as the default size: the layout is fixed-pixel and does not
-        // reflow, so shrinking below this would clip it rather than adapt.
-        .min_inner_size(WINDOW_W, WINDOW_H)
+        .inner_size(f64::from(open_w), f64::from(open_h))
+        // 1x — the surface itself. The layout is fixed-pixel and does not
+        // reflow, so there is nothing below this to give.
+        .min_inner_size(SURFACE_W * MIN_SCALE, SURFACE_H * MIN_SCALE)
+        // 3x. The OS enforces the top of the range during a drag, which also
+        // makes it the cap on how big a window-manager maximize can get.
+        .max_inner_size(SURFACE_W * MAX_SCALE, SURFACE_H * MAX_SCALE)
         .resizable(true)
+        // No maximize. A maximized window is by definition the display's
+        // shape, not 8:5, so it is the one shape this game cannot fill —
+        // and there is no maximize button in the page's own title bar to
+        // offer it. Unsupported on Linux (tauri 2.11.5 documents
+        // `maximizable` as macOS/Windows only), where `max_inner_size` and
+        // `snap_once`'s hands-off rule are what remain.
+        .maximizable(false)
         // SET-1 (docs/ui-spec.md §11): the USER's choice, applied at creation
         // so the very first frame is already right — never a flash of a
         // pinned window followed by a correction.
@@ -817,6 +1360,7 @@ pub fn run() {
             // the runtime is not ours to clean up, and killing it would be
             // exactly the bug this shell was rewritten to remove.
             build_window(app, url.clone(), prefs)?;
+            keep_the_game_filling_the_window(app);
             watch_for_a_moved_runtime(app, url, prefs);
             Ok(())
         })
@@ -1266,5 +1810,476 @@ mod shell_mode {
         // would make every window focus look like a moved runtime and
         // re-navigate the page endlessly.
         assert_eq!(bare.as_str(), "http://127.0.0.1:53421/");
+    }
+}
+
+// ---------------------------------------------------------------------------
+// WINDOW-FIT — the snap arithmetic.
+// ---------------------------------------------------------------------------
+
+/// The whole of the sizing decision is pure arithmetic over logical pixels,
+/// which is deliberate: this project's Linux box cannot display a Tauri window
+/// at all (../README.md §5), so "does a resize land on a crisp size" has to be
+/// answerable without one. These tests are that answer. What they cannot check
+/// — how a drag FEELS, and whether a compositor honours the size hints — is
+/// listed in ../README.md §5 for an owner with a real screen.
+#[cfg(test)]
+mod window_sizing {
+    use super::{
+        crisp_sizes, crisp_sizes_within, crisp_step, is_own_echo, nearest_crisp_size, opening_size,
+        Logical, SnapGuard, DEFAULT_MAX_SCALE, MAX_SCALE, MAX_UNANSWERED, MIN_SCALE, SURFACE_H,
+        SURFACE_W,
+    };
+
+    /// The page's own scale rule, transcribed from `chooseScale` in
+    /// `app/frontend/src/render/viewport.ts`. Every size this shell hands the
+    /// window is fed through it below, because "the game fills the window" is
+    /// a claim about what the PAGE does with the size, not about the size.
+    fn page_scale(vw: f64, vh: f64, step: f64) -> f64 {
+        let exact = (vw / 640.0).min(vh / 400.0);
+        // The TS reads `if (!(exact > 0))` — a NaN/zero guard for a viewport
+        // of zero size. Spelled out here because clippy (rightly) objects to
+        // negating a partial-order comparison.
+        if exact.is_nan() || exact <= 0.0 {
+            return 1.0;
+        }
+        if exact < 1.0 {
+            return exact;
+        }
+        let capped = exact.min(3.0);
+        let snapped = (capped / step + 1e-9).floor() * step;
+        snapped.max(1.0)
+    }
+
+    /// Every device-pixel-ratio worth reasoning about: an ordinary monitor, a
+    /// retina display, a 3x display, and Windows at 125% (where no crisp
+    /// increment exists at all).
+    const RATIOS: [f64; 4] = [1.0, 2.0, 3.0, 1.25];
+
+    // -- the ladder ---------------------------------------------------------
+
+    #[test]
+    fn the_crisp_step_mirrors_the_pages_rule() {
+        assert_eq!(crisp_step(1.0), 1.0);
+        assert_eq!(crisp_step(2.0), 0.5);
+        assert_eq!(crisp_step(3.0), 1.0 / 3.0);
+        // Fractional: there is no increment that lands art pixels on whole
+        // device pixels, so whole CSS pixels are the best available.
+        assert_eq!(crisp_step(1.25), 1.0);
+        assert_eq!(crisp_step(1.5), 1.0);
+        // Below 1 is not a ratio any display reports, but a zero or negative
+        // one would make 1/dpr nonsense, so it falls back too.
+        assert_eq!(crisp_step(0.5), 1.0);
+        assert_eq!(crisp_step(0.0), 1.0);
+    }
+
+    #[test]
+    fn a_dpr_1_display_gets_the_integer_ladder() {
+        assert_eq!(
+            crisp_sizes(1.0, MAX_SCALE),
+            vec![(640, 400), (1280, 800), (1920, 1200)]
+        );
+    }
+
+    #[test]
+    fn a_retina_display_gets_the_half_steps_too() {
+        assert_eq!(
+            crisp_sizes(2.0, MAX_SCALE),
+            vec![
+                (640, 400),
+                (960, 600),
+                (1280, 800),
+                (1600, 1000),
+                (1920, 1200)
+            ]
+        );
+    }
+
+    /// The integer filter. A 1/3 step would put 1.333x at 853.33 logical px —
+    /// not a size a window can have, and a window rounded to 853 is a third of
+    /// a logical pixel (one device pixel) short of 1.333x, which the page's
+    /// `Math.floor` reads as **1x**. So those steps are dropped and a dpr-3
+    /// display gets whole scales.
+    #[test]
+    fn a_dpr_3_display_drops_the_steps_that_are_not_whole_pixels() {
+        assert_eq!(
+            crisp_sizes(3.0, MAX_SCALE),
+            vec![(640, 400), (1280, 800), (1920, 1200)]
+        );
+    }
+
+    #[test]
+    fn a_fractional_dpr_gets_the_integer_ladder() {
+        assert_eq!(crisp_sizes(1.25, MAX_SCALE), crisp_sizes(1.0, MAX_SCALE));
+    }
+
+    /// The cap is inclusive at both ends of a floating-point accumulation:
+    /// 1 + 2 * 0.5 can land a hair above 2.0, and a bare `>` would drop 2x
+    /// from a dpr-2 ladder capped at 2x.
+    #[test]
+    fn the_cap_keeps_the_step_that_lands_exactly_on_it() {
+        assert_eq!(
+            crisp_sizes(2.0, DEFAULT_MAX_SCALE),
+            vec![(640, 400), (960, 600), (1280, 800)]
+        );
+        assert_eq!(*crisp_sizes(1.0, MAX_SCALE).last().unwrap(), (1920, 1200));
+        assert_eq!(
+            *crisp_sizes(3.0, DEFAULT_MAX_SCALE).last().unwrap(),
+            (1280, 800)
+        );
+    }
+
+    /// The property that makes a size "crisp" at all: one art pixel covers a
+    /// whole number of DEVICE pixels, and the same whole number on both axes.
+    ///
+    /// A fractional device-pixel-ratio is excluded, and that exclusion is the
+    /// honest statement of what a 125% display costs: at dpr 1.25 an art pixel
+    /// is 1.25 device px wide at 1x and no window size can change that, so the
+    /// ladder falls back to whole CSS pixels (asserted separately) and this
+    /// property is simply unavailable.
+    #[test]
+    fn every_ladder_size_is_a_whole_number_of_device_pixels_per_art_pixel() {
+        for dpr in RATIOS {
+            for (w, h) in crisp_sizes(dpr, MAX_SCALE) {
+                // 8:5, exactly, on every rung of every ladder.
+                assert_eq!(u64::from(w) * 5, u64::from(h) * 8, "{w}x{h} is not 8:5");
+                if !super::is_whole(dpr) {
+                    continue;
+                }
+                let across = f64::from(w) * dpr / SURFACE_W;
+                let down = f64::from(h) * dpr / SURFACE_H;
+                assert!(
+                    (across - across.round()).abs() < 1e-9,
+                    "{w}x{h} at dpr {dpr}: {across} device px per art px across"
+                );
+                assert_eq!(
+                    across.round(),
+                    down.round(),
+                    "{w}x{h} at dpr {dpr}: art pixels are not square"
+                );
+            }
+        }
+    }
+
+    /// The claim this whole section exists to make, checked against the page's
+    /// own arithmetic: at every size this shell can produce, the page fills
+    /// the window exactly and its letterbox is 0px on both axes.
+    #[test]
+    fn at_every_ladder_size_the_page_fills_the_window_exactly() {
+        for dpr in RATIOS {
+            let step = crisp_step(dpr);
+            for (w, h) in crisp_sizes(dpr, MAX_SCALE) {
+                let scale = page_scale(f64::from(w), f64::from(h), step);
+                let ox = (f64::from(w) - SURFACE_W * scale) / 2.0;
+                let oy = (f64::from(h) - SURFACE_H * scale) / 2.0;
+                assert_eq!(
+                    (ox.round(), oy.round()),
+                    (0.0, 0.0),
+                    "at dpr {dpr} a {w}x{h} window renders at {scale}x, leaving a \
+                     ({ox}, {oy}) letterbox — the game would not touch its own window edges"
+                );
+            }
+        }
+    }
+
+    /// The bug, stated as a test: the size this window used to open at is the
+    /// one the owner screenshotted, and it letterboxes.
+    #[test]
+    fn the_old_660x460_default_is_exactly_the_reported_letterbox() {
+        let scale = page_scale(660.0, 460.0, crisp_step(1.0));
+        assert_eq!(scale, 1.0);
+        assert_eq!((660.0 - SURFACE_W * scale) / 2.0, 10.0); // 10px pillarbox
+        assert_eq!((460.0 - SURFACE_H * scale) / 2.0, 30.0); // 30px letterbox
+                                                             // ...and it is not a size this shell can produce any more.
+        assert!(!crisp_sizes(1.0, MAX_SCALE).contains(&(660, 460)));
+    }
+
+    // -- nearest-step selection --------------------------------------------
+
+    #[test]
+    fn a_size_already_on_the_ladder_snaps_to_itself() {
+        for dpr in RATIOS {
+            for size in crisp_sizes(dpr, MAX_SCALE) {
+                assert_eq!(nearest_crisp_size(size, dpr, None), size, "dpr {dpr}");
+            }
+        }
+    }
+
+    #[test]
+    fn the_old_default_snaps_down_to_1x() {
+        assert_eq!(nearest_crisp_size((660, 460), 1.0, None), (640, 400));
+    }
+
+    /// Nearest, not "largest that fits": a drag most of the way to 2x lands on
+    /// 2x rather than collapsing back to 1x.
+    #[test]
+    fn a_drag_past_the_halfway_point_snaps_up() {
+        assert_eq!(nearest_crisp_size((970, 610), 1.0, None), (1280, 800));
+        assert_eq!(nearest_crisp_size((1200, 740), 1.0, None), (1280, 800));
+    }
+
+    #[test]
+    fn a_drag_short_of_the_halfway_point_snaps_down() {
+        assert_eq!(nearest_crisp_size((700, 470), 1.0, None), (640, 400));
+        assert_eq!(nearest_crisp_size((900, 560), 1.0, None), (640, 400));
+    }
+
+    /// Dead centre between two rungs. The ladder is ascending and the
+    /// comparison is strict, so the SMALLER size wins — the direction that can
+    /// never push the window off the screen.
+    #[test]
+    fn an_exact_tie_goes_to_the_smaller_size() {
+        assert_eq!(nearest_crisp_size((960, 600), 1.0, None), (640, 400));
+        // On a retina display 960x600 is not a tie at all: it is a rung.
+        assert_eq!(nearest_crisp_size((960, 600), 2.0, None), (960, 600));
+    }
+
+    /// The same drag resolves differently per display, because the ladder is
+    /// the display's. Not a wart — it is the point of deriving it.
+    #[test]
+    fn the_same_size_resolves_per_display() {
+        assert_eq!(nearest_crisp_size((1000, 620), 1.0, None), (1280, 800));
+        assert_eq!(nearest_crisp_size((1000, 620), 2.0, None), (960, 600));
+    }
+
+    /// Nearest in PIXEL space, so how far each axis was dragged is what
+    /// decides — and 8:5 is not negotiable, so a one-axis drag resolves to a
+    /// rung that moves BOTH axes. Both halves of that are deliberate:
+    ///
+    ///   * a modest pull on one edge holds the current rung rather than
+    ///     doubling the other axis behind the user's back;
+    ///   * a big one, though, is a request for a bigger window, and the only
+    ///     bigger windows this game has are 8:5. Pulling the right edge out to
+    ///     1900 asks for a scale the height has to follow to.
+    ///
+    /// `bound` is what keeps that second case on the screen — see
+    /// `the_work_area_bound_stops_the_snap_growing_off_the_screen`.
+    #[test]
+    fn a_one_axis_drag_resolves_by_how_far_it_went() {
+        assert_eq!(nearest_crisp_size((640, 790), 1.0, None), (640, 400));
+        assert_eq!(nearest_crisp_size((1900, 800), 1.0, None), (1920, 1200));
+        assert_eq!(
+            nearest_crisp_size((1900, 800), 1.0, Some((1920, 1040))),
+            (1280, 800)
+        );
+    }
+
+    // -- min / max clamping -------------------------------------------------
+
+    /// The min/max are enforced by the OS on the window itself, so these sizes
+    /// should never reach the snap — but a compositor that ignores size hints
+    /// is exactly the case the snap is the backstop for.
+    #[test]
+    fn a_size_below_1x_clamps_up_and_a_size_above_3x_clamps_down() {
+        assert_eq!(nearest_crisp_size((320, 200), 1.0, None), (640, 400));
+        assert_eq!(nearest_crisp_size((1, 1), 2.0, None), (640, 400));
+        assert_eq!(nearest_crisp_size((3840, 2400), 1.0, None), (1920, 1200));
+        assert_eq!(nearest_crisp_size((2000, 1300), 2.0, None), (1920, 1200));
+    }
+
+    #[test]
+    fn the_range_is_the_pages_range() {
+        assert_eq!(
+            (SURFACE_W * MIN_SCALE, SURFACE_H * MIN_SCALE),
+            (640.0, 400.0)
+        );
+        assert_eq!(
+            (SURFACE_W * MAX_SCALE, SURFACE_H * MAX_SCALE),
+            (1920.0, 1200.0)
+        );
+    }
+
+    // -- the monitor bound --------------------------------------------------
+
+    /// A bound keeps the snap on the screen: on a 1080p display 1920x1200 is
+    /// nearest to a full-height drag, and snapping there would make the window
+    /// taller than the monitor it is on.
+    #[test]
+    fn the_work_area_bound_stops_the_snap_growing_off_the_screen() {
+        let full_height_drag: Logical = (1900, 1040);
+        assert_eq!(
+            nearest_crisp_size(full_height_drag, 1.0, None),
+            (1920, 1200)
+        );
+        assert_eq!(
+            nearest_crisp_size(full_height_drag, 1.0, Some((1920, 1040))),
+            (1280, 800)
+        );
+    }
+
+    /// A display too small for even 1x keeps 1x anyway: it is the window's
+    /// `min_inner_size`, and "the smallest window this game has" is a better
+    /// answer than no size at all.
+    #[test]
+    fn a_bound_smaller_than_the_surface_still_leaves_1x() {
+        assert_eq!(
+            crisp_sizes_within(1.0, MAX_SCALE, Some((500, 300))),
+            vec![(640, 400)]
+        );
+        assert_eq!(
+            nearest_crisp_size((500, 300), 1.0, Some((500, 300))),
+            (640, 400)
+        );
+    }
+
+    // -- the opening size ---------------------------------------------------
+
+    #[test]
+    fn a_fresh_window_opens_at_2x_on_a_display_that_fits_it() {
+        // 1080p, minus a taskbar.
+        assert_eq!(opening_size(1.0, Some((1920, 1040))), (1280, 800));
+        // A 4K display could fit 3x, but a first launch that fills the screen
+        // is not what this product is: the default is capped at 2x.
+        assert_eq!(opening_size(1.0, Some((3840, 2100))), (1280, 800));
+        // The same 4K panel at dpr 2 is a 1920x1080 logical desktop.
+        assert_eq!(opening_size(2.0, Some((1920, 1040))), (1280, 800));
+    }
+
+    #[test]
+    fn a_small_display_opens_smaller() {
+        // A 1366x768 laptop cannot fit 1280x800 (768 < 800), so 1x it is.
+        assert_eq!(opening_size(1.0, Some((1366, 728))), (640, 400));
+        // A retina display of the same logical size has a rung in between.
+        assert_eq!(opening_size(2.0, Some((1366, 728))), (960, 600));
+    }
+
+    /// With no readable work area the cap is the only bound — never larger
+    /// than the default cap, so an unknown display cannot produce a 3x window.
+    #[test]
+    fn an_unknown_display_opens_at_the_default_cap() {
+        assert_eq!(opening_size(1.0, None), (1280, 800));
+        assert_eq!(opening_size(2.0, None), (1280, 800));
+        assert_eq!(opening_size(1.25, None), (1280, 800));
+    }
+
+    #[test]
+    fn every_opening_size_is_on_the_ladder() {
+        for dpr in RATIOS {
+            for bound in [
+                None,
+                Some((1920, 1040)),
+                Some((1366, 728)),
+                Some((3840, 2100)),
+                Some((500, 300)),
+            ] {
+                let size = opening_size(dpr, bound);
+                assert!(
+                    crisp_sizes(dpr, MAX_SCALE).contains(&size),
+                    "dpr {dpr}, bound {bound:?} opened at {size:?}, which is not crisp"
+                );
+            }
+        }
+    }
+
+    // -- the loop guard -----------------------------------------------------
+
+    #[test]
+    fn an_echo_is_recognised_within_a_pixel_and_not_beyond_it() {
+        assert!(is_own_echo((1280, 800), Some((1280, 800))));
+        assert!(is_own_echo((1281, 799), Some((1280, 800))));
+        assert!(!is_own_echo((1282, 800), Some((1280, 800))));
+        assert!(!is_own_echo((1280, 802), Some((1280, 800))));
+        // Nothing has been asked for yet, so nothing can be an echo.
+        assert!(!is_own_echo((1280, 800), None));
+    }
+
+    /// Loop 1: our own `set_size` comes back as a resize event. The snap must
+    /// not ask again — and a size that already IS the target needs no ask
+    /// however it got there (the user can drag onto a rung by hand).
+    #[test]
+    fn a_window_already_at_the_target_is_not_resized() {
+        let mut guard = SnapGuard::default();
+        assert!(!guard.should_ask_for((1280, 800), (1280, 800)));
+        assert!(!guard.should_ask_for((1280, 800), (1281, 800)));
+    }
+
+    #[test]
+    fn a_settled_drag_asks_once_and_the_echo_ends_it() {
+        let mut guard = SnapGuard::default();
+        // The drag settled at 1200x740; the snap asks for 1280x800.
+        assert!(guard.should_ask_for((1280, 800), (1200, 740)));
+        // set_size worked, and its own Resized event re-armed the timer.
+        assert!(!guard.should_ask_for((1280, 800), (1280, 800)));
+    }
+
+    /// Loop 2: a window manager that answers `set_size` with something else.
+    /// Three tries, then this shell leaves the window alone rather than
+    /// fighting the compositor forever at one round trip per settle.
+    #[test]
+    fn a_window_manager_that_refuses_is_asked_a_bounded_number_of_times() {
+        let mut guard = SnapGuard::default();
+        for attempt in 1..=MAX_UNANSWERED {
+            assert!(
+                guard.should_ask_for((1280, 800), (1300, 810)),
+                "attempt {attempt} should still be tried"
+            );
+        }
+        assert!(
+            !guard.should_ask_for((1280, 800), (1300, 810)),
+            "the {}th ask for a size the window never reports is a loop",
+            MAX_UNANSWERED + 1
+        );
+    }
+
+    /// The counter must not leak into the next drag: a user who resizes again
+    /// gets a snap, even if an earlier target was abandoned.
+    #[test]
+    fn a_new_target_resets_the_counter() {
+        let mut guard = SnapGuard::default();
+        for _ in 0..=MAX_UNANSWERED {
+            guard.should_ask_for((1280, 800), (1300, 810));
+        }
+        assert!(!guard.should_ask_for((1280, 800), (1300, 810))); // given up
+        assert!(guard.should_ask_for((1920, 1200), (1900, 1180))); // a real drag
+    }
+
+    /// And a target that DID land is askable again later — the same size, a
+    /// second time, after the window has actually been there.
+    #[test]
+    fn a_target_that_landed_can_be_asked_for_again() {
+        let mut guard = SnapGuard::default();
+        assert!(guard.should_ask_for((1280, 800), (1200, 740)));
+        assert!(!guard.should_ask_for((1280, 800), (1280, 800))); // it landed
+        for attempt in 1..=MAX_UNANSWERED {
+            assert!(
+                guard.should_ask_for((1280, 800), (1200, 740)),
+                "attempt {attempt} after a successful snap should be tried"
+            );
+        }
+    }
+
+    // -- the cross-language pin ---------------------------------------------
+
+    /// The page's rule and this shell's ladder are two halves of one contract
+    /// that crosses a language boundary, and `page_scale` above is a
+    /// TRANSCRIPTION — nothing makes it stay true on its own. So the real
+    /// source is read at compile time and the numbers it is transcribed from
+    /// are pinned. Change the ladder in one language and this fails in the
+    /// other, which is the only way this can be kept honest short of running
+    /// both.
+    #[test]
+    fn the_pages_scale_rule_still_says_what_this_shell_assumes() {
+        const VIEWPORT_TS: &str = include_str!("../../../app/frontend/src/render/viewport.ts");
+        for needle in [
+            "const BASE_W = 640;",
+            "const BASE_H = 400;",
+            "export const MAX_SCALE = 3;",
+            // crispStep: the ladder's increment, and the fractional-dpr
+            // fallback that makes `crisp_step` above a mirror and not a guess.
+            "return dpr >= 1 && dpr === Math.floor(dpr) ? 1 / dpr : 1;",
+            // chooseScale: snap DOWN to a crisp factor, with the same epsilon.
+            "const snapped = Math.floor(capped / step + 1e-9) * step;",
+        ] {
+            assert!(
+                VIEWPORT_TS.contains(needle),
+                "app/frontend/src/render/viewport.ts no longer contains {needle:?}. \
+                 That file and this one are the two ends of the WINDOW-FIT contract: this \
+                 shell sizes the window to a rung of the page's own ladder, and if the \
+                 ladder moved, `crisp_step`/`crisp_sizes` in lib.rs must move with it or \
+                 the game stops touching its window edges. Update both, then fix this list."
+            );
+        }
+        // The cap is a number in two languages; assert it, not just its text.
+        assert_eq!(MAX_SCALE, 3.0);
     }
 }
