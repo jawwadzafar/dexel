@@ -286,3 +286,10 @@ model; remaining gains are cosmetic; the one real win (recursive compile-time
 content-free guarantees) is back-ported to the Go tests instead. app-rs/ and
 the goldens stay frozen as the record; the goldens double as Go wire-contract
 fixtures. Revisit triggers recorded in the verdict file.
+
+### Version policy (2026-08-25, owner): FROZEN AT v0.1.0
+The version stays 0.1.0 until the owner explicitly says otherwise. No bumps for
+fixes/features. Delivering updates to installed instances during the freeze:
+rebuild and REPLACE the v0.1.0 release assets in place (the documented
+pre-release exception to the releases-are-immutable rule — that rule resumes
+the moment the owner unfreezes versioning), or install from source.
