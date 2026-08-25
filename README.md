@@ -38,6 +38,13 @@ has an icon in your desktop's app grid (Linux) or Start Menu (Windows), and
 then starts the runtime and opens the game. No `sudo`, no elevation, no
 autostart.
 
+`install.sh` installs **however you run it** — from the download path above,
+from a fresh clone with no network, or from a `.tar.gz` you already have — by
+picking the highest-confidence source available and falling back automatically
+([the ladder](#how-installsh-picks-what-to-install)). Cloned the repo? Running
+`./install.sh` builds it with your local Go toolchain and needs neither the
+network nor a published release.
+
 **Linux and Windows via Git Bash/MSYS2/Cygwin** (amd64 or arm64) — the same
 one line everywhere bash exists (macOS runs the same script too, see the note
 below on why it isn't installable yet):
@@ -77,12 +84,16 @@ irm https://raw.githubusercontent.com/jawwadzafar/dexel/main/install.ps1 | iex
 > bytes at a shorter address, not a different installer
 > ([release pipeline](docs/production-runtime/RELEASE_PIPELINE.md)).
 
-**macOS is not published yet.** The current release carries no `darwin`
-archive, so the installer says so and stops rather than pretending — build
-from source with the two commands under [Quick start](#quick-start). Nothing
-needs to change in the installer when a macOS build appears: it checks the
-release for a `darwin` archive on every run, so the day one is published the
-normal install path takes over.
+**macOS has no published release binary yet — but the installer still works
+there.** On a mac, clone the repo and run `./install.sh`: it detects the
+source tree and your Go toolchain and **builds from source automatically**, no
+network or release needed (Xcode Command Line Tools supply the C compiler the
+darwin activity provider's cgo needs). Only the *download* path lacks a mac
+build — run that way (piped, or `--from-release`) with no darwin archive in the
+release and it says so and stops rather than pretending. Nothing needs to
+change in the installer when a macOS build appears: it checks the release for a
+`darwin` archive on every run, so the day one is published the download path
+takes over too.
 
 When it does, the installer will place the CLI and start it, and say where the
 window comes from: `Dexel.app` is built and signed by `scripts/mac-release.sh`
@@ -102,6 +113,38 @@ there on its own once it exists, so nothing has to be re-run.
 > *blind* rather than pretending to see, and the companion will not claim a
 > workday it cannot see. See
 > [Platform support](#platform-support-for-activity-capture).
+
+### How `install.sh` picks what to install
+
+`install.sh` chooses the **highest-confidence source available** and each rung
+is a fallback for the one above it, so a single command works from a clone,
+offline, from a local archive, or the download path — no flags required. Flags
+force a rung; the environment equivalents are for a piped `curl | sh`.
+
+| Rung | When it is chosen automatically | Force it | Network? |
+|---|---|---|---|
+| **1. Build from source** | `install.sh` is run from *inside* the dexel source tree (its own directory holds `app/main.go` and a dexel `app/go.mod`) **and** `go` is on `PATH` | `--from-source` / `DEXEL_FROM_SOURCE=1` — builds even if a release exists, for testing your own changes | **No** |
+| **2. Local archive** | rung 1 does not apply and `DEXEL_ARCHIVE=<path>` is set | set `DEXEL_ARCHIVE` | **No** |
+| **3. Download a release** | neither of the above applies | `--from-release` / `DEXEL_FROM_RELEASE=1` | Yes |
+
+**Build from source** is the "clone it and it just works" path: `go build`
+compiles `app/`, and `app/embed.go` bakes the committed frontend bundle
+(`app/public/js/dexel.js`) and the sprites (`app/assets`) *into* the binary, so
+one plain build yields the complete game — **`npm` is never involved**. The
+version is stamped from `git describe` (or `dev` outside a git checkout), and
+the launcher icon comes straight from the tree. Only Go 1.27+ is required.
+
+**Local archive** installs a `.tar.gz` you already have, fully offline. It is
+verified against a sibling `<archive>.sha256` when one sits beside it;
+otherwise it installs with a printed *"unverified local file"* notice (a file
+you pointed at, not a download). Adding `--from-release` instead verifies a
+local archive against the **live release's** `sha256sums.txt` — the strongest
+check, but that one needs the network.
+
+If you run from a clone with **no Go toolchain, no `DEXEL_ARCHIVE`, and no
+network**, none of the three can proceed: the installer says exactly that
+(install Go, or point `DEXEL_ARCHIVE` at an archive) and exits non-zero. It
+never silently does nothing.
 
 ### What the installer does, and what it will not do
 
@@ -138,25 +181,32 @@ not document, and use distinct exit codes so a piped run is diagnosable from
 
 | Code | Meaning |
 |---|---|
+| `2` | usage error (e.g. `--from-source` outside the source tree) |
 | `3` | unsupported platform |
-| `4` | missing tool |
+| `4` | missing tool — `curl`/`wget`/`sha256`/`tar`, or `go` when building from source |
 | `5` | no build for this platform in this release |
 | `6` | checksum mismatch |
-| `7` | network failure |
+| `7` | network failure — including "cloned, but no Go, no archive, and no network" |
 | `8` | the installed binary failed its own `dexel version` check |
 
 Environment knobs, on either platform: `DEXEL_INSTALL_DIR`, `DEXEL_VERSION`,
-`DEXEL_HOME`, `DEXEL_ARCHIVE` (install a `.tar.gz`/`.zip` you already have —
-the checksum is still verified), and `GH_TOKEN` / `GITHUB_TOKEN`. A dry run
-(`--dry-run` on Linux, `$env:DEXEL_DRY_RUN = '1'` on Windows) resolves,
-downloads, and verifies without installing anything — including the AppImage,
-which makes it a complete test of the release and every checksum in it.
+`DEXEL_HOME`, `DEXEL_ARCHIVE` (install a `.tar.gz`/`.zip` you already have,
+offline — verified against a sibling `.sha256` if present, else installed with
+an "unverified local file" notice; with `--from-release` it is verified against
+the live release instead), `DEXEL_FROM_SOURCE` / `DEXEL_FROM_RELEASE` (the
+[source-selection](#how-installsh-picks-what-to-install) flags as env vars),
+and `GH_TOKEN` / `GITHUB_TOKEN`. A dry run (`--dry-run` on Linux,
+`$env:DEXEL_DRY_RUN = '1'` on Windows) resolves/builds and verifies without
+installing anything — for the download path including the AppImage, which makes
+it a complete test of the release and every checksum in it.
 
 Turning the new behaviour off, as flags on Linux or environment variables on
 either platform:
 
 | Flag (Linux) | Environment | Effect |
 |---|---|---|
+| `--from-source` | `DEXEL_FROM_SOURCE=1` | build from the source tree even if a release exists — for testing your own changes |
+| `--from-release` | `DEXEL_FROM_RELEASE=1` | skip the source/archive rungs and always download a release |
 | `--no-start` | `DEXEL_NO_START=1` | install everything, start nothing |
 | `--no-desktop` | `DEXEL_NO_DESKTOP=1` | no icon, no launcher entry, no GUI shell |
 | `--no-app` | `DEXEL_NO_APP=1` | keep the icon and the launcher, skip the ~84 MB AppImage |

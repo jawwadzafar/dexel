@@ -298,6 +298,42 @@ runner publishes that asset, the normal install path takes over with no edit
 to either script — which is the same "omit the key, derive the truth"
 property § 7 wants from the manifest.
 
+### 6-STAGE-1-SOURCE. `install.sh` installs from any source, best-first
+
+**Amendment to § 6's acquisition model.** § 6 assumed one source — a published
+artifact fetched over the network. `install.sh` now resolves what to install
+from a **source-selection ladder**, choosing the highest-confidence source
+available and falling back automatically, so the one command works from a
+fresh clone, offline, from a local archive, or the download path:
+
+1. **Build from source** — auto when `install.sh` is run from *inside* the
+   dexel source tree (its own resolved directory holds `app/main.go` and an
+   `app/go.mod` declaring `github.com/jawwadzafar/dexel/app`) **and** `go` is on
+   `PATH`. It runs `CGO_ENABLED=<0, or 1 on darwin> go build -trimpath -ldflags
+   "-s -w -X main.version=<git describe>" -o <tmp>/dexel .` from `app/`, then
+   installs that binary exactly like the download path's post-install (icon from
+   `desktop/src-tauri/icons/128x128.png`, `.desktop` entry, start). No network,
+   no release: `app/embed.go` bakes the committed frontend bundle and sprites
+   into the binary, so a plain `go build` is the complete game and `npm` is
+   never involved. `--from-source` / `DEXEL_FROM_SOURCE=1` forces it even when a
+   release exists (a developer testing local changes). This is also what makes
+   macOS installable today — a mac clone with Xcode CLT builds the cgo darwin
+   provider itself, with no published darwin archive.
+2. **Local archive** — `DEXEL_ARCHIVE=<path>` when rung 1 does not apply.
+   Fully offline: verified against a sibling `<archive>.sha256` if present,
+   else installed with a printed "unverified local file" notice. `--from-release`
+   moves a local archive back to rung 3's verification (against the live
+   release's `sha256sums.txt`), which needs the network.
+3. **Download a release** — the original path (this section's rest), used when
+   1 and 2 do not apply, or forced with `--from-release` /
+   `DEXEL_FROM_RELEASE=1`.
+
+Run from a clone with no Go toolchain, no `DEXEL_ARCHIVE`, and no network, the
+script names all three no-network options and exits non-zero (code 7) rather
+than silently doing nothing. Windows still delegates to `install.ps1` **before**
+the ladder — the source/archive rungs are POSIX-shell (Linux/macOS) territory.
+`shellcheck -s sh` clean; `-n` clean under dash, bash, and busybox ash.
+
 ### 6-STAGE-1-DESKTOP. One command installs everything, and it just starts
 
 **Amendment to § 6's step 7 and step 10.** § 6 said "installs one binary" and

@@ -45,6 +45,40 @@
 #     which is a supported front door and not a consolation prize.
 # All of it lives under $HOME, is idempotent, and is skippable.
 #
+# ---------------------------------------------------------------------------
+# SOURCE-SELECTION LADDER — this script installs SUCCESSFULLY however it is
+# run: from a fresh clone, offline, from a local archive, or the download-
+# from-GitHub path it started life as. It picks the highest-confidence source
+# available automatically, and each rung is a fallback for the one above it:
+#
+#   1. BUILD FROM SOURCE  — auto when this script is run from INSIDE the dexel
+#      source tree (its own real directory holds app/main.go and an app/go.mod
+#      that declares dexel's module path) AND a Go toolchain is on PATH. This
+#      is the "clone it and run install.sh — it just works" path: no network
+#      and no published release needed. The committed frontend bundle
+#      (app/public/js/dexel.js) and the sprites (app/assets) are compiled into
+#      the binary by `go build` via app/embed.go, so there is no npm step —
+#      a plain `go build` produces the COMPLETE game in one file. The version
+#      is stamped from `git describe` (or "dev" outside a git tree). Force it
+#      with --from-source even when a release exists — the path a developer
+#      testing their own uncommitted changes wants.
+#
+#   2. LOCAL ARCHIVE      — DEXEL_ARCHIVE=<path> to a .tar.gz already on disk.
+#      Fully offline: if a sibling <archive>.sha256 sits beside it the checksum
+#      is verified against that; otherwise it is installed with a printed
+#      notice that it is an unverified local file you chose. (Add --from-release
+#      to instead verify a local archive against the LIVE release's
+#      sha256sums.txt — the strongest check, but that one needs the network.)
+#
+#   3. DOWNLOAD A RELEASE — the original path: resolve the latest (or pinned)
+#      GitHub release, download this platform's archive, verify its sha256 and
+#      the digest GitHub reports, install. Used when 1 and 2 do not apply, or
+#      forced with --from-release.
+#
+# Run from a clone, offline, with no Go toolchain and no DEXEL_ARCHIVE, none
+# of the three can proceed: the script says exactly that (install Go to build,
+# or set DEXEL_ARCHIVE) and exits non-zero. It never silently does nothing.
+#
 # ON GIT BASH / MSYS2 / CYGWIN — a real Windows box whose `uname -s` answers
 # MINGW*/MSYS*/CYGWIN* — this script does not just print the PowerShell
 # one-liner and stop. It finds powershell.exe or pwsh.exe, downloads
@@ -56,7 +90,15 @@
 # message with the one-liner below is still the fallback.
 #
 # Options (flags, or the environment):
-#   --dry-run                resolve + download + verify, then stop. No writes
+#   --from-source            build from the source tree this script lives in
+#                            (needs `go` on PATH), even if a release exists.
+#                            The default already does this automatically when
+#                            run from a clone with a Go toolchain present.
+#   --from-release           skip the source/local-archive rungs and always
+#                            resolve + download a GitHub release. With
+#                            DEXEL_ARCHIVE set, installs that local archive but
+#                            verifies it against the live release's checksums.
+#   --dry-run                resolve/build + verify, then stop. No writes
 #                            outside the temp dir. This is the mode CI runs.
 #   --no-start               install everything, start nothing. The report
 #                            still tells you the command to run.
@@ -75,18 +117,24 @@
 #   DEXEL_APP=1              same as --app
 #   DEXEL_VERSION=vX.Y.Z     install this tag instead of the latest release
 #   DEXEL_REPO=owner/name    resolve against a different repository
-#   DEXEL_ARCHIVE=FILE       use an archive already on disk instead of
-#                            downloading one. The checksum is still verified
-#                            against the release's sha256sums.txt — this is an
-#                            offline/air-gapped convenience, not a bypass.
+#   DEXEL_ARCHIVE=FILE       install from a .tar.gz already on disk instead of
+#                            downloading one — the offline rung of the ladder.
+#                            Verified against a sibling FILE.sha256 if present;
+#                            otherwise installed with an "unverified local
+#                            file" notice. With --from-release it is verified
+#                            against the live release's sha256sums.txt instead.
+#   DEXEL_FROM_SOURCE=1      same as --from-source
+#   DEXEL_FROM_RELEASE=1     same as --from-release
 #   GITHUB_TOKEN / GH_TOKEN  sent as a bearer token. Required only while the
 #                            repository is private; ignored once it is public.
 #   DEXEL_UNAME_S / _M       override `uname -s` / `uname -m` (testing)
 #
 # Exit codes, so a piped run is diagnosable from $? alone:
-#   2 usage   3 unsupported platform   4 missing tool   5 no build for this
-#   platform in this release   6 checksum mismatch   7 network/API failure
-#   8 the installed binary failed its own version check
+#   2 usage   3 unsupported platform   4 missing tool (curl/wget/sha/tar, or
+#   `go` when building from source)   5 no build for this platform in this
+#   release   6 checksum mismatch   7 network/API failure (also: cloned but
+#   no way to install — no Go, no archive, no network)   8 the installed
+#   binary failed its own version check
 
 set -eu
 
@@ -116,6 +164,18 @@ HTTP_CLIENT=""   # curl | wget
 SHA_TOOL=""      # sha256sum | shasum
 DRY_RUN=0
 STOPPED_RUNTIME=0
+
+SOURCE=""        # source | archive | release — chosen by choose_source()
+FROM_SOURCE=0    # --from-source / DEXEL_FROM_SOURCE
+FROM_RELEASE=0   # --from-release / DEXEL_FROM_RELEASE
+IN_REPO=0        # this script's real dir IS the dexel source tree
+REPO_DIR=""      # ...and this is that directory (the repo root)
+VERSION=""       # the version string a source build stamps in
+EXPECT_VERSION="" # what `dexel version` should echo back (TAG, or the built VERSION)
+ICON_SRC=""      # the 128x128 PNG to install: from the archive, or the tree
+SRC_BIN=""       # a freshly built binary awaiting install (source path)
+ARCHIVE_NAME=""  # set on the archive/release paths
+ARCHIVE_PATH=""
 
 NO_START=0
 NO_DESKTOP=0
@@ -158,10 +218,11 @@ usage() {
         sed -n '2,100p' "$0" | sed 's/^# \{0,1\}//'
     else
         say "dexel installer — see https://github.com/${REPO}#install"
+        say "sources (auto-selected; flags force): --from-source, --from-release"
         say "options: --dry-run, --no-start, --no-desktop, --no-app, --app, --help"
         say "env: DEXEL_INSTALL_DIR, DEXEL_VERSION, DEXEL_REPO, DEXEL_ARCHIVE,"
-        say "DEXEL_NO_START, DEXEL_NO_DESKTOP, DEXEL_NO_APP, DEXEL_APP,"
-        say "GH_TOKEN/GITHUB_TOKEN"
+        say "DEXEL_FROM_SOURCE, DEXEL_FROM_RELEASE, DEXEL_NO_START,"
+        say "DEXEL_NO_DESKTOP, DEXEL_NO_APP, DEXEL_APP, GH_TOKEN/GITHUB_TOKEN"
     fi
 }
 
@@ -278,6 +339,104 @@ resolve_token() {
 }
 
 # ---------------------------------------------------------------------------
+# the source-selection ladder — am I inside the dexel source tree, and if so
+# can I build it? (see the SOURCE-SELECTION LADDER block at the top)
+# ---------------------------------------------------------------------------
+
+# resolve_script_dir — this script's OWN directory, symlinks resolved, or a
+# non-zero return when there is nothing to resolve (a `curl | sh` has no
+# on-disk path for itself, so $0 is the shell's name, not a file).
+#
+# $0 is turned into an absolute path first: absolute already, relative-with-
+# slash (./install.sh, sub/install.sh) against $PWD, and a bare name that IS a
+# file in $PWD (`sh install.sh` sets $0 to "install.sh"). A bare name that is
+# NOT such a file is the piped case — return 1. Then symlinks are chased with
+# readlink where it exists (POSIX has no `readlink -f`), capped so a symlink
+# cycle cannot spin forever. `cd -P` gives the physical directory.
+resolve_script_dir() {
+    _src=$0
+    case "$_src" in
+        /*)  : ;;
+        */*) _src="$PWD/$_src" ;;
+        *)
+            if [ -f "$PWD/$_src" ]; then
+                _src="$PWD/$_src"
+            else
+                return 1
+            fi
+            ;;
+    esac
+
+    if have readlink; then
+        _hops=0
+        while [ -h "$_src" ] && [ "$_hops" -lt 40 ]; do
+            _dir=$(cd -P "$(dirname "$_src")" 2>/dev/null && pwd) || return 1
+            _link=$(readlink "$_src") || return 1
+            case "$_link" in
+                /*) _src="$_link" ;;
+                *)  _src="$_dir/$_link" ;;
+            esac
+            _hops=$((_hops + 1))
+        done
+    fi
+
+    _dir=$(cd -P "$(dirname "$_src")" 2>/dev/null && pwd) || return 1
+    printf '%s\n' "$_dir"
+}
+
+# detect_repo — set IN_REPO=1 and REPO_DIR only when this script's real
+# directory actually IS the dexel source tree. "A Go repo" is not enough: the
+# directory must hold app/main.go AND an app/go.mod that declares dexel's own
+# module path, so a copy of install.sh dropped into some other project can
+# never be mistaken for the real thing. A fork keeps that module path (it is
+# in the file, not the remote), so DEXEL_REPO forks build from source too.
+detect_repo() {
+    _d=$(resolve_script_dir) || return 0
+    if [ -f "$_d/app/main.go" ] &&
+       [ -f "$_d/app/go.mod" ] &&
+       grep -q '^module github\.com/jawwadzafar/dexel/app$' "$_d/app/go.mod" 2>/dev/null
+    then
+        IN_REPO=1
+        REPO_DIR="$_d"
+    fi
+}
+
+# choose_source — walk the ladder and set SOURCE to source | archive | release.
+# Forcing flags short-circuit the auto choice; --from-source also validates its
+# two preconditions loudly rather than silently falling through to a download.
+choose_source() {
+    if [ "$FROM_SOURCE" = 1 ]; then
+        if [ "$IN_REPO" != 1 ]; then
+            die "$E_USAGE" "--from-source needs to run from inside the dexel source tree, but this
+copy of install.sh is not sitting beside a dexel app/ (or was piped in with no
+file on disk). Clone the repo and run ./install.sh --from-source from its root."
+        fi
+        have go ||
+            die "$E_TOOL" "--from-source needs a Go toolchain, but \`go\` is not on PATH.
+Install Go 1.27+ (https://go.dev/dl/) and re-run, or drop --from-source to
+download a release instead."
+        SOURCE=source
+        return 0
+    fi
+
+    if [ "$FROM_RELEASE" = 1 ]; then
+        SOURCE=release
+        return 0
+    fi
+
+    # Auto: highest-confidence rung that can actually proceed.
+    if [ "$IN_REPO" = 1 ] && have go; then
+        SOURCE=source
+        return 0
+    fi
+    if [ -n "${DEXEL_ARCHIVE:-}" ]; then
+        SOURCE=archive
+        return 0
+    fi
+    SOURCE=release
+}
+
+# ---------------------------------------------------------------------------
 # HTTPS, once, for everything
 #
 # The bearer token goes into a 0600 config file inside the temp dir rather
@@ -291,7 +450,13 @@ make_tempdir() {
     trap cleanup EXIT
     trap 'cleanup; exit 130' INT
     trap 'cleanup; exit 143' TERM
+}
 
+# configure_http — write the 0600 curl/wget config the network path uses.
+# Split out of make_tempdir so the source and local-archive rungs, which
+# touch no network, can have a temp dir without demanding an HTTP client
+# (they never call pick_http_client, so HTTP_CLIENT is empty there).
+configure_http() {
     if [ "$HTTP_CLIENT" = curl ]; then
         {
             printf 'silent\nshow-error\nfail\nlocation\n'
@@ -404,6 +569,7 @@ PowerShell one-liner yourself:
   irm https://raw.githubusercontent.com/${REPO}/main/install.ps1 | iex"
     resolve_token
     make_tempdir
+    configure_http
 
     # Same $REPO, same hardcoded "main" that this script's own die messages
     # already point at elsewhere (see detect_platform, and the fallback
@@ -494,6 +660,16 @@ resolve_release() {
         say "Could not read $_rel_url"
         token_hint
         say "  (An unauthenticated GitHub API allows 60 requests per hour per IP.)"
+        # The honest-failure case: we are standing in the source tree, so the
+        # network is not the only door — name the two that do not need it.
+        if [ "$IN_REPO" = 1 ]; then
+            say ""
+            say "  You are inside the dexel source tree but could not reach GitHub, and"
+            say "  there was no Go toolchain to build from source and no DEXEL_ARCHIVE to"
+            say "  install from. Any ONE of these finishes the install with no network:"
+            say "      * install Go 1.27+ (https://go.dev/dl/), then re-run — it will build"
+            say "      * DEXEL_ARCHIVE=/path/to/dexel-*.tar.gz ./install.sh"
+        fi
         die "$E_NETWORK" "could not resolve $_rel_what."
     fi
 
@@ -923,9 +1099,13 @@ SHIM
 # without one. GTK and Qt both read the directory directly, so the cache is
 # an optimisation we do not need and cannot honestly claim to have built.
 install_icon() {
-    if [ -z "$UNPACKED_DIR" ] || [ ! -f "$UNPACKED_DIR/dexel.png" ]; then
-        info "icon      not in $ARCHIVE_NAME (a release from before the icon shipped);"
-        info "          the launcher will use your theme's fallback icon"
+    # ICON_SRC is the archive's staged dexel.png on the download/local-archive
+    # rungs, and desktop/src-tauri/icons/128x128.png on the source rung — the
+    # same 128x128 PNG either way (build-release.sh copies that very file into
+    # the archive).
+    if [ -z "$ICON_SRC" ] || [ ! -f "$ICON_SRC" ]; then
+        info "icon      not available for this install; the launcher will use"
+        info "          your theme's fallback icon"
         return 0
     fi
     _icon_dir="$DATADIR/icons/hicolor/128x128/apps"
@@ -934,12 +1114,12 @@ install_icon() {
         return 0
     fi
     if have install; then
-        if ! install -m 0644 "$UNPACKED_DIR/dexel.png" "$_icon_dir/dexel.png"; then
+        if ! install -m 0644 "$ICON_SRC" "$_icon_dir/dexel.png"; then
             warn "could not write $_icon_dir/dexel.png; skipping the icon."
             return 0
         fi
     else
-        if ! cp "$UNPACKED_DIR/dexel.png" "$_icon_dir/dexel.png"; then
+        if ! cp "$ICON_SRC" "$_icon_dir/dexel.png"; then
             warn "could not write $_icon_dir/dexel.png; skipping the icon."
             return 0
         fi
@@ -1008,6 +1188,10 @@ install_desktop_entry() {
     if [ "$OS" != linux ]; then
         return 0
     fi
+    # decide_desktop sets DATADIR on the release rung; the source and local-
+    # archive rungs never call it, so establish the same default here. Set
+    # either way, it is the one value both use.
+    DATADIR="${XDG_DATA_HOME:-$HOME/.local/share}"
     install_icon
     write_desktop_file
 }
@@ -1107,13 +1291,22 @@ install_binary() {
     # (scripts/build-release.sh stages `dexel.png` beside it), so remember
     # where that was rather than unpacking the archive a second time.
     UNPACKED_DIR=$(dirname "$_src")
+    ICON_SRC="$UNPACKED_DIR/dexel.png"
 
+    install_binary_from "$_src"
+}
+
+# install_binary_from SRC — copy one already-verified (or freshly built)
+# `dexel` binary into BINDIR with mode 0755. The single place the binary
+# actually lands, shared by every rung of the ladder.
+install_binary_from() {
+    _bin_src=$1
     mkdir -p "$BINDIR" || die "$E_TOOL" "could not create $BINDIR."
     if have install; then
-        install -m 0755 "$_src" "$BINDIR/dexel" ||
+        install -m 0755 "$_bin_src" "$BINDIR/dexel" ||
             die "$E_TOOL" "could not install to $BINDIR/dexel."
     else
-        if cp "$_src" "$BINDIR/dexel"; then
+        if cp "$_bin_src" "$BINDIR/dexel"; then
             chmod 0755 "$BINDIR/dexel" ||
                 die "$E_TOOL" "could not chmod $BINDIR/dexel."
         else
@@ -1186,11 +1379,16 @@ verify_installed() {
     INSTALLED_VERSION=$("$BINDIR/dexel" version 2>/dev/null || true)
     [ -n "$INSTALLED_VERSION" ] ||
         die "$E_VERIFY" "$BINDIR/dexel installed but \`dexel version\` produced nothing.
-The archive may not match this platform ($OS-$ARCH)."
-    case "$INSTALLED_VERSION" in
-        *"$TAG"*) : ;;
-        *) warn "\`dexel version\` says \"$INSTALLED_VERSION\" but $TAG was installed." ;;
-    esac
+The binary may not match this platform ($OS-$ARCH)."
+    # EXPECT_VERSION is the tag on the download rung and the built version on
+    # the source rung; it is empty on the local-archive rung (whose version we
+    # cannot know ahead of time), and then there is nothing to cross-check.
+    if [ -n "$EXPECT_VERSION" ]; then
+        case "$INSTALLED_VERSION" in
+            *"$EXPECT_VERSION"*) : ;;
+            *) warn "\`dexel version\` says \"$INSTALLED_VERSION\" but $EXPECT_VERSION was installed." ;;
+        esac
+    fi
 }
 
 report() {
@@ -1285,53 +1483,171 @@ report() {
 }
 
 # ---------------------------------------------------------------------------
-# main — the only top-level statement in this file is its call, on the last
-# line, so a truncated download cannot run a partial installer.
+# rung 1 — build from the source tree this script lives in
+#
+# The "clone it and run install.sh — it just works" path. No network and no
+# published release: `go build` compiles app/, and app/embed.go bakes the
+# committed frontend bundle (app/public) and the sprites (app/assets) INTO the
+# binary, so one plain build yields the complete game with no npm step. The
+# icon comes straight out of the tree.
 # ---------------------------------------------------------------------------
 
-main() {
-    while [ $# -gt 0 ]; do
-        case "$1" in
-            --dry-run) DRY_RUN=1 ;;
-            --no-start) NO_START=1 ;;
-            --no-desktop) NO_DESKTOP=1 ;;
-            --no-app) NO_APP=1 ;;
-            --app) FORCE_APP=1 ;;
-            -h|--help) usage; return 0 ;;
-            *) printf 'dexel install: unknown option %s\n' "$1" >&2
-               printf 'try --help\n' >&2
-               return "$E_USAGE" ;;
-        esac
-        shift
-    done
+# derive_source_version — the same rule scripts/build-release.sh uses:
+# `git describe --tags --always --dirty` in a git checkout, and "dev" outside
+# one (a source tarball with no .git). Whatever this returns is stamped into
+# the binary via -ldflags -X main.version=, so `dexel version` echoes it back.
+derive_source_version() {
+    if have git && git -C "$REPO_DIR" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+        _v=$(git -C "$REPO_DIR" describe --tags --always --dirty 2>/dev/null || true)
+        if [ -n "$_v" ]; then
+            printf '%s' "$_v"
+            return 0
+        fi
+    fi
+    printf '%s' "dev"
+}
 
-    BINDIR="${DEXEL_INSTALL_DIR:-$HOME/.local/bin}"
+do_source_install() {
+    have go || die "$E_TOOL" "building from source needs \`go\` on PATH."
+    have mktemp || die "$E_TOOL" "need mktemp, which is not on PATH."
+    make_tempdir
 
-    # Environment equivalents of the flags, for a `curl | sh` that cannot
-    # pass arguments. A flag already set stays set.
-    # `[ x ] && VAR=1` would be shorter and would also EXIT under `set -e`
-    # the moment the test was false, because a failed AND-list is a failed
-    # command. if/fi is the only spelling that is correct here.
-    if [ "${DEXEL_NO_START:-}" = 1 ]; then NO_START=1; fi
-    if [ "${DEXEL_NO_DESKTOP:-}" = 1 ]; then NO_DESKTOP=1; fi
-    if [ "${DEXEL_NO_APP:-}" = 1 ]; then NO_APP=1; fi
-    if [ "${DEXEL_APP:-}" = 1 ]; then FORCE_APP=1; fi
+    VERSION=$(derive_source_version)
+    EXPECT_VERSION="$VERSION"
+    say "==> dexel installer — building from source ($OS-$ARCH)"
+    info "source    $REPO_DIR"
+    info "version   $VERSION"
+    info "toolchain $(command -v go)"
 
-    detect_platform                        # 1
-    if [ "$OS" = windows ]; then
-        # Git Bash / MSYS2 / Cygwin: hand off to install.ps1 and stop here.
-        # A successful delegation falls through to `return 0`; a failed one
-        # already ended the script via set -eu inside delegate_windows.
-        delegate_windows
+    # CGO: darwin's activity provider is cgo (app/internal/activity/
+    # provider_darwin.go), so a mac build needs CGO_ENABLED=1 and a C compiler,
+    # exactly like scripts/build-release.sh's darwin row. Everywhere else the
+    # tree is pure Go and builds with CGO off, needing no C toolchain — which
+    # is what keeps the common "clone and go" path dependency-free.
+    _cgo=0
+    if [ "$OS" = darwin ]; then _cgo=1; fi
+
+    SRC_BIN="$TMPD/dexel"
+    say "==> compiling dexel — no network, no release, no npm needed"
+    info "the frontend bundle (app/public/js/dexel.js) and sprites (app/assets)"
+    info "are committed and embedded by go build (app/embed.go)"
+    if ! (
+        cd "$REPO_DIR/app" &&
+        CGO_ENABLED="$_cgo" go build -trimpath \
+            -ldflags "-s -w -X main.version=$VERSION" -o "$SRC_BIN" .
+    ); then
+        die "$E_TOOL" "\`go build\` failed — see the compiler output above."
+    fi
+    [ -f "$SRC_BIN" ] ||
+        die "$E_TOOL" "\`go build\` reported success but produced no binary."
+    say "==> built $SRC_BIN"
+
+    # The launcher icon, straight from the tree (build-release.sh copies this
+    # exact file into the release archive as dexel.png).
+    ICON_SRC="$REPO_DIR/desktop/src-tauri/icons/128x128.png"
+
+    if [ "$DRY_RUN" = 1 ]; then
+        say ""
+        say "--dry-run: built dexel from source to a temp dir and verified it runs:"
+        info "$("$SRC_BIN" version 2>/dev/null || echo '(dexel version produced nothing)')"
+        say "Nothing was installed."
         return 0
     fi
-    check_tools                            # 2
-    detect_session
+
+    stop_running_runtime
+    install_binary_from "$SRC_BIN"
+    finish_common
+}
+
+# ---------------------------------------------------------------------------
+# rung 2 — install from a local archive (DEXEL_ARCHIVE), fully offline
+#
+# Verified against a sibling <archive>.sha256 when one exists; otherwise
+# installed with a printed "unverified local file" notice. (The stronger
+# "verify a local archive against the LIVE release's sha256sums.txt" flow is
+# the --from-release path's DEXEL_ARCHIVE branch, in download() — that one
+# needs the network, so it is a separate, opted-into thing.)
+# ---------------------------------------------------------------------------
+
+verify_local_archive() {
+    _f=$1
+    _sum="$_f.sha256"
+    if [ -f "$_sum" ]; then
+        if have sha256sum; then
+            SHA_TOOL=sha256sum
+        elif have shasum; then
+            SHA_TOOL=shasum
+        else
+            die "$E_TOOL" "found $(basename "$_sum") beside the archive but no sha256sum or
+shasum to check it with."
+        fi
+        _want=$(awk 'NF { print $1; exit }' "$_sum")
+        [ -n "$_want" ] ||
+            die "$E_CHECKSUM" "$(basename "$_sum") is empty; cannot verify $ARCHIVE_NAME."
+        _got=$(sha256_of "$_f")
+        if [ "$_want" != "$_got" ]; then
+            say ""
+            say "  expected  $_want   (from $(basename "$_sum"))"
+            say "  actual    $_got   ($ARCHIVE_NAME)"
+            say ""
+            say "  Nothing was unpacked and nothing was installed."
+            die "$E_CHECKSUM" "sha256 mismatch on $ARCHIVE_NAME."
+        fi
+        say "==> sha256 verified against $(basename "$_sum")"
+        info "$_got"
+    else
+        warn "no $(basename "$_f").sha256 beside the archive — installing it UNVERIFIED.
+       This is a local file you pointed at, not a download, which is the only
+       reason it is allowed; put a matching .sha256 next to it to have this
+       checked, or use --from-release to verify against the live release."
+    fi
+}
+
+do_archive_install() {
+    have tar || die "$E_TOOL" "need tar to unpack an archive, which is not on PATH."
+    have mktemp || die "$E_TOOL" "need mktemp, which is not on PATH."
+    _arch="${DEXEL_ARCHIVE:-}"
+    [ -n "$_arch" ] || die "$E_USAGE" "the local-archive rung needs DEXEL_ARCHIVE set to a file."
+    [ -f "$_arch" ] || die "$E_USAGE" "DEXEL_ARCHIVE=$_arch is not a file."
+    make_tempdir
+
+    ARCHIVE_NAME=$(basename "$_arch")
+    ARCHIVE_PATH="$_arch"          # unpack it where it lies; no copy needed
+    EXPECT_VERSION=""              # a local archive's version is not known up front
+    say "==> dexel installer — installing from local archive ($OS-$ARCH)"
+    info "archive   $_arch"
+    verify_local_archive "$_arch"
+
+    if [ "$DRY_RUN" = 1 ]; then
+        mkdir -p "$TMPD/x"
+        tar -xzf "$ARCHIVE_PATH" -C "$TMPD/x" ||
+            die "$E_TOOL" "could not unpack $ARCHIVE_NAME."
+        _found=$(find "$TMPD/x" -type f -name dexel 2>/dev/null | head -n 1)
+        [ -n "$_found" ] ||
+            die "$E_TOOL" "no \`dexel\` binary inside $ARCHIVE_NAME."
+        say ""
+        say "--dry-run: verified and unpacked $ARCHIVE_NAME. Nothing was installed."
+        return 0
+    fi
+
+    stop_running_runtime
+    install_binary                # unpacks ARCHIVE_PATH, sets UNPACKED_DIR + ICON_SRC
+    finish_common
+}
+
+# ---------------------------------------------------------------------------
+# rung 3 — download a release from GitHub (the original path)
+# ---------------------------------------------------------------------------
+
+do_release_install() {
+    check_tools
     resolve_token
     make_tempdir
+    configure_http
     say "==> dexel installer — $OS-$ARCH"
     resolve_release                        # 3
     require_platform_asset                 # 3b: macOS/absent-build honesty
+    EXPECT_VERSION="$TAG"
     decide_desktop                         # 3c: what desktop integration to do
     download                               # 4, 5
     verify                                 # 6
@@ -1360,6 +1676,86 @@ main() {
     path_advice                            # 9
     launch                                 # 11: just start
     report                                 # 10
+}
+
+# finish_common — the shared install tail for the source and local-archive
+# rungs (the release rung inlines the same steps plus its AppImage shell,
+# which only a release carries). By this point the binary is already in place.
+finish_common() {
+    install_desktop_entry                  # 7c: the icon + the launcher (Linux)
+    make_state_dirs                        # 8
+    verify_installed                       # 10
+    path_advice                            # 9
+    launch                                 # 11: just start
+    report                                 # 10
+}
+
+# ---------------------------------------------------------------------------
+# main — the only top-level statement in this file is its call, on the last
+# line, so a truncated download cannot run a partial installer.
+# ---------------------------------------------------------------------------
+
+main() {
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            --from-source) FROM_SOURCE=1 ;;
+            --from-release) FROM_RELEASE=1 ;;
+            --dry-run) DRY_RUN=1 ;;
+            --no-start) NO_START=1 ;;
+            --no-desktop) NO_DESKTOP=1 ;;
+            --no-app) NO_APP=1 ;;
+            --app) FORCE_APP=1 ;;
+            -h|--help) usage; return 0 ;;
+            *) printf 'dexel install: unknown option %s\n' "$1" >&2
+               printf 'try --help\n' >&2
+               return "$E_USAGE" ;;
+        esac
+        shift
+    done
+
+    BINDIR="${DEXEL_INSTALL_DIR:-$HOME/.local/bin}"
+
+    # Environment equivalents of the flags, for a `curl | sh` that cannot
+    # pass arguments. A flag already set stays set.
+    # `[ x ] && VAR=1` would be shorter and would also EXIT under `set -e`
+    # the moment the test was false, because a failed AND-list is a failed
+    # command. if/fi is the only spelling that is correct here.
+    if [ "${DEXEL_FROM_SOURCE:-}" = 1 ]; then FROM_SOURCE=1; fi
+    if [ "${DEXEL_FROM_RELEASE:-}" = 1 ]; then FROM_RELEASE=1; fi
+    if [ "${DEXEL_NO_START:-}" = 1 ]; then NO_START=1; fi
+    if [ "${DEXEL_NO_DESKTOP:-}" = 1 ]; then NO_DESKTOP=1; fi
+    if [ "${DEXEL_NO_APP:-}" = 1 ]; then NO_APP=1; fi
+    if [ "${DEXEL_APP:-}" = 1 ]; then FORCE_APP=1; fi
+
+    if [ "$FROM_SOURCE" = 1 ] && [ "$FROM_RELEASE" = 1 ]; then
+        die "$E_USAGE" "--from-source and --from-release are mutually exclusive; pick one."
+    fi
+
+    detect_platform                        # 1
+    if [ "$OS" = windows ]; then
+        # Git Bash / MSYS2 / Cygwin: hand off to install.ps1 and stop here,
+        # BEFORE the source-selection ladder — Windows installs via install.ps1,
+        # which has its own acquisition logic; the source/archive rungs below
+        # are Linux/macOS shell territory. A successful delegation falls through
+        # to `return 0`; a failed one already ended the script via set -eu
+        # inside delegate_windows.
+        delegate_windows
+        return 0
+    fi
+
+    detect_session
+    detect_repo                            # am I inside the dexel source tree?
+    choose_source                          # -> SOURCE = source | archive | release
+
+    # The ladder: the highest-confidence source that can actually proceed.
+    # Each do_* function verifies before it writes, honours --dry-run, and ends
+    # by installing the binary, wiring desktop integration, and starting dexel.
+    case "$SOURCE" in
+        source)  do_source_install ;;      # rung 1: build the tree we live in
+        archive) do_archive_install ;;     # rung 2: a local .tar.gz, offline
+        release) do_release_install ;;     # rung 3: download from GitHub
+        *)       die "$E_USAGE" "internal error: no install source was chosen." ;;
+    esac
 }
 
 main "$@"
