@@ -27,9 +27,11 @@ export const SLOT_RECT: Record<string, Rect> = {
 // local 95.5), which is also what keeps the derived 40x40 hoodie store
 // thumbnails a centred crop of the hood.
 //
-// The rect is UNCHANGED by the proportion pass (the figure inside it grew
-// ~1.45x: a 48x31 hood at room y110..140, 92px-wide shoulders, arms 11..19px
-// thick). It deliberately still stops at room y167 rather than being extended
+// The rect is UNCHANGED by the proportion pass, by the SLIMMING pass that
+// followed it, and by the HOOD-NARROWING pass after that (the figure inside it
+// now reads lean: a 42x31 hood at room y110..140 — 46 -> 42 when the owner
+// read the head as still a little wide — 76px-wide shoulders tapering to a
+// 66px waist, arms 10..17px thick). It deliberately still stops at room y167 rather than being extended
 // down behind the HUD: the panels are opaque from room y161 to y198 and the
 // 4px gap between them at room x158..161 is itself covered by the chair, so a
 // taller canvas would add no visible pixel — while pushing the derived hoodie
@@ -46,17 +48,21 @@ export const DEV_RECT: Rect = { left: 64, top: 92, w: 192, h: 76 };
 // 150 — the developer's shoulder line, above which only the hood, shoulders
 // and forward-reaching arms live (row 149 is reserved for the detail layer's
 // 1px contact halo) — so the plain Z-order swap composites correctly with no
-// per-layer masking. Backrests are shoulder-width-MINUS (half-width 31..39
-// against the developer's shoulder half-width 46), so the shoulders peek out
-// at the sides of every style and the hood clears every crown. The chairs grew
-// with the developer in the proportion pass (canvases 96..120 → 116..148 wide,
-// 58 → 51 rows tall as the seam moved from room y144 down to y150).
+// per-layer masking. Backrests are shoulder-width-MINUS (half-width 24..28
+// against the developer's shoulder half-width 38), so the shoulders peek out
+// at the sides of every style and the hood clears every crown. SLIMMING PASS:
+// the owner read the figure as fat and the furniture as too wide, so the
+// shoulders came down 92 → 76px and the chairs came down FURTHER — canvases
+// 116..148 → 68..88 wide, backrest half-widths 31..39 → 24..28, and armrests
+// pulled in so the whole furniture footprint (78..86px; 65px for the pod) now
+// sits INSIDE the figure's own widest span (90px) instead of outside it, which
+// is what read as "too wide".
 // Sizes match the sprite canvases in tools/gen_assets.py 1:1.
 export const CHAIR_RECT: Record<string, Rect> = {
-  chair_basic: { w: 136, h: 51, left: 92, top: 149 },
-  chair_racer: { w: 140, h: 51, left: 90, top: 149 },
-  chair_exec: { w: 148, h: 51, left: 86, top: 149 },
-  chair_antigrav: { w: 116, h: 51, left: 102, top: 149 }
+  chair_basic: { w: 80, h: 51, left: 120, top: 149 },
+  chair_racer: { w: 84, h: 51, left: 118, top: 149 },
+  chair_exec: { w: 88, h: 51, left: 116, top: 149 },
+  chair_antigrav: { w: 68, h: 51, left: 126, top: 149 }
 };
 
 export interface SceneryItem extends Rect {
