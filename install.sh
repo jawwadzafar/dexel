@@ -105,7 +105,8 @@
 #   --no-desktop             skip ALL desktop integration (icon, .desktop
 #                            entry, GUI shell). CLI + browser only.
 #   --no-app                 keep the icon and the launcher entry, skip only
-#                            the AppImage download (it is ~84 MB).
+#                            the GUI shell: the AppImage download on Linux
+#                            (~84 MB), the Dexel.app build on macOS.
 #   --app                    download the AppImage even with no detected
 #                            desktop session (e.g. installing over ssh for a
 #                            desktop you will log into later).
@@ -191,6 +192,7 @@ APPIMAGE_DIGEST=""
 ICON_INSTALLED=0
 DESKTOP_ENTRY=""
 SHIM_INSTALLED=0
+MAC_APP=""          # where Dexel.app was installed, if it was
 LAUNCHED=none       # none | open | start
 
 # ---------------------------------------------------------------------------
@@ -907,6 +909,22 @@ $ARCHIVE_NAME. Refusing to install."
 detect_session() {
     if [ -n "${DISPLAY:-}" ] || [ -n "${WAYLAND_DISPLAY:-}" ]; then
         HAS_SESSION=1
+        return 0
+    fi
+    # macOS has no $DISPLAY. Without this branch a Mac install always took
+    # the "no desktop session" path: it ran `dexel start` instead of
+    # `dexel open`, so the one-command install never actually showed the
+    # game, and the report told the user no session was detected while they
+    # were looking at their own desktop.
+    #
+    # `launchctl managername` is the honest question, not a guess: it prints
+    # Aqua inside a real GUI login session and Background/StandardIO over
+    # ssh or from a LaunchDaemon, which is exactly the distinction $DISPLAY
+    # draws on Linux. If it is missing or says anything else, this stays 0
+    # and --app still overrides it.
+    if [ "$OS" = darwin ] && have launchctl &&
+        [ "$(launchctl managername 2>/dev/null || true)" = Aqua ]; then
+        HAS_SESSION=1
     fi
 }
 
@@ -1197,6 +1215,159 @@ install_desktop_entry() {
 }
 
 # ---------------------------------------------------------------------------
+# step 7d (macOS) — build and install Dexel.app, the frameless window
+#
+# WHY THIS IS BUILT RATHER THAN DOWNLOADED, unlike Linux's AppImage.
+# The release ships a Linux AppImage and no macOS bundle: darwin/arm64 needs
+# a real macOS toolchain (app/internal/activity/provider_darwin.go is cgo —
+# Cocoa/CoreGraphics — so a CGO_ENABLED=0 darwin build does not degrade, it
+# fails to link), which the Linux release runner does not have.
+# scripts/mac-release.sh exists for the signed+notarized artifact and is
+# deliberately NOT used here: it wants a tag, it may prompt for a signing
+# identity, and it uploads. For "I cloned this and ran the installer" the
+# right answer is a plain local unsigned build.
+#
+# WHY IT IS BEST-EFFORT AND NEVER FATAL.
+# The window is optional (ARCHITECTURE.md Decision 17: `dexel open` falls
+# back to the browser, which runs the same game). The Rust/Tauri toolchain is
+# a large ask that the CLI itself does not need, so a machine without it gets
+# a clear notice and a working install rather than a failed one. Every exit
+# from this function is exit 0.
+#
+# WHERE IT LANDS.
+# /Applications when that is writable WITHOUT sudo, else ~/Applications. This
+# installer does not sudo — that rule is older than this function and this
+# function does not get to break it — so an admin-only /Applications means a
+# personal install, announced rather than silent. `dexel open` looks in both
+# (cmd_lifecycle.go's desktopAppCandidates) and `dexel uninstall` removes
+# both (cmd_uninstall.go's macAppBundleCandidates).
+# ---------------------------------------------------------------------------
+
+# mac_app_toolchain_missing — echoes the missing piece, or nothing.
+#
+# cargo alone is not enough: the bundle is produced by the `tauri` cargo
+# subcommand, which is a separate install (`cargo install tauri-cli`) and is
+# the piece most likely to be absent on a machine that has Rust.
+mac_app_toolchain_missing() {
+    if ! have cargo; then
+        printf '%s' "cargo (install rustup: https://rustup.rs)"
+        return 0
+    fi
+    if ! cargo tauri --version >/dev/null 2>&1; then
+        printf '%s' "the tauri CLI (run: cargo install tauri-cli --version '^2')"
+        return 0
+    fi
+    printf ''
+}
+
+# mac_app_dest — the bundle directory to install into, honouring the
+# no-sudo rule. Echoes the PARENT directory.
+#
+# -w on the directory is the test, not "am I root": /Applications is
+# group-writable by `admin` on a default macOS install, which is why this
+# usually succeeds for the machine's own user and needs no privilege
+# escalation at all.
+mac_app_dest() {
+    if [ -d /Applications ] && [ -w /Applications ]; then
+        printf '%s' /Applications
+        return 0
+    fi
+    printf '%s' "$HOME/Applications"
+}
+
+install_mac_app() {
+    if [ "$OS" != darwin ]; then
+        return 0
+    fi
+    if [ "$NO_DESKTOP" = 1 ]; then
+        return 0
+    fi
+    if [ "$NO_APP" = 1 ]; then
+        info "window    skipped (--no-app); \`dexel open\` will use your browser"
+        return 0
+    fi
+    # Only from a clone: the archive and release rungs have no Rust source
+    # to build, and downloading a bundle is not an option until a release
+    # ships one.
+    if [ "$SOURCE" != source ]; then
+        info "window    not built (installing from a $SOURCE, not a clone);"
+        info "          \`dexel open\` will use your browser"
+        return 0
+    fi
+    _missing=$(mac_app_toolchain_missing)
+    if [ -n "$_missing" ]; then
+        say ""
+        say "==> skipping the desktop window: no $_missing"
+        info "the CLI is installed and works; \`dexel open\` will use your browser."
+        info "install that, re-run this script, and you get the frameless window."
+        return 0
+    fi
+
+    say ""
+    say "==> building Dexel.app — the frameless desktop window (optional)"
+    info "this compiles Rust and takes a few minutes the first time"
+
+    # The Go daemon that lives INSIDE the bundle, named for this host's Rust
+    # target triple (scripts/build-sidecar.sh explains the capital D). With
+    # no arguments it builds exactly the host triple, which is what we want.
+    if ! ( cd "$REPO_DIR" && bash scripts/build-sidecar.sh >&2 ); then
+        warn "could not build the bundled runtime for Dexel.app. The CLI is
+       installed and works; \`dexel open\` will use your browser."
+        return 0
+    fi
+
+    # --bundles app: the .app only. The default also builds a .dmg, which is
+    # a disk image for SHIPPING a build to someone else — pure waste when the
+    # destination is this machine's own /Applications.
+    if ! ( cd "$REPO_DIR/desktop/src-tauri" && cargo tauri build --bundles app >&2 ); then
+        warn "\`cargo tauri build\` failed — see the output above. The CLI is
+       installed and works; \`dexel open\` will use your browser."
+        return 0
+    fi
+
+    _built="$REPO_DIR/desktop/src-tauri/target/release/bundle/macos/Dexel.app"
+    if [ ! -d "$_built" ]; then
+        warn "the build reported success but produced no Dexel.app. The CLI is
+       installed and works; \`dexel open\` will use your browser."
+        return 0
+    fi
+
+    _parent=$(mac_app_dest)
+    _dest="$_parent/Dexel.app"
+    mkdir -p "$_parent" || {
+        warn "could not create $_parent; skipping the desktop window."
+        return 0
+    }
+
+    # Remove-then-copy, because a bundle is a DIRECTORY: copying over an
+    # existing one merges two builds' files rather than replacing them, and
+    # a stale file left behind in Contents/ is exactly the kind of bug that
+    # only shows up at launch. Idempotent by construction — a re-run
+    # replaces whatever is there.
+    #
+    # A running copy is stopped first: `open -a` on a bundle whose files are
+    # being swapped underneath it is undefined, and the old window is about
+    # to be out of date anyway. It is not an error if nothing was running.
+    if have pkill; then
+        pkill -x dexel-desktop >/dev/null 2>&1 || true
+    fi
+    rm -rf "$_dest" 2>/dev/null || true
+    if ! cp -R "$_built" "$_parent/"; then
+        warn "could not install Dexel.app into $_parent. The CLI is installed
+       and works; \`dexel open\` will use your browser."
+        return 0
+    fi
+    MAC_APP="$_dest"
+    say "==> installed $_dest"
+    if [ "$_parent" != /Applications ]; then
+        info "/Applications was not writable without sudo, so this is a"
+        info "personal install. \`dexel open\` looks here too."
+    fi
+    info "unsigned: the first launch may need a right-click > Open, or"
+    info "System Settings > Privacy & Security > Open Anyway."
+}
+
+# ---------------------------------------------------------------------------
 # just start
 #
 # The one thing this installer's older self refused to do, and the one thing
@@ -1398,6 +1569,9 @@ report() {
     if [ "$SHIM_INSTALLED" = 1 ]; then
         say "desktop shell at $BINDIR/dexel-desktop.AppImage"
     fi
+    if [ -n "$MAC_APP" ]; then
+        say "desktop window at $MAC_APP"
+    fi
     if [ -n "$DESKTOP_ENTRY" ]; then
         if [ "$ICON_INSTALLED" = 1 ]; then
             say "in your app grid as \"Dexel\", with its own icon"
@@ -1445,13 +1619,16 @@ report() {
         say "dexel; it enabled no services and registered no login items. Making it come"
         say "back on every login is a separate, explicit \`dexel autostart enable\`."
     fi
-    if [ "$OS" = darwin ]; then
+    if [ "$OS" = darwin ] && [ -z "$MAC_APP" ]; then
         say ""
-        say "On macOS this installed the CLI only. The Dexel.app window is built and"
-        say "signed by scripts/mac-release.sh and ships as a .dmg; when a release"
-        say "carries one, drag Dexel.app into /Applications and \`dexel open\` finds"
-        say "it there on its own (ARCHITECTURE.md Decision 17). Until then \`dexel"
-        say "open\` uses your browser, which is a supported front door."
+        say "On macOS this installed the CLI only — no Dexel.app window. \`dexel"
+        say "open\` uses your browser, which is a supported front door"
+        say "(ARCHITECTURE.md Decision 17) and runs the same game."
+        say ""
+        say "To get the frameless window: from a clone of this repo, with rustup"
+        say "and \`cargo install tauri-cli --version '^2'\` present, re-run this"
+        say "script — it builds Dexel.app and installs it for you. A signed .dmg"
+        say "is a separate thing, produced by scripts/mac-release.sh for releases."
     fi
     say ""
     say "Uninstall — one command, and it is the exact reversal of the above:"
@@ -1671,6 +1848,7 @@ do_release_install() {
     install_binary                         # 7
     install_desktop_app                    # 7b: the AppImage + its shim
     install_desktop_entry                  # 7c: the icon + the launcher
+    install_mac_app                        # 7d: Dexel.app, the window (macOS)
     make_state_dirs                        # 8
     verify_installed                       # 10
     path_advice                            # 9
@@ -1683,6 +1861,7 @@ do_release_install() {
 # which only a release carries). By this point the binary is already in place.
 finish_common() {
     install_desktop_entry                  # 7c: the icon + the launcher (Linux)
+    install_mac_app                        # 7d: Dexel.app, the window (macOS)
     make_state_dirs                        # 8
     verify_installed                       # 10
     path_advice                            # 9

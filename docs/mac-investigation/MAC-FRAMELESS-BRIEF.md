@@ -338,8 +338,66 @@ session is still the honest confirmation and I cannot run one here.
      responding and a frameless window has no other close affordance until
      Esc/G. Left alone deliberately — it is a frontend change needing its own
      visual gate, and it is not what was asked for here.
-  2. **Phase 2** (install.sh builds + installs `Dexel.app` on macOS) — still to
-     do. Note the brief suggests `scripts/mac-release.sh`; that exists but is
-     the tagged/signed/notarized/uploading path and is the wrong tool. The
-     right recipe is `bash scripts/build-sidecar.sh` then `cargo tauri build`.
-  3. Sound and click-to-react on macOS remain unverified (audio, not visual).
+  2. Sound and click-to-react on macOS remain unverified (audio, not visual).
+
+## PHASE 2 — DONE. `install.sh` builds and installs `Dexel.app` on a Mac
+
+`install_mac_app` runs on the from-source rung only (the archive and release
+rungs have no Rust to build and no bundle to download), builds
+`scripts/build-sidecar.sh` then `cargo tauri build --bundles app` — the `.app`
+only, since the default also produces a `.dmg`, which is for shipping a build
+to someone else and is pure waste when the destination is this machine — and
+installs it to `/Applications`, or `~/Applications` when `/Applications` needs
+admin, because this installer does not sudo. Every failure path is exit 0 with
+a clear notice: the window is optional and the CLI must still install.
+
+**A second bug, found while testing.** `detect_session` only looked at
+`$DISPLAY`/`$WAYLAND_DISPLAY`, which macOS does not set — so a Mac install
+always took the "no desktop session" branch, ran `dexel start` instead of
+`dexel open`, and told the user no session was detected while they were
+looking at their own desktop. The one-command install therefore never showed
+the game on a Mac even once the app existed. Now `launchctl managername` =
+`Aqua` answers it honestly (it says `Background`/`StandardIO` over ssh, which
+is the distinction `$DISPLAY` draws on Linux).
+
+Also: `report`'s macOS paragraph still said "this installed the CLI only... the
+window ships as a .dmg", which is now false when the window was in fact
+installed. It is printed only when no app was installed, and rewritten.
+
+`dexel open`'s lookup gained `~/Applications/Dexel.app`, second — `/Applications`
+wins because a shared install should beat a personal one. The uninstall side
+needed **no change**: `cmd_uninstall.go`'s `macAppBundleCandidates` already
+listed both roots, in both capitalisations.
+
+**Proven end to end**, from a throwaway `HOME` + `DEXEL_INSTALL_DIR`:
+
+* `--dry-run` wrote nothing outside the temp dir.
+* A real run built the CLI, built the sidecar, built `Dexel.app`, installed it
+  to `/Applications`, started the runtime and **opened the frameless window** —
+  a brand-new dexel at LV 1 with 0 coins, screenshotted and judged: no traffic
+  lights, own pixel titlebar, edge-to-edge. Report line: `desktop window at
+  /Applications/Dexel.app`.
+* With a `HOME` whose rustup config is absent, it **skipped gracefully** —
+  "skipping the desktop window: no the tauri CLI (run: cargo install
+  tauri-cli...)" — and the CLI still installed and started. That path was
+  exercised by accident before it was exercised on purpose, which is the best
+  kind of test of a never-fail branch.
+* `dexel uninstall --yes` printed `removed /Applications/Dexel.app` and the
+  bundle was gone.
+
+**Gates:** `shellcheck -s sh install.sh`, `dash -n`, `bash -n`;
+`go build ./... && go vet ./...`; full `go test ./...`; `bash
+scripts/test-race.sh`; `npx tsc --noEmit` + `npm run build` with no bundle
+drift.
+
+**Machine restored afterwards** (the owner asked for it): the throwaway install
+and its temp `HOME` are gone, `/Applications/Dexel.app` is back to this tree's
+build, the runtime is running on its original port with its save intact, and
+`alwaysOnTop` is back to the value recorded at the start of the session.
+
+One honest note from the teardown: a cleanup line of mine ran
+`"$T/bin/dexel" stop` **without** overriding `HOME`, so it stopped the owner's
+real runtime rather than the throwaway one. It shut down gracefully and
+persisted its save (`persist=2ms`), and it was restarted on the same port with
+the save loaded — no data lost, but it is exactly the class of mistake that
+makes a temp-HOME test worth doing with the env var on every single line.
