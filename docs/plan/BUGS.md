@@ -76,8 +76,65 @@ geometry), gated by real in-game renders judged by eye until it clearly reads as
   been our local gates (real, but CI must come alive before production tag).
 - SF-1/3/4/5/6/7 + 10 NITs — queued into the post-PR-5 fix wave.
 
-- **BUG-9 — `dexel stop` escalates to SIGKILL consistently** (observed in every
-  installer gate: "did not exit within 5s… escalating"). The graceful path
-  (persist + shutdown) seems slower than the CLI's 5s patience, or something
-  blocks shutdown. Investigate: the provider Stop wg.Wait (known rough edge)?
-  the HTTP Shutdown? Raise the CLI wait or fix the slow path.
+- **BUG-9 — `dexel stop` escalates to SIGKILL consistently. FIXED 2026-08-25.**
+  (Observed in every installer gate: "did not exit within 5s… escalating".)
+
+  **Root cause: `os.File.Fd()`.** Measured, not guessed — a SIGQUIT dump of a
+  hung runtime put goroutine 1 in `LinuxProvider.Stop` → `wg.Wait`, and all 12
+  reader goroutines in a bare blocking `read(2)` syscall (`internal/poll.FD.Read`
+  with no netpoller wait). The reason they were blocking rather than parked in
+  the poller is one line in the hotplug rewrite's `evdevScanner.Open`:
+  `syscall.Fstat(int(f.Fd()), &st)`. `os.File.Fd()` puts the descriptor **back
+  into blocking mode** and takes it off Go's netpoller for good, and closing
+  such an fd CANNOT interrupt an in-flight read — internal/poll defers the real
+  `close(2)` until the read returns. So `Stop()` waited for the next key or
+  mouse event on **every** device; on an idle gate machine (no page open, nobody
+  typing) that never came, and `dexel stop` spent 5s on the lifecycle endpoint,
+  5s more on SIGTERM, then hard-killed. Isolated probe of the two variants:
+  `OpenFile` + `Fd()` → 0 of 12 readers returned within 2s of `Close()`;
+  without `Fd()` → 12 of 12 returned in ~6ms each.
+
+  Everything else on the path was innocent, with numbers: `persist` (SQLite)
+  **1ms**, `httpSrv.Shutdown` **0s** even with three live WebSocket connections
+  and a real browser page open (nhooyr.io/websocket hijacks the connection, and
+  `http.Server.Shutdown` by design neither closes nor waits for hijacked
+  connections).
+
+  **Fix.** (a) `evdevScanner.Open` now opens each node with
+  `syscall.Open(..., O_RDONLY|O_NONBLOCK|O_CLOEXEC)`, fstats the **raw** fd
+  (never through `Fd()`), and wraps it with `os.NewFile` — which registers the
+  pollable evdev fd with the netpoller, so `Close()` interrupts a blocked read
+  in milliseconds. (b) `Stop()` bounds its wait anyway (`stopWaitTimeout`,
+  500ms) and says so out loud if it ever has to abandon a reader, so no future
+  kernel quirk can make shutdown hang again; each start generation gets its own
+  WaitGroup so an abandoned wait can never collide with a later `Start()`.
+  (c) `main.go`'s shutdown closure now logs a per-phase timing breakdown (the
+  bug was invisible for a day because the log said "shutting down" and then
+  nothing), and `http.Server.Shutdown`'s budget dropped from 5s — the CLI's
+  *entire* patience — to 1s (`httpShutdownGrace`); the save still goes first and
+  unbounded, because losing progress is the only unacceptable outcome.
+  The CLI's 5s `stopGrace` is unchanged and is now generous headroom rather than
+  a coin flip (`shutdown_budget_test.go` asserts that relationship).
+
+  **Before → after** (same box, real Linux provider, 12 input devices):
+  `dexel stop` 10.12s / 10.12s / 10.13s / 10.12s / 10.12s with a hard kill every
+  time → **0.109s / 0.109s / 0.108s / 0.109s / 0.109s**, and 0 escalations in 10
+  consecutive stop cycles with a real browser page (live WebSocket) open, save
+  file mtime+hash advancing on every one. In-runtime breakdown after the fix:
+  `persist=1ms provider.Stop=83-109ms http.Shutdown=0s total=84-110ms`
+  (provider.Stop is 12 sequential poller-closes at ~7ms each — the whole
+  graceful path is now ~1% of the CLI's grace).
+
+  Same fix cures a bug nobody had filed: `dexel pause` calls `provider.Stop()`
+  from the single-owner loop, so pausing an idle machine used to freeze the
+  entire game (ticks, WS broadcasts, autosave) until the next keystroke. Pause
+  now returns in ~0.1s.
+
+  Regression tests (`app/internal/activity/provider_linux_shutdown_test.go`,
+  `app/shutdown_budget_test.go`): the real scanner's fds must be non-blocking
+  and interruptible (a FIFO stands in for an evdev node, so it runs anywhere);
+  `Stop()` on real `/dev/input` must return promptly (skipped where no node is
+  readable); `Stop()` must stay bounded even against a reader that never
+  returns; and non-blocking fds must still DELIVER events (counted keystrokes),
+  since an interruptible fd that stops counting would be a worse bug. Both
+  fd-level tests were confirmed to FAIL against the old `Fd()` code.

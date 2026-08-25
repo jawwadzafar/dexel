@@ -43,6 +43,20 @@ const (
 	tickerInterval   = 2500 * time.Millisecond
 )
 
+// httpShutdownGrace is how long the graceful stop waits for the HTTP
+// server to drain (BUG-9). It is a loopback server whose only long-lived
+// connections are WebSockets — which nhooyr.io/websocket hijacks, and
+// http.Server.Shutdown by design neither closes nor waits for hijacked
+// connections — so a normal drain is instant and this is purely a ceiling
+// on the pathological case (a request stuck mid-write). The state save
+// has already completed by the time this runs, so the cost of hitting the
+// ceiling is nothing but a closed socket the page reconnects over.
+//
+// It was 5 seconds, exactly matching the CLI's whole stop grace, which
+// left the graceful path no budget at all: any delay ahead of it and the
+// runtime was killed before Shutdown could return.
+const httpShutdownGrace = 1 * time.Second
+
 // suspendGapThreshold is how much wall-clock time a single 1 Hz tick may
 // cover that the MONOTONIC clock did not, before the runtime treats the
 // tick as landing on the far side of a machine suspend (or a large clock
@@ -557,13 +571,43 @@ func runServe(mode serveMode, args []string) {
 	// `case <-controlCh:` (POST /api/lifecycle/stop) call this and only
 	// this, so there is exactly one place that decides what "shutting
 	// down" means.
+	// The ORDER is the contract, and it is deliberate (BUG-9): the save
+	// goes FIRST and unbounded, because losing progress is the only truly
+	// unacceptable outcome of a stop and a local SQLite write is
+	// milliseconds; everything after it is bounded, because nothing after
+	// it is worth being killed for. provider.Stop bounds itself
+	// (activity.stopWaitTimeout), and http.Shutdown gets httpShutdownGrace
+	// rather than the 5s it used to get — with the save already on disk,
+	// waiting seconds for a lingering connection buys nothing and risks
+	// the CLI's patience running out mid-shutdown, which is exactly how
+	// BUG-9 ended in a SIGKILL every time.
+	//
+	// The timings line is not decoration: BUG-9 was invisible for a whole
+	// day of installer gates because the log said "shutting down" and then
+	// nothing at all, so nobody could tell WHICH phase was hanging. Now
+	// every stop leaves the breakdown behind.
 	shutdown := func() {
 		log.Println("shutting down: saving state...")
+		t0 := time.Now()
 		persist()
+		tPersist := time.Now()
 		_ = provider.Stop()
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		_ = httpSrv.Shutdown(ctx)
+		tProvider := time.Now()
+		ctx, cancel := context.WithTimeout(context.Background(), httpShutdownGrace)
+		httpErr := httpSrv.Shutdown(ctx)
 		cancel()
+		tHTTP := time.Now()
+		if httpErr != nil {
+			// A deadline here means a connection was still draining. Said
+			// out loud, because the alternative is a mystery delay in the
+			// timings line below.
+			log.Printf("http shutdown did not drain within %s (%v) — exiting anyway; the save is already on disk", httpShutdownGrace, httpErr)
+		}
+		log.Printf("shutdown timings: persist=%s provider.Stop=%s http.Shutdown=%s total=%s",
+			tPersist.Sub(t0).Round(time.Millisecond),
+			tProvider.Sub(tPersist).Round(time.Millisecond),
+			tHTTP.Sub(tProvider).Round(time.Millisecond),
+			tHTTP.Sub(t0).Round(time.Millisecond))
 	}
 
 	// persistConfig writes EVERY half of config.json this process owns

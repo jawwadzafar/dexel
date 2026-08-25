@@ -74,9 +74,17 @@ const startPollInterval = 25 * time.Millisecond
 
 // stopGrace is how long `dexel stop` waits for a graceful exit before
 // escalating (PLATFORM_NOTES.md §2: "Escalate to SIGKILL after a 5s
-// grace ... and say so loudly"). It matches the runtime's own 5s
-// http.Server.Shutdown timeout, so a runtime that is merely finishing a
-// slow shutdown is never killed for it.
+// grace ... and say so loudly").
+//
+// It used to be justified as "it matches the runtime's own 5s
+// http.Server.Shutdown timeout" — which was the whole problem (BUG-9):
+// equal budgets mean the CLI's patience expires at the exact moment the
+// runtime's last phase does, so ANY delay ahead of that phase ends in a
+// SIGKILL. The runtime's graceful path now bounds itself to well under a
+// second in total (see main.go's shutdown closure and
+// httpShutdownGrace), so 5s is deliberately generous headroom for a slow
+// disk rather than a coin flip, and shutdown_budget_test.go asserts that
+// relationship instead of a comment claiming it.
 const stopGrace = 5 * time.Second
 
 // killGrace is the short second wait after SIGKILL, purely so `dexel

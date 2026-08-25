@@ -83,6 +83,23 @@ const (
 	// device: open succeeds, read returns EIO) degrades to one
 	// open/read/close per second instead of a hot loop.
 	defaultMinRescanInterval = 1 * time.Second
+
+	// stopWaitTimeout is how long Stop() waits for the reader goroutines
+	// after closing their fds. With poller-backed non-blocking fds they
+	// come back in single-digit milliseconds, so 500ms is ~50x headroom
+	// for a loaded machine — and it is a CEILING, not a delay: the normal
+	// path returns as soon as the last reader does. It is deliberately
+	// small enough that persist + Stop + http.Shutdown together stay far
+	// inside the CLI's stop grace (see main.go's shutdown closure), so a
+	// graceful stop can never again lose the race to SIGKILL (BUG-9).
+	stopWaitTimeout = 500 * time.Millisecond
+
+	// eagainPollInterval is the fallback cadence for a device Go's
+	// netpoller refused to take (see readLoop). 25ms keeps keystroke
+	// coalescing (MouseSampleInterval, 100ms) unaffected while costing
+	// 40 cheap failed reads per second per device — a path we expect never
+	// to run on a real evdev node.
+	eagainPollInterval = 25 * time.Millisecond
 )
 
 // deviceKey identifies one open device NODE INSTANCE, not a path. Paths are
@@ -142,17 +159,48 @@ func (s evdevScanner) Scan() []deviceNode {
 	return nodes
 }
 
+// Open opens one evdev node NON-BLOCKING and hands it to os.NewFile, and
+// it fstats the RAW fd — never os.File.Fd(). Both halves of that sentence
+// are BUG-9 (docs/plan/BUGS.md), the bug that made `dexel stop` escalate to
+// SIGKILL on every single installer gate:
+//
+//	os.File.Fd() puts the file back into BLOCKING mode ("if the file
+//	descriptor is in non-blocking mode, Fd will return the descriptor in
+//	blocking mode", os.File.Fd's own doc) and takes it off Go's netpoller
+//	for good. A read on such an fd is a bare read(2) syscall, and closing
+//	the fd CANNOT interrupt it — internal/poll defers the real close(2)
+//	until the in-flight read returns. So every reader goroutine sat in
+//	read(2) until the user touched a key, Stop()'s wait sat behind them,
+//	and on an idle machine (every gate: no page open, nobody typing) the
+//	CLI's 5s patience ran out and killed the process. Measured: 0 of 12
+//	reader goroutines returned within 2s of Close() with the Fd() variant;
+//	12 of 12 returned within ~6ms without it.
+//
+// So: syscall.Open with O_NONBLOCK|O_CLOEXEC, fstat on that raw int fd
+// (which is what the node-instance deviceKey needs and the only authority
+// on what we actually opened), then os.NewFile — which sees a non-blocking
+// fd, registers it with the netpoller, and thereby makes Close() (and
+// SetReadDeadline, should we ever want it) interrupt a blocked Read within
+// milliseconds. evdev character devices are pollable — that is how every
+// select/epoll-based input reader works — so this is the supported path,
+// not a trick.
+//
+// O_CLOEXEC is passed explicitly because dropping to syscall.Open drops
+// os.OpenFile's implicit one: Go always opens files close-on-exec, and
+// these fds in particular must not leak into a spawned child (`dexel
+// start` spawns the runtime, `dexel restart` spawns another), which would
+// hand it a dozen live input-device descriptors it never asked for.
 func (s evdevScanner) Open(path string) (inputDevice, deviceKey, error) {
-	f, err := os.OpenFile(path, os.O_RDONLY, 0)
+	fd, err := syscall.Open(path, syscall.O_RDONLY|syscall.O_NONBLOCK|syscall.O_CLOEXEC, 0)
 	if err != nil {
 		return nil, deviceKey{}, err
 	}
 	var st syscall.Stat_t
-	if err := syscall.Fstat(int(f.Fd()), &st); err != nil {
-		_ = f.Close()
+	if err := syscall.Fstat(fd, &st); err != nil {
+		_ = syscall.Close(fd)
 		return nil, deviceKey{}, err
 	}
-	return f, keyFromStat(&st), nil
+	return os.NewFile(uintptr(fd), path), keyFromStat(&st), nil
 }
 
 // deviceRetry is one node instance's death history: how many times reading
@@ -184,6 +232,12 @@ type openDevice struct {
 	dev  inputDevice
 	path string
 	key  deviceKey
+
+	// eagainNoted is touched ONLY by this device's own reader goroutine
+	// (there is exactly one, for the life of the open fd), so it needs no
+	// lock: it just keeps the netpoller-fallback warning to one line per
+	// device instead of one per poll.
+	eagainNoted bool
 }
 
 // LinuxProvider reads raw evdev nodes directly (no cgo, no library). If the
@@ -219,7 +273,12 @@ type LinuxProvider struct {
 
 	stopCh   chan struct{}
 	rescanCh chan struct{}
-	wg       sync.WaitGroup
+	// wg is per-START, not per-provider: Stop() abandons the wait if it
+	// ever overruns (see stopWaitTimeout), and a later Start() must not
+	// then be adding to a WaitGroup an abandoned Wait is still parked on.
+	// A fresh WaitGroup per generation makes that structurally impossible
+	// instead of merely unlikely.
+	wg *sync.WaitGroup
 
 	// Seams (defaults filled in by Start / NewLinuxProvider): the scanner
 	// is the OS, logf is the log sink, and the two intervals let tests
@@ -298,8 +357,9 @@ func (p *LinuxProvider) Start() error {
 	p.retry = make(map[deviceKey]*deviceRetry)
 	p.stopCh = make(chan struct{})
 	p.rescanCh = make(chan struct{}, 1)
+	p.wg = &sync.WaitGroup{}
 	p.lastAnyInput = time.Now()
-	stop, rescan := p.stopCh, p.rescanCh
+	stop, rescan, wg := p.stopCh, p.rescanCh, p.wg
 	scanner := p.scanner
 	p.mu.Unlock()
 
@@ -310,8 +370,8 @@ func (p *LinuxProvider) Start() error {
 	p.initialCount = opened
 	p.mu.Unlock()
 
-	p.wg.Add(1)
-	go p.rescanLoop(stop, rescan)
+	wg.Add(1)
+	go p.rescanLoop(wg, stop, rescan)
 
 	if opened == 0 {
 		// BLIND, but live: the rescan loop above is already running, so a
@@ -412,11 +472,15 @@ func (p *LinuxProvider) openMissing(scanner deviceScanner, nodes []deviceNode, s
 		// wg.Add BEFORE releasing the lock: Stop() takes this same lock
 		// before it waits, so a device added here can never be missed by
 		// that wait (which would let a reader goroutine outlive Stop).
-		p.wg.Add(1)
+		// p.wg is read here rather than passed in because it belongs to
+		// THIS start generation, and the p.stopCh == stop check above (same
+		// critical section) is what proves the generation is still ours.
+		wg := p.wg
+		wg.Add(1)
 		p.mu.Unlock()
 
 		opened++
-		go p.readLoop(od, stop)
+		go p.readLoop(wg, od, stop)
 
 		if recovered && logGain {
 			p.logf("activity(linux): RECOVERED — reopened an input device after seeing none; %d device(s) open, honesty restored to global", total)
@@ -433,8 +497,8 @@ func (p *LinuxProvider) openMissing(scanner deviceScanner, nodes []deviceNode, s
 
 // rescanLoop re-enumerates /dev/input periodically, and immediately
 // whenever a reader reports its device died.
-func (p *LinuxProvider) rescanLoop(stop chan struct{}, rescan chan struct{}) {
-	defer p.wg.Done()
+func (p *LinuxProvider) rescanLoop(wg *sync.WaitGroup, stop chan struct{}, rescan chan struct{}) {
+	defer wg.Done()
 
 	ticker := time.NewTicker(p.rescanInterval)
 	defer ticker.Stop()
@@ -481,8 +545,8 @@ func (p *LinuxProvider) triggerRescan() {
 	}
 }
 
-func (p *LinuxProvider) readLoop(d *openDevice, stop chan struct{}) {
-	defer p.wg.Done()
+func (p *LinuxProvider) readLoop(wg *sync.WaitGroup, d *openDevice, stop chan struct{}) {
+	defer wg.Done()
 	buf := make([]byte, inputEventSize)
 	for {
 		select {
@@ -491,6 +555,27 @@ func (p *LinuxProvider) readLoop(d *openDevice, stop chan struct{}) {
 		default:
 		}
 		n, err := d.dev.Read(buf)
+		if errors.Is(err, syscall.EAGAIN) {
+			// The fd is non-blocking (see evdevScanner.Open) and Go's
+			// netpoller normally parks this Read until data arrives, so
+			// EAGAIN never surfaces here. It CAN, on a kernel or a node
+			// where os.NewFile's netpoller registration failed: then the
+			// non-blocking read returns EAGAIN at once. That is emphatically
+			// NOT device death — reporting it as such would spin
+			// death -> rescan -> reopen as fast as the CPU allows — so fall
+			// back to a slow explicit poll, and say once, per device, that
+			// we are doing it.
+			if !d.eagainNoted {
+				d.eagainNoted = true
+				p.logf("activity(linux): %s is not pollable by the Go runtime — falling back to polling it every %s (input is still counted; shutdown stays prompt)", d.path, eagainPollInterval)
+			}
+			select {
+			case <-stop:
+				return
+			case <-time.After(eagainPollInterval):
+			}
+			continue
+		}
 		if err == nil && n <= 0 {
 			// A character device returning 0 bytes with no error is the
 			// EOF-shaped half of device death (a node that went away under
@@ -588,20 +673,33 @@ func (p *LinuxProvider) handleEvent(typ, code uint16, value int32) {
 	}
 }
 
-// Stop closes every opened device and waits for its reader goroutine to
-// exit. Note: closing a fd mid-blocking-read is a known rough edge for
-// plain os.File on Linux (unlike network fds, there is no netpoller
-// integration for character devices) — in the worst case a reader goroutine
-// blocks until the next event arrives on that device before it notices the
-// stop signal. Acceptable for a best-effort provider; see package doc.
+// Stop closes every opened device and waits for its reader goroutines to
+// exit — PROMPTLY, and with a hard ceiling.
+//
+// Prompt is the whole point (BUG-9): the fds are opened non-blocking and
+// live on Go's netpoller (evdevScanner.Open explains why), so closing one
+// makes its blocked Read return immediately instead of waiting for the next
+// key or mouse event. On the machine this was measured on, twelve devices
+// go from "still blocked 2s later" to all twelve back within ~10ms.
+//
+// The ceiling exists anyway, because a shutdown path must not be able to
+// hang on a kernel quirk we have not met yet. If a reader has not returned
+// within stopWaitTimeout, Stop says so out loud and returns: its fd is
+// already closed and its device already dropped from the open set (so this
+// provider is BLIND and reports nothing further), and the goroutine itself
+// ends the moment its read returns — or with the process, whichever comes
+// first. Nothing it can do afterwards is observable: deviceDied sees a
+// different start generation and returns without touching state.
 func (p *LinuxProvider) Stop() error {
 	p.mu.Lock()
 	stop := p.stopCh
 	devices := p.devices
+	wg := p.wg
 	p.stopCh = nil
 	p.rescanCh = nil
 	p.devices = nil
 	p.retry = nil
+	p.wg = nil
 	p.initialCount = 0
 	p.mu.Unlock()
 
@@ -611,8 +709,22 @@ func (p *LinuxProvider) Stop() error {
 	for _, d := range devices {
 		_ = d.dev.Close()
 	}
-	p.wg.Wait()
-	return nil
+	if wg == nil {
+		return nil
+	}
+
+	done := make(chan struct{})
+	go func() {
+		wg.Wait()
+		close(done)
+	}()
+	select {
+	case <-done:
+		return nil
+	case <-time.After(stopWaitTimeout):
+		p.logf("activity(linux): %d input reader goroutine(s) had not returned %s after their fds were closed — abandoning the wait so shutdown stays bounded (they are blind and will end on their next read or with the process)", len(devices), stopWaitTimeout)
+		return nil
+	}
 }
 
 // Snapshot returns the current view of activity. A BLIND provider (zero
