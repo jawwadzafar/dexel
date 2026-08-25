@@ -293,3 +293,15 @@ fixes/features. Delivering updates to installed instances during the freeze:
 rebuild and REPLACE the v0.1.0 release assets in place (the documented
 pre-release exception to the releases-are-immutable rule — that rule resumes
 the moment the owner unfreezes versioning), or install from source.
+
+### WINDOW-POLISH (2026-08-25, owner) — queued behind SETTINGS (same files)
+- **Frameless Tauri window**: drop native decorations; the game's own titlebar
+  becomes the drag region; in-UI close/minimize controls shown ONLY when
+  running inside the shell (the same HTML serves browsers — shell mode must be
+  detectable, e.g. a query param the shell appends; drag/window-control
+  mechanics per current Tauri v2 remote-content rules — needs the agent to
+  verify what works for a webview pointed at a local URL).
+- **Pixel-true canvas scaling**: on window/viewport resize, scale the 640x400
+  game surface preserving aspect — snapping to crisp multiples up to a sane
+  max — then LETTERBOX (center with margins) instead of stretching further;
+  never blur/distort the pixels. Applies to browser and shell alike.
