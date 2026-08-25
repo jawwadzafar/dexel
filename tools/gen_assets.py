@@ -337,18 +337,20 @@ SPEC: list[tuple[str, int, int]] = [
     # COMPOSITING: the chair draws ON TOP of the developer, so every canvas
     # starts at (or below) room row 149 - one row above the CHAIR_TOP_ROOM_Y
     # 150 shoulder line, the extra row being the detail layer's silhouette
-    # halo - and is shoulder-width-plus, never a full-scene slab. PROPORTION
-    # PASS: the developer grew ~1.45x, so every chair grew with him (canvases
-    # 112..120 -> 136..148 wide, backrest half-widths 22..28 -> 31..39) and
-    # got 7 rows shorter as the seam moved down from room y144 to y150.
-    ("chair_basic_form.png", 136, 51),
-    ("chair_basic_detail.png", 136, 51),
-    ("chair_racer_form.png", 140, 51),
-    ("chair_racer_detail.png", 140, 51),
-    ("chair_exec_form.png", 148, 51),
-    ("chair_exec_detail.png", 148, 51),
-    ("chair_antigrav_form.png", 116, 51),
-    ("chair_antigrav_detail.png", 116, 51),
+    # halo - and is shoulder-width-MINUS, never a full-scene slab. SLIMMING
+    # PASS: the owner read the figure as fat and the furniture as too wide, so
+    # the shoulders came down 92 -> 76px and the chairs came down FURTHER
+    # (canvases 116..148 -> 68..88 wide, backrest half-widths 31..39 ->
+    # 24..28) until the whole furniture footprint fits INSIDE the figure's own
+    # widest span instead of straddling it.
+    ("chair_basic_form.png", 80, 51),
+    ("chair_basic_detail.png", 80, 51),
+    ("chair_racer_form.png", 84, 51),
+    ("chair_racer_detail.png", 84, 51),
+    ("chair_exec_form.png", 88, 51),
+    ("chair_exec_detail.png", 88, 51),
+    ("chair_antigrav_form.png", 68, 51),
+    ("chair_antigrav_detail.png", 68, 51),
     # Keyboard (4), 96x24 at (112, 90)
     ("kb_membrane.png", 96, 24),
     ("kb_mech.png", 96, 24),
@@ -874,8 +876,25 @@ def build_monitor() -> Sprite:
 # figure read as a small person with huge hands, lost against a 320x200
 # room. The fix scales the BODY up to the hands rather than shrinking the
 # hands: hood 34x25 -> 48x34 px, shoulders 64 -> 92 px wide, arms 7..11 ->
-# 11..19 px thick, and every chair up with it. Body-to-hand ratios now match
-# a real body seen from behind (shoulders 4.4 hand-widths, hood 2.3).
+# 11..19 px thick, and every chair up with it.
+#
+# SLIMMING PASS (this revision). The scale was then right but the BUILD was
+# not: the owner read the figure as "FAT". Three things caused that, and all
+# three are fixed here without touching anything already approved (the mixed
+# behind/elevated camera, the hands on the keys and the mouse pose, the hood
+# identity, the hand size):
+#   1. the shoulders were 92px across - 4.4 hand-widths, the top of the human
+#      range - so they came down to 76px (3.6 hand-widths, still human, still
+#      1.65x the hood, which is what keeps the hooded read);
+#   2. the torso was a STRAIGHT SLAB at full shoulder width for every row the
+#      player could see, so it now tapers 76 -> 66px across those same rows
+#      (_SH_HW below) - a waist, which is the single biggest part of the fix;
+#   3. the hood's hem drape flared 2px wider than the hood body, widening the
+#      figure exactly where head meets shoulders; the flare is now 1px.
+# The arms were re-pathed to the narrower shoulders (elbows in by 3px,
+# deltoids flush with the new shoulder edge, 11..19 -> 10..16px thick) with
+# every WRIST and HAND left exactly where it was - the reach targets are fixed
+# world positions (the keys, the mouse) and are not negotiable.
 #
 # Vertical budget (why everything is where it is): the SPRINT/STATUS panels
 # cover the scene below room y161 (they are opaque from room y161 to y198,
@@ -885,7 +904,7 @@ def build_monitor() -> Sprite:
 # y99..160:
 #     y100..109  hands on the keys (keyboard rows y90..98 stay visible)
 #     y110..140  hood (the back of the head), 31 rows
-#     y136..149  shoulders / upper back, widening to 92px
+#     y136..149  shoulders / upper back: out to 76px, then tapering
 #     y150+      the chair back, which draws ON TOP from here down
 # The developer's near-camera parts (hood, arms, hands) all live ABOVE room
 # y150; every chair sprite starts AT y150 (its detail halo at y149). That
@@ -952,8 +971,11 @@ DEV_KB_GUARD_ROW = 7
 #
 # The dome is generated rather than hand-listed so the crown is a true
 # quarter-ellipse over 13 rows (a hand-typed table at this size wobbled):
-# half-width climbs 6 -> 22, holds 22 for the body, flares to 24 across the
-# hem where the fabric drapes onto the shoulders, then eases back in. 48 wide
+# half-width climbs 6 -> 22, holds 22 for the body, flares to 23 across the
+# hem where the fabric drapes onto the shoulders, then eases back in (the
+# SLIMMING PASS took that flare down from 24: two extra pixels of drape at the
+# exact row where head meets shoulders read as width on the whole
+# figure). 46 wide
 # is 2.3 hand-widths - the ratio a real hood has to a hand - and it is now
 # unmistakably bigger than either hand, which was half the complaint. The hem stops at room y140 rather than reaching for
 # the chair line: the OTHER half of the complaint was that the shoulders were
@@ -970,37 +992,48 @@ for _d in range(_HOOD_ROUND):
     _HOOD_HW[_HOOD_TOP + _d] = int(round(_HOOD_BODY_HW * (1.0 - _t * _t) ** 0.5))
 for _y in range(_HOOD_TOP + _HOOD_ROUND, 41):
     _HOOD_HW[_y] = _HOOD_BODY_HW
-_HOOD_HW.update({41: 23, 42: 23, 43: 24, 44: 24, 45: 23, 46: 23, 47: 22, 48: 20})
+_HOOD_HW.update({41: 22, 42: 23, 43: 23, 44: 23, 45: 23, 46: 22, 47: 21, 48: 19})
 assert min(_HOOD_HW) == _HOOD_TOP and max(_HOOD_HW) == _HOOD_BOT
-_HOOD_HEM_HW = 24             # widest row; the hem arc below is anchored on it
+_HOOD_HEM_HW = 23             # widest row; the hem arc below is anchored on it
 
 # --- BACK / SHOULDERS -----------------------------------------------------
-# 92px across at the shoulder line (half-width 46, up from 32) - 4.4
+# 76px across at the shoulder line (half-width 38, down from 46) - 3.6
 # hand-widths, which is what a real biacromial span is against a hand, and
-# 1.9x the hood's 48: a solid upper body under a head rather than the sliver
-# of fabric between keyboard and HUD the previous scale gave. Starts at local
-# row 44 INSIDE the hood hem and widens monotonically (no dip -> no notch),
-# steeply enough (30 -> 46 in seven rows) that the widest part of the torso
-# lands ABOVE the backrest crown where the camera can actually see it.
+# 1.65x the hood's 46: a lean upper body under a head, where 4.4 hand-widths
+# of straight slab read as a fat one. Starts at local row 44 INSIDE the hood
+# hem and widens monotonically (no dip -> no notch), steeply enough (26 -> 38
+# in six rows) that the widest part of the torso lands ABOVE the backrest
+# crown where the camera can actually see it.
 #
-# Local rows 44..57 (room y136..149) are the band the player sees BARE: rows
-# 44..48 flanking the hood on both sides, rows 49..57 (room y141..149) as a
-# full-width 92px shoulder block - the "solid upper body" the previous, taller
-# hood left no room for. From row 58 (room y150 = CHAIR_TOP_ROOM_Y) down the
-# backrest covers the middle and the shoulders keep peeking out at the sides
-# of every chair (46 against the widest backrest's 39). Below that the torso
-# tapers to a rounded end at local 74 (room y166), all of it behind the HUD.
+# Local rows 44..57 (room y136..149) are the band the player sees BARE, and
+# this is where the SLIMMING PASS spends its whole budget: rows 44..48 flank
+# the hood on both sides, row 49 is the shoulder line (38), and rows 50..57
+# TAPER back in to 34 - a visible waist across the nine rows the player
+# actually looks at, instead of the full-width slab that was there before.
+# From row 58 (room y150 = CHAIR_TOP_ROOM_Y) down the backrest covers the
+# middle and the torso holds a constant 33 so the shoulders keep peeking out
+# at the sides of every chair (33 against the widest backrest's 28). Below
+# row 67 it tapers to a rounded end at local 74 (room y166), behind the HUD.
 _BACK_TOP = 44
 _BACK_BOT = 74
-_SH_HW = {44: 33, 45: 37, 46: 40, 47: 43, 48: 45, 49: 46}
+# The shoulder ramp UP out of the hood hem (rows 44..49) and the waist taper
+# DOWN from it (rows 50..67), listed row by row because both halves are what
+# the eye reads and neither is a formula: the ramp has to start just wider
+# than the hood hem (23) so there is no notch where fabric meets body, and
+# the taper has to lose a visible 5px per side across the nine BARE rows
+# (49..57) - that is the whole "lean, not slab" fix - then hold 33 through the
+# chair band so the shoulders keep peeking out at the sides of every backrest.
+_SH_HW = {44: 26, 45: 30, 46: 33, 47: 35, 48: 37, 49: 38, 50: 38,
+          51: 37, 52: 37, 53: 36, 54: 36, 55: 35, 56: 34, 57: 34}
+_WAIST_HW = 33                # rows 58..67, the band the chair back covers
 
 
 def _back_hw(y: int) -> int:
     if y in _SH_HW:
         return _SH_HW[y]
-    if y <= 64:
-        return 46
-    return max(18, 46 - ((y - 64) * 3) // 2)   # rounded taper into the seat
+    if y <= 67:
+        return _WAIST_HW
+    return max(15, _WAIST_HW - ((y - 67) * 3) // 2)   # rounded taper into the seat
 
 
 DOME_DY = {"idle": 0, "type_a": 0, "type_b": 0, "mouse": 0, "sleep": 3,
@@ -1062,15 +1095,21 @@ def _back_span(y: int, sdy: int):
 # shoulders that is the ratio a real arm has, and it is what stops the bigger
 # body from wearing spaghetti arms. The forearm also got longer (wrist row 20
 # to elbow row 44, up from 20->40) so the reach still lands on the same keys
-# from a shoulder that is now four rows lower, and the elbow swung out to
-# local x54 (room x118, just outside the shoulder's x114) so the two limbs
-# read as elbows-out arms rather than two parallel tubes. The right arm is the exact
-# mirror for every frame but `mouse`.
+# from a shoulder that is now four rows lower.
+#
+# SLIMMING PASS: 92px shoulders became 76px, so the elbow came IN with them
+# (local x54 -> x61, still just outside the new shoulder edge at x58) and the
+# deltoid moved to x69/row 55, flush with that edge instead of buried three
+# pixels inside a slab. Thickness came down one notch with it (wrist 5.5 ->
+# 4.8, deltoid 9.5 -> 8.0, i.e. 11..19px -> 10..16px), which holds the same
+# arm-to-torso ratio the proportion pass established. The WRIST rows and every
+# hand rect are UNTOUCHED: those are keyboard/mouse world positions.
+# The right arm is the exact mirror for every frame but `mouse`.
 _ARM_BASE_LEFT = [
-    (63, 20, 5.5),    # wrist, just under the hand
-    (59, 32, 6.5),    # forearm - near VERTICAL, only leaning out a little
-    (54, 44, 7.5),    # elbow, swung OUT past the shoulder, at the shoulder line
-    (64, 54, 9.5),    # deltoid, well inside the shoulder mass
+    (63, 20, 4.8),    # wrist, just under the hand
+    (61, 32, 5.6),    # forearm - near VERTICAL, only leaning out a little
+    (61, 43, 6.4),    # elbow, just OUTSIDE the shoulder, above the shoulder line
+    (69, 55, 8.0),    # deltoid, flush with the shoulder edge
 ]
 _HAND_BASE_LEFT = (54, 74, 8, 17)       # x0, x1, y0, y1 (room x118..138, y100..109)
 
@@ -1079,11 +1118,11 @@ _HAND_BASE_LEFT = (54, 74, 8, 17)       # x0, x1, y0, y1 (room x118..138, y100..
 # the shoulder cannot move and everything between it and the hand must
 # lengthen and flatten to get there.
 _ARM_MOUSE_RIGHT = [
-    (176, 20, 5.5),   # wrist over the mouse
-    (167, 30, 6.5),   # forearm, reaching right
-    (154, 40, 7.5),   # elbow, swung well out to the side
-    (140, 48, 8.5),   # upper arm
-    (127, 54, 9.5),   # deltoid (mirror of the left one)
+    (176, 20, 4.8),   # wrist over the mouse
+    (167, 30, 5.6),   # forearm, reaching right
+    (151, 40, 6.6),   # elbow, swung well out to the side
+    (137, 48, 7.3),   # upper arm
+    (122, 55, 8.0),   # deltoid (mirror of the left one)
 ]
 _HAND_MOUSE_RIGHT = (168, 188, 8, 17)   # room x232..252, y100..109
 
@@ -1096,8 +1135,8 @@ _HAND_MOUSE_RIGHT = (168, 188, 8, 17)   # room x232..252, y100..109
 # keyboard far-row guard (DEV_KB_GUARD_ROW) forbids going any higher, so the
 # celebration's energy is spent on width plus the bounce.
 _ARM_CHEER_LEFT = {
-    "cheer_a": [(48, 20, 5.5), (53, 31, 6.0), (58, 42, 7.0), (64, 53, 9.5)],
-    "cheer_b": [(42, 20, 5.5), (49, 31, 6.0), (56, 42, 7.0), (64, 51, 9.5)],
+    "cheer_a": [(48, 20, 4.8), (54, 31, 5.5), (61, 42, 6.4), (69, 53, 8.0)],
+    "cheer_b": [(42, 20, 4.8), (50, 31, 5.5), (59, 42, 6.4), (69, 51, 8.0)],
 }
 _HAND_CHEER_LEFT = {"cheer_a": (38, 58, 8, 17),    # room x102..122
                     "cheer_b": (32, 52, 8, 17)}    # room x96..116
@@ -1105,10 +1144,10 @@ _HAND_CHEER_LEFT = {"cheer_a": (38, 58, 8, 17),    # room x102..122
 # `sleep`: the hands have slid forward-and-down OFF the keys onto the desk
 # lip, the forearms folded short into a slumped shoulder.
 _ARM_SLEEP_LEFT = [
-    (58, 34, 5.5),
-    (58, 44, 6.5),
-    (60, 50, 7.5),
-    (64, 56, 9.5),
+    (58, 34, 4.8),
+    (59, 44, 5.6),
+    (63, 50, 6.6),
+    (69, 56, 8.0),
 ]
 _HAND_SLEEP_LEFT = (52, 72, 22, 31)     # room x116..136, y114..123
 
@@ -1315,11 +1354,11 @@ def _back_v(x: int, y: int, sdy: int, span, arms) -> float:
         v -= 0.7 * (0.3 + max(0.0, (_BACK_TOP + 2 - ry) / 3.0))   # hood-drape/neck AO
     if abs(x - DEV_CX) <= 1 and ry >= _BACK_TOP + 3:
         v -= 0.35                                # centre-back seam
-    for bx in (DEV_CX - 19, DEV_CX + 18):        # shoulder-blade patches
-        if abs(x - bx) <= 9 and _BACK_TOP + 7 <= ry <= _BACK_TOP + 20:
+    for bx in (DEV_CX - 16, DEV_CX + 15):        # shoulder-blade patches
+        if abs(x - bx) <= 8 and _BACK_TOP + 7 <= ry <= _BACK_TOP + 20:
             d = ((x - bx) ** 2 + (ry - (_BACK_TOP + 13)) ** 2) ** 0.5
-            if d <= 10:
-                v -= 0.4 * (1 - d / 10.0)
+            if d <= 9:
+                v -= 0.4 * (1 - d / 9.0)
     if x - x0 <= 3:
         v += 0.7 * (1 - (x - x0) / 4.0)          # rim light on the lit edge
     if _arm_shadow(arms, x, y):
@@ -1466,8 +1505,8 @@ def build_hoodie_classic() -> Sprite:
     # The yoke seam picks up where the hood hem arc stops and runs OUT to the
     # shoulder tips, so hem + seam read as one shoulder yoke. Placed inboard
     # of the hem it just made a second horizontal bar under the first.
-    s.hline(49, DEV_CX - 40, DEV_CX - 26, "shadow")     # yoke seam, left
-    s.hline(49, DEV_CX + 25, DEV_CX + 39, "shadow")     # yoke seam, right
+    s.hline(49, DEV_CX - 33, DEV_CX - 20, "shadow")     # yoke seam, left
+    s.hline(49, DEV_CX + 19, DEV_CX + 32, "shadow")     # yoke seam, right
     return s
 
 
@@ -1493,12 +1532,12 @@ def build_hoodie_tech() -> Sprite:
         hw = _HOOD_HW[y]
         s.dot(DEV_CX - hw, y, "screen")
         s.dot(DEV_CX - hw + 1, y, "screen") if y % 3 == 0 else None
-    s.line(DEV_CX - 33, 53, DEV_CX + 32, 57, "desk_dark")
-    s.line(DEV_CX - 33, 54, DEV_CX + 32, 58, "desk_dark")
+    s.line(DEV_CX - 30, 53, DEV_CX + 29, 57, "desk_dark")
+    s.line(DEV_CX - 30, 54, DEV_CX + 29, 58, "desk_dark")
     s.rect(DEV_CX - 6, 53, DEV_CX + 5, 57, "metal")     # buckle
     # Row 50, on the bare upper back: at the hood hem (row 48) dev_base's own
     # hem arc draws OVER the overlay and chopped this stripe into two tabs.
-    s.hline(50, DEV_CX - 32, DEV_CX + 31, "screen")     # reflective stripe
+    s.hline(50, DEV_CX - 27, DEV_CX + 26, "screen")     # reflective stripe
     return s
 
 
@@ -1513,8 +1552,8 @@ def build_hoodie_cloak() -> Sprite:
         s.vline(x, 30, 47, "shadow")                    # long drape folds
     for x in (DEV_CX - 8, DEV_CX + 7):
         s.vline(x, 36, 47, "shadow")                    # short drape folds
-    s.hline(51, DEV_CX - 35, DEV_CX + 34, "gold")       # gold hem trim
-    for x in (DEV_CX - 30, DEV_CX - 15, DEV_CX + 14, DEV_CX + 29):
+    s.hline(51, DEV_CX - 29, DEV_CX + 28, "gold")       # gold hem trim
+    for x in (DEV_CX - 25, DEV_CX - 12, DEV_CX + 11, DEV_CX + 24):
         s.vline(x, 52, 57, "shadow")                    # skirt folds below it
     return s
 
@@ -1554,24 +1593,27 @@ def build_hoodie_cloak() -> Sprite:
 # the store's composed preview, which renders the full sprite) but they carry
 # no weight in the main scene. Per style, in the visible band:
 #
-#   basic     narrowest back (hw 32) + an aluminium frame rail around it and
+#   basic     narrowest back (hw 25) + an aluminium frame rail around it and
 #             a sparse mesh weave -> an ergonomic mesh task chair.
-#   racer     wide back (hw 35) with raised, cream-stitched side bolsters and
+#   racer     wide back (hw 27) with raised, cream-stitched side bolsters and
 #             a seam cutting off a headrest band -> a gaming bucket seat.
-#   exec      broadest back (hw 39), gold button tufting in a diamond grid,
+#   exec      broadest back (hw 28), gold button tufting in a diamond grid,
 #             the widest and thickest armrest pads -> padded executive.
-#   antigrav  a strongly domed shell (hw 17 at the crown, 31 at the body), no
+#   antigrav  a strongly domed shell (hw 13 at the crown, 24 at the body), no
 #             armrests, no base, screen/lamp glow -> a floating pod.
 #
-# PROPORTION PASS: the developer grew ~1.45x (92px shoulders, a 48x34 hood),
-# so the furniture grew with him - backrest half-widths 22..28 -> 31..39,
-# canvases 96..120 -> 116..148 wide, armrest pads and star bases to match.
-# The ratio is what was preserved, not the pixels: the backrests are still
-# shoulder-width-MINUS (hw 31..39 against the developer's shoulder hw 46, the
-# same 0.70..0.85 fraction as before) so the shoulders still peek out at the
-# sides of all four, and the hood - 31 rows tall, ending at room y140 - still
-# clearly clears every crown. The person stays the primary subject, and now
-# reads as the scene's main subject rather than a doll in a big room.
+# SLIMMING PASS: the owner's other complaint was that the chairs were too
+# wide, and the fix is NOT proportional - as the shoulders slim, the furniture
+# has to slim MORE or the backrest swallows them. Backrest half-widths
+# 31..39 -> 24..28 (0.63..0.74 of the new shoulder hw 38, down from
+# 0.67..0.85 of the old 46) and the armrest pads came in with them, which is
+# the measurement that actually settles it: the whole furniture footprint is
+# now 78/82/86px (65px for the pod) against a figure whose own widest span is
+# 90px, so the chair sits INSIDE the person instead of straddling them. It
+# was 105/110/119px against 100px before - literally wider than its occupant,
+# which is what "too wide" was describing. Per-style identity is unchanged
+# (mesh rail, stitched bolsters, gold tufting, glowing pod), and the hood -
+# 31 rows tall, ending at room y140 - still clearly clears every crown.
 #
 # Everything is authored in ROOM coordinates and converted to the sprite's
 # LOCAL frame via _chair_axes: local x = room x - (160 - w//2), local y =
@@ -1792,19 +1834,19 @@ def build_chair_basic_form() -> Sprite:
     backs (only a little wider than the shoulders, so they peek out at both
     sides), a seat pan tucked beneath, slim armrests, over a gas cylinder +
     star base in the detail layer."""
-    w, h = 136, 51
+    w, h = 80, 51
     s = Sprite(w, h, palette=RAMP)
     ox, oy, cx, half = _chair_axes(w, h)
     _chair_back_panel(s, ox, oy, cx, half, top=150, bottom=182,
-                      hw_body=32, hw_top=29, round_rows=6)
-    _chair_crown_rim(s, ox, oy, 30, 150)
-    _chair_lumbar_seam(s, ox, oy, cx, half, 32, 159)
-    _chair_armrests(s, ox, oy, cx, half, 108, 134, 155, 161,
-                    post_inset=8, post_bot=174)
-    _chair_seat(s, ox, oy, cx, half, 110, 209, 174, 186)
+                      hw_body=25, hw_top=22, round_rows=6)
+    _chair_crown_rim(s, ox, oy, 23, 150)
+    _chair_lumbar_seam(s, ox, oy, cx, half, 25, 159)
+    _chair_armrests(s, ox, oy, cx, half, 122, 139, 155, 161,
+                    post_inset=6, post_bot=174)
+    _chair_seat(s, ox, oy, cx, half, 124, 195, 174, 186)
     # Sparse mesh punctures across the back panel, one ramp step darker.
     for ry in range(156, 182, 5):
-        for rx in range(133, 188, 7):
+        for rx in range(139, 182, 6):
             lx, ly = rx - ox, ry - oy
             rel = max(-1.0, min(1.0, (lx - cx) / half))
             s.dot(lx, ly, ramp_dither(lx, ly, 3.0 - 0.8 * rel - 0.7))
@@ -1813,11 +1855,11 @@ def build_chair_basic_form() -> Sprite:
 
 
 def build_chair_basic_detail() -> Sprite:
-    w, h = 136, 51
+    w, h = 80, 51
     s = Sprite(w, h)
     ox, oy = 160 - w // 2, 200 - h
-    bevel_rect(s, 154 - ox, 185 - oy, 166 - ox, 193 - oy, "metal", "wall_light", "shadow")
-    _chair_star_base(s, 160 - ox, 190 - oy, 197 - oy, 52)
+    bevel_rect(s, 156 - ox, 185 - oy, 164 - ox, 193 - oy, "metal", "wall_light", "shadow")
+    _chair_star_base(s, 160 - ox, 190 - oy, 197 - oy, 34)
     # The slate default tint crushes the tinted mesh near-black, so the
     # detail layer carries the light aluminium FRAME around the backrest
     # (crown rail + both side rails) plus a sparse weave: this is what keeps
@@ -1826,10 +1868,10 @@ def build_chair_basic_detail() -> Sprite:
     # `wall_light` alone is #3d3550 - all but invisible against the slate
     # default tint, which is #2b2b33. The frame therefore reads as CREAM
     # dithered into wall_light: brushed aluminium that survives every tint.
-    _stroke_outline(s, ox, oy, _chair_crown_outline(150, 32, 29, 6, 180),
+    _stroke_outline(s, ox, oy, _chair_crown_outline(150, 25, 22, 6, 180),
                     "cream", dither="wall_light", ratio=0.5)
     for ry in range(157, 180, 5):
-        for rx in range(134, 187, 8):
+        for rx in range(140, 181, 7):
             s.dot(rx - ox, ry - oy,
                   bayer_mix(rx - ox, ry - oy, 0.5, "wall_light", "cream"))
     fab = build_chair_basic_form()
@@ -1843,41 +1885,41 @@ def build_chair_racer_form() -> Sprite:
     """Gaming bucket seat, behind-view: a wide shaped back with the shoulder
     bolsters INTEGRATED as raised side ridges (not detached towers), a seam
     cutting off the headrest band at the top, blocky armrests."""
-    w, h = 140, 51
+    w, h = 84, 51
     s = Sprite(w, h, palette=RAMP)
     ox, oy, cx, half = _chair_axes(w, h)
     _chair_back_panel(s, ox, oy, cx, half, top=150, bottom=184,
-                      hw_body=35, hw_top=31, round_rows=6)
+                      hw_body=27, hw_top=24, round_rows=6)
     # Bolster ridges: brighten the two side bands so the edges read as a
     # bucket seat's raised bolsters cradling the torso.
     for ry in range(157, 185):
-        for (b0, b1) in ((128, 137), (182, 191)):
+        for (b0, b1) in ((133, 140), (179, 186)):
             for rx in range(b0, b1 + 1):
                 lx, ly = rx - ox, ry - oy
                 rel = max(-1.0, min(1.0, (lx - cx) / half))
                 s.dot(lx, ly, ramp_dither(lx, ly, min(4.0, 3.0 - 0.8 * rel + 0.7)))
     # Headrest seam: an AO band across the back, the racing-seat tell that
     # the top section is a separate padded headrest.
-    _chair_lumbar_seam(s, ox, oy, cx, half, 35, 158)
-    _chair_crown_rim(s, ox, oy, 28, 150)
-    _chair_armrests(s, ox, oy, cx, half, 104, 134, 155, 161,
-                    post_inset=8, post_bot=176)
-    _chair_seat(s, ox, oy, cx, half, 106, 213, 176, 188)
+    _chair_lumbar_seam(s, ox, oy, cx, half, 27, 158)
+    _chair_crown_rim(s, ox, oy, 25, 150)
+    _chair_armrests(s, ox, oy, cx, half, 120, 138, 155, 161,
+                    post_inset=6, post_bot=176)
+    _chair_seat(s, ox, oy, cx, half, 122, 197, 176, 188)
     chair_rim_light(s)
     return s
 
 
 def build_chair_racer_detail() -> Sprite:
-    w, h = 140, 51
+    w, h = 84, 51
     s = Sprite(w, h)
     ox, oy = 160 - w // 2, 200 - h
-    bevel_rect(s, 154 - ox, 186 - oy, 166 - ox, 194 - oy, "metal", "wall_light", "shadow")
-    _chair_star_base(s, 160 - ox, 191 - oy, 197 - oy, 54)
+    bevel_rect(s, 156 - ox, 186 - oy, 164 - ox, 194 - oy, "metal", "wall_light", "shadow")
+    _chair_star_base(s, 160 - ox, 191 - oy, 197 - oy, 36)
     # Double stitching up each bolster (racing-seat tell), inside the band
     # the HUD panels leave visible.
-    _stroke_outline(s, ox, oy, _chair_crown_outline(150, 35, 31, 6, 182),
+    _stroke_outline(s, ox, oy, _chair_crown_outline(150, 27, 24, 6, 182),
                     "cream", dither="shadow", ratio=0.6)   # contrast piping
-    for rx in (129, 135, 184, 190):
+    for rx in (134, 139, 180, 185):
         for ry in range(157, 181, 3):
             s.dot(rx - ox, ry - oy, "cream")               # bolster stitching
     fab = build_chair_racer_form()
@@ -1891,34 +1933,34 @@ def build_chair_exec_form() -> Sprite:
     """Executive chair, behind-view: the broadest and most softly rounded
     padded back of the four, the widest and thickest armrest pads, a broad
     seat, over a heavier gas cylinder + base."""
-    w, h = 148, 51
+    w, h = 88, 51
     s = Sprite(w, h, palette=RAMP)
     ox, oy, cx, half = _chair_axes(w, h)
     _chair_back_panel(s, ox, oy, cx, half, top=150, bottom=186,
-                      hw_body=39, hw_top=35, round_rows=6)
-    _chair_crown_rim(s, ox, oy, 35, 150)
-    _chair_lumbar_seam(s, ox, oy, cx, half, 39, 159)
-    _chair_armrests(s, ox, oy, cx, half, 99, 133, 154, 161,
-                    post_inset=9, post_bot=178)
-    _chair_seat(s, ox, oy, cx, half, 102, 217, 178, 190)
+                      hw_body=28, hw_top=25, round_rows=6)
+    _chair_crown_rim(s, ox, oy, 26, 150)
+    _chair_lumbar_seam(s, ox, oy, cx, half, 28, 159)
+    _chair_armrests(s, ox, oy, cx, half, 118, 139, 155, 162,
+                    post_inset=8, post_bot=178)
+    _chair_seat(s, ox, oy, cx, half, 120, 199, 178, 190)
     chair_rim_light(s)
     return s
 
 
 def build_chair_exec_detail() -> Sprite:
-    w, h = 148, 51
+    w, h = 88, 51
     s = Sprite(w, h)
     ox, oy = 160 - w // 2, 200 - h
     # Button tufting on the padded back: a diamond grid of gold buttons,
     # placed in the band the HUD panels leave visible (room y150..160).
-    _stroke_outline(s, ox, oy, _chair_crown_outline(150, 39, 35, 6, 184),
+    _stroke_outline(s, ox, oy, _chair_crown_outline(150, 28, 25, 6, 184),
                     "gold", dither="shadow", ratio=0.5)     # gold hide piping
-    for (bx, by) in ((133, 155), (146, 155), (160, 155), (173, 155), (186, 155),
-                     (126, 160), (140, 160), (153, 160), (167, 160), (180, 160),
-                     (193, 160)):
+    for (bx, by) in ((139, 155), (149, 155), (160, 155), (170, 155), (180, 155),
+                     (134, 160), (144, 160), (155, 160), (165, 160), (175, 160),
+                     (185, 160)):
         s.dot(bx - ox, by - oy, "gold")                     # button tufting
-    bevel_rect(s, 153 - ox, 188 - oy, 167 - ox, 194 - oy, "metal", "wall_light", "shadow")
-    _chair_star_base(s, 160 - ox, 191 - oy, 197 - oy, 56)
+    bevel_rect(s, 155 - ox, 188 - oy, 165 - ox, 194 - oy, "metal", "wall_light", "shadow")
+    _chair_star_base(s, 160 - ox, 191 - oy, 197 - oy, 38)
     fab = build_chair_exec_form()
     outline_from_mask(s, union_mask(fab.mask(), s.mask()), "shadow")
     return s
@@ -1932,40 +1974,40 @@ def build_chair_antigrav_form() -> Sprite:
     below - unmistakably a seat the developer sits IN, not a slab behind
     them. No legs or base (it floats); the levitation glow is in the detail
     layer."""
-    w, h = 116, 51
+    w, h = 68, 51
     s = Sprite(w, h, palette=RAMP)
     ox, oy, cx, half = _chair_axes(w, h)
     _chair_back_panel(s, ox, oy, cx, half, top=150, bottom=184,
-                      hw_body=31, hw_top=17, round_rows=13, curve=True)
-    _chair_crown_rim(s, ox, oy, 17, 150)
-    chair_shade_ellipse(s, 160 - ox, 183 - oy, 42, 9, cx, half, extra=0.3)
+                      hw_body=24, hw_top=13, round_rows=13, curve=True)
+    _chair_crown_rim(s, ox, oy, 13, 150)
+    chair_shade_ellipse(s, 160 - ox, 183 - oy, 31, 9, cx, half, extra=0.3)
     chair_rim_light(s)
     return s
 
 
 def build_chair_antigrav_detail() -> Sprite:
-    w, h = 116, 51
+    w, h = 68, 51
     s = Sprite(w, h)
     ox, oy = 160 - w // 2, 200 - h
     # Levitation glow ring beneath the pod (where a base would be) + drifting
     # float motes + a floor-facing glow shadow: the 'floating' tell.
-    s.outline(126 - ox, 193 - oy, 193 - ox, 196 - oy, "screen")
-    for rx in range(127, 193):
+    s.outline(135 - ox, 193 - oy, 184 - ox, 196 - oy, "screen")
+    for rx in range(136, 184):
         s.dot(rx - ox, 194 - oy, bayer_mix(rx - ox, 194 - oy, 0.4, "screen", "lamp"))
-    s.dots([(120 - ox, 196 - oy), (160 - ox, 198 - oy), (200 - ox, 196 - oy)], "lamp")
-    s.hline(198 - oy, 134 - ox, 186 - ox, "shadow")
+    s.dots([(130 - ox, 196 - oy), (160 - ox, 198 - oy), (189 - ox, 196 - oy)], "lamp")
+    s.hline(198 - oy, 141 - ox, 178 - ox, "shadow")
     # Glow along the visible shell crown so the pod reads as energised - and
     # this is the part the HUD panels never cover.
     # The pod's whole visible edge is energised, plus an energy seam and two
     # float motes INSIDE the band the HUD panels leave visible - the glow ring
     # under the pod is real but sits below room y160 where nothing sees it.
     _stroke_outline(s, ox, oy,
-                    _chair_crown_outline(150, 31, 17, 13, 182, curve=True),
+                    _chair_crown_outline(150, 24, 13, 13, 182, curve=True),
                     "screen", dither="shadow", ratio=0.65)
-    for rx in range(136, 185, 2):
+    for rx in range(142, 178, 2):
         s.dot(rx - ox, 159 - oy, bayer_mix(rx - ox, 159 - oy, 0.5, "shadow", "screen"))
-    s.dots([(126 - ox, 154 - oy), (193 - ox, 156 - oy),
-            (124 - ox, 160 - oy), (195 - ox, 158 - oy)], "lamp")
+    s.dots([(133 - ox, 154 - oy), (186 - ox, 156 - oy),
+            (131 - ox, 160 - oy), (188 - ox, 158 - oy)], "lamp")
     fab = build_chair_antigrav_form()
     outline_from_mask(s, union_mask(fab.mask(), s.mask()), "shadow")
     return s
@@ -2701,6 +2743,65 @@ def assert_dev_lift_headroom(name: str, s: Sprite) -> str:
             f"(local rows 0..{limit - 1})")
 
 
+def assert_hoodie_on_fabric(name: str, s: Sprite) -> str:
+    """SLIMMING-PASS guard. A hoodie style overlay is PRINTED ON the garment,
+    so every one of its marks has to land on a fabric pixel of the frame it
+    was authored against (`idle`). Nothing enforced that before, because the
+    92px shoulder slab was wider than any mark anyone would place; the moment
+    the shoulders came in to 76px, a yoke seam or a hem stripe that was not
+    rescaled with them became a line floating in mid-air beside the figure.
+    This is the check that says the garment still fits the body."""
+    fabric = _dev_fabric_grid("idle")
+    px = s.img.load()
+    bad = [(x, y) for y in range(DEV_H) for x in range(DEV_W)
+           if px[x, y][3] != 0 and not fabric[y][x]]
+    if bad:
+        raise AssertionError(
+            f"{name}: {len(bad)} style mark px land OFF the idle-frame garment "
+            f"(they would float beside the figure); first={bad[0]} "
+            f"(room {(DEV_OX + bad[0][0], DEV_OY + bad[0][1])})")
+    return f"{name}: every style mark printed on the garment"
+
+
+# The band where the chair's BACKREST and the developer's shoulders are both
+# visible: from the chair line down to just above the row the armrest pads
+# start on (an armrest legitimately reaches outside the sitter - a shoulder
+# blade does not).
+PEEK_ROOM_ROWS = range(CHAIR_TOP_ROOM_Y, CHAIR_TOP_ROOM_Y + 4)
+
+
+def assert_shoulder_peek(style: str, form: Sprite, detail: Sprite) -> str:
+    """SLIMMING-PASS guard, and the one that makes "the chairs must slim MORE
+    than the shoulders" a checked rule instead of a good intention: across the
+    rows where backrest and shoulders are both on screen, the DEVELOPER has to
+    be wider than the CHAIR on both sides. Fail it and the backrest has eaten
+    the figure, which is the exact regression a future width tweak would
+    introduce silently - the hooded read depends on shoulders > backrest."""
+    dev = Image.open(ASSETS / "dev_form_idle.png").convert("RGBA").load()
+    ox = 160 - form.w // 2
+    oy = 200 - form.h
+    fp, dp = form.img.load(), detail.img.load()
+    worst = None
+    for ry in PEEK_ROOM_ROWS:
+        cxs = [x for x in range(form.w)
+               if fp[x, ry - oy][3] != 0 or dp[x, ry - oy][3] != 0]
+        dxs = [x for x in range(DEV_W) if dev[x, ry - DEV_OY][3] != 0]
+        if not cxs or not dxs:
+            raise AssertionError(f"chair_{style}: nothing to compare at room y{ry}")
+        left = (ox + min(cxs)) - (DEV_OX + min(dxs))
+        right = (DEV_OX + max(dxs)) - (ox + max(cxs))
+        if left < 1 or right < 1:
+            raise AssertionError(
+                f"chair_{style}: at room y{ry} the backrest is as wide as or wider "
+                f"than the developer (peek L{left}px / R{right}px) - the shoulders "
+                f"no longer show at the sides of the chair")
+        if worst is None or min(left, right) < worst[1]:
+            worst = (ry, min(left, right))
+    return (f"chair_{style}: shoulders peek past the backrest on every row of "
+            f"room y{PEEK_ROOM_ROWS[0]}..{PEEK_ROOM_ROWS[-1]} "
+            f"(tightest {worst[1]}px at y{worst[0]})")
+
+
 # The two desk rects the hands have to actually reach, in ROOM coordinates
 # (from geometry.ts SLOT_RECT): the keyboard and the mouse.
 KB_ROOM_RECT = (112, 90, 207, 113)
@@ -2934,6 +3035,23 @@ def main() -> int:
     for name in HOODIE_FILES:
         try:
             print(" ", assert_dev_region(name, built[name]))
+        except AssertionError as exc:
+            ok = False
+            print("  FAIL:", exc)
+
+    print("\n-- hoodie style marks printed on the garment --")
+    for name in HOODIE_FILES:
+        try:
+            print(" ", assert_hoodie_on_fabric(name, built[name]))
+        except AssertionError as exc:
+            ok = False
+            print("  FAIL:", exc)
+
+    print("\n-- shoulders peek past every backrest (slimming-pass invariant) --")
+    for style in CHAIR_STYLES:
+        try:
+            print(" ", assert_shoulder_peek(style, built[f"chair_{style}_form.png"],
+                                            built[f"chair_{style}_detail.png"]))
         except AssertionError as exc:
             ok = False
             print("  FAIL:", exc)
