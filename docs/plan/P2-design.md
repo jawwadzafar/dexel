@@ -1158,9 +1158,19 @@ regardless.
   the session's own numbers are clean by construction. A general "freeze earning
   while a text input has focus" rule is a possible follow-up, named not built.
 - **A wall-clock duration can exceed observed time** when the process was closed
-  mid-session. Honest by design (ticks are the only thing Dexel can count), and
-  bounded by the 2 h idle rule and the 16 h cap. `observedSeconds` is
-  client-derivable from two fields already sent if it is ever wanted.
+  mid-session, or the machine was suspended. Honest by design (ticks are the only
+  thing Dexel can count), and bounded by the 2 h idle rule and the 16 h cap.
+  `observedSeconds` is client-derivable from two fields already sent if it is
+  ever wanted.
+  - Those two bounds are **wall-clock** bounds, which is what makes this
+    limitation bounded at all. They did not used to be: session timestamps
+    carried a monotonic reading, and on Linux the monotonic clock stops during a
+    suspend, so a laptop's session measured *awake* seconds only — neither bound
+    could fire across a sleep (`docs/plan/BUGS-RESILIENCE.md` R1/R2). Session
+    timestamps are now stored through `session.go`'s `wallClock` (`Round(0)`,
+    which strips the monotonic reading), so the live path has exactly the
+    wall-clock semantics the reloaded-from-disk path always had, and the 2 h /
+    16 h bounds mean what §2.5 says they mean.
 - **The chain is verified in full at every boot**, O(n) HMACs. Trivial today;
   measured, not assumed, in the handoff. If it ever matters, the fix is a
   checkpoint MAC every K rows — named, not built.

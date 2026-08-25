@@ -4,6 +4,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jawwadzafar/dexel/app/internal/activity"
 	"github.com/jawwadzafar/dexel/app/internal/engine"
 )
 
@@ -216,5 +217,110 @@ func TestRestoreStatsKeepsTodayWhenDateMatches(t *testing.T) {
 
 	if got := g.State().Stats.Today; got != today {
 		t.Errorf("today after RestoreStats (same date) = %+v, want %+v (unchanged)", got, today)
+	}
+}
+
+// --- BUGS-RESILIENCE.md R5: a blind provider's seconds are not idle ------
+
+// TestBlindTicksDoNotAccrueIdleSeconds is R5 — the ANALYTICS half of the
+// dead-fd field bug (a GNOME screen lock re-enumerated /dev/input, the
+// provider held dead handles for 19 hours). The provider-side fix stopped
+// the runtime from CLAIMING onBreak while blind, but statsToday.IdleSeconds
+// still climbed one per tick for the whole blind stretch — so "you were
+// idle for 19 hours" survived the fix.
+//
+// The rule under test: idle is a POSITIVE claim ("dexel looked and saw
+// nothing"), so a tick where the provider could not see input at all
+// (activity.HonestyBlind) must accrue to NO bucket — not idle, not active,
+// not paused. Unobserved time is not idleness (ADR 0010). That is also why
+// R8's uptime invariant is stated over observed ticks rather than raw
+// uptime.
+func TestBlindTicksDoNotAccrueIdleSeconds(t *testing.T) {
+	g := New()
+	fakeNow := time.Date(2026, 1, 1, 12, 0, 0, 0, time.Local)
+	g.now = func() time.Time { return fakeNow }
+
+	// Ten honest seconds first, half coding, so both buckets are non-zero
+	// and a later freeze is visible as a freeze rather than as a zero.
+	for i := 0; i < 10; i++ {
+		mood := engine.MoodIdle
+		var keys uint64
+		if i%2 == 0 {
+			mood = engine.MoodCoding
+			keys = 3
+		}
+		g.Tick(engine.TickResult{Honesty: activity.HonestyGlobal, Mood: mood, KeystrokeDelta: keys})
+	}
+	before := g.State().Stats.Today
+	if before.ActiveSeconds != 5 || before.IdleSeconds != 5 {
+		t.Fatalf("warm-up: active=%d idle=%d, want 5 and 5", before.ActiveSeconds, before.IdleSeconds)
+	}
+
+	// The provider goes blind for an hour. The engine's ADR 0010 gate
+	// already refuses MoodOnBreak here, so the mood is MoodIdle — which is
+	// exactly the input that used to be counted as idleness.
+	for i := 0; i < 3600; i++ {
+		g.Tick(engine.TickResult{Honesty: activity.HonestyBlind, Mood: engine.MoodIdle})
+	}
+
+	for _, b := range []struct {
+		name string
+		c    StatCounters
+	}{
+		{"today", g.State().Stats.Today},
+		{"lifetime", g.State().Stats.Lifetime},
+	} {
+		if b.c.IdleSeconds != 5 {
+			t.Errorf("%s.IdleSeconds = %d after an hour of BLIND ticks, want it frozen at 5 — a provider that cannot see input must not claim idleness (R5)", b.name, b.c.IdleSeconds)
+		}
+		if b.c.ActiveSeconds != 5 {
+			t.Errorf("%s.ActiveSeconds = %d, want it frozen at 5 too — a blind tick is not work either", b.name, b.c.ActiveSeconds)
+		}
+		if b.c.PausedSeconds != 0 {
+			t.Errorf("%s.PausedSeconds = %d, want 0 — a blind provider is not a pause (the user never asked dexel to stop looking)", b.name, b.c.PausedSeconds)
+		}
+	}
+
+	// And the open session sees the same freeze, since its numbers are
+	// lifetime deltas.
+	if err := g.StartSession(""); err != nil {
+		t.Fatalf("StartSession: %v", err)
+	}
+	for i := 0; i < 120; i++ {
+		g.Tick(engine.TickResult{Honesty: activity.HonestyBlind, Mood: engine.MoodIdle})
+	}
+	active := g.State().Sessions.Active
+	if active == nil {
+		t.Fatal("no active session")
+	}
+	if active.IdleSeconds != 0 {
+		t.Errorf("session idleSeconds = %d across 120 blind ticks, want 0 (R5)", active.IdleSeconds)
+	}
+}
+
+// TestBlindTicksStillCountContentFreeObservations pins the OTHER half of
+// R5's decision: the honesty gate covers the active/idle TIME split only.
+// A blind provider on macOS can still report keystroke counts it genuinely
+// observed through a non-global path, and those counts are facts, not
+// claims about idleness — so Keystrokes/MouseActiveSeconds must keep
+// accruing exactly as before. This is what stops the R5 gate from being
+// over-applied into "a blind tick is ignored entirely".
+func TestBlindTicksStillCountContentFreeObservations(t *testing.T) {
+	g := New()
+	fakeNow := time.Date(2026, 1, 1, 12, 0, 0, 0, time.Local)
+	g.now = func() time.Time { return fakeNow }
+
+	for i := 0; i < 4; i++ {
+		g.Tick(engine.TickResult{Honesty: activity.HonestyBlind, Mood: engine.MoodIdle, KeystrokeDelta: 2, MouseActive: true})
+	}
+	today := g.State().Stats.Today
+	if today.Keystrokes != 8 {
+		t.Errorf("today.Keystrokes = %d, want 8 — an observed count is not an idleness claim", today.Keystrokes)
+	}
+	if today.MouseActiveSeconds != 4 {
+		t.Errorf("today.MouseActiveSeconds = %d, want 4", today.MouseActiveSeconds)
+	}
+	if today.IdleSeconds != 0 {
+		t.Errorf("today.IdleSeconds = %d, want 0 (R5)", today.IdleSeconds)
 	}
 }

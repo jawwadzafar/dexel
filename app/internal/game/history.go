@@ -95,16 +95,77 @@ type StreakView struct {
 // g.statsFocusBlockMax at the moment rolloverStatsIfNewDay notices the
 // date changed).
 func (g *Game) finalizeDay(date string, counters StatCounters, coins CoinBreakdown, focusBlockMax uint64) {
-	g.history = append(g.history, DayBucket{
+	bucket := DayBucket{
 		Date:                     date,
 		Counters:                 counters,
 		CoinsEarned:              coins.Sum(),
 		LongestFocusBlockSeconds: focusBlockMax,
-	})
-	if len(g.history) > HistoryRetentionDays {
-		g.history = g.history[len(g.history)-HistoryRetentionDays:]
+	}
+
+	// Upsert, never a blind append (docs/plan/BUGS-RESILIENCE.md R7). The
+	// local date can move BACKWARDS — flying west across a date boundary,
+	// or a wrong RTC on resume that NTP then corrects — and
+	// rolloverStatsIfNewDay keys purely on string inequality, so it will
+	// happily finalize a date that already has a bucket. A second bucket
+	// for the same date is not merely redundant: buildHistoryView (and
+	// the History modal it feeds) collapses history by date with
+	// last-write-wins, so the newer PARTIAL bucket would silently
+	// overwrite the full day's numbers in every state message.
+	//
+	// The merge rule is field-wise MAX, not a sum: a finalized day may
+	// never shrink, and summing would double-count whenever the two
+	// finalizes cover overlapping stretches of the same day (which this
+	// layer cannot distinguish from disjoint ones — RestoreStats
+	// finalizes a saved day's counters too). Max is the honest floor: it
+	// keeps whichever finalize actually saw more of the day.
+	if i := g.historyIndexOf(date); i >= 0 {
+		g.history[i] = mergeDayBuckets(g.history[i], bucket)
+	} else {
+		g.history = append(g.history, bucket)
+		if len(g.history) > HistoryRetentionDays {
+			g.history = g.history[len(g.history)-HistoryRetentionDays:]
+		}
 	}
 	g.updateStreak(date, counters.ActiveSeconds >= ActiveDayMinSeconds)
+}
+
+// historyIndexOf returns the index of the bucket already finalized for
+// date, or -1. Linear over at most HistoryRetentionDays entries, which is
+// why finalizeDay can afford it once per day rollover.
+func (g *Game) historyIndexOf(date string) int {
+	for i := range g.history {
+		if g.history[i].Date == date {
+			return i
+		}
+	}
+	return -1
+}
+
+// mergeDayBuckets folds a second finalize of the SAME local date into the
+// bucket already stored, field-wise max (see finalizeDay's R7 comment for
+// why max and not sum). Both arguments carry the same Date.
+func mergeDayBuckets(existing, incoming DayBucket) DayBucket {
+	maxU64 := func(a, b uint64) uint64 {
+		if b > a {
+			return b
+		}
+		return a
+	}
+	return DayBucket{
+		Date: existing.Date,
+		Counters: StatCounters{
+			Keystrokes:         maxU64(existing.Counters.Keystrokes, incoming.Counters.Keystrokes),
+			MouseActiveSeconds: maxU64(existing.Counters.MouseActiveSeconds, incoming.Counters.MouseActiveSeconds),
+			ActiveSeconds:      maxU64(existing.Counters.ActiveSeconds, incoming.Counters.ActiveSeconds),
+			IdleSeconds:        maxU64(existing.Counters.IdleSeconds, incoming.Counters.IdleSeconds),
+			SprintsCompleted:   maxU64(existing.Counters.SprintsCompleted, incoming.Counters.SprintsCompleted),
+			FocusSessions:      maxU64(existing.Counters.FocusSessions, incoming.Counters.FocusSessions),
+			AppSwitches:        maxU64(existing.Counters.AppSwitches, incoming.Counters.AppSwitches),
+			PausedSeconds:      maxU64(existing.Counters.PausedSeconds, incoming.Counters.PausedSeconds),
+		},
+		CoinsEarned:              maxU64(existing.CoinsEarned, incoming.CoinsEarned),
+		LongestFocusBlockSeconds: maxU64(existing.LongestFocusBlockSeconds, incoming.LongestFocusBlockSeconds),
+	}
 }
 
 // updateStreak is §2.3's streak update, applied at finalize for the day
@@ -129,9 +190,22 @@ func (g *Game) updateStreak(date string, active bool) {
 		// Re-finalize guard: the same day finalized twice (should not
 		// happen via the normal rollover call site, but finalizeDay must
 		// stay idempotent for this exact date) — no-op on the counter.
+	case date < g.streakLastActiveDate:
+		// A date EARLIER than the last active day (dates are
+		// statsDateFormat, so string order is calendar order): the local
+		// clock or timezone stepped backwards — flying west, or a wrong
+		// RTC on resume (docs/plan/BUGS-RESILIENCE.md R7). That is not a
+		// gap in the run, it is a re-report of a day already behind us, so
+		// it carries no information about whether the streak continues and
+		// must not reset it to 1. Ignored ENTIRELY — including the
+		// streakLastActiveDate write below, which would otherwise move the
+		// high-water mark backwards and make the next genuine day look
+		// like a gap.
+		return
 	default:
-		// Any other date (a gap of >1 calendar day since
-		// lastActiveDate) starts a fresh run of 1.
+		// A LATER date more than one calendar day on (a real gap of at
+		// least one inactive day since lastActiveDate) starts a fresh run
+		// of 1.
 		g.streakCurrent = 1
 	}
 

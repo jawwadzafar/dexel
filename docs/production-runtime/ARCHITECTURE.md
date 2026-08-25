@@ -481,12 +481,30 @@ Paused time is known precisely — it just isn't activity.
   buckets. One more content-free duration; it goes on
   `app/internal/game/content_free_test.go`'s allow-list explicitly.
 * **Invariant, unit-testable:** for any bucket,
-  `activeSeconds + idleSeconds + pausedSeconds == seconds the runtime was up
-  during that bucket`. Today `activeSeconds + idleSeconds` already partitions
-  every tick (`ActiveSeconds` counts `MoodCoding` ticks, `IdleSeconds` counts
-  every other tick). Pause carves a third, disjoint slice; it must never be
-  added to `IdleSeconds`, and `MouseActiveSeconds`/`Keystrokes`/`FocusSessions`/
-  `AppSwitches` must be provably unchanged across a pause.
+  `activeSeconds + idleSeconds + pausedSeconds == seconds the runtime was
+  AWAKE, TICKING AND OBSERVING during that bucket`. Today
+  `activeSeconds + idleSeconds` already partitions every *observed* tick
+  (`ActiveSeconds` counts `MoodCoding` ticks, `IdleSeconds` counts every other
+  tick **from a provider that could see input**). Pause carves a third,
+  disjoint slice; it must never be added to `IdleSeconds`, and
+  `MouseActiveSeconds`/`Keystrokes`/`FocusSessions`/`AppSwitches` must be
+  provably unchanged across a pause.
+  * The wording is deliberate and was **amended** (`docs/plan/
+    BUGS-RESILIENCE.md` R8): it is not wall-clock uptime. All three counters
+    are incremented per tick, and two things take no tick — a **suspended
+    machine** (Go's tickers are armed on the monotonic clock, so they do not
+    fire during a sleep) and, since R5, a tick where the provider was
+    **blind** (`activity.HonestyBlind`: unobserved time is not idleness, so it
+    accrues to no bucket). For a bucket containing either, wall-clock uptime —
+    what a human, and `/api/lifecycle/status`'s `uptimeSeconds`, mean — is
+    strictly larger than the sum, by exactly the sleep plus the blind
+    seconds. A fourth `suspendedSeconds`/`unobservedSeconds` bucket would
+    restore the wall-clock form; it is recorded as future work in R8, not
+    done here, because a new `StatCounters` field must be threaded through
+    `subtractCounters`, both session wire views, `StatCountersSave` and a
+    schema bump. `internal/game/pause_test.go`'s
+    `TestUptimePartitionIsOverAwakeObservedSecondsNotWallClock` pins the
+    amended claim.
 * `history.DayStat` gains the same field (it mirrors `StatCounters` field for
   field — `app/internal/game/history.go` L56-71), so a day's row can honestly
   show a paused band instead of a suspiciously idle stretch.

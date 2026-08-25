@@ -900,7 +900,12 @@ Field notes the implementers must not improvise on:
   §PR-5) adds a **third** time bucket alongside `activeSeconds`/
   `idleSeconds` — time spent with tracking stopped — never folded into
   idle: for any bucket, `activeSeconds + idleSeconds + pausedSeconds`
-  equals that bucket's whole runtime uptime. Optional client-side for the
+  equals the seconds that bucket's runtime was **awake, ticking and
+  observing** — not its wall-clock uptime (amended per
+  `docs/plan/BUGS-RESILIENCE.md` R8: every counter is per-tick, and neither
+  a suspended machine nor a blind provider's tick lands in any of the
+  three, so a day containing a sleep or a blind stretch sums to less than
+  its wall-clock span). Optional client-side for the
   same stale-server reason as the rest of this shape.
 * `stats.coinsToday` — optional `CoinBreakdown { keystrokes, mouse,
   focusSessions, appSwitches: number }` (A2, ADR 0012), all whole coin

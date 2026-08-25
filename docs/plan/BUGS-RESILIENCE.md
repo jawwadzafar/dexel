@@ -224,6 +224,24 @@ the unexported `g.now`), advance 8h **without ticking** and assert the idle
 auto-end fires backdated — the test `PLATFORM_NOTES.md` §7 said was worth
 writing.
 
+**FIXED 2026-08-25** — `session.go` gained `wallClock(t) = t.Round(0)` and
+applies it at every point a session timestamp is *stored*: `StartSession`
+(`startedAt`/`lastActivityAt`), `advanceSessionActivity`, `finishSession`'s
+`endAt`, and `RestoreActiveSession` (a no-op there, applied so the property
+holds on every path by construction). Every downstream `Sub`/`Before`/`After`
+therefore falls back to the wall clock, exactly as it already did for a restored
+session, and the live/restored asymmetry is gone. Tests:
+`TestSessionTimestampsCarryNoMonotonicReading` (the structural half — the only
+half a test can check, since Go cannot fake a monotonic reading; it fails if
+`wallClock` is reverted to the identity),
+`TestSuspendedMachineAutoEndsSessionOnFirstTickBack` (3h wall jump with no ticks
+after a long run of ticks → backdated idle auto-end, duration = observed work
+only) and `TestElapsedSecondsFollowsWallClockAcrossASuspend`. Note on the
+sketch: it named `session.go:227-232` and `:404` only — `finishSession`'s
+`endAt` (`:262` via `StopSession`) is a third storage point and is stripped too,
+so the in-memory `SessionRecord` matches the reloaded one in clock semantics and
+not merely in printed form.
+
 ### R2 — The session pill freezes across a suspend, then jumps hours on restart
 
 Same root as R1; this one is on screen. `session.go:645-646`:
@@ -303,6 +321,28 @@ Owner: `app/main.go` for the detector and the `eng.Reset()` call;
 four fields). Note the detector also fires on a large NTP step, which is the
 correct response there too.
 
+**FIXED 2026-08-25 (with R4)** — `app/main.go` gained
+`suspendGapExceeded(wallElapsed, monoElapsed, threshold)` (a pure function, so
+it is testable without a real suspend) plus `suspendGapThreshold = 60s`, called
+at the TOP of the 1 Hz tick branch — before the pause gate and before
+`eng.Tick()` — from one `time.Now()` per tick read twice (`Round(0)` for wall,
+raw for monotonic). On a gap it logs one line and calls the existing
+`eng.Reset()`. The bookkeeping is updated on every tick including paused ones,
+so a long pause (which still ticks at 1 Hz) can never look like a gap. Tests:
+`app/suspend_detect_test.go`'s `TestSuspendGapExceeded` (table, including the
+load-bearing "normal 1 Hz tick → must NOT fire" row, a 59s near-miss, a late
+tick where both clocks lag together, and a backward wall step) and
+`TestSuspendGapMeasuredFromOneTimeNowIsZero` (200 real intervals, gap ~0);
+`internal/engine/reset_test.go`'s
+`TestSuspendWithAFrozenMonotonicClockNeedsReset` proves the *engine* half with
+its control: with the monotonic clock advancing only the ~2 awake seconds around
+lid close/open, `FocusGapToleranceSeconds` cannot save the run, the bonus really
+is paid without a `Reset`, and is not paid with one. Notes on the sketch: (a)
+the threshold is 60s, not 5s — 5s is uncomfortably close to a legitimately late
+tick, and 60s is still negligible against any real sleep; (b)
+`g.NoteSuspendGap(gap)` was deliberately NOT added (see R8: the claim was
+amended instead of a fourth bucket being introduced).
+
 ### R4 — `coding` is claimed for ~10 seconds after every resume
 
 `app/internal/engine/engine.go:315-321`:
@@ -374,6 +414,22 @@ is silently dropped from every session. The count-nothing variant needs none of
 that and is already strictly more honest than today. Owner:
 `app/internal/game/game.go` (+ `session.go`/`store` only if the new bucket is
 chosen). **Requires nothing from `internal/activity`.**
+
+**FIXED 2026-08-25** — took the count-nothing variant, as the sketch
+recommends: `recordStats` is now a three-way `switch` (coding → active; else
+`!r.SeesGlobalInput()` → **no bucket at all**; else → idle). No new
+`StatCounters` field, so no `subtractCounters`/wire-view/`StatCountersSave`/
+schema change — and nothing was needed from `internal/activity`. What happens to
+a blind second is therefore: it is counted in *nothing*, which is the R8
+interplay — the three time buckets partition the seconds the runtime was awake
+AND observing, and R8's documented claim was amended to say exactly that. The
+content-free observations a blind tick may still legitimately carry
+(`Keystrokes`, `MouseActiveSeconds`) keep accruing — they are facts, not
+idleness claims. Tests: `internal/game/stats_test.go`'s
+`TestBlindTicksDoNotAccrueIdleSeconds` (an hour of blind ticks → today's,
+lifetime's and the open session's idle all frozen; paused stays 0) and
+`TestBlindTicksStillCountContentFreeObservations` (the guard against
+over-applying the gate).
 
 ### R6 — Log rotation never runs under the supervised autostart paths
 
@@ -465,6 +521,22 @@ larger `ActiveSeconds`), and make `updateStreak` ignore a date **earlier** than
 `app/internal/game/history.go`; `history_test.go` already drives dates as
 strings, so both tests are cheap.
 
+**FIXED 2026-08-25** — `finalizeDay` is now an upsert: `historyIndexOf(date)`
+plus `mergeDayBuckets`, which folds a second finalize of the same date
+field-wise **max** (a finalized day may never shrink, and summing would
+double-count whenever two finalizes cover overlapping stretches — which this
+layer cannot distinguish from disjoint ones, since `RestoreStats` finalizes a
+saved day too). `updateStreak` gained a `date < g.streakLastActiveDate` case
+that returns outright — the counter is untouched AND `streakLastActiveDate` is
+not dragged backwards, which is what keeps the next genuine day an extension
+rather than a gap. No persistence change: `history` is already saved as
+whole buckets keyed by date. Tests:
+`TestFlyingWestDoesNotDuplicateABucketOrResetTheStreak` (four-day streak, local
+date steps back a day and then forward again → exactly one bucket per date, the
+full day's numbers survive in both `g.history` and the wire view, the streak
+stays intact, and the next real day makes it 5) and
+`TestBackwardDateStepDoesNotResetTheStreakDirectly` (the new branch on its own).
+
 ### R8 — The documented uptime partition is false across a suspend
 
 This is a claim the project states three times and tests once.
@@ -514,6 +586,32 @@ say "seconds the runtime was **awake**" and add the missing test that a suspend
 gap does not violate it. (b) is free; (a) is what a user reading "pausedSeconds"
 would expect. Owner decision, not a silent fix. Owner of the code either way:
 `internal/game` + the three docs.
+
+**RESOLVED 2026-08-25 — option (b), amend the claim (owner decision).** The
+invariant now reads `activeSeconds + idleSeconds + pausedSeconds == the seconds
+the runtime was AWAKE, TICKING AND OBSERVING during that bucket` — amended in
+all four places it is stated (`ARCHITECTURE.md` Decision 14, `MIGRATION_PLAN.md`
+§PR-5's exit criterion, `docs/ui-spec.md` §`stats.today`, and the
+`StatCounters.PausedSeconds` doc comment in `internal/game/game.go`) plus
+`pause_test.go`'s own `runUptime` comment, which had *defined* uptime as the
+tick count and so could not fail. The amended claim excludes **two** things, not
+one: the suspend gap this finding is about, and (new, from R5) ticks taken while
+the provider was blind. The missing test was written:
+`TestUptimePartitionIsOverAwakeObservedSecondsNotWallClock` drives observed
+seconds + a pause + a 2h wall jump with no ticks + 40 blind ticks + more
+observed seconds, and asserts both that the sum equals the observed tick count
+and that the unaccounted remainder is *exactly* the sleep plus the blind ticks
+(so the test cannot pass by accident on a bucket that never slept).
+
+**Future work, not done here — option (a), the fourth bucket.** Crediting the
+measured gap to a `suspendedSeconds` bucket (`g.NoteSuspendGap(gap)` from the
+R3 detector, which already measures it) plus an `unobservedSeconds` bucket for
+R5's blind ticks would restore the wall-clock form of the invariant, and is
+what a user reading "pausedSeconds" would expect. It was declined for now
+because each new `StatCounters` field must be threaded through
+`subtractCounters`, `ActiveSessionView`, `SessionView`, `StatCountersSave` and a
+save-schema bump — a wire/schema change this fix wave deliberately does not
+make.
 
 ### R9 — After any runtime restart, every open window is permanently dead
 

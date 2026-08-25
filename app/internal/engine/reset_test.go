@@ -265,3 +265,69 @@ func TestResetClearsEveryCrossTickField(t *testing.T) {
 		}
 	}
 }
+
+// TestSuspendWithAFrozenMonotonicClockNeedsReset is
+// docs/plan/BUGS-RESILIENCE.md R3, and the reason main.go now carries a
+// suspend detector at all.
+//
+// A machine suspend is NOT the same shape as a pause, even though both
+// leave a ten-hour hole in the middle of a run. Go's clocks make the
+// difference: on Linux CLOCK_MONOTONIC does not advance while the machine
+// is suspended, and every delta in this file is monotonic (both operands
+// come from e.now()). So the awake gap the engine sees across a real
+// weekend of sleep is the handful of seconds around lid close and lid
+// open — under FocusGapToleranceSeconds, which means the tolerance rule
+// that protects the pause seam CANNOT protect this one.
+//
+// The control half of this test is the load-bearing half: it proves that
+// without an external Reset the bonus really is paid, so the detector in
+// main.go is not decoration.
+func TestSuspendWithAFrozenMonotonicClockNeedsReset(t *testing.T) {
+	// setup builds an engine 119 monotonic seconds into a sustained run —
+	// one second short of FocusSessionSeconds.
+	setup := func() (*Engine, *stubProvider, *time.Time, uint64) {
+		now := time.Date(2026, 3, 10, 17, 58, 0, 0, time.UTC)
+		p := &stubProvider{honesty: activity.HonestyGlobal}
+		e := New(p)
+		e.now = func() time.Time { return now }
+		var keys uint64
+		for i := 0; i < int(FocusSessionSeconds)-1; i++ {
+			keys++
+			p.snap = activity.Snapshot{KeystrokeCount: keys}
+			if r := e.Tick(); r.FocusSessionsCompleted != 0 {
+				t.Fatalf("a focus session completed early, at tick %d — the setup is wrong", i)
+			}
+			now = now.Add(time.Second)
+		}
+		return e, p, &now, keys
+	}
+
+	// Control: the lid closes for the weekend, the monotonic clock
+	// advances by only the two awake seconds around lid close/open, and
+	// nobody resets anything. The unlock password is itself real input.
+	control, cp, cnow, ckeys := setup()
+	*cnow = cnow.Add(2 * time.Second) // AWAKE seconds only — the suspend is invisible here
+	ckeys++
+	cp.snap = activity.Snapshot{KeystrokeCount: ckeys}
+	if r := control.Tick(); r.FocusSessionsCompleted == 0 {
+		t.Fatal("control: a focus run did NOT survive a suspend-shaped monotonic hole — R3's mechanism is gone, so this test can no longer prove the detector is needed; re-derive before deleting anything")
+	}
+
+	// With the detector's Reset (main.go calls exactly this on the first
+	// tick whose wall-clock delta far exceeds its monotonic delta):
+	e, p, now, keys := setup()
+	e.Reset()
+	*now = now.Add(2 * time.Second)
+	keys++
+	p.snap = activity.Snapshot{KeystrokeCount: keys}
+	r := e.Tick()
+	if r.FocusSessionsCompleted != 0 {
+		t.Error("a focus session completed on the first tick after a suspend — a 'sustained' run with a weekend in the middle is exactly the claim R3 says must never be made")
+	}
+	if r.WorkUnits != 0 {
+		t.Errorf("the first tick after the suspend earned %v work units, want 0", r.WorkUnits)
+	}
+	if r.Mood == MoodCoding {
+		t.Errorf("mood = %q on the first tick after the suspend, want anything but coding — a keystroke observed before the sleep is not 'coding right now' (R4)", r.Mood)
+	}
+}

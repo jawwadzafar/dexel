@@ -830,3 +830,163 @@ func TestNextSessionIdIsAnchoredOnTheLastPersistedRow(t *testing.T) {
 		}
 	})
 }
+
+// --- BUGS-RESILIENCE.md R1/R2: wall-clock session bookkeeping ------------
+
+// TestSessionTimestampsCarryNoMonotonicReading is the STRUCTURAL half of
+// R1/R2's fix, and the only half a test can check directly: no test can
+// stage a real machine suspend, because Go offers no way to fake a
+// monotonic reading — but it CAN prove that the values the suspend bug
+// depended on no longer exist.
+//
+// The bug: time.Now() carries a wall reading AND a monotonic reading, and
+// Sub/Before/After silently prefer the monotonic one when both operands
+// have it. On Linux the monotonic clock stops during a machine suspend, so
+// an in-memory session timestamp compared against a live time.Now()
+// measured AWAKE seconds only — the 2h idle auto-end and the 16h cap
+// could not fire across a sleep, and elapsedSeconds froze. The same
+// comparisons were wall-based for a session RESTORED from disk (time.Parse
+// yields no monotonic reading), so the bug was an asymmetry between the
+// live and reloaded paths.
+//
+// The fix is to store session timestamps through wallClock (Round(0)), so
+// the live path is byte-identical in clock semantics to the reloaded one.
+// t == t.Round(0) is exactly the "carries no monotonic reading" test:
+// time.Time's == compares wall, monotonic and location, and Round(0)
+// differs from t only by having dropped the monotonic reading.
+func TestSessionTimestampsCarryNoMonotonicReading(t *testing.T) {
+	// The REAL clock deliberately — g.now defaults to time.Now, which is
+	// the only source that carries a monotonic reading at all. A fakeClock
+	// built from time.Date never has one, so it could not fail this test.
+	g := New()
+	if err := g.StartSession("proj"); err != nil {
+		t.Fatalf("StartSession: %v", err)
+	}
+	s := g.session
+	if s.startedAt != s.startedAt.Round(0) {
+		t.Errorf("startedAt carries a monotonic reading (%v); a stored session timestamp must be pure wall clock, or the 2h/16h bounds measure awake time only (R1)", s.startedAt)
+	}
+	if s.lastActivityAt != s.lastActivityAt.Round(0) {
+		t.Errorf("lastActivityAt (at start) carries a monotonic reading (%v) (R1)", s.lastActivityAt)
+	}
+
+	g.Tick(tr(4, true, 0, 0))
+	if s.lastActivityAt != s.lastActivityAt.Round(0) {
+		t.Errorf("lastActivityAt carries a monotonic reading (%v) after a real-input tick; the idle auto-end compares it against a later now (R1)", s.lastActivityAt)
+	}
+
+	// And the finished record's EndedAt, which sessionsSummary buckets by
+	// local date and internal/store persists as RFC3339.
+	g.session.startedAt = g.session.startedAt.Add(-2 * time.Hour) // long enough to survive the min-duration discard
+	if err := g.StopSession(); err != nil {
+		t.Fatalf("StopSession: %v", err)
+	}
+	rec, ok := g.TakeEndedSession()
+	if !ok {
+		t.Fatal("StopSession produced no record")
+	}
+	if rec.EndedAt != rec.EndedAt.Round(0) {
+		t.Errorf("record EndedAt carries a monotonic reading (%v); the in-memory record must match the reloaded one's clock semantics (R1)", rec.EndedAt)
+	}
+	if rec.StartedAt != rec.StartedAt.Round(0) {
+		t.Errorf("record StartedAt carries a monotonic reading (%v) (R1)", rec.StartedAt)
+	}
+}
+
+// TestSuspendedMachineAutoEndsSessionOnFirstTickBack is R1's behavioural
+// half, staged the only way a suspend CAN be staged in a unit test: the
+// wall clock jumps forward while NO ticks are taken (which is exactly what
+// a suspend looks like from inside the process — Go's tickers are armed on
+// the monotonic clock and do not fire during a sleep), and the session's
+// timestamps are the wall-clock values the fix now stores.
+//
+// The "regardless of process uptime" half matters: the process here has
+// already been up for a long run of ticks before the sleep, so nothing
+// about this outcome can depend on a fresh start or a reload.
+func TestSuspendedMachineAutoEndsSessionOnFirstTickBack(t *testing.T) {
+	clock := newFakeClock()
+	g := New()
+	g.now = clock.now
+
+	if err := g.StartSession("overnight"); err != nil {
+		t.Fatalf("StartSession: %v", err)
+	}
+	// 20 minutes of ordinary, observed work: ticks and clock in lockstep,
+	// so the process has real uptime behind it.
+	for i := 0; i < 20*60; i++ {
+		g.Tick(tr(uint64(i%5), i%3 == 0, 0, 0))
+		clock.advance(time.Second)
+	}
+	lastActivity := g.session.lastActivityAt
+	if _, ok := g.ActiveSession(); !ok {
+		t.Fatal("session ended during the warm-up run")
+	}
+
+	// The lid closes. Wall clock advances 3h; not a single tick fires.
+	clock.advance(3 * time.Hour)
+
+	// Lid opens: one honest tick.
+	g.Tick(tr(2, false, 0, 0))
+
+	rec, ok := g.TakeEndedSession()
+	if !ok {
+		t.Fatal("a session left open across a 3h suspend did not auto-end on the first tick back (R1)")
+	}
+	if rec.EndReason != endReasonIdle {
+		t.Fatalf("endReason = %q, want %q", rec.EndReason, endReasonIdle)
+	}
+	if !rec.EndedAt.Equal(lastActivity) {
+		t.Errorf("endedAt = %v, want it backdated to the last real activity %v", rec.EndedAt, lastActivity)
+	}
+	if rec.DurationSeconds != 20*60-1 {
+		t.Errorf("durationSeconds = %d, want %d (the observed work only, not the sleep)", rec.DurationSeconds, 20*60-1)
+	}
+	// The invariant the backdated watermark exists to protect: none of the
+	// slept seconds may show up as session idle time.
+	if rec.Counters.IdleSeconds > rec.DurationSeconds {
+		t.Errorf("session idleSeconds = %d exceeds durationSeconds %d — the sleep leaked into the record", rec.Counters.IdleSeconds, rec.DurationSeconds)
+	}
+	if _, active := g.ActiveSession(); active {
+		t.Error("session still active after the auto-end")
+	}
+}
+
+// TestElapsedSecondsFollowsWallClockAcrossASuspend is R2: the pill's two
+// halves — the `startedAt` string and `elapsedSeconds` — must always
+// describe the same quantity. Before the fix, elapsedSeconds was a
+// monotonic delta for a live session (frozen across a sleep, then jumping
+// by the whole gap at the next restart) while startedAt printed wall time.
+func TestElapsedSecondsFollowsWallClockAcrossASuspend(t *testing.T) {
+	clock := newFakeClock()
+	g := New()
+	g.now = clock.now
+
+	if err := g.StartSession(""); err != nil {
+		t.Fatalf("StartSession: %v", err)
+	}
+	// Ten observed minutes, then a 30-minute sleep with no ticks, then one
+	// tick back. 30m is under the 2h idle timeout, so the session survives
+	// and the pill must show the full wall-clock span.
+	for i := 0; i < 600; i++ {
+		g.Tick(tr(3, false, 0, 0))
+		clock.advance(time.Second)
+	}
+	clock.advance(30 * time.Minute)
+	g.Tick(tr(3, false, 0, 0))
+
+	active := g.State().Sessions.Active
+	if active == nil {
+		t.Fatal("session unexpectedly ended (30m is well under the 2h idle timeout)")
+	}
+	want := uint64(600 + 30*60)
+	if active.ElapsedSeconds != want {
+		t.Errorf("elapsedSeconds = %d, want %d — elapsed must be wall time, so it agrees with the startedAt it is rendered next to (R2)", active.ElapsedSeconds, want)
+	}
+	startedAt, err := time.Parse(time.RFC3339, active.StartedAt)
+	if err != nil {
+		t.Fatalf("parse startedAt %q: %v", active.StartedAt, err)
+	}
+	if got := uint64(clock.now().Sub(startedAt) / time.Second); got != active.ElapsedSeconds {
+		t.Errorf("now − startedAt = %d but elapsedSeconds = %d — the two halves of the same wire frame disagree (R2)", got, active.ElapsedSeconds)
+	}
+}

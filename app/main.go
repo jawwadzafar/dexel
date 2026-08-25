@@ -39,6 +39,56 @@ const (
 	tickerInterval   = 2500 * time.Millisecond
 )
 
+// suspendGapThreshold is how much wall-clock time a single 1 Hz tick may
+// cover that the MONOTONIC clock did not, before the runtime treats the
+// tick as landing on the far side of a machine suspend (or a large clock
+// step) and resets the engine's cross-tick memory
+// (docs/plan/BUGS-RESILIENCE.md R3/R4).
+//
+// Why the two clocks disagree at all: one time.Now() carries both a wall
+// reading and a monotonic reading, and on Linux CLOCK_MONOTONIC does not
+// advance while the machine is suspended (that is CLOCK_BOOTTIME). Go's
+// tickers are armed on the monotonic clock, so they do not fire during a
+// suspend either — the loop simply resumes. Nothing accrues for the gap,
+// which is correct; what is NOT correct is that the engine's recency
+// state is then compared against a monotonic clock that skipped the hole:
+// a sustained-typing focus run survives an arbitrarily long sleep and
+// pays FocusSessionBonusWork for it (R3), and mood() keeps claiming
+// MoodCoding for up to CodingRecencyWindow of awake time on the strength
+// of a keystroke that is hours old in wall time (R4) — verbatim the two
+// failures Engine.Reset's own doc comment describes for the pause seam,
+// with nobody calling Reset on resume-from-suspend.
+//
+// 60s is chosen to be unreachable in normal operation while still tiny
+// against any real sleep: a tick covers 1s of wall time, and even a
+// runtime descheduled by heavy swap or a stop-the-world pause would have
+// to lose a full minute of wall clock WITHOUT the monotonic clock
+// advancing to reach it — and if it somehow did, clearing stale recency
+// state is the honest response anyway. It also fires on a large NTP/RTC
+// step, which is the correct response there too.
+const suspendGapThreshold = 60 * time.Second
+
+// suspendGapExceeded is R3/R4's detector, extracted as a pure function so
+// it can be tested without a real suspend (which no test can stage —
+// there is no way to fake a monotonic reading in Go).
+//
+// wallElapsed is the wall-clock time between two consecutive ticks
+// (measured on time.Now() values with their monotonic readings STRIPPED,
+// so Sub cannot silently use the monotonic clock); monoElapsed is the
+// same interval measured on the monotonic clock (two unstripped
+// time.Now() values). In normal operation both are ~tickInterval and the
+// gap is ~0. Across a suspend, wallElapsed is the whole sleep while
+// monoElapsed is a fraction of a second, and the difference IS the sleep.
+//
+// Returns the gap and whether it exceeds threshold. A negative gap
+// (wall stepped backwards) never trips the detector: the engine's own
+// state is entirely monotonic, so a backward wall step cannot make it
+// stale — the day-bucket layer is where a backward step matters (R7).
+func suspendGapExceeded(wallElapsed, monoElapsed, threshold time.Duration) (time.Duration, bool) {
+	gap := wallElapsed - monoElapsed
+	return gap, gap > threshold
+}
+
 // serveMode is WHICH of the three entry points is running today's server
 // body (docs/production-runtime/ARCHITECTURE.md Decision 3 and FORK
 // A). `serve` and `runtime` "are the same code path; the two names exist
@@ -436,6 +486,12 @@ func runServe(mode serveMode, args []string) {
 
 	tickTicker := time.NewTicker(tickInterval)
 	defer tickTicker.Stop()
+	// prevTick/prevTickWall are the same instant read twice: with its
+	// monotonic reading (prevTick) and with that reading stripped
+	// (prevTickWall). Comparing the two deltas at the next tick is how the
+	// loop notices a machine suspend — see suspendGapThreshold (R3/R4).
+	prevTick := time.Now()
+	prevTickWall := prevTick.Round(0)
 	terminalTicker := time.NewTicker(terminalInterval)
 	defer terminalTicker.Stop()
 	tickerTicker := time.NewTicker(tickerInterval)
@@ -521,6 +577,28 @@ func runServe(mode serveMode, args []string) {
 	for {
 		select {
 		case <-tickTicker.C:
+			// Suspend/clock-jump detection runs FIRST, before the pause
+			// gate and before eng.Tick(), so the tick that lands on the
+			// far side of a sleep is already working from cleared engine
+			// state (docs/plan/BUGS-RESILIENCE.md R3/R4). The bookkeeping
+			// is updated on EVERY tick including paused ones, so a long
+			// pause — during which ticks keep firing at 1 Hz — can never
+			// look like a gap.
+			tickNow := time.Now()
+			if gap, jumped := suspendGapExceeded(tickNow.Round(0).Sub(prevTickWall), tickNow.Sub(prevTick), suspendGapThreshold); jumped {
+				// One line per event, not per tick: the detector fires on
+				// the single tick that crosses the hole.
+				log.Printf("resumed after ~%s of suspend or clock jump: resetting engine recency state", gap.Round(time.Second))
+				// The same call the RESUME action makes, for the same
+				// reason (Engine.Reset's doc comment): a keystroke seen
+				// before the hole is not "coding right now", and a focus
+				// run with a hole in the middle is not sustained typing.
+				// Clearing `initialized` also makes the first tick back
+				// contribute exactly zero work.
+				eng.Reset()
+			}
+			prevTick, prevTickWall = tickNow, tickNow.Round(0)
+
 			// PR-5 (ARCHITECTURE.md Decisions 13/14): while paused there
 			// is NO sampling. eng.Tick() is not called, so no mood is
 			// computed, no work unit is produced, no focus run is

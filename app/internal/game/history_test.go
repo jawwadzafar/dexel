@@ -587,3 +587,139 @@ func TestRestoreHistoryAndStreakRoundTrip(t *testing.T) {
 		t.Errorf("StreakSnapshot = (%d %d %s), want (2 5 2026-05-02)", current, longest, lastActive)
 	}
 }
+
+// --- BUGS-RESILIENCE.md R7: a backward local-date step --------------------
+
+// TestFlyingWestDoesNotDuplicateABucketOrResetTheStreak is R7: the local
+// date can move BACKWARDS — flying west across a date boundary, or a wrong
+// RTC on resume that NTP later corrects — and rolloverStatsIfNewDay keys
+// purely on string inequality, so it happily finalizes a date that has
+// already been finalized.
+//
+// Two things used to go wrong at once. finalizeDay appended
+// unconditionally, and buildHistoryView collapses history by date with
+// last-write-wins — so the second, PARTIAL bucket for the earlier date
+// silently overwrote the full day in every state message and in the
+// History modal. And updateStreak saw a date that was neither
+// lastActiveDate nor lastActiveDate+1, fell through to its default branch,
+// and reset a long streak to 1.
+func TestFlyingWestDoesNotDuplicateABucketOrResetTheStreak(t *testing.T) {
+	g := New()
+	activeTick := engine.TickResult{Mood: engine.MoodCoding, KeystrokeDelta: 1}
+	setDate := func(y, m, d int) {
+		g.now = func() time.Time { return time.Date(y, time.Month(m), d, 8, 0, 0, 0, time.Local) }
+	}
+	tickSeconds := func(seconds int) {
+		for i := 0; i < seconds; i++ {
+			g.Tick(activeTick)
+		}
+	}
+
+	// Four consecutive active days. Each day's bucket finalizes on the
+	// next day's first tick, so by the time we are working on 06-04 the
+	// streak is 4 and 06-01..06-03 are finalized.
+	for d := 1; d <= 4; d++ {
+		setDate(2026, 6, d)
+		tickSeconds(2 * ActiveDayMinSeconds)
+	}
+	if s := g.State().Stats.Streak; s.Current != 4 {
+		t.Fatalf("streak before the clock step = %d, want 4", s.Current)
+	}
+	fullThird, ok := bucketFor(g, "2026-06-03")
+	if !ok {
+		t.Fatalf("2026-06-03 was never finalized; history = %+v", g.history)
+	}
+	if fullThird.Counters.ActiveSeconds != uint64(2*ActiveDayMinSeconds) {
+		t.Fatalf("2026-06-03 activeSeconds = %d, want %d", fullThird.Counters.ActiveSeconds, 2*ActiveDayMinSeconds)
+	}
+
+	// The aeroplane lands: the local date steps BACK to 06-03. The first
+	// tick finalizes the in-progress 06-04 and reopens 06-03's bucket for
+	// a handful of seconds.
+	setDate(2026, 6, 3)
+	tickSeconds(10)
+
+	// The clock corrects (or the flight ends): forward to 06-04 again.
+	// This is the finalize that used to append a duplicate 06-03 bucket
+	// carrying only those 10 seconds.
+	setDate(2026, 6, 4)
+	tickSeconds(10)
+
+	if n := countBuckets(g, "2026-06-03"); n != 1 {
+		t.Errorf("history holds %d buckets for 2026-06-03, want exactly 1 — a duplicate bucket overwrites the full day via last-write-wins (R7)", n)
+	}
+	merged, ok := bucketFor(g, "2026-06-03")
+	if !ok {
+		t.Fatal("2026-06-03's bucket disappeared entirely")
+	}
+	if merged.Counters.ActiveSeconds < fullThird.Counters.ActiveSeconds {
+		t.Errorf("2026-06-03 activeSeconds = %d after the backward step, want >= %d — a finalized day must never shrink (R7)", merged.Counters.ActiveSeconds, fullThird.Counters.ActiveSeconds)
+	}
+	// The wire view is where the damage was actually visible.
+	for _, day := range g.State().Stats.History {
+		if day.Date == "2026-06-03" && day.ActiveSeconds < fullThird.Counters.ActiveSeconds {
+			t.Errorf("history wire view for 2026-06-03 shows activeSeconds = %d, want >= %d (R7)", day.ActiveSeconds, fullThird.Counters.ActiveSeconds)
+		}
+	}
+
+	// The streak must have survived: a re-report of a day already behind
+	// us says nothing about whether the run continues.
+	if s := g.State().Stats.Streak; s.Current < 4 {
+		t.Errorf("streak = %d after a backward local-date step, want it intact at >= 4 (R7)", s.Current)
+	}
+	if s := g.State().Stats.Streak; s.Longest < 4 {
+		t.Errorf("longest streak = %d, want >= 4", s.Longest)
+	}
+
+	// And the next genuine day still EXTENDS the run rather than looking
+	// like a gap — i.e. the backward step did not drag
+	// streakLastActiveDate backwards on its way past.
+	setDate(2026, 6, 5)
+	tickSeconds(2 * ActiveDayMinSeconds)
+	if s := g.State().Stats.Streak; s.Current != 5 {
+		t.Errorf("streak on the day after the clock step = %d, want 5 (the run continues) (R7)", s.Current)
+	}
+}
+
+// TestBackwardDateStepDoesNotResetTheStreakDirectly drives updateStreak's
+// new backward-date branch on its own, with no rollover machinery in the
+// way: a finalize for a date EARLIER than streakLastActiveDate must be
+// ignored outright — counter untouched, lastActiveDate not dragged
+// backwards (R7).
+func TestBackwardDateStepDoesNotResetTheStreakDirectly(t *testing.T) {
+	g := New()
+	g.RestoreStreak(40, 40, "2026-06-20")
+
+	g.updateStreak("2026-06-14", true) // a week backwards
+
+	if g.streakCurrent != 40 {
+		t.Errorf("streakCurrent = %d after finalizing an earlier date, want 40 untouched (R7)", g.streakCurrent)
+	}
+	if g.streakLastActiveDate != "2026-06-20" {
+		t.Errorf("streakLastActiveDate = %q, want it left at 2026-06-20 — moving it backwards makes the next real day look like a gap (R7)", g.streakLastActiveDate)
+	}
+
+	// The day after the real high-water mark still extends the run.
+	g.updateStreak("2026-06-21", true)
+	if g.streakCurrent != 41 {
+		t.Errorf("streakCurrent = %d, want 41 (the run continues) (R7)", g.streakCurrent)
+	}
+}
+
+func bucketFor(g *Game, date string) (DayBucket, bool) {
+	for _, b := range g.history {
+		if b.Date == date {
+			return b, true
+		}
+	}
+	return DayBucket{}, false
+}
+
+func countBuckets(g *Game, date string) (n int) {
+	for _, b := range g.history {
+		if b.Date == date {
+			n++
+		}
+	}
+	return n
+}

@@ -5,15 +5,30 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jawwadzafar/dexel/app/internal/activity"
 	"github.com/jawwadzafar/dexel/app/internal/engine"
 )
 
 // runUptime drives `seconds` one-second ticks against g, taking the paused
 // path whenever g is paused and the ordinary engine path otherwise —
 // exactly what main.go's select loop does (PR-5: "eng.Tick() is not called
-// while paused"). It returns the number of seconds the runtime was "up",
-// which for a 1Hz tick is simply the tick count: this helper IS the
-// definition of uptime the invariant below is asserted against.
+// while paused"). It returns the number of seconds the runtime was AWAKE
+// AND TICKING, which for a 1 Hz tick is simply the tick count: this helper
+// IS the definition of uptime the invariant below is asserted against.
+//
+// That definition is deliberate, and it is the AMENDED invariant
+// (docs/plan/BUGS-RESILIENCE.md R8). The three buckets are all
+// incremented per tick, and ticks do not happen while the machine is
+// suspended (Go's tickers are armed on the monotonic clock) — so the sum
+// can only ever equal the seconds the runtime actually ticked, never the
+// wall-clock uptime a human or /api/lifecycle/status would report. Blind
+// ticks are excluded from the sum as well (R5: a provider that cannot see
+// input accrues to no bucket). The invariant is therefore stated over
+// awake, observed seconds; a fourth `suspendedSeconds`/`unobservedSeconds`
+// bucket that would restore the wall-clock version is recorded as future
+// work in BUGS-RESILIENCE.md R8. TestUptimePartitionIsOverAwakeObserved
+// SecondsNotWallClock below pins both exclusions so the claim in the docs
+// and the behaviour of the code cannot drift apart again.
 //
 // pauseAt/resumeAt let a test flip the pause state mid-run at exact second
 // boundaries, so the paused stretch's length is known precisely rather
@@ -44,7 +59,11 @@ func runUptime(g *Game, clock *fakeClock, seconds int, pauseAt, resumeAt int) (u
 // exit criterion, and ARCHITECTURE.md Decision 14's stated invariant:
 //
 //	activeSeconds + idleSeconds + pausedSeconds == seconds the runtime
-//	was up during that bucket
+//	was awake, ticking and observing during that bucket
+//
+// (amended per docs/plan/BUGS-RESILIENCE.md R8 — see runUptime's doc
+// comment for why "up" was the wrong word: a suspended machine takes no
+// ticks, so no bucket can account for the sleep.)
 //
 // It holds for BOTH buckets, and it is what makes paused time honest: the
 // second is accounted for, disjointly, in a bucket that says "dexel was
@@ -556,6 +575,74 @@ func TestActiveSessionViewCarriesEveryCounter(t *testing.T) {
 		}
 		if f.Uint() == 0 {
 			t.Errorf("ActiveSessionView.%s = 0 after a run that exercised every counter — it is probably unmapped in sessionsView (session.go)", name)
+		}
+	}
+}
+
+// --- BUGS-RESILIENCE.md R8: what the partition is actually over -----------
+
+// TestUptimePartitionIsOverAwakeObservedSecondsNotWallClock is R8's
+// missing test. The project stated the partition four times as "seconds the
+// runtime was up", which is false across a machine suspend by exactly the
+// sleep: all three counters are per-tick, and no tick fires while the
+// machine is asleep. Rather than invent a fourth bucket, the claim was
+// amended to say what the code has always done — and this test is what
+// keeps the amended claim honest.
+//
+// It asserts both exclusions in one run:
+//
+//   - a suspend gap (wall clock jumps, no ticks) is in NO bucket, so the
+//     sum tracks the tick count and NOT the wall-clock span; and
+//   - a blind stretch (ticks fire, the provider cannot see) is in no
+//     bucket either (R5).
+func TestUptimePartitionIsOverAwakeObservedSecondsNotWallClock(t *testing.T) {
+	clock := newFakeClock()
+	g := New()
+	g.SetClockForTest(clock.now)
+	start := clock.now()
+
+	// 30 observed seconds, 20 paused, 30 observed — 80 ticks, all sighted.
+	ticks := runUptime(g, clock, 80, 30, 50)
+
+	// The lid closes for two hours: the wall clock moves, no tick fires.
+	clock.advance(2 * time.Hour)
+
+	// Back awake, but the provider is blind for 40 ticks (a dead evdev
+	// handle after the screen lock — today's field bug's shape).
+	for i := 0; i < 40; i++ {
+		g.Tick(engine.TickResult{Honesty: activity.HonestyBlind, Mood: engine.MoodIdle})
+		clock.advance(time.Second)
+		ticks++
+	}
+	const blindTicks = 40
+
+	// Then 30 honest seconds again.
+	ticks += runUptime(g, clock, 30, -1, -1)
+
+	wallSeconds := uint64(clock.now().Sub(start) / time.Second)
+	for _, bucket := range []struct {
+		name string
+		c    StatCounters
+	}{
+		{"today", g.State().Stats.Today},
+		{"lifetime", g.State().Stats.Lifetime},
+	} {
+		sum := bucket.c.ActiveSeconds + bucket.c.IdleSeconds + bucket.c.PausedSeconds
+		if want := uint64(ticks - blindTicks); sum != want {
+			t.Errorf("%s: active(%d)+idle(%d)+paused(%d) = %d, want %d — the partition is over the seconds the runtime was awake, ticking AND observing (R8/R5)",
+				bucket.name, bucket.c.ActiveSeconds, bucket.c.IdleSeconds, bucket.c.PausedSeconds, sum, want)
+		}
+		// The honest gap, asserted rather than hidden: wall-clock uptime
+		// is strictly larger, by the sleep plus the blind stretch. This is
+		// the claim the docs now make instead of the false one.
+		if sum >= wallSeconds {
+			t.Errorf("%s: the bucket sum (%d) is not smaller than the wall-clock span (%d) — this test cannot be proving anything about a suspend", bucket.name, sum, wallSeconds)
+		}
+		if gap := wallSeconds - sum; gap != 2*3600+blindTicks {
+			t.Errorf("%s: unaccounted seconds = %d, want %d (the 2h suspend plus the %d blind ticks, and nothing else)", bucket.name, gap, 2*3600+blindTicks, blindTicks)
+		}
+		if bucket.c.PausedSeconds != 20 {
+			t.Errorf("%s: PausedSeconds = %d, want 20 — a suspend must not be laundered into the pause bucket either", bucket.name, bucket.c.PausedSeconds)
 		}
 	}
 }

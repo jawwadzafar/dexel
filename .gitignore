@@ -47,3 +47,7 @@ app/frontend/node_modules/
 
 # macOS Finder metadata
 .DS_Store
+
+# never commit env/secret files (the sudo-helper pattern reads SUDO_PASSWORD from .env)
+.env
+.path

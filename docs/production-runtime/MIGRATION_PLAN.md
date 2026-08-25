@@ -196,7 +196,12 @@ Per `ARCHITECTURE.md` §6:
 
 **Exit:**
 - Unit test: for any bucket,
-  `activeSeconds + idleSeconds + pausedSeconds == runtime uptime in that bucket`.
+  `activeSeconds + idleSeconds + pausedSeconds == the seconds the runtime was
+  awake, ticking and observing in that bucket` (amended per
+  `docs/plan/BUGS-RESILIENCE.md` R8 — NOT wall-clock uptime: a suspended
+  machine takes no ticks, and a blind provider's ticks accrue to no bucket per
+  R5, so both fall outside all three counters. See ARCHITECTURE.md Decision 14
+  for the full wording.)
 - Unit test: across a pause, `devCash`, `xp`, `sprint.unitsDone`, `keystrokes`,
   `mouseActiveSeconds`, `focusSessions`, `appSwitches` are **all** unchanged, and
   `idleSeconds` did **not** absorb the paused seconds.

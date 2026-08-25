@@ -186,6 +186,29 @@ func subtractCounters(watermark, baseline StatCounters) StatCounters {
 	}
 }
 
+// wallClock strips the MONOTONIC reading from a time.Now() reading, so
+// every timestamp this file *stores* is a pure wall-clock value
+// (docs/plan/BUGS-RESILIENCE.md R1/R2).
+//
+// Why this exists at all: a Go time.Time from time.Now() carries two
+// clocks, and Sub/Before/After use the monotonic one whenever BOTH
+// operands have it. On Linux CLOCK_MONOTONIC does not advance while the
+// machine is suspended, so an in-memory session timestamp compared
+// against a live time.Now() measures AWAKE seconds only — a laptop that
+// sleeps over a weekend never reaches the 2h idle auto-end, the 16h cap
+// becomes a cap on 16 hours of awake time, and elapsedSeconds freezes on
+// screen. The very same comparisons behave as wall time for a session
+// RESTORED from disk, because time.Parse produces no monotonic reading —
+// so the bug was really an asymmetry between the live and reloaded paths.
+//
+// Round(0) at the storage points removes the asymmetry by construction:
+// startedAt/lastActivityAt never carry a monotonic reading, so every
+// downstream Sub/Before/After falls back to the wall clock (Go's rule
+// when EITHER operand lacks one) whether the value came from
+// StartSession or from a save file. durationSecondsBetween's floor at 0
+// is the guard a backward wall step needs.
+func wallClock(t time.Time) time.Time { return t.Round(0) }
+
 // durationSecondsBetween returns end−start in whole seconds, floored at 0
 // (a defensive clamp against a backdated end that could theoretically
 // land before startedAt — should never happen, since every endAt this
@@ -224,7 +247,10 @@ func (g *Game) StartSession(name string) error {
 	if g.session != nil {
 		return ErrSessionAlreadyActive
 	}
-	now := g.now()
+	// wallClock: session timestamps are stored WITHOUT a monotonic
+	// reading, so the 2h idle auto-end, the 16h cap and elapsedSeconds all
+	// measure wall time — see wallClock's doc comment (R1/R2).
+	now := wallClock(g.now())
 	baseline := g.statsLifetime
 	g.session = &activeSession{
 		id:             g.nextSessionID(),
@@ -290,6 +316,12 @@ func (g *Game) finishSession(watermark StatCounters, endAt time.Time, reason str
 	}
 	g.session = nil
 
+	// wallClock: EndedAt is a STORED timestamp too (it survives into
+	// SessionRecord and, through internal/store, into the save as
+	// RFC3339 — which strips the monotonic reading anyway). Stripping it
+	// here means the in-memory record and the reloaded one are identical
+	// in clock semantics, not just in printed form (R1).
+	endAt = wallClock(endAt)
 	durationSeconds := durationSecondsBetween(s.startedAt, endAt)
 	if durationSeconds < SessionMinDurationSeconds {
 		return
@@ -362,6 +394,13 @@ func (g *Game) ActiveSession() (SessionRecord, bool) {
 // session that is BOTH stale enough to idle-end and old enough to have
 // hit the cap ends via the idle rule, which produces the shorter, more
 // honest of the two possible records.
+//
+// Both bounds are WALL-clock bounds: lastActivityAt/startedAt are stored
+// through wallClock, so neither comparison can be measured on a
+// monotonic clock that stops during a machine suspend (R1). A laptop that
+// sleeps overnight mid-session therefore auto-ends on the first tick
+// after wake, backdated to the last real input — the same self-heal a
+// reopened save has always had.
 func (g *Game) checkSessionAutoEnd(r engine.TickResult, now time.Time) {
 	s := g.session
 	if s == nil {
@@ -401,7 +440,10 @@ func (g *Game) advanceSessionActivity(r engine.TickResult, now time.Time) {
 		return
 	}
 	if r.KeystrokeDelta > 0 || r.MouseActive {
-		s.lastActivityAt = now
+		// wallClock for the same reason StartSession uses it: this is a
+		// STORED session timestamp, and the idle auto-end compares it
+		// against a later now (R1).
+		s.lastActivityAt = wallClock(now)
 		s.watermark = g.statsLifetime
 	}
 }
@@ -563,10 +605,15 @@ func (g *Game) RestoreActiveSession(id int, startedAt, lastActivityAt time.Time,
 		g.session = nil
 		return
 	}
+	// wallClock is a no-op for a value that came out of time.Parse (a
+	// parsed time never carries a monotonic reading), and is applied
+	// anyway so "a stored session timestamp is wall-clock" holds by
+	// construction on EVERY path into activeSession, not just the two
+	// that happen to need it today (R1).
 	g.session = &activeSession{
 		id:                       id,
-		startedAt:                startedAt,
-		lastActivityAt:           lastActivityAt,
+		startedAt:                wallClock(startedAt),
+		lastActivityAt:           wallClock(lastActivityAt),
 		baseline:                 baseline,
 		watermark:                watermark,
 		coinsEarned:              coinsEarned,
@@ -640,9 +687,13 @@ func (g *Game) sessionsView() SessionsView {
 	if s := g.session; s != nil {
 		c := subtractCounters(g.statsLifetime, s.baseline)
 		active = &ActiveSessionView{
-			ID:                       s.id,
-			Name:                     g.sessionNames[s.id],
-			StartedAt:                s.startedAt.Format(time.RFC3339),
+			ID:        s.id,
+			Name:      g.sessionNames[s.id],
+			StartedAt: s.startedAt.Format(time.RFC3339),
+			// Wall-clock by construction: startedAt carries no monotonic
+			// reading (wallClock), so this delta is the same wall-clock
+			// quantity the startedAt field above prints — the two halves
+			// of this frame can no longer disagree across a suspend (R2).
 			ElapsedSeconds:           durationSecondsBetween(s.startedAt, g.now()),
 			Keystrokes:               c.Keystrokes,
 			MouseActiveSeconds:       c.MouseActiveSeconds,

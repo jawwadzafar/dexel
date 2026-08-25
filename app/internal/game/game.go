@@ -157,12 +157,26 @@ type StatCounters struct {
 	// "dexel wasn't looking".
 	//
 	// Together with ActiveSeconds/IdleSeconds this partitions every
-	// second the runtime was up during the bucket, exactly once:
-	// ActiveSeconds counts MoodCoding ticks, IdleSeconds counts every
-	// OTHER ticked second, and PausedSeconds counts every second no tick
-	// was taken because the user paused. Hence the unit-tested
-	// invariant `ActiveSeconds + IdleSeconds + PausedSeconds == uptime
-	// seconds in that bucket` (see stats_test.go).
+	// second the runtime was AWAKE, TICKING AND OBSERVING during the
+	// bucket, exactly once: ActiveSeconds counts MoodCoding ticks,
+	// IdleSeconds counts every OTHER ticked second the provider could
+	// actually see, and PausedSeconds counts every second no tick was
+	// taken because the user paused. Hence the unit-tested invariant
+	// `ActiveSeconds + IdleSeconds + PausedSeconds == awake, observed
+	// seconds in that bucket` (see pause_test.go).
+	//
+	// That is NOT wall-clock uptime, and the difference is deliberate
+	// (docs/plan/BUGS-RESILIENCE.md R8, which amended the claim rather
+	// than adding a fourth bucket). Every counter here is per-tick, and
+	// two things produce no tick at all: a SUSPENDED machine (Go's
+	// tickers are armed on the monotonic clock and do not fire during a
+	// sleep) and — since R5 — a tick whose provider was BLIND, which
+	// accrues to nothing because unobserved time is not idleness. So for
+	// any bucket containing a sleep or a blind stretch, the wall-clock
+	// span is strictly larger than this sum. A fourth
+	// suspendedSeconds/unobservedSeconds bucket is future work, priced in
+	// R8: it would have to be threaded through subtractCounters, both
+	// session wire views, StatCountersSave and a schema bump.
 	PausedSeconds uint64 `json:"pausedSeconds"`
 }
 
@@ -755,10 +769,36 @@ func (g *Game) recordStats(r engine.TickResult) (switchCounted bool) {
 		g.statsLifetime.MouseActiveSeconds++
 	}
 
-	if r.Mood == engine.MoodCoding {
+	switch {
+	case r.Mood == engine.MoodCoding:
+		// Observed work. Reached only through a keystroke/mouse delta the
+		// provider actually saw, so it needs no honesty gate of its own.
 		g.statsToday.ActiveSeconds++
 		g.statsLifetime.ActiveSeconds++
-	} else {
+	case !r.SeesGlobalInput():
+		// The provider could not see input AT ALL this tick
+		// (activity.HonestyBlind: a dead evdev handle after a screen
+		// lock, a revoked macOS permission). Unobserved time is NOT
+		// idleness — "idle" is a positive claim that dexel looked and saw
+		// nothing, and ADR 0010 forbids making a claim the runtime cannot
+		// support. So this second is counted in NO bucket: not idle, not
+		// active, not paused (docs/plan/BUGS-RESILIENCE.md R5 — the
+		// analytics half of the dead-fd field bug, whose provider-side
+		// half only stopped the `onBreak` MOOD claim; without this gate a
+		// 19-hour blind window still added 19 hours to statsToday.
+		// IdleSeconds, to lifetime, and to the open session's delta).
+		//
+		// Counting nothing rather than adding an UnobservedSeconds bucket
+		// is deliberate: a new StatCounters field is not free (it must be
+		// threaded through subtractCounters, ActiveSessionView,
+		// SessionView, StatCountersSave and a schema bump — see
+		// session.go's warning on subtractCounters), and the consequence
+		// is the same one a machine suspend already has: the three time
+		// buckets partition the seconds the runtime was awake AND
+		// OBSERVING, not raw wall-clock uptime (R8's amended invariant).
+		// A fourth `unobservedSeconds` bucket is recorded as future work
+		// in BUGS-RESILIENCE.md R8.
+	default:
 		// Idle or OnBreak both count as "not coding right now" for this
 		// tally; ADR 0010's honesty rules already decided, upstream in the
 		// engine, which of those two moods a blind-vs-global provider is
