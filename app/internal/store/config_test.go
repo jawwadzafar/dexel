@@ -223,3 +223,78 @@ func TestSessionNamesToConfigAndSessionNamesFromConfigRoundTrip(t *testing.T) {
 		t.Errorf("round trip = %v, want %v", got, in)
 	}
 }
+
+// TestSoundEnabledOrDefaultResolvesTheThreeStates is SOUND-1's migration
+// contract (docs/ui-spec.md §13.4), and the reason ConfigData.SoundEnabled is
+// a *bool rather than a bool.
+//
+// Sound is the first preference in this file whose honest default is ON, so
+// the zero value the other two lean on means the OPPOSITE of the default
+// here. A plain bool would therefore have made an absent key — which is
+// exactly what every config.json written before this field existed has —
+// indistinguishable from a deliberate mute: every existing user would come
+// back silent, and nothing could tell that apart from a choice they made.
+//
+// So: three states, three answers, asserted through a real file round trip
+// rather than only on the struct, because the round trip is where a `json:`
+// tag typo or an omitempty would quietly collapse two of them into one.
+func TestSoundEnabledOrDefaultResolvesTheThreeStates(t *testing.T) {
+	yes, no := true, false
+	cases := []struct {
+		name  string
+		field *bool
+		want  bool
+		why   string
+	}{
+		{"absent (a pre-SOUND-1 config.json)", nil, true,
+			"never chosen must resolve to the default, which is ON — anything else silently mutes every existing user"},
+		{"explicitly on", &yes, true, "an explicit yes is a yes"},
+		{"explicitly off", &no, false,
+			"an explicit MUTE must survive; this is the state a plain bool could not express"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			// On the struct directly.
+			if got := (ConfigData{SoundEnabled: tc.field}).SoundEnabledOrDefault(); got != tc.want {
+				t.Errorf("SoundEnabledOrDefault() = %v, want %v — %s", got, tc.want, tc.why)
+			}
+			// And through the file, which is what actually ships.
+			path := filepath.Join(t.TempDir(), "config.json")
+			if err := SaveConfig(path, ConfigData{Name: "Pixel", SoundEnabled: tc.field}); err != nil {
+				t.Fatalf("SaveConfig: %v", err)
+			}
+			got, err := LoadConfig(path)
+			if err != nil {
+				t.Fatalf("LoadConfig: %v", err)
+			}
+			if got.SoundEnabledOrDefault() != tc.want {
+				t.Errorf("after a file round trip = %v, want %v — %s", got.SoundEnabledOrDefault(), tc.want, tc.why)
+			}
+		})
+	}
+
+	// The literal shape a hand-edited or pre-SOUND-1 file has: no
+	// `soundEnabled` key at all. Written as raw JSON on purpose — a struct
+	// with a nil pointer marshals to `"soundEnabled": null`, which is a
+	// DIFFERENT byte sequence from an absent key, and both have to resolve
+	// to the default for the migration to be real.
+	for _, raw := range []string{
+		`{"name":"Legacy","alwaysOnTop":true,"showAwayTime":true}`,
+		`{"name":"Legacy","soundEnabled":null}`,
+	} {
+		path := filepath.Join(t.TempDir(), "config.json")
+		if err := os.WriteFile(path, []byte(raw), 0o644); err != nil {
+			t.Fatalf("write %s: %v", raw, err)
+		}
+		cfg, err := LoadConfig(path)
+		if err != nil {
+			t.Fatalf("LoadConfig(%s): %v", raw, err)
+		}
+		if cfg.SoundEnabled != nil {
+			t.Errorf("%s decoded soundEnabled as %v, want nil (never chosen)", raw, *cfg.SoundEnabled)
+		}
+		if !cfg.SoundEnabledOrDefault() {
+			t.Errorf("%s resolved to sound OFF — a config.json that predates this field must boot with the default", raw)
+		}
+	}
+}

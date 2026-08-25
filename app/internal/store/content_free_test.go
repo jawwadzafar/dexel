@@ -183,6 +183,16 @@ func contentFreeRegistry() contentfree.Registry {
 		// are recorded and persisted either way (recording is unchanged:
 		// StatCountersSave.IdleSeconds above keeps its own entry, and
 		// nothing in SaveData branches on this field).
+		//
+		// SoundEnabled (SOUND-1, docs/ui-spec.md §13) is a third such
+		// preference and is listed as *bool rather than bool for a reason
+		// that has nothing to do with privacy: sound defaults ON, so the
+		// pointer is what distinguishes "never chosen" from "chosen off"
+		// (see ConfigData.SoundEnabledOrDefault). A *bool carries exactly
+		// the same three-valued nothing a bool carries two of — no text, no
+		// path, no observation of the work — and the audit lists the
+		// pointer type explicitly so a later change from *bool to bool (or
+		// to *string) cannot slip past unreviewed.
 		"store.ConfigData": {
 			Sample: ConfigData{},
 			Allowed: map[string]string{
@@ -191,6 +201,7 @@ func contentFreeRegistry() contentfree.Registry {
 				"Autostart":    "string",
 				"AlwaysOnTop":  "bool",
 				"ShowAwayTime": "bool",
+				"SoundEnabled": "*bool",
 			},
 			Exceptions: map[string]string{
 				"Name": "ADR 0014 (docs/adr/0014-save-integrity-hmac-and-config-split.md): " +

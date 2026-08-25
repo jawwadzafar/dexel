@@ -5,6 +5,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -276,6 +277,11 @@ func TestConfigWriteThroughPreservesAutostart(t *testing.T) {
 // here would look exactly like "the user never set it" — the quietest
 // possible regression, and the reason both directions are pinned rather
 // than just the new one.
+//
+// SOUND-1 adds the MIRROR of that trap, and it is worse: `soundEnabled`
+// defaults ON, so a clobber there looks like "the user muted it" — a
+// feature that silently disappears rather than one that silently never
+// arrived. Both polarities are pinned below.
 func TestConfigWriteThroughCarriesPrefsWithoutClobberingTheOtherFields(t *testing.T) {
 	dir := t.TempDir()
 	cfgPath := filepath.Join(dir, "config.json")
@@ -287,10 +293,11 @@ func TestConfigWriteThroughCarriesPrefsWithoutClobberingTheOtherFields(t *testin
 		t.Fatalf("seed config: %v", err)
 	}
 
-	// The SET_PREF path: both preferences on, everything else untouched.
+	// The SET_PREF path: every preference on, everything else untouched.
 	if err := writeConfigThrough(cfgPath, "Marvin", map[string]string{"3": "docs pass"}, configPrefs{
 		AlwaysOnTop:  true,
 		ShowAwayTime: true,
+		SoundEnabled: true,
 	}); err != nil {
 		t.Fatalf("writeConfigThrough (prefs): %v", err)
 	}
@@ -298,8 +305,14 @@ func TestConfigWriteThroughCarriesPrefsWithoutClobberingTheOtherFields(t *testin
 	if err != nil {
 		t.Fatalf("reload config: %v", err)
 	}
-	if !got.AlwaysOnTop || !got.ShowAwayTime {
-		t.Errorf("prefs = {alwaysOnTop:%v showAwayTime:%v}, want both true", got.AlwaysOnTop, got.ShowAwayTime)
+	if !got.AlwaysOnTop || !got.ShowAwayTime || !got.SoundEnabledOrDefault() {
+		t.Errorf("prefs = {alwaysOnTop:%v showAwayTime:%v soundEnabled:%v}, want all true", got.AlwaysOnTop, got.ShowAwayTime, got.SoundEnabledOrDefault())
+	}
+	// Written as a CONCRETE value, not left nil: once dexel has written
+	// this file, "never chosen" is over. A nil here would make a later
+	// mute indistinguishable from a fresh install.
+	if got.SoundEnabled == nil {
+		t.Error("soundEnabled is still nil after a write-through — the write must record an explicit choice")
 	}
 	if got.Autostart != "launchd" || got.Name != "Marvin" || got.SessionNames["3"] != "docs pass" {
 		t.Errorf("a prefs write-through disturbed another field: %+v", got)
@@ -310,6 +323,7 @@ func TestConfigWriteThroughCarriesPrefsWithoutClobberingTheOtherFields(t *testin
 	if err := writeConfigThrough(cfgPath, "Zaphod", map[string]string{"3": "docs pass"}, configPrefs{
 		AlwaysOnTop:  true,
 		ShowAwayTime: true,
+		SoundEnabled: true,
 	}); err != nil {
 		t.Fatalf("writeConfigThrough (rename): %v", err)
 	}
@@ -320,11 +334,32 @@ func TestConfigWriteThroughCarriesPrefsWithoutClobberingTheOtherFields(t *testin
 	if got.Name != "Zaphod" {
 		t.Errorf("name = %q, want %q", got.Name, "Zaphod")
 	}
-	if !got.AlwaysOnTop || !got.ShowAwayTime {
-		t.Errorf("prefs = {alwaysOnTop:%v showAwayTime:%v} after a rename, want both still true", got.AlwaysOnTop, got.ShowAwayTime)
+	if !got.AlwaysOnTop || !got.ShowAwayTime || !got.SoundEnabledOrDefault() {
+		t.Errorf("prefs = {alwaysOnTop:%v showAwayTime:%v soundEnabled:%v} after a rename, want all still true", got.AlwaysOnTop, got.ShowAwayTime, got.SoundEnabledOrDefault())
 	}
 	if got.Autostart != "launchd" {
 		t.Errorf("autostart = %q after a rename, want %q", got.Autostart, "launchd")
+	}
+
+	// SOUND-1's own polarity: a user who MUTED must stay muted across a
+	// rename. This is the case a plain-bool field could not express, and
+	// the one an "absent means on" default would silently undo.
+	if err := writeConfigThrough(cfgPath, "Trillian", map[string]string{"3": "docs pass"}, configPrefs{
+		AlwaysOnTop:  true,
+		ShowAwayTime: true,
+		SoundEnabled: false,
+	}); err != nil {
+		t.Fatalf("writeConfigThrough (muted rename): %v", err)
+	}
+	got, err = store.LoadConfig(cfgPath)
+	if err != nil {
+		t.Fatalf("reload config: %v", err)
+	}
+	if got.SoundEnabledOrDefault() {
+		t.Error("sound came back ON after a rename that carried soundEnabled=false — a mute must survive every other write")
+	}
+	if got.Autostart != "launchd" || got.Name != "Trillian" {
+		t.Errorf("the muting write-through disturbed another field: %+v", got)
 	}
 }
 
@@ -345,5 +380,80 @@ func TestConfigWriteThroughOnAMissingFileStillWrites(t *testing.T) {
 	}
 	if got.Autostart != "" {
 		t.Errorf("autostart = %q on a fresh config, want empty", got.Autostart)
+	}
+}
+
+// TestLoadOrInitConfigWritesAnExplicitSoundDefault covers the ONE place
+// SOUND-1's inverted default becomes a byte on disk before the user has
+// touched anything (docs/ui-spec.md §13.4).
+//
+// A fresh install's config.json is a file whose whole purpose is to be
+// hand-edited (ADR 0014's unsigned config side), so it states the default
+// rather than leaving `"soundEnabled": null` in it — `null` where a bool
+// belongs reads like damage, and a file that invites editing must not look
+// broken on first open. The `nil` state itself is NOT removed: it stays the
+// honest representation of "never chosen" for a config.json written before
+// this field existed, which is the case internal/store's
+// TestSoundEnabledOrDefaultResolvesTheThreeStates pins.
+//
+// The nicety is only worth having if it cannot drift from the real default,
+// so this asserts the file agrees with SoundEnabledOrDefault rather than
+// hardcoding `true` twice.
+func TestLoadOrInitConfigWritesAnExplicitSoundDefault(t *testing.T) {
+	t.Setenv("DEXEL_HOME", t.TempDir())
+
+	cfgPath, cfg := loadOrInitConfig()
+	if cfgPath == "" {
+		t.Fatal("loadOrInitConfig could not resolve a config path under a temp DEXEL_HOME")
+	}
+	// What the loader handed the game must AGREE with what it just wrote:
+	// after initialising, the returned config is the config on disk, and a
+	// function that wrote `true` while telling its caller `nil` would be two
+	// answers to one question.
+	if cfg.SoundEnabled == nil {
+		t.Error("the config returned after writing a default still reports soundEnabled as never-chosen")
+	}
+	if !cfg.SoundEnabledOrDefault() {
+		t.Error("a fresh install resolves to sound OFF — SOUND-1's default is ON")
+	}
+
+	// What it WROTE: an explicit value, matching that same default.
+	raw, err := os.ReadFile(cfgPath)
+	if err != nil {
+		t.Fatalf("read the default config it just wrote: %v", err)
+	}
+	if !strings.Contains(string(raw), `"soundEnabled": true`) {
+		t.Errorf("the default config.json does not state the sound default explicitly:\n%s", raw)
+	}
+	written, err := store.LoadConfig(cfgPath)
+	if err != nil {
+		t.Fatalf("reload: %v", err)
+	}
+	if written.SoundEnabled == nil {
+		t.Fatal("the default config.json left soundEnabled null")
+	}
+	if *written.SoundEnabled != *cfg.SoundEnabled {
+		t.Errorf("the file says soundEnabled=%v but the returned config says %v", *written.SoundEnabled, *cfg.SoundEnabled)
+	}
+	if *written.SoundEnabled != cfg.SoundEnabledOrDefault() {
+		t.Errorf("the written value (%v) disagrees with SoundEnabledOrDefault (%v) — the default now lives in two places",
+			*written.SoundEnabled, cfg.SoundEnabledOrDefault())
+	}
+
+	// A SECOND call must not rewrite or re-default anything: the file
+	// exists now, so this is the returning-user path.
+	before, err := os.ReadFile(cfgPath)
+	if err != nil {
+		t.Fatalf("read before the second call: %v", err)
+	}
+	if _, again := loadOrInitConfig(); again.SoundEnabled == nil || !*again.SoundEnabled {
+		t.Errorf("the second load reports soundEnabled=%v, want the true it just wrote", again.SoundEnabled)
+	}
+	after, err := os.ReadFile(cfgPath)
+	if err != nil {
+		t.Fatalf("read after the second call: %v", err)
+	}
+	if string(before) != string(after) {
+		t.Errorf("loadOrInitConfig rewrote an existing config.json:\nbefore: %s\nafter:  %s", before, after)
 	}
 }

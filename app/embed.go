@@ -5,8 +5,8 @@
 // public/ and no assets/ next to it — serves the complete game:
 //
 //   - public/  the committed frontend bundle (index.html, css, fonts,
-//     js/dexel.js — but never js/dexel.js.map, see publicEmbed) served
-//     at "/"
+//     sounds/*.wav, js/dexel.js — but never js/dexel.js.map, see
+//     publicEmbed) served at "/"
 //   - assets/  the art agent's sprite/thumbnail PNGs (tools/gen_assets.py's
 //     output) served at "/assets/"
 //
@@ -59,9 +59,17 @@ import (
 // app/public tree and fails if anything but a .map is missing from the
 // embedded copy.
 //
+// SOUND-1: public/sounds holds tools/gen_sounds.py's six chiptune WAVs
+// (~106 KB), fetched by the page at /sounds/<file>.wav. It is named as its
+// own whole-directory pattern for the same reason css/ and fonts/ are — the
+// generator owns the directory's exact contents (its manifest deletes
+// anything it does not claim), so there is nothing here to enumerate
+// file-by-file.
+//
 //go:embed all:public/index.html
 //go:embed all:public/css
 //go:embed all:public/fonts
+//go:embed all:public/sounds
 //go:embed all:public/js/dexel.js
 var publicEmbed embed.FS
 

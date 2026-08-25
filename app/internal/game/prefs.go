@@ -48,6 +48,7 @@ import (
 const (
 	PrefAlwaysOnTop  = "alwaysOnTop"
 	PrefShowAwayTime = "showAwayTime"
+	PrefSoundEnabled = "soundEnabled"
 )
 
 // ErrUnknownPref is SET_PREF's rejection for a key that is not on the
@@ -66,10 +67,16 @@ var ErrUnknownPref = errors.New("unknown preference")
 // app/hub.go's actionMessage), so a future non-boolean preference — a
 // theme name, a number — is a WIRE decision to make at that point, not
 // something to smuggle in by widening this map first.
+//
+// The map says nothing about DEFAULTS, and must not: alwaysOnTop and
+// showAwayTime default off (the Go zero value), soundEnabled defaults on
+// (set by New()). A preference's default is a property of the preference,
+// declared where the field is, not of the allow-list.
 func (g *Game) prefTargets() map[string]*bool {
 	return map[string]*bool{
 		PrefAlwaysOnTop:  &g.prefAlwaysOnTop,
 		PrefShowAwayTime: &g.prefShowAwayTime,
+		PrefSoundEnabled: &g.prefSoundEnabled,
 	}
 }
 
@@ -119,14 +126,30 @@ func (g *Game) AlwaysOnTop() bool { return g.prefAlwaysOnTop }
 // the frontend, which is where "show or hide" is decided.
 func (g *Game) ShowAwayTime() bool { return g.prefShowAwayTime }
 
-// RestorePrefs seeds both preferences from config.json at boot. Like
+// SoundEnabled reports the sound-effects preference (SOUND-1,
+// docs/ui-spec.md §13). Exactly like ShowAwayTime, nothing in this package
+// branches on it: it is persisted and echoed on the wire, and the
+// frontend's audio layer (app/frontend/src/render/audio.ts) is the only
+// thing that acts on it. It is also the only preference here whose default
+// is TRUE, which is why New() sets it rather than leaning on the zero
+// value — see Game.prefSoundEnabled's own comment.
+func (g *Game) SoundEnabled() bool { return g.prefSoundEnabled }
+
+// RestorePrefs seeds every preference from config.json at boot. Like
 // RestoreConfigName it is boot-only and takes whatever the file said: a
 // bool cannot be malformed the way a name can (encoding/json already
 // degraded a non-boolean JSON value to the zero value by refusing the
 // whole file — store.LoadConfig's "a malformed config.json yields
 // defaults" contract), so there is nothing to validate here and nothing a
 // hand edit can do beyond choosing true or false.
-func (g *Game) RestorePrefs(alwaysOnTop, showAwayTime bool) {
+//
+// soundEnabled is passed as a plain bool like the other two because the
+// "absent means on" question is already answered upstream, by
+// store.ConfigData.SoundEnabledOrDefault — the one place that default
+// lives. This function must never re-derive it: two places deciding a
+// default is how they drift.
+func (g *Game) RestorePrefs(alwaysOnTop, showAwayTime, soundEnabled bool) {
 	g.prefAlwaysOnTop = alwaysOnTop
 	g.prefShowAwayTime = showAwayTime
+	g.prefSoundEnabled = soundEnabled
 }

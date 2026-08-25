@@ -522,6 +522,7 @@ type statusJSON struct {
 type prefsJSON struct {
 	AlwaysOnTop  bool `json:"alwaysOnTop"`
 	ShowAwayTime bool `json:"showAwayTime"`
+	SoundEnabled bool `json:"soundEnabled"`
 }
 
 // readPrefs loads the `prefs` block from config.json under stateDir.
@@ -536,7 +537,14 @@ type prefsJSON struct {
 // way for the same reason: the rest of the status answer is still true.
 func readPrefs(stateDir string) prefsJSON {
 	cfg, _ := store.LoadConfig(filepath.Join(stateDir, configFileName))
-	return prefsJSON{AlwaysOnTop: cfg.AlwaysOnTop, ShowAwayTime: cfg.ShowAwayTime}
+	// SoundEnabledOrDefault, not the raw field: `dexel status` must report
+	// what the running game would actually do, and for a config.json that
+	// predates SOUND-1 that is the default (on), not the nil pointer.
+	return prefsJSON{
+		AlwaysOnTop:  cfg.AlwaysOnTop,
+		ShowAwayTime: cfg.ShowAwayTime,
+		SoundEnabled: cfg.SoundEnabledOrDefault(),
+	}
 }
 
 // configFileName is config.json's basename, pinned by store.ConfigPath()
@@ -646,6 +654,7 @@ func cmdStatus(args []string) int {
 	// are config facts and do not depend on anything running.
 	fmt.Fprintf(env.out, "  on top    %s\n", yesNo(out.Prefs.AlwaysOnTop))
 	fmt.Fprintf(env.out, "  away time %s\n", shownHidden(out.Prefs.ShowAwayTime))
+	fmt.Fprintf(env.out, "  sound     %s\n", onOff(out.Prefs.SoundEnabled))
 	return 0
 }
 
@@ -668,12 +677,15 @@ func uptimeSeconds(startedAt string, now time.Time) int64 {
 	return int64(d / time.Second)
 }
 
-// yesNo/shownHidden render SET-1's two preferences for the human-readable
-// `dexel status` output. Separate wordings on purpose: "on top: yes/no" is
-// a property of the window, while away time is either "shown" or "hidden"
-// — and calling the hidden case "no" would read as "not recorded", which
-// is precisely the thing that is NOT true (docs/ui-spec.md §11.3: away
-// time is always recorded, only its display is a choice).
+// yesNo/shownHidden/onOff render the user preferences for the
+// human-readable `dexel status` output. Separate wordings on purpose:
+// "on top: yes/no" is a property of the window, while away time is either
+// "shown" or "hidden" — and calling the hidden case "no" would read as
+// "not recorded", which is precisely the thing that is NOT true
+// (docs/ui-spec.md §11.3: away time is always recorded, only its display
+// is a choice). Sound is the plain case: it is either on or off, and off
+// means nothing is recorded, computed or withheld — there is simply no
+// sound (SOUND-1, §13).
 func yesNo(v bool) string {
 	if v {
 		return "yes"
@@ -686,6 +698,13 @@ func shownHidden(v bool) string {
 		return "shown in the activity log"
 	}
 	return "hidden (still recorded)"
+}
+
+func onOff(v bool) string {
+	if v {
+		return "on"
+	}
+	return "off"
 }
 
 func firstNonEmpty(values ...string) string {

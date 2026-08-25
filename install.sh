@@ -1256,7 +1256,16 @@ report() {
         say "open\` uses your browser, which is a supported front door."
     fi
     say ""
-    say "Uninstall — no package manager was involved, so it is just files:"
+    say "Uninstall — one command, and it is the exact reversal of the above:"
+    say ""
+    say "  dexel uninstall           stop, disable autostart, remove every file"
+    say "                            this installer wrote. Your save STAYS."
+    say "  dexel uninstall --purge   ...and delete the save too (asks twice)"
+    say ""
+    say "It prints every path it removed and every path it kept, and running it"
+    say "twice is harmless. Add --yes to skip the prompts in a script."
+    say ""
+    say "By hand instead — or if you deleted the binary before reading this:"
     say "  dexel stop && dexel autostart disable"
     say "  rm -f $BINDIR/dexel"
     if [ "$SHIM_INSTALLED" = 1 ]; then

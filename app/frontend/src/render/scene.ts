@@ -60,8 +60,14 @@ import {
 import { buildTintLayer, plainImg, positionEl, setSrc, updateTintLayer } from './tint';
 import { warmCatalogSprites, warmSprites, warmStaticSprites } from './preload';
 import { handleSpriteSentinelError } from './overlays';
+// SOUND-1 (docs/ui-spec.md §13): this module owns both moments that make a
+// sound — the four click reactions and the celebration beat — so it is the
+// module that calls play(). audio.ts decides nothing about WHEN; it only
+// knows how, and whether the user said yes.
+import { play as playSound } from './audio';
 import type { Rect } from '../geometry';
 import type { CatalogMessage } from '../wire';
+import type { SoundName } from './audio';
 
 const scene = byId<HTMLDivElement>('scene-sprites');
 
@@ -254,6 +260,17 @@ function advanceAmbient(eligible: boolean): void {
 export function onCelebrate(reason: 'session' | 'sprint'): void {
   const state = store.getState();
   if (!state || state.activeState === 'onBreak') return;
+  // SOUND-1: the two completion jingles ride THIS seam rather than main.ts's
+  // two call sites, and deliberately BELOW the onBreak guard — so the sound
+  // is suppressed by exactly the same condition the visible celebration is.
+  // A sleeping character cheering at an empty chair was already refused as
+  // dishonest body language (see this function's comment above); a jingle
+  // playing into an empty room while its owner is away is the same lie with
+  // the volume up. `reason` picks the voice, which is the second thing that
+  // parameter now earns: the two sounds are audibly different (square vs
+  // triangle, climb vs resolve, 0.6s vs 0.9s — tools/gen_sounds.py) because
+  // a sprint and a session are different achievements.
+  playSound(reason === 'sprint' ? 'sprintComplete' : 'sessionComplete');
   // SCENE-REACTIONS: a real server event outranks a click that is still
   // playing out (the other direction — a click during a celebration — is
   // refused in queueReact).
@@ -366,6 +383,23 @@ const REACT_SCRIPT: Record<string, string[]> = {
   buddy: ['a', 'b', 'b', 'a']
 };
 const REACT_COOLDOWN_TICKS = 6;   // 1.2s of quiet after a beat ends
+// SOUND-1: one voice per clickable item, keyed by the same four REACT_KEYS
+// the scripts above are. Kept as its own table rather than derived from the
+// key by string surgery, for the same reason PROP_REACT_SPRITES below is
+// written out: the dev's sound is react_dexel (the character's name, not the
+// slot's), and an explicit table is also how a future clickable item with no
+// voice says so — by simply not being here.
+//
+// The anti-mash rules do NOT need a second copy here. play() is called from
+// exactly one place, INSIDE queueReact and after every refusal, so a beat
+// that does not start makes no sound and the ~2s-per-item worst case that
+// bounds the animation bounds the audio identically.
+const REACT_SOUNDS: Record<string, SoundName | undefined> = {
+  dev: 'reactDev',
+  monitor: 'reactMonitor',
+  beverage: 'reactBeverage',
+  buddy: 'reactBuddy'
+};
 // The prop react sprites, keyed by CATALOG ITEM ID and written out rather
 // than derived from item.sprite by string surgery. Two reasons, both real:
 // buddy_bot's `sprite` is buddy_bot_a.png (frame A of its blink pair) while
@@ -461,6 +495,19 @@ function queueReact(key: string): void {
   r.queue = REACT_SCRIPT[key].slice();
   r.frame = r.queue.shift() as string;
   paintReact(key);   // start on the click, not up to 200ms later
+  // SOUND-1: on the same beat as the first frame, and only for a click that
+  // actually became a react — every refusal above has already returned, so
+  // there is no case where the room stays still and still makes a noise.
+  //
+  // A click here is also what UNLOCKS audio for the whole page — though not
+  // by this line: audio.ts's own capturing `pointerdown` listener has
+  // already created and resumed the context by the time this `click` handler
+  // runs. That is why the two completion jingles, which arrive on server
+  // events rather than gestures, can be heard at all once a user has poked
+  // the room once — and why audio.ts treats "no gesture yet" as silence
+  // rather than as an error.
+  const sound = REACT_SOUNDS[key];
+  if (sound) playSound(sound);
 }
 
 // One tick of every item's beat. A beat that just ended starts that item's

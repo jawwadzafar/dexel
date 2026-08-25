@@ -88,14 +88,50 @@ import (
 //     client's rendering decision, driven by this field arriving over the
 //     wire in ConfigView.
 //
-// Neither is protected state: like Name, they are the user's to hand-edit
-// (the file is unsigned by design), and neither can influence the economy.
+// SoundEnabled (SOUND-1, docs/ui-spec.md §13) is the third such
+// preference and the FIRST one whose honest default is ON — which is
+// exactly why it is a *bool and not a bool. The two fields above lean on
+// Go's zero value: false is what a fresh install, an absent key and a
+// hand-deleted key all mean, and they agree, so no defaulting code exists
+// anywhere. Sound defaults to on, so a plain bool would make those three
+// cases mean the opposite of the default: every user who already has a
+// config.json — written before this field existed — would silently come
+// back with sound off and no way to tell that from a deliberate choice.
+// A pointer keeps the three states distinct and honest:
+//
+//	nil    never chosen  -> SoundEnabledOrDefault() == true
+//	&true  chosen on
+//	&false chosen off    -> stays off across restarts, which a
+//	                        zero-value bool could not express
+//
+// That is the whole cost of the inverted default, and it is paid here, in
+// the one file that has to know the difference between "absent" and
+// "false". Everything downstream — game.Game, ConfigView, the wire, the
+// frontend — sees a plain bool, because by then the question has been
+// answered.
+//
+// None of the three is protected state: like Name, they are the user's to
+// hand-edit (the file is unsigned by design), and none of them can
+// influence the economy.
 type ConfigData struct {
 	Name         string            `json:"name"`
 	SessionNames map[string]string `json:"sessionNames"`
 	Autostart    string            `json:"autostart"`
 	AlwaysOnTop  bool              `json:"alwaysOnTop"`
 	ShowAwayTime bool              `json:"showAwayTime"`
+	SoundEnabled *bool             `json:"soundEnabled"`
+}
+
+// SoundEnabledOrDefault resolves ConfigData.SoundEnabled's three states to
+// the one bool everything downstream wants: an absent field means the user
+// has never chosen, and the default is ON (SOUND-1, docs/ui-spec.md §13).
+//
+// This is the ONLY place that default lives. main.go seeds game.Game
+// through it at boot and the write-through in bootstrap.go always writes a
+// concrete value back, so the nil case is reachable exactly once per
+// config.json — the first boot after this field was added.
+func (c ConfigData) SoundEnabledOrDefault() bool {
+	return c.SoundEnabled == nil || *c.SoundEnabled
 }
 
 // ConfigPath returns <StateDir>/config.json — the same directory as

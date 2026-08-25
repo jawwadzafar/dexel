@@ -54,6 +54,16 @@ behaviour, same DOM/WS contract, no redesign.
     backstop for elements neither reaches. Touches no click/pointer event —
     the scene must keep receiving clicks.
   - `flash.ts` — the flash toast + the insufficient-funds flash.
+  - `audio.ts` — SOUND-1's six chiptune sound effects
+    (`docs/ui-spec.md` §13): the only module in this frontend that touches
+    an `AudioContext`. Lazily creates one on the first user gesture (a
+    browser will not let a page make noise before that), warms and decodes
+    all six WAVs from `/sounds/`, and gates every `play()` on the server's
+    `config.soundEnabled`. A locked context is a NORMAL state here, not an
+    error: the sprint/session jingles fire on server events that dexel's
+    window may never have been clicked for, so an un-playable sound is
+    retried for a bounded 250ms and then dropped — never queued, never
+    thrown. `render/scene.ts` is its only caller.
 - **FEATURE/LOGIC layer** (`src/features/`) — each owns its own DOM/UI
   state, reads the store, and is the only place that sends the
   `ClientAction`s for that feature.
@@ -67,7 +77,8 @@ behaviour, same DOM/WS contract, no redesign.
     follows the server's `state.onboarding` flag in both directions.
   - `menu.ts` — the titlebar hamburger panel (`#menu-open`/`#menu-panel`).
   - `settings-modal.ts` — SET-1's Settings modal (rename, always-on-top,
-    away-time display).
+    away-time display) plus SOUND-1's sound-effects toggle. The only
+    sender of `SET_PREF`.
   - `sessions-modal.ts` — Phase P2's Sessions modal + session-complete card.
   - `shell-window.ts` — WINDOW-POLISH's in-page close/minimize buttons, shown
     ONLY when the frameless Tauri shell appended `?shell=1` (`env.ts`'s

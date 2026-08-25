@@ -77,16 +77,19 @@ type subcommand struct {
 
 // subcommands is that table.
 //
-// ARCHITECTURE.md Decision 3 also specifies `update` and `uninstall`.
-// They are deliberately ABSENT until PR-7, which owns them: a word that
-// is listed but does nothing is worse than a word that honestly reports
-// "unknown command", which is why MIGRATION_PLAN.md's exit criteria are
-// per-PR in the first place. `pause`/`resume` joined the table with
-// PR-5, which is the PR that gave them something real to flip
-// (MIGRATION_PLAN.md §PR-5); `autostart` joins it here with PR-6
+// ARCHITECTURE.md Decision 3 also specifies `update`, which is
+// deliberately ABSENT until the half of PR-7 that owns it lands: a word
+// that is listed but does nothing is worse than a word that honestly
+// reports "unknown command", which is why MIGRATION_PLAN.md's exit
+// criteria are per-PR in the first place. `pause`/`resume` joined the
+// table with PR-5, which is the PR that gave them something real to flip
+// (MIGRATION_PLAN.md §PR-5); `autostart` joined it with PR-6
 // (MIGRATION_PLAN.md §PR-6, PLATFORM_NOTES.md §3) — its own three
 // sub-verbs (enable/disable/status) are dispatched from cmd_autostart.go,
 // the same one-word-fans-out-to-sub-verbs shape cmdPause/cmdResume use.
+// `uninstall` joins it with PR-7's uninstall half, now that
+// cmd_uninstall.go can really reverse everything install.sh and
+// install.ps1 create (ARCHITECTURE.md §9).
 var subcommands = map[string]subcommand{
 	"start":     {"start the background runtime (detached) and print its URL", cmdStart},
 	"stop":      {"stop the background runtime; it saves on the way out", cmdStop},
@@ -97,6 +100,7 @@ var subcommands = map[string]subcommand{
 	"autostart": {"enable|disable|status the login autostart entry — never enabled implicitly", cmdAutostart},
 	"open":      {"start if needed, then open the UI (desktop app, else browser)", cmdOpen},
 	"logs":      {"the runtime log [-n N] [-f] [--path] [--truncate]", cmdLogs},
+	"uninstall": {"remove dexel from this machine [--purge to delete your save too] [--yes]", cmdUninstall},
 	"serve":     {"run the server in the FOREGROUND (the developer path; all of today's flags)", func(args []string) int { runServe(modeServe, args); return 0 }},
 	"runtime":   {"the detached runtime's own entry point — `start` execs this", func(args []string) int { runServe(modeRuntime, args); return 0 }},
 	"version":   {"print version, commit and os/arch", func([]string) int { fmt.Println(versionLine()); return 0 }},

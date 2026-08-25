@@ -1772,17 +1772,14 @@ body.shell #titlebar { cursor: default; }
 }
 
 /* ================= settings modal ================= */
-/* SET-1 — The Settings modal (docs/ui-spec.md §11). Same mechanics as
-   #store/#activity/#history/#sessions above (native <dialog>,
-   showModal(), the shared #scrim), and deliberately the same box as
-   #sessions: 480x300 at left 80, top 50 — a geometry already proven to
-   sit under BUG-8's ~362px browser dialog:modal height cap, so this modal
-   inherits that headroom instead of re-deriving it.
+/* SET-1 — The Settings modal (docs/ui-spec.md §11), extended by SOUND-1
+   (§13). Same mechanics as #store/#activity/#history/#sessions above
+   (native <dialog>, showModal(), the shared #scrim).
 
    Children flow normally inside one #settings-body box rather than each
    being absolutely positioned, the idiom .sessions-view and
    .activity-section already use. Vertical budget inside that box
-   (top:32, footer at top:280, so 248px available):
+   (top:32, footer at top:324, so 292px available):
 
      NAME title        12 + 4 margin   = 16
      current name      10 + 4          = 14
@@ -1792,14 +1789,31 @@ body.shell #titlebar { cursor: default; }
      WINDOW title      8 + 12 + 4      = 24   -> 112
      on-top row        20 + 2          = 22   -> 134
      window note       10              = 10   -> 144
-     PRIVACY title     8 + 12 + 4      = 24   -> 168
-     away row          20 + 2          = 22   -> 190
-     two privacy notes 10 + 10         = 20   -> 210
+     SOUND title       8 + 12 + 4      = 24   -> 168
+     sound row         20 + 2          = 22   -> 190
+     two sound notes   10 + 10         = 20   -> 210
+     PRIVACY title     8 + 12 + 4      = 24   -> 234
+     away row          20 + 2          = 22   -> 256
+     two privacy notes 10 + 10         = 20   -> 276
 
-   210 of 248 — 38px of slack, which is what makes room for a fourth
-   preference later without touching the modal's box. The 8px inter-section
-   gap is a margin-top on .settings-section-title, so adding or removing a
-   note line never needs a second spacing edit.
+   276 of 292 — 16px of slack. THE BOX GREW FOR THIS, from 480x300 to
+   480x344: the SOUND section is 56px and the old box had 38px spare, so
+   the honest options were to grow or to drop a note line, and the note
+   line is the sentence that makes the setting comprehensible. 344px keeps
+   18px of clearance under BUG-8's ~362px browser dialog:modal height cap
+   — the same margin #activity's 346px box has, and the reason that comment
+   says "well under the cap, not just relying on the cap to save us". Any
+   FURTHER section has to shrink something rather than grow this again.
+
+   Re-centred with the new height: (400-344)/2 = 28, replacing the top:50
+   it inherited from #sessions' 300px box. #settings-help moved with it,
+   280 -> 324, keeping the same 2px it always had between its baseline and
+   the modal's padding box.
+
+   The 8px inter-section gap is a margin-top on .settings-section-title, so
+   adding or removing a note line never needs a second spacing edit — which
+   is why inserting a whole section above PRIVACY was three DOM nodes and no
+   spacing rules at all.
 
    Line lengths are checked against the 448px inner width at 8px/char
    (Press Start 2P advances exactly one em): the longest line here is the
@@ -1809,9 +1823,9 @@ body.shell #titlebar { cursor: default; }
   /* Authored position inside the 640x400 layout. Consumed by the
      shared window-fit transform above, NOT by left/top. */
   --dlg-x: 80px;
-  --dlg-y: 50px;
+  --dlg-y: 28px;
   width: 480px;
-  height: 300px;
+  height: 344px;
   margin: 0;
   padding: 12px;
   border: 4px solid var(--wall-light);
@@ -1966,7 +1980,7 @@ body.shell #titlebar { cursor: default; }
 #settings-help {
   position: absolute;
   left: 12px;
-  top: 280px;
+  top: 324px;
   width: 448px;
   height: 10px;
   line-height: 10px;

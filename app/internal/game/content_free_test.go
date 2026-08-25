@@ -120,12 +120,21 @@ func contentFreeRegistry() contentfree.Registry {
 		//     StatCounters/DayStat/SessionView above, untouched, because
 		//     recording is deliberately unchanged (ADR 0010/0013) and only
 		//     presentation is the user's call.
+		//   - SoundEnabled (SOUND-1, docs/ui-spec.md §13): whether the page
+		//     plays its six chiptune effects. One bit, chosen by the user,
+		//     about the user's own speakers. It is the purest case of the
+		//     category this whole block describes: nothing is recorded when
+		//     it is on, nothing is withheld when it is off, and the value
+		//     says nothing whatsoever about the work — a muted dexel earns
+		//     and counts exactly what a noisy one does
+		//     (TestSoundEnabledChangesNothingButItself pins that).
 		"game.ConfigView": {
 			Sample: ConfigView{},
 			Allowed: map[string]string{
 				"Name":         "string",
 				"AlwaysOnTop":  "bool",
 				"ShowAwayTime": "bool",
+				"SoundEnabled": "bool",
 			},
 			Exceptions: nameException(),
 		},

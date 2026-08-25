@@ -1,4 +1,5 @@
-// prefs_wire_test.go — SET-1's contract seams (docs/ui-spec.md §11):
+// prefs_wire_test.go — SET-1's contract seams (docs/ui-spec.md §11) plus
+// SOUND-1's (§13):
 // SET_PREF's wire shape and behaviour through applyAction, and the
 // `prefs` block `dexel status --json` publishes for the desktop shell.
 //
@@ -25,12 +26,21 @@ import (
 // "value":true}` and nothing else.
 func TestSetPrefWireShapeRoundTrips(t *testing.T) {
 	for _, key := range game.PrefKeys() {
+		// SOUND-1: the value sent is the OPPOSITE of what a fresh game
+		// already holds, read off the wire rather than assumed. This test
+		// used to hardcode `true` and lean on "every preference defaults
+		// to false" — which stopped being true the moment `soundEnabled`
+		// arrived defaulting ON, and would have reported the new key as
+		// broken when it was working perfectly. A round-trip test must
+		// exercise a real CHANGE, and only the current value knows which
+		// one that is.
+		want := !prefOnTheWire(t, game.New(), key)
 		var msg actionMessage
-		raw := `{"action":"SET_PREF","key":"` + key + `","value":true}`
+		raw := `{"action":"SET_PREF","key":"` + key + `","value":` + boolLit(want) + `}`
 		if err := json.Unmarshal([]byte(raw), &msg); err != nil {
 			t.Fatalf("unmarshal %s: %v", raw, err)
 		}
-		if msg.Action != actionSetPref || msg.Key != key || !msg.Value {
+		if msg.Action != actionSetPref || msg.Key != key || msg.Value != want {
 			t.Fatalf("decoded %s as %+v", raw, msg)
 		}
 
@@ -38,6 +48,9 @@ func TestSetPrefWireShapeRoundTrips(t *testing.T) {
 		mutated, flash := applyAction(g, msg, 1)
 		if !mutated {
 			t.Errorf("%s did not mutate the game", raw)
+		}
+		if got := prefOnTheWire(t, g, key); got != want {
+			t.Errorf("%s: the wire still reports %v", raw, got)
 		}
 		// No flash on success — the PAUSE/STORE_OPEN precedent
 		// (docs/ui-spec.md §6.2): a preference is a state, not an event.
@@ -59,8 +72,25 @@ func TestSetPrefShowsOnTheWireUnderTheDocumentedTags(t *testing.T) {
 	if err != nil {
 		t.Fatalf("marshal state: %v", err)
 	}
-	if !strings.Contains(string(raw), `"config":{"name":"","alwaysOnTop":true,"showAwayTime":true}`) {
-		t.Fatalf("state's config block does not carry both preferences under the documented tags: %s", raw)
+	// soundEnabled is true here without anyone setting it — that IS its
+	// documented default (SOUND-1, docs/ui-spec.md §13), and pinning the
+	// whole literal block is what makes the default part of the contract
+	// rather than an accident of construction.
+	if !strings.Contains(string(raw), `"config":{"name":"","alwaysOnTop":true,"showAwayTime":true,"soundEnabled":true}`) {
+		t.Fatalf("state's config block does not carry every preference under the documented tags: %s", raw)
+	}
+
+	// And the OFF direction reaches the wire too — the half a
+	// default-on preference can get wrong: a client that can never send
+	// `false` has a toggle that only mutes on paper.
+	muted := game.New()
+	applyAction(muted, actionMessage{Action: actionSetPref, Key: game.PrefSoundEnabled, Value: false}, 1)
+	rawMuted, err := json.Marshal(muted.State())
+	if err != nil {
+		t.Fatalf("marshal muted state: %v", err)
+	}
+	if !strings.Contains(string(rawMuted), `"soundEnabled":false`) {
+		t.Fatalf("SET_PREF soundEnabled=false did not reach the wire: %s", rawMuted)
 	}
 
 	// The away durations are STILL on the wire with showAwayTime true or
@@ -143,17 +173,32 @@ func TestReadPrefsReadsTheSameFileTheRuntimeWrites(t *testing.T) {
 	dir := t.TempDir()
 	cfgPath := filepath.Join(dir, configFileName)
 
-	// Nothing written yet: defaults, no error, no refusal to answer.
-	if got := readPrefs(dir); got != (prefsJSON{}) {
-		t.Errorf("readPrefs on a missing config.json = %+v, want both false", got)
+	// Nothing written yet: defaults, no error, no refusal to answer. The
+	// defaults are not all false — SOUND-1's soundEnabled defaults ON —
+	// and `status` must report the default the RUNNING game would use, not
+	// the zero value of a struct (readPrefs goes through
+	// store.ConfigData.SoundEnabledOrDefault for exactly this).
+	defaults := prefsJSON{SoundEnabled: true}
+	if got := readPrefs(dir); got != defaults {
+		t.Errorf("readPrefs on a missing config.json = %+v, want %+v", got, defaults)
 	}
 
 	// Exactly what the runtime's write-through produces.
-	if err := writeConfigThrough(cfgPath, "Pixel", nil, configPrefs{AlwaysOnTop: true, ShowAwayTime: true}); err != nil {
+	if err := writeConfigThrough(cfgPath, "Pixel", nil, configPrefs{AlwaysOnTop: true, ShowAwayTime: true, SoundEnabled: true}); err != nil {
 		t.Fatalf("writeConfigThrough: %v", err)
 	}
-	if got := readPrefs(dir); !got.AlwaysOnTop || !got.ShowAwayTime {
-		t.Errorf("readPrefs = %+v after a write-through setting both, want both true", got)
+	if got := readPrefs(dir); !got.AlwaysOnTop || !got.ShowAwayTime || !got.SoundEnabled {
+		t.Errorf("readPrefs = %+v after a write-through setting all three, want all true", got)
+	}
+
+	// The muted case has to survive the round trip too, and it is the one
+	// a nil-vs-false mistake would break: a user who turned sound OFF must
+	// not be reported as on just because off happens to look like absent.
+	if err := writeConfigThrough(cfgPath, "Pixel", nil, configPrefs{SoundEnabled: false}); err != nil {
+		t.Fatalf("writeConfigThrough (muted): %v", err)
+	}
+	if got := readPrefs(dir); got.SoundEnabled {
+		t.Errorf("readPrefs = %+v after a write-through muting sound, want soundEnabled false", got)
 	}
 
 	// A hand-edited, syntactically broken config.json must not stop
@@ -162,8 +207,8 @@ func TestReadPrefsReadsTheSameFileTheRuntimeWrites(t *testing.T) {
 	if err := os.WriteFile(cfgPath, []byte("{not json"), 0o644); err != nil {
 		t.Fatalf("write malformed config: %v", err)
 	}
-	if got := readPrefs(dir); got != (prefsJSON{}) {
-		t.Errorf("readPrefs on a malformed config.json = %+v, want defaults", got)
+	if got := readPrefs(dir); got != defaults {
+		t.Errorf("readPrefs on a malformed config.json = %+v, want %+v", got, defaults)
 	}
 }
 
@@ -174,7 +219,40 @@ func TestStatusPrefsJSONTagsAreTheContractTheShellReads(t *testing.T) {
 	if err != nil {
 		t.Fatalf("marshal: %v", err)
 	}
-	if !strings.Contains(string(raw), `"prefs":{"alwaysOnTop":true,"showAwayTime":false}`) {
+	if !strings.Contains(string(raw), `"prefs":{"alwaysOnTop":true,"showAwayTime":false,"soundEnabled":false}`) {
 		t.Fatalf("status --json's prefs block is not the shape the desktop shell reads: %s", raw)
 	}
+}
+
+// prefOnTheWire reads one preference back out of the ONE place a client can
+// see it — the `config` block of a `state` broadcast — by its wire key.
+// Keyed by string rather than switched by name on purpose: it then works for
+// a preference added after this helper was written, which is the whole point
+// of the tests above walking game.PrefKeys() instead of a hand-written list.
+func prefOnTheWire(t *testing.T, g *game.Game, key string) bool {
+	t.Helper()
+	raw, err := json.Marshal(g.State().Config)
+	if err != nil {
+		t.Fatalf("marshal config view: %v", err)
+	}
+	var m map[string]any
+	if err := json.Unmarshal(raw, &m); err != nil {
+		t.Fatalf("unmarshal config view: %v", err)
+	}
+	v, ok := m[key]
+	if !ok {
+		t.Fatalf("pref %q is settable but absent from the config block (%s)", key, raw)
+	}
+	b, ok := v.(bool)
+	if !ok {
+		t.Fatalf("pref %q is %T on the wire, want bool", key, v)
+	}
+	return b
+}
+
+func boolLit(v bool) string {
+	if v {
+		return "true"
+	}
+	return "false"
 }

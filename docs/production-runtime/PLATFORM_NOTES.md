@@ -11,16 +11,44 @@ Support tiers, inherited from the repo as it is:
 | linux/amd64 | tier 1 | evdev, needs `input` group | systemd --user | the only platform with CI and real users today |
 | linux/arm64 | tier 1 | same | same | cross-compiled, untested on hardware |
 | darwin/arm64 | tier 1 (product's primary — ADR 0010) | CoreGraphics polling, permissionless | launchd user agent | needs a macOS build host (cgo) |
-| windows/amd64 | tier 2 | **blind** (`provider_select_other.go`) | HKCU Run key | dexel runs and the economy works, but earns nothing from real input |
-| windows/arm64 | tier 3 | blind | same | cross-compiled, never run |
+| windows/amd64 | tier 2 | WH_KEYBOARD_LL + WH_MOUSE_LL low-level hooks, permissionless (ADR 0021) | HKCU Run key | real capture since ADR 0021; **unverified on hardware** — no Windows runner |
+| windows/arm64 | tier 3 | same | same | cross-compiled, never run |
 | darwin/amd64 | not built | — | — | omitted from the matrix; add if an Intel Mac ever matters |
 
-The Windows honesty note matters for distribution: shipping a Windows binary
-whose provider is blind means the store, the UI, and the save all work while
-Dev Cash never accrues from real typing. That is a *documented* state, not a
-bug — `activity.HonestyBlind` exists precisely so nothing lies about it — but
-the download page and `dexel status` must both say so, or the first Windows
-user will file "dexel is broken".
+**The Windows honesty note changed shape, it did not go away.** Until ADR 0021
+Windows fell through to `provider_select_other.go` and was flatly blind: the
+store, the UI and the save all worked while Dev Cash never accrued from real
+typing. `provider_select_windows.go` ends that — `internal/activity`'s
+`WindowsProvider` counts keystrokes and mouse activity globally through two
+low-level hooks, with no cgo, so `scripts/build-release.sh`'s cross-compile
+matrix is untouched.
+
+What remains to be honest about is now narrower, and it is *verification*
+rather than *capability*:
+
+* **Nobody has run it on Windows.** This repo has no Windows runner. The pure
+  decisions (anti-mash coalescing, the eviction rule, app-name narrowing) are
+  tested on Linux and the two privacy boundaries are enforced by tests that
+  parse `provider_windows.go` as an AST, but the hook install, the message
+  loop, and app identity have never executed. Windows therefore stays **tier
+  2**: the capability is there, the field verification is not. ADR 0021 lists,
+  in order, what a first field session should check.
+* **The hooks can be refused** — enterprise Group Policy hook restrictions, a
+  secure/locked desktop at the moment of start. `Start` then returns a
+  descriptive error and the provider reports `activity.HonestyBlind`, so ADR
+  0010's engine gating refuses to claim idle or onBreak from it. The old blind
+  state is now the *exception path*, and it still exists precisely so nothing
+  lies about it.
+* **Windows silently evicts a slow low-level hook** (`LowLevelHooksTimeout`,
+  300ms by default) with no error and a handle that still looks valid. The
+  provider cross-checks itself against `GetLastInputInfo` and reinstalls when
+  the two disagree; every reinstall logs one line containing `EVICTED`, which
+  is the thing to grep for in `<StateDir>/logs/runtime.log` when a Windows user
+  reports that earning stopped.
+
+`dexel status` and the download page must say which of those states a given
+install is in, or the first Windows user will file "dexel is broken" — the same
+requirement as before, now with three answers instead of one.
 
 ---
 
@@ -926,8 +954,12 @@ running, or nothing at all when it was not.
 * **Linux `input` group.** Required for real capture; a runtime without it is
   honestly blind rather than broken. `dexel status` surfaces `providerHonesty`
   so one command explains "why is nothing accruing".
-* **Windows is blind today** (`provider_select_other.go`). Say it on the download
-  page and in `dexel status`.
+* **Windows capture is new and unverified** (`provider_select_windows.go`, ADR
+  0021). It is no longer blind by construction, but it *can* be: the low-level
+  hook install is refusable (Group Policy, a secure desktop) and Windows evicts
+  a slow hook silently. `dexel status`'s `providerHonesty` is the one command
+  that explains "why is nothing accruing" here too, and the download page should
+  say "field verification pending" rather than either "blind" or "works".
 * **`~/.local/bin` may not be on `PATH`.** The installer detects and offers to
   fix it, per-shell, idempotently (RELEASE_PIPELINE.md §6 step 8). It never edits
   anything outside `$HOME`.

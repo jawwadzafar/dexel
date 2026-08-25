@@ -90,13 +90,18 @@ and ships as a `.dmg`, which is a drag-to-`/Applications` gesture rather than
 something a script should do behind your back. `dexel open` finds a bundle
 there on its own once it exists, so nothing has to be re-run.
 
-> [!WARNING]
-> **On Windows, activity tracking is not wired up yet.** Dexel has no native
-> capture provider for Windows, so it runs a deliberately *blind*, zero-signal
-> provider: the game, the UI, and every command work, but your typing does not
-> accrue and the companion will not claim a workday it cannot see. That is the
-> honest failure mode rather than a fabricated one. Linux and macOS have real
-> providers — see [Platform support](#platform-support-for-activity-capture).
+> [!IMPORTANT]
+> **On Windows, activity tracking is new in this build and field verification
+> is pending.** Dexel now has a real native Windows provider — two low-level
+> hooks that count keystrokes and mouse activity globally, no permission
+> prompt, no cgo ([ADR 0021](docs/adr/0021-windows-activity-provider.md)) — but
+> nobody has yet run it on Windows hardware, because this project has no
+> Windows CI runner. Everything decidable without one is tested; the hook
+> install itself is not. It also still degrades honestly: if Windows refuses
+> the hooks (enterprise policy, a locked desktop) the provider reports itself
+> *blind* rather than pretending to see, and the companion will not claim a
+> workday it cannot see. See
+> [Platform support](#platform-support-for-activity-capture).
 
 ### What the installer does, and what it will not do
 
@@ -161,6 +166,49 @@ either platform:
 
 ### Uninstall
 
+One command, on every platform:
+
+```bash
+dexel uninstall            # stop, disable autostart, remove every installed file
+dexel uninstall --purge    # ...and delete your save data too
+```
+
+It is the exact reversal of what the installer did, and it says so as it goes:
+it stops the runtime (via the lifecycle endpoint, the same graceful path as
+`dexel stop`), disables autostart with **every** mechanism probed — so a login
+entry can never outlive the binary it points at — removes the binary, the
+optional GUI shell, the launcher entry and the icon, then prints a report of
+every path it removed and every path it kept.
+
+**Your save is kept by default.** `state.db`, `config.json` and `logs/` stay
+where they are, their paths are printed, and reinstalling later resumes *the
+same dexel* — same Dev Cash, same wardrobe, same lifetime counters. Only
+`--purge` deletes them, and it asks twice: once for the uninstall, then again
+for the data, where the confirmation is typing the literal word `purge`.
+`--yes` skips both prompts for a script; without a terminal and without
+`--yes`, `uninstall` refuses rather than guessing which answer you meant.
+Running it twice is harmless — already-gone paths are reported as
+`already absent` and it still exits 0.
+
+Two things it will **not** do, on purpose:
+
+* **It never uses `sudo`.** If you also installed the release's `.deb`
+  system-wide, those files are in `/usr/bin` and belong to your package
+  manager — `uninstall` detects them, names them, and prints
+  `sudo apt remove dexel` instead of failing halfway.
+* **It never edits your shell config.** The installer only ever *printed* the
+  `PATH` line; if you added it, that line is yours to remove, and `uninstall`
+  reminds you which one it was.
+
+On Windows a running `.exe` cannot delete itself, so `uninstall` schedules a
+detached helper that removes `dexel.exe` the moment the command exits and
+appends one line to the runtime log saying whether it worked. On macOS an
+installed `Dexel.app` (dragged in from the `.dmg`) is removed under the same
+confirmation.
+
+<details>
+<summary>By hand instead, or if you deleted the binary before reading this</summary>
+
 No package manager was involved, so it is just files:
 
 ```bash
@@ -183,6 +231,8 @@ Remove-Item -Recurse "$env:LOCALAPPDATA\dexel"   # optional: also drops your sav
 
 The installer prints this same list, with your real paths filled in and only
 the lines that apply to what it actually installed.
+
+</details>
 
 ## Features
 
@@ -240,6 +290,7 @@ terminal to leave open. Closing the browser tab does **not** stop it.
 | `dexel pause` / `resume` | stop / start observing activity |
 | `dexel logs` | the runtime log (`-n N`, `-f`, `--path`, `--truncate`) |
 | `dexel autostart enable\|disable\|status` | the login autostart entry — never enabled implicitly |
+| `dexel uninstall` | remove dexel from this machine (`--purge` drops your save too) — see [Uninstall](#uninstall) |
 | `dexel serve` | the foreground developer server (see [Development](#development)) |
 | `dexel version` / `help` | version, commit, os/arch — or the full command list |
 
@@ -263,15 +314,23 @@ sprints and drives the honest mood/idle logic.
 |---|---|---|
 | **macOS** | Yes — permissionless | None. Polls `CGEventSourceSecondsSinceLastEventType` (a system timestamp delta, not a keystroke tap), so there is no Accessibility dialog to click through. |
 | **Linux** | Yes — needs one group membership | `sudo usermod -aG input "$USER"`, then log out and back in. It reads raw `/dev/input/event*` nodes. |
-| **Windows** (and any other OS) | **No native provider yet** | None available. A blind, zero-signal provider runs instead. |
+| **Windows** | Yes — permissionless, *unverified on hardware* | None. Installs `WH_KEYBOARD_LL` + `WH_MOUSE_LL` low-level hooks, which count events and never identify them. New in this build ([ADR 0021](docs/adr/0021-windows-activity-provider.md)); if Windows refuses the hooks it reports itself blind instead of guessing. |
+| **Any other OS** | **No native provider** | None available. A blind, zero-signal provider runs instead. |
 
 Without the Linux `input` group the server still runs; it just can't see global
 input, so activity only counts while the browser tab itself has focus, and the
 honesty rules freeze rather than guess at idle time.
 
-A native Windows provider is future work, not yet started
-([ADR 0010](docs/adr/0010-mac-first-honest-mechanics.md),
-[ADR 0011](docs/adr/0011-engine-pivot-to-pdf-native-stack.md)).
+The Windows provider is the newest of the three and the only one nobody has
+run on the platform it targets. Its coalescing rules, its hook-eviction
+detection, and the narrowing of a process path down to a bare app name are
+pure Go with tests that run on Linux, and two tests parse the Windows source
+to prove it never calls `GetWindowTextW` (a window title) or touches the mouse
+hook's cursor-position struct. The hook install, the message loop, and
+foreground-app detection have never executed. That is a *stated* gap, not an
+implied one — [ADR 0021](docs/adr/0021-windows-activity-provider.md) lists what
+a first field session should check, and a Windows CI runner is what would
+retire the caveat.
 
 <details>
 <summary><b>Cross-compiling</b></summary>
@@ -285,9 +344,12 @@ GOOS=linux   GOARCH=amd64 go build -o dexel .
 ```
 
 The caveat: activity capture is OS-native code (see the table above), so a
-cross-built binary only ever gets the provider its *target* OS has — a Windows
-binary cross-built from a Mac still has no native activity provider, because
-none exists for Windows yet.
+cross-built binary only ever gets the provider its *target* OS has. Linux and
+Windows both cross-build completely — their providers are plain syscalls with
+no cgo, which is exactly why the Windows one was written that way. macOS is the
+exception: `provider_darwin.go` is cgo (Cocoa/CoreGraphics), so a
+`GOOS=darwin` build needs a macOS host and a clang toolchain rather than just
+`go build`.
 
 </details>
 
@@ -570,7 +632,7 @@ Tracked in [`docs/plan/ROADMAP.md`](docs/plan/ROADMAP.md). Where things stand:
 | Release pipeline | Workflows written; runs by hand while Actions is account-blocked |
 | Frontend architecture (F1 build + TypeScript, F2 modular layers) | **Shipped** |
 | F3 — Tauri desktop shell | Scaffold + Linux bundles; signed installers need runners |
-| Native Windows activity provider | Not started |
+| Native Windows activity provider | **Shipped** (ADR 0021) — unverified on hardware; no Windows runner |
 | Art fidelity | **Parked** at the current procedural pixel-art look, deliberately, in favour of shipping features |
 
 ## Contributing

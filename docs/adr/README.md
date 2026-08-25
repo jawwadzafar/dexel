@@ -26,3 +26,4 @@ say something different — supersede it with a new one and cross-link.
 | [0018](0018-dexel-cli-and-background-runtime.md) | Dexel CLI and background runtime: one binary, argv-shape dispatch, ask-don't-trust discovery | accepted |
 | [0019](0019-app-identity-via-cgwindowlist-and-an-availability-bit.md) | App identity from CGWindowList, not NSWorkspace: a frozen cache is a confident wrong answer, plus an explicit availability bit | accepted |
 | [0020](0020-archive-the-frozen-rust-track.md) | Archive the frozen Rust/Bevy track and the opencode fleet to branch `attic/legacy-rust-and-fleet` (amends 0011) | accepted |
+| [0021](0021-windows-activity-provider.md) | A real Windows activity provider: WH_KEYBOARD_LL/WH_MOUSE_LL low-level hooks, counted not read, plus a GetLastInputInfo eviction watchdog | accepted |

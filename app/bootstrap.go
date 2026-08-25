@@ -167,6 +167,17 @@ func loadOrInitConfig() (string, store.ConfigData) {
 		log.Printf("load config failed (using defaults): %v", err)
 	}
 	if _, statErr := os.Stat(cfgPath); os.IsNotExist(statErr) {
+		// The default config this writes is the file a user will later
+		// hand-edit, so it states SOUND-1's default rather than leaving
+		// `"soundEnabled": null` in it. Both mean the same thing to the
+		// loader (store.ConfigData.SoundEnabledOrDefault resolves nil to
+		// true), but only one of them reads like a setting to a human
+		// opening the file — and `null` where a bool belongs reads like
+		// damage. This is a FRESH-FILE nicety and nothing more: the nil
+		// state still exists, and is still the honest answer, for a
+		// config.json written before this field did.
+		fresh := cfg.SoundEnabledOrDefault()
+		cfg.SoundEnabled = &fresh
 		if err := store.SaveConfig(cfgPath, cfg); err != nil {
 			log.Printf("write default config failed: %v", err)
 		} else {
@@ -185,6 +196,13 @@ func loadOrInitConfig() (string, store.ConfigData) {
 type configPrefs struct {
 	AlwaysOnTop  bool
 	ShowAwayTime bool
+	// SoundEnabled (SOUND-1, docs/ui-spec.md §13) is a plain bool here even
+	// though the field it writes is a *bool: by the time a value reaches
+	// this struct it came from the live game.Game, which always holds a
+	// concrete answer. The pointer exists on store.ConfigData only to tell
+	// "absent" from "false" when READING a config.json written before this
+	// preference existed — a distinction a write never has to make.
+	SoundEnabled bool
 }
 
 // writeConfigThrough is persistConfig's pure core: the read-modify-write
@@ -197,10 +215,10 @@ type configPrefs struct {
 // so anything not re-stated here would be written back as its zero value.
 // That is not hypothetical: building a fresh ConfigData here once erased
 // `autostart` on every SET_NAME (see persistConfig's own comment in
-// main.go). SET-1's two preference fields join the same discipline —
-// every field this function does not own is loaded and left alone, and
-// every field it does own is set from the live game, never from a
-// remembered copy.
+// main.go). SET-1's two preference fields — and SOUND-1's third — join the
+// same discipline: every field this function does not own is loaded and
+// left alone, and every field it does own is set from the live game, never
+// from a remembered copy.
 func writeConfigThrough(cfgPath, name string, sessionNames map[string]string, prefs configPrefs) error {
 	cfg, err := store.LoadConfig(cfgPath)
 	if err != nil {
@@ -210,6 +228,12 @@ func writeConfigThrough(cfgPath, name string, sessionNames map[string]string, pr
 	cfg.SessionNames = sessionNames
 	cfg.AlwaysOnTop = prefs.AlwaysOnTop
 	cfg.ShowAwayTime = prefs.ShowAwayTime
+	// Always a concrete value, never left nil: once dexel has written this
+	// file the "never chosen" state is gone for good, so a later boot reads
+	// the user's actual choice instead of falling back to the default and
+	// silently un-muting someone who muted.
+	sound := prefs.SoundEnabled
+	cfg.SoundEnabled = &sound
 	return store.SaveConfig(cfgPath, cfg)
 }
 

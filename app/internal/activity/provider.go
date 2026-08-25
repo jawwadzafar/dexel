@@ -3,8 +3,8 @@
 // understands (ADR 0002/0009: counts and app identity only — never key
 // identity, text, clipboard, or window titles). Platform-specific capture
 // lives in build-tagged files in this same package (provider_darwin.go,
-// provider_linux.go); the game and server never import anything but this
-// interface.
+// provider_linux.go, provider_windows.go); the game and server never import
+// anything but this interface.
 package activity
 
 import "time"
@@ -14,10 +14,13 @@ import "time"
 // per ADR 0011's port): at most one counted keystroke and one flagged
 // mouse-active signal per this window, however fast the input arrives.
 // This is the single source of truth for that value — provider_linux.go,
-// provider_darwin.go, and internal/engine's AntiMashSampleInterval all
-// reference this constant rather than each hardcoding their own 100ms, so
-// the three can never silently drift apart (which is exactly what had
-// happened: three independently-declared 100ms constants, one per file).
+// provider_darwin.go, windows_signals.go, and internal/engine's
+// AntiMashSampleInterval all reference this constant rather than each
+// hardcoding their own 100ms, so they can never silently drift apart (which
+// is exactly what had happened: three independently-declared 100ms
+// constants, one per file). windows_linux_parity_test.go goes one step
+// further and asserts the Linux and Windows providers COUNT the same, not
+// merely that they read the same number.
 const MouseSampleInterval = 100 * time.Millisecond
 
 // Snapshot is a point-in-time view of system activity, sampled by a
@@ -65,8 +68,11 @@ type Snapshot struct {
 	// capability failure was indistinguishable from a real answer — which is
 	// exactly the ADR 0010 lie ("on break because you minimized me") in a
 	// different costume. It is false on Linux (no permissionless focus
-	// source across X11/Wayland) and false on macOS only if there is no
-	// window-server session to query.
+	// source across X11/Wayland), false on macOS only if there is no
+	// window-server session to query, and on Windows false until the
+	// GetForegroundWindow -> process-image query has succeeded at least once
+	// (ADR 0021: a process with no interactive desktop gets NULL forever, and
+	// that must not read as "nothing is frontmost").
 	//
 	// Content-free by construction: a single bool about the PROVIDER, not
 	// about the user. See AppIdentity.Available for the full state table.

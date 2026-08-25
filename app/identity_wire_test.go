@@ -137,7 +137,7 @@ func TestSetNameShowsOnTheWire(t *testing.T) {
 	// implementation detail (an on-top window nobody asked for, and away
 	// time shown to a user who never chose to see it, are exactly what
 	// SET-1 exists to stop).
-	if !strings.Contains(string(fresh), `"config":{"name":"","alwaysOnTop":false,"showAwayTime":false}`) {
+	if !strings.Contains(string(fresh), `"config":{"name":"","alwaysOnTop":false,"showAwayTime":false,"soundEnabled":true}`) {
 		t.Fatalf(`a fresh state is missing the empty config block: %s`, fresh)
 	}
 	if !strings.Contains(string(fresh), `"onboarding":false`) {

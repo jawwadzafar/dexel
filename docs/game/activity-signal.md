@@ -46,6 +46,7 @@ Which one you get is decided at startup by `selectProvider`
 | --- | --- | --- | --- | --- |
 | macOS | `DarwinProvider` | `CGEventSourceSecondsSinceLastEventType` on `kCGEventSourceStateHIDSystemState`, polled every 50 ms | `HonestyGlobal`, always | `CGWindowListCopyWindowInfo` → `kCGWindowOwnerName`, re-read every 500 ms |
 | Linux | `LinuxProvider` | raw reads of `/dev/input/event*` (evdev), no cgo | `HonestyGlobal` if any device opened, else `HonestyBlind` | **none** — `ActiveApp` is always `""` and `AppIdentityAvailable` is always `false` |
+| Windows | `WindowsProvider` | `WH_KEYBOARD_LL` + `WH_MOUSE_LL` low-level hooks on a dedicated message-loop thread, no cgo (ADR 0021) | `HonestyGlobal` while both hooks are installed, else `HonestyBlind` | the foreground window's process image base name (never `GetWindowTextW`); `AppIdentityAvailable` sticky-true once the query has answered once |
 | anything else | blind `FakeProvider` | nothing | `HonestyBlind` | none |
 | `-provider=fake` / `-fake-script` / `DEXEL_FAKE_SCRIPT` | `FakeProvider` | a scripted `type`/`mouse`/`idle` timeline, pure function of elapsed time | `HonestyGlobal` | a constant, default `code` / `VS Code` |
 
@@ -65,8 +66,8 @@ Two details worth knowing because they explain observed behaviour:
 ### The anti-mash coalescing happens here, not in the economy
 
 `activity.MouseSampleInterval = 100 * time.Millisecond` (`provider.go`) is the
-single source of truth for the coalescing window, referenced by both providers
-and re-exported as `engine.AntiMashSampleInterval`. It used to be three
+single source of truth for the coalescing window, referenced by all three
+providers and re-exported as `engine.AntiMashSampleInterval`. It used to be three
 independently declared `100ms` constants in three files; hoisting it was the
 fix for that.
 

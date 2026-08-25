@@ -55,6 +55,14 @@ type SprintView struct {
 // the same config.json as Name), so they arrive here alongside it and the
 // frontend reads them the way it reads everything else, verbatim.
 //
+// SoundEnabled (SOUND-1, docs/ui-spec.md §13) is the third, and it is on
+// the wire for exactly the same reason: the frontend's audio layer
+// (app/frontend/src/render/audio.ts) must gate every sound on the user's
+// choice without ever remembering that choice itself, so it reads this
+// field on each play() the way the Settings modal reads it to paint the
+// toggle. Nothing in THIS package plays a sound or branches on it —
+// game.Game only holds it, persists it and sends it.
+//
 // ShowAwayTime in particular is a DISPLAY switch and nothing more. The
 // counters it hides (StatCounters.IdleSeconds, and its per-day and
 // per-session equivalents) keep being recorded and keep being SENT
@@ -74,6 +82,10 @@ type ConfigView struct {
 	// ShowAwayTime gates the Activity modal's away rows client-side. See
 	// this type's doc comment for why hiding is presentation-only.
 	ShowAwayTime bool `json:"showAwayTime"`
+	// SoundEnabled gates every sound effect client-side (SOUND-1). It is
+	// the one preference here that defaults to TRUE; the default itself
+	// lives in store.ConfigData.SoundEnabledOrDefault, never here.
+	SoundEnabled bool `json:"soundEnabled"`
 }
 
 // StateMessage is the exact `"type":"state"` WebSocket payload
@@ -368,14 +380,25 @@ type Game struct {
 	// (RestorePrefs) and writes them back through store.SaveConfig after
 	// SetPref.
 	//
-	// Both default to FALSE, which is the zero value, so a fresh game and
-	// a fresh config.json agree with no defaulting code. prefShowAwayTime
-	// changes NOTHING about what this package records: every away second
-	// still lands in statsToday/statsLifetime.IdleSeconds and still
-	// crosses the wire. It is read by the frontend as a rendering
+	// The first two default to FALSE, which is the zero value, so a fresh
+	// game and a fresh config.json agree with no defaulting code.
+	// prefShowAwayTime changes NOTHING about what this package records:
+	// every away second still lands in statsToday/statsLifetime.IdleSeconds
+	// and still crosses the wire. It is read by the frontend as a rendering
 	// instruction and by nothing else here.
+	//
+	// prefSoundEnabled (SOUND-1, docs/ui-spec.md §13) breaks the zero-value
+	// convenience on purpose: sound is ON by default, so New() sets it to
+	// true explicitly and a bare `Game{}` literal would report it off. That
+	// is safe because New() is the ONLY constructor in this package and the
+	// only bare literal is the throwaway inside PrefKeys(), which reads
+	// nothing but the map's keys — but it is worth saying out loud, because
+	// it is the one place a preference's value is not simply "whatever Go
+	// gave us". Like the other two, nothing here branches on it; the
+	// frontend's audio layer is the only thing that acts on it.
 	prefAlwaysOnTop  bool
 	prefShowAwayTime bool
+	prefSoundEnabled bool
 
 	// paused is PR-5's pause state (docs/production-runtime/
 	// ARCHITECTURE.md §6). Unlike onboarding it IS persisted
@@ -435,6 +458,9 @@ func New() *Game {
 		Equipped:    map[string]EquippedRef{},
 		tickerLines: make([]string, 3),
 		now:         time.Now,
+		// SOUND-1: the one preference whose honest default is ON, so it is
+		// the one that cannot ride Go's zero value. See prefSoundEnabled.
+		prefSoundEnabled: true,
 	}
 	g.resetTerminal()
 	g.GrantTierZeroDefaults()
@@ -1082,6 +1108,7 @@ func (g *Game) State() StateMessage {
 			Name:         g.configName,
 			AlwaysOnTop:  g.prefAlwaysOnTop,
 			ShowAwayTime: g.prefShowAwayTime,
+			SoundEnabled: g.prefSoundEnabled,
 		},
 		Onboarding: g.onboarding,
 		Paused:     g.paused,

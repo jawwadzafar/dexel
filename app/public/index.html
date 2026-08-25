@@ -294,6 +294,24 @@
         </div>
         <div class="settings-note">Keeps the desktop app above other windows.</div>
 
+        <!-- SOUND-1 (docs/ui-spec.md §13). Sits between WINDOW and PRIVACY
+             because it is the same category as WINDOW - how dexel behaves on
+             your machine - while PRIVACY, which is about what dexel shows
+             you about your own work, stays last as the weightiest section.
+             Same three-node idiom as the two rows above: a title, one row
+             with one toggle, and a dim note. -->
+        <div class="settings-section-title">SOUND</div>
+        <div class="settings-row">
+          <span class="label">SOUND EFFECTS</span>
+          <button id="settings-sound" class="nes-btn settings-toggle">ON</button>
+        </div>
+        <!-- Two lines for the same reason the privacy note below is two: the
+             modal's inner width is 448px and Press Start 2P advances exactly
+             one 8px em per character, so 56 characters is the hard limit. The
+             "-" is an ASCII hyphen, not an em dash - see the note below. -->
+        <div class="settings-note">A few tiny chiptune moments - never music,</div>
+        <div class="settings-note">never typing noise.</div>
+
         <div class="settings-section-title">PRIVACY</div>
         <div class="settings-row">
           <span class="label">SHOW AWAY TIME</span>

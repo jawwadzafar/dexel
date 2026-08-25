@@ -85,7 +85,10 @@ func TestClassifyImplementsForkADispatchTable(t *testing.T) {
 		{"pause", []string{"pause"}, dispatchSubcommand, "pause", []string{}},
 		{"resume", []string{"resume"}, dispatchSubcommand, "resume", []string{}},
 		{"autostart", []string{"autostart", "enable"}, dispatchSubcommand, "autostart", []string{"enable"}},
-		{"a future command not yet built", []string{"uninstall"}, dispatchUnknown, "uninstall", []string{}},
+		{"uninstall", []string{"uninstall"}, dispatchSubcommand, "uninstall", []string{}},
+		{"uninstall with flags", []string{"uninstall", "--purge", "--yes"},
+			dispatchSubcommand, "uninstall", []string{"--purge", "--yes"}},
+		{"a future command not yet built", []string{"update"}, dispatchUnknown, "update", []string{}},
 		{"a bare path", []string{"state.db"}, dispatchUnknown, "state.db", []string{}},
 	}
 
@@ -147,10 +150,18 @@ func TestEverySubcommandIsWiredAndDocumented(t *testing.T) {
 			t.Errorf("§PR-6 requires a %q subcommand and there is none", name)
 		}
 	}
+	// ...as must PR-7's uninstall half, now that cmd_uninstall.go can
+	// really reverse what install.sh/install.ps1 create
+	// (ARCHITECTURE.md §9, MIGRATION_PLAN.md §PR-7).
+	for _, name := range []string{"uninstall"} {
+		if _, ok := subcommands[name]; !ok {
+			t.Errorf("§PR-7 requires a %q subcommand and there is none", name)
+		}
+	}
 	// ...and the words later PRs own must NOT be, because a word that is
 	// listed but does nothing is worse than an honest "unknown command"
-	// (PR-7 owns update/uninstall).
-	for _, name := range []string{"update", "uninstall"} {
+	// (PR-7's update half is still outstanding).
+	for _, name := range []string{"update"} {
 		if _, ok := subcommands[name]; ok {
 			t.Errorf("%q is registered but its PR has not landed — it would do nothing", name)
 		}
@@ -396,7 +407,7 @@ func TestStatusJSONShape(t *testing.T) {
 	data, err := json.Marshal(statusJSON{
 		Running: true, Pid: 1, Port: 2, URL: "u", Version: "v", Commit: "c",
 		StartedAt: "s", Uptime: 3, StateDir: "sd", LogPath: "lp", Cleaned: true, Reason: "r",
-		Prefs: prefsJSON{AlwaysOnTop: true, ShowAwayTime: true},
+		Prefs: prefsJSON{AlwaysOnTop: true, ShowAwayTime: true, SoundEnabled: true},
 	})
 	if err != nil {
 		t.Fatalf("marshal: %v", err)
@@ -447,7 +458,7 @@ func TestStatusJSONShape(t *testing.T) {
 	if !ok {
 		t.Fatalf("a not-running status omits `prefs` (%v) — a preference is config, not a property of a live process", m["prefs"])
 	}
-	for _, k := range []string{"alwaysOnTop", "showAwayTime"} {
+	for _, k := range []string{"alwaysOnTop", "showAwayTime", "soundEnabled"} {
 		if _, ok := prefs[k]; !ok {
 			t.Fatalf("status --json's prefs block is missing %q", k)
 		}

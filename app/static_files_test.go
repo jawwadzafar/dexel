@@ -50,6 +50,7 @@ func TestStaticTreesServeFilesOnly(t *testing.T) {
 		{"/js/", http.StatusNotFound, "the bundle directory must not enumerate itself"},
 		{"/css/", http.StatusNotFound, "the stylesheet directory must not enumerate itself"},
 		{"/fonts/", http.StatusNotFound, "the font directory must not enumerate itself"},
+		{"/sounds/", http.StatusNotFound, "the sound directory must not enumerate itself"},
 		// The same directories WITHOUT the trailing slash. FileServer used
 		// to answer these with a 301 to the trailing-slash form, which then
 		// listed — so a fix that only looked at the trailing slash would
@@ -62,6 +63,15 @@ func TestStaticTreesServeFilesOnly(t *testing.T) {
 		{"/js/dexel.js", http.StatusOK, "the bundle must still load"},
 		{"/css/game.css", http.StatusOK, "the stylesheet must still load"},
 		{"/css/nes.min.css", http.StatusOK, "the vendored stylesheet must still load"},
+		// SOUND-1: the six WAVs tools/gen_sounds.py writes. Listed here —
+		// in the test that runs against BOTH the embedded tree and the disk
+		// tree — because "it works in `-public` dev mode" is exactly how a
+		// missing go:embed pattern hides until a release (embed.go's own
+		// comment, and embed_test.go). Two of the six is enough to prove
+		// the directory is reachable in both modes; embed_test.go proves
+		// the set is complete.
+		{"/sounds/sprint_complete.wav", http.StatusOK, "the sprint jingle must load"},
+		{"/sounds/react_dexel.wav", http.StatusOK, "a reaction blip must load"},
 		{"/assets/room_back.png", http.StatusOK, "sprites must still load"},
 		{"/assets/dev_base_idle.png", http.StatusOK, "sprites must still load"},
 		// A path that never existed is still an ordinary 404, not a panic.

@@ -8,9 +8,11 @@
 // later Settings surface can rename with the same action and no new
 // wire").
 //
-// Three sections, one job each (§11.2):
+// Four sections, one job each (§11.2, extended by SOUND-1 §13):
 //   - NAME     — the current name, an input, SAVE NAME.
 //   - WINDOW   — the always-on-top preference.
+//   - SOUND    — the sound-effects preference, plus the two lines that say
+//                exactly what it does and does not make noise for.
 //   - PRIVACY  — the show-away-time preference, plus the one honest line
 //                that explains it.
 //
@@ -23,12 +25,21 @@
 // the user's real machine and is honestly counted as one, exactly as
 // pressing [G] to get here is.
 //
-// EVERY CONTROL RENDERS FROM SERVER STATE. The two toggles read
-// state.config.{alwaysOnTop,showAwayTime} and never a locally-remembered
-// position, so a second tab, a hand edit of config.json plus a restart,
-// or a rejected action all leave the buttons telling the truth. The one
-// exception is the name INPUT, which holds an in-progress edit — see
-// render()'s comment for why that is a draft and not a claim.
+// EVERY CONTROL RENDERS FROM SERVER STATE. The three toggles read
+// state.config.{alwaysOnTop,showAwayTime,soundEnabled} and never a
+// locally-remembered position, so a second tab, a hand edit of config.json
+// plus a restart, or a rejected action all leave the buttons telling the
+// truth. The one exception is the name INPUT, which holds an in-progress
+// edit — see render()'s comment for why that is a draft and not a claim.
+//
+// soundEnabled is the first preference here whose default is ON, and the
+// only place that shows up in this file is the `!== false` inside
+// soundEnabledIn() below: an absent field means "never chosen", and the
+// honest render of never-chosen is the default. Painting it as OFF — which
+// `!!state.config.soundEnabled` would do — would tell the user they had
+// muted something they had not. It is also why #settings-sound's markup
+// ships reading ON while the other two ship OFF: the pre-render label has
+// to be the default too, or the modal flashes a lie for one frame.
 import { byId } from '../dom';
 import * as store from '../state/store';
 import { sendAction } from '../state/ws-client';
@@ -45,6 +56,7 @@ const el = {
   nameSave: byId<HTMLButtonElement>('settings-name-save'),
 
   onTopBtn: byId<HTMLButtonElement>('settings-ontop'),
+  soundBtn: byId<HTMLButtonElement>('settings-sound'),
   awayBtn: byId<HTMLButtonElement>('settings-away')
 };
 
@@ -88,6 +100,10 @@ export function render(): void {
   // call render/chrome.ts makes for #status-name.
   el.nameCurrent.textContent = name ? truncate(name, MAX_NAME_LEN) : '';
   paintToggle(el.onTopBtn, !!(config && config.alwaysOnTop));
+  // SOUND-1: read through the same default-aware helper the click handler
+  // uses, so the painted position and the value a click inverts can never
+  // disagree about what "absent" means.
+  paintToggle(el.soundBtn, soundEnabledIn(config));
   paintToggle(el.awayBtn, !!(config && config.showAwayTime));
 }
 
@@ -171,8 +187,23 @@ function currentShowAwayTime(): boolean {
   const state = store.getState();
   return !!(state && state.config && state.config.showAwayTime);
 }
+// soundEnabledIn is the ONE reading of soundEnabled in this module, shared by
+// render() and the click handler. `!== false`, not `!!`: see this file's
+// header, and render/audio.ts, which gates playback on the identical rule —
+// the button and the speaker must agree about the default or the toggle is a
+// lie in one direction.
+function soundEnabledIn(config: { soundEnabled?: boolean } | null): boolean {
+  return !!config && config.soundEnabled !== false;
+}
+function currentSoundEnabled(): boolean {
+  const state = store.getState();
+  return soundEnabledIn((state && state.config) || null);
+}
 el.onTopBtn.addEventListener('click', function () {
   sendAction({ action: 'SET_PREF', key: 'alwaysOnTop', value: !currentAlwaysOnTop() });
+});
+el.soundBtn.addEventListener('click', function () {
+  sendAction({ action: 'SET_PREF', key: 'soundEnabled', value: !currentSoundEnabled() });
 });
 el.awayBtn.addEventListener('click', function () {
   sendAction({ action: 'SET_PREF', key: 'showAwayTime', value: !currentShowAwayTime() });

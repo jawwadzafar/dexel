@@ -1074,7 +1074,7 @@ second to reflect a click.
     ],
     "streak": {"current": 6, "longest": 14}
   },
-  "config": {"name": "Pixel", "alwaysOnTop": false, "showAwayTime": false},
+  "config": {"name": "Pixel", "alwaysOnTop": false, "showAwayTime": false, "soundEnabled": true},
   "sessions": {
     "active": {
       "id": 28,
@@ -1224,8 +1224,25 @@ Field notes the implementers must not improvise on:
     counting when hidden would make every total derived from it silently
     wrong, which is the dishonesty ADR 0010/0013 forbid — so recording is
     deliberately untouched.
+  * `config.soundEnabled` — whether the page plays its six chiptune sound
+    effects (§13). Also purely a **client** instruction: nothing on the
+    server makes a sound, branches on this field, or records anything
+    differently because of it — a muted dexel earns and counts exactly what
+    a noisy one does.
 
-  Both live in the same `~/.config/dexel/config.json` as the name (ADR
+    **This is the one field in this block whose default is `true`**, which
+    changes how a client must read it. `alwaysOnTop`/`showAwayTime` are
+    typed optional and `!!undefined` is the right degradation for both
+    (window unpinned, away time private). For `soundEnabled` the right
+    degradation is `!== false`: an absent field means *the user has never
+    chosen*, and the honest render of never-chosen is the default. A client
+    that read it as `!!undefined` would silently mute itself and paint an
+    `OFF` toggle the user never touched. On disk the same distinction is
+    carried by a **`*bool`** (`store.ConfigData.SoundEnabled`): absent,
+    `true` and `false` are three states, and collapsing them to two is
+    exactly what would turn a deliberate mute into an accident.
+
+  All three live in the same `~/.config/dexel/config.json` as the name (ADR
   0014's config side), are written by `SET_PREF` (§6.2) and are freely
   hand-editable.
 
@@ -1424,7 +1441,8 @@ replaces the old.
   sends this same action, with no second rename path and no new validation.
 * `SET_PREF` (SET-1, §11.4) sets one user **preference**. `key` is
   validated server-side against `game.PrefKeys()`'s allow-list
-  (`alwaysOnTop`, `showAwayTime` today) and `value` is a **bool** — every
+  (`alwaysOnTop`, `showAwayTime`, `soundEnabled` today) and `value` is a
+  **bool** — every
   dexel preference is an on/off choice, so a malformed value is refused by
   the JSON decode itself rather than re-checked per key. An unknown or
   missing `key` is a `flash: error` with **no state change**, so a client
@@ -2044,6 +2062,13 @@ dexel**, **the window's always-on-top preference**, and **away-time
 privacy**. ADR 0014 named this modal as the follow-up that would finally
 surface the config slot SEC-1 provisioned; this is that follow-up.
 
+SOUND-1 later added a fourth section, **`SOUND`** (§13), through the same
+`SET_PREF` wire and the same one-button-per-preference idiom — the point of
+the pattern SET-1 established being that the next preference is a row, not a
+redesign. The only thing it did not inherit is the *default*: sound is the
+first preference here that ships **on**, and every consequence of that is
+recorded in §13.4.
+
 The mechanics are the ones every modal here shares (§4, and the
 `add-a-menu-modal` skill): a native `<dialog>` opened with `showModal()`,
 the shared `#scrim`, mouse **and** keyboard **and** `Esc`, and one `'close'`
@@ -2074,28 +2099,41 @@ honestly counted as one, exactly as pressing `[G]` to get here is. So no
   reason onboarding and Sessions do: it owns an input, so a bare letter must
   not reach a launcher even when focus sits on one of its buttons.
 
-### 11.2 Geometry and the three sections
+### 11.2 Geometry and the four sections
 
-`#settings` is **480 x 300 at left 80, top 50** — deliberately the same box
-as `#sessions` (§9.2), a geometry already proven to sit under BUG-8's
-~362px browser `dialog:modal` height cap, so this modal inherits that
-headroom instead of re-deriving it. `#settings-title` and
-`#settings-close` follow §9.2's positions exactly.
+`#settings` is **480 x 344 at left 80, top 28**, centred vertically
+((400-344)/2 = 28). `#settings-title` and `#settings-close` follow §9.2's
+positions exactly.
+
+**The box grew for SOUND-1**, from the 480x300-at-top-50 it originally
+borrowed from `#sessions` (§9.2). A `SOUND` section costs 56px (title, row,
+two note lines) and the original budget had 38px spare, so the honest
+options were to grow the box or to drop the note line that makes the
+setting comprehensible. 344px keeps **18px of clearance** under BUG-8's
+~362px browser `dialog:modal` height cap — the same margin `#activity`'s
+346px box has, and for the reason that comment gives: stay well under the
+cap rather than relying on the cap to save you. A *fifth* section has to
+shrink something rather than grow this again.
 
 Everything else lives in one `#settings-body` box (`left: 12, top: 32,
 width: 448`) whose children **flow normally** rather than being
 individually absolute-positioned — the idiom `.sessions-view` and
 `.activity-section` already use. The 8px inter-section gap is a
 `margin-top` on `.settings-section-title`, so a section can gain or lose a
-note line without a second spacing edit. The vertical budget is 210px of
-the 248px available (the full ledger is in `game.css`'s own comment),
-leaving room for a fourth preference without touching the box.
+note line without a second spacing edit. The vertical budget is 276px of
+the 292px available (the full ledger is in `game.css`'s own comment).
 
 | Section | Contents |
 |---|---|
 | `NAME` | `#settings-name-current` (`CURRENTLY <name>`, the live server-authored name), `#settings-name-label`, `#settings-name` (an `<input maxlength="24">`), `#settings-name-save` (`SAVE NAME`) |
 | `WINDOW` | one `.settings-row`: label `ALWAYS ON TOP` + `#settings-ontop`, then one `.settings-note` |
+| `SOUND` | one `.settings-row`: label `SOUND EFFECTS` + `#settings-sound`, then two `.settings-note` lines (§13.4) |
 | `PRIVACY` | one `.settings-row`: label `SHOW AWAY TIME` + `#settings-away`, then two `.settings-note` lines |
+
+`SOUND` sits between `WINDOW` and `PRIVACY` because it is the same category
+as `WINDOW` — how dexel behaves on your machine — while `PRIVACY`, which is
+about what dexel shows you about your own work, stays last as the weightiest
+section.
 
 **[DESIGN CALL] The current name is shown on its own line, and the input is
 a draft.** The input is seeded from `state.config.name` on **open** and
@@ -2185,14 +2223,14 @@ same lesson the A2 `→` glyph taught (§4's coins row).
 
 ### 11.4 Actions
 
-Both controls reuse or extend the existing wire; neither invents a second
+Every control reuses or extends the existing wire; none invents a second
 path.
 
 | Control | Action | Notes |
 |---|---|---|
 | `SAVE NAME` / `Enter` in the field | `{"action":"SET_NAME","name":"<raw>"}` | The **existing** P1 action (§6.2), unchanged. Server-side `game.NormalizeName` is still the only door: trim, drop control characters, cap at 24 runes, reject empty. The client trims and sends nothing for an empty result purely so it never fires an action it knows would be rejected. |
 | `ALWAYS ON TOP` toggle | `{"action":"SET_PREF","key":"alwaysOnTop","value":<bool>}` | See §6.2 for the full contract: server-side key allow-list, no success flash, immediate `config.json` write-through, honest error flash if that write fails. |
-| `SHOW AWAY TIME` toggle | `{"action":"SET_PREF","key":"showAwayTime","value":<bool>}` | Same. |
+| `SOUND EFFECTS` toggle | `{"action":"SET_PREF","key":"soundEnabled","value":<bool>}` | Same, with one difference that matters: this preference **defaults on**, so the client must send `false` first, not `true`. The button reads its current value through the same `!== false` rule §6.1 describes, so the value it inverts and the value it paints can never disagree about what "absent" means. |
 
 **Web-only users** can set `alwaysOnTop` and nothing consumes it — the
 preference simply persists. That is harmless rather than a lie: no text on
@@ -2208,7 +2246,12 @@ re-resolve. It does already run `dexel status --json`, at launch and again
 on every focus, so the preference rides that call:
 
 * `dexel status --json` gains a **`prefs`** block — `{"alwaysOnTop": bool,
-  "showAwayTime": bool}` — read straight out of `config.json`.
+  "showAwayTime": bool, "soundEnabled": bool}` — read straight out of
+  `config.json`. `soundEnabled` is reported through
+  `ConfigData.SoundEnabledOrDefault()`, not from the raw field, because
+  `status` must say what a running dexel would actually *do*: for a
+  `config.json` written before SOUND-1 that is the default (on), not a nil
+  pointer rendered as false.
 * `prefs` is **not `omitempty`** and is **not conditional on `running`**. A
   preference is *config* (ADR 0014); it is just as true with nothing
   running, so a consumer never has to branch on `running` to find out what
@@ -2219,11 +2262,14 @@ on every focus, so the preference rides that call:
   writes through to immediately, and the file ADR 0014 deliberately leaves
   hand-editable. Reading it is therefore both fresher (a hand edit is seen
   at once) and answerable with no runtime at all.
-* `dexel status` (text) prints `on top yes|no` and
-  `away time shown in the activity log | hidden (still recorded)`, for the
-  same reason it prints `paused` (ARCHITECTURE.md Decision 16: never mute).
-  The away wording is deliberately not "yes/no" — "no" would read as *not
-  recorded*, which is exactly what is not true.
+* `dexel status` (text) prints `on top yes|no`,
+  `away time shown in the activity log | hidden (still recorded)` and
+  `sound on|off`, for the same reason it prints `paused`
+  (ARCHITECTURE.md Decision 16: never mute). The away wording is
+  deliberately not "yes/no" — "no" would read as *not recorded*, which is
+  exactly what is not true. Sound is the plain case and gets the plain
+  wording: off means there is simply no sound, with nothing recorded,
+  computed or withheld behind it.
 * The shell applies it at **window creation** (`WebviewWindowBuilder::always_on_top`),
   so the first frame is already right and there is never a flash of a
   pinned window followed by a correction; and again on its existing focus
@@ -2247,7 +2293,9 @@ real clicks and real per-character keystrokes, and judged from the pixels
 
 * **Opens both ways.** `[G]` and the `[G] SETTINGS` menu entry both open it;
   `[G]`, `Esc` and `X` all close it. `#settings-body`'s measured
-  `scrollHeight` is **210px** — exactly the authored budget, no overflow.
+  `scrollHeight` was **210px** — exactly the authored budget, no overflow.
+  (SOUND-1 re-measured this after adding the fourth section: 276px of the
+  292px the taller box provides, still no overflow, at 1x and 2x. §13.6.)
 * **Rename round-trips.** Typing a new name and pressing `SAVE NAME`
   changed `#menu-panel-title`, `#status-name` and the modal's own
   `CURRENTLY` line together, and `config.json` on disk carried the new
@@ -2426,3 +2474,286 @@ pixels (the `feature-build-and-verify` gate):
 * **Clean.** Zero console errors and zero page errors across every run, in the
   real WS-backed app and under `?dev=1`; `tsc --noEmit` clean and the bundle
   byte-identical across rebuilds.
+
+---
+
+## 13. Sound — six tiny chiptune moments
+
+SOUND-1. dexel makes a noise at six moments and at no others. The moments
+are the two completions and the four scene reactions (§12); everything else
+— typing, mouse movement, menus, modals, connection changes, purchases — is
+**deliberately silent**.
+
+The whole feature is **client-side and additive**: `render/audio.ts` owns
+playback, `render/scene.ts` is the only module that calls it, the server
+gained exactly one bool (`config.soundEnabled`, §6.1) and nothing else. No
+sound is ever *composed* on the client from server text, no sound is queued,
+and no sound is played for anything the server did not report.
+
+### 13.1 The six sounds
+
+Generated by `tools/gen_sounds.py` into `app/public/sounds/`, embedded into
+the binary by `app/embed.go` and fetched by the page at `/sounds/<file>.wav`.
+All mono, 22050 Hz, 16-bit PCM; the whole set is ~106 KB.
+
+| File | Moment | Character | Length | Peak |
+|---|---|---|---|---|
+| `sprint_complete.wav` | `flash{kind:"sprint"}` | Four **square** notes straight up a C major triad into the octave (C5-E5-G5-C6) — the payday, and the only bright thing here | 0.60s | -12 dBFS |
+| `session_complete.wav` | `sessionComplete` | Five **triangle** notes that *resolve* rather than climb (E5-G5-C6, a B5 leaning note, then a held C6) — rounder, calmer, longer | 0.90s | -12 dBFS |
+| `react_dexel.wav` | click the developer | A startled "bwip?" — a thin 25%-duty square gliding 400 → 950 Hz, because a rising glide is heard as a question | 0.18s | -15 dBFS |
+| `react_monitor.wav` | click the monitor | A soft rattle: a low 190 Hz triangle with ±18% vibrato and matching tremolo at 30 Hz — a wobble, not a hit | 0.30s | -18 dBFS |
+| `react_beverage.wav` | click the beverage | A bloop (520 → 300 → 470 Hz triangle: liquid moving) plus four discrete 6ms ticks of fizz | 0.23s | -16 dBFS |
+| `react_buddy.wav` | click the buddy | Two quick rising square blips (700→1100, then 950→1400 Hz) — a bird's answer, in the buddy's own two-beat shape | 0.24s | -15 dBFS |
+
+**The two completions are distinguishable in a blind listen**, which is why
+they differ on all three axes at once — waveshape, contour and length —
+rather than only on pitch. A sprint and a session are different
+achievements.
+
+**Levels are the design, not an afterthought.** The two jingles sit at
+-12 dBFS and the four reactions between -18 and -15, so idly poking the mug
+can never be louder than actually finishing something. `gen_sounds.py` normalises each file to hit its
+declared peak exactly and then re-measures it from the written bytes,
+failing outside a ±0.05 dB band and outside a hard -24…-9 dBFS envelope: a
+future edit cannot quietly ship something twice as loud as this release.
+
+**There is no noise channel.** A real 8-bit chip has one and it is the
+fastest way to make a companion sound like an arcade cabinet. Every voice is
+a square or a triangle with a pitch slide and a short envelope; even the
+beverage's fizz is four discrete ticks rather than a white-noise burst.
+
+**The generator is the source**, exactly as it is for the sprites: the WAVs
+are build artefacts of `tools/gen_sounds.py`, not hand-recorded blobs. Its
+self-check asserts per file — duration bounds, the declared peak, no DC
+offset, a zero first and last sample (no click at either edge), a size
+budget, and **byte-identical output across two independent synthesis
+passes**, which is what proves there is no RNG, clock or dict-ordering
+dependence anywhere in it. A manifest names the exact six files and deletes
+anything else in the directory, so no orphan WAV can be embedded into every
+binary while no code plays it.
+
+### 13.2 What deliberately makes no sound
+
+* **Typing.** The single most-repeated event in this app. A companion that
+  chirps per keystroke is a companion that gets muted on day one — at which
+  point the six moments that *were* worth hearing are gone too.
+* **Ambient anything.** No loop, no room tone, no music. dexel sits on a
+  working developer's desk for eight hours.
+* **A UI click on menu/modal opens.** Considered and dropped. Six launchers
+  are one keypress away each; a tick on every one of them is exactly the
+  "annoying" this feature is trying not to be. If it is ever wanted it
+  belongs in `gen_sounds.py`'s manifest with its own self-check, not as a
+  special case in the player.
+* **Errors, connection loss, purchases, equips.** These already have honest
+  *visual* feedback (a flash, the connection overlay, the cash flash). None
+  of them is a celebration, and a sound would make several of them feel
+  like one.
+
+### 13.3 The autoplay policy — why a locked context is normal, not an error
+
+Browsers refuse to let a page make noise before the user has interacted with
+it: an `AudioContext` constructed before any gesture starts **suspended**,
+and `resume()` on it rejects until a gesture has happened.
+
+dexel's six moments split across that line, and **not symmetrically**:
+
+* **The four reactions ARE gestures.** They arrive inside a `click` handler
+  — precisely when a context may be created and resumed. So the first click
+  on the room both unlocks audio and plays its own sound.
+* **The two completions are NOT.** A sprint completes because the user was
+  typing *in their editor*; dexel's window may not have been clicked since
+  the page loaded, or ever. **This is the ordinary case, not an edge case** —
+  and it is the one a naive implementation gets wrong by throwing an
+  unhandled rejection into the console at the app's happiest moment.
+
+So the contract is: **a locked context produces silence, never an error.**
+`play()` on a locked context asks the browser to resume (harmless, and it
+succeeds on the occasions a gesture already happened), swallows the
+rejection, and returns.
+
+* **A bounded 250ms grace window, and it is not a queue.** Two things can
+  make a sound momentarily un-playable and both resolve by themselves within
+  a few milliseconds: `resume()` is asynchronous (so a context created
+  *inside* the asking gesture can still read `suspended`), and
+  `decodeAudioData` is asynchronous (so on the very first gesture the buffer
+  is still decoding — that gesture is the earliest moment decoding could have
+  started at all). Without a window the **first** sound after a page load is
+  silent: click the mug, watch it hop, hear nothing, click again and it
+  works. That was measured in the gate, not theorised — a headless click
+  lands ~15ms after its own `pointerdown`, nowhere near enough for six WAVs
+  to decode.
+
+  So an un-ready sound is re-attempted every 30ms for at most **250ms** and
+  then dropped for good. That is bounded well inside the 800-1000ms reaction
+  beat and the ~1.4s celebration bounce, so a sound that lands late still
+  lands *on its moment*; it **expires**, so a sprint that completed while the
+  page had no gesture can never fire twenty minutes later when the user
+  finally clicks — the dishonesty this codebase refuses everywhere else (a
+  jingle is a claim that something just happened); and the preference is
+  re-read on every attempt, so muting inside the window silences it like
+  anything else.
+* **Nothing is created eagerly.** `initAudio()` (called from `main.ts`)
+  installs one capturing `pointerdown` + `keydown` listener on `window` and
+  does nothing else — no context, no fetch. Both events count because this
+  app is fully keyboard-driven; a user who never touches the mouse must
+  still be able to unlock audio. Both listeners are removed the moment
+  either fires.
+* **Decoding is deferred to that same gesture, then warms all six.**
+  `decodeAudioData` needs a context, so nothing can be decoded before one
+  exists; warming the whole set at unlock means the two completion
+  sounds — which fire on a server event that will not wait for a fetch —
+  are already decoded when they arrive.
+* **A browser with no WebAudio, or one that refuses the constructor, leaves
+  the module permanently and quietly inert.** Sound is a garnish; no part of
+  this app may fail because a garnish did. A failed fetch or decode is
+  swallowed the same way `render/preload.ts` swallows a failed sprite warm,
+  and is retried on a later `play()`.
+
+**One master gain of 0.5**, applied to every voice. The *relative* balance
+is already fixed where it belongs — in the generator's per-sound peaks — and
+mixing in two places is how two places drift.
+
+### 13.4 The preference
+
+`config.soundEnabled` (§6.1), set by `SET_PREF` (§6.2, §11.4), stored in
+`~/.config/dexel/config.json`, surfaced as the `SOUND` section's
+`SOUND EFFECTS` toggle (§11.2) under one honest note:
+
+> A few tiny chiptune moments - never music, never typing noise.
+
+* **Default ON.** A companion that ships silent is a companion nobody
+  discovers has a voice. The mute is one keypress and two clicks away.
+* **`play()` reads the preference from server state on every single call** —
+  never cached, never remembered locally. So a mute in a second tab, or a
+  hand-edited `config.json` plus a restart, takes effect without the audio
+  layer knowing anything happened. Same rule as every other control in this
+  app.
+* **The default is inverted from its two siblings, and that has real
+  cost**, paid in exactly one place: `store.ConfigData.SoundEnabled` is a
+  **`*bool`**. `alwaysOnTop`/`showAwayTime` lean on Go's zero value — false
+  is what a fresh install, an absent key and a hand-deleted key all mean,
+  and they agree, so no defaulting code exists anywhere. A plain bool here
+  would make those three cases mean the *opposite* of the default: every
+  user with a `config.json` written before this field existed would silently
+  come back muted, indistinguishable from a deliberate choice. The pointer
+  keeps `nil` (never chosen → default on), `&true` and `&false` distinct,
+  and `SoundEnabledOrDefault()` is the single place the default lives — read
+  by `main.go` at boot and by `dexel status`, and never re-derived.
+  The **write**-through always records a concrete value, so "never chosen"
+  is over the first time dexel writes the file — and the default
+  `config.json` a fresh install writes states `"soundEnabled": true` rather
+  than `null`, because that file exists to be hand-edited and `null` where a
+  bool belongs reads like damage. The `nil` state remains the honest answer
+  for a `config.json` written before this field did, which is the only place
+  it can still occur.
+* **Muting changes nothing but the sound.** No counter, no coin, no XP, no
+  sprint progress and no recorded duration differs between a muted and an
+  unmuted dexel — pinned by
+  `TestSoundEnabledChangesNothingButItself`, the sibling of §11.3's
+  `TestShowAwayTimeNeverChangesWhatIsRecorded`.
+
+### 13.5 Where the calls are, and what bounds them
+
+Two call sites, both in `render/scene.ts` — the module that already owns
+both of these moments:
+
+1. **`queueReact(key)`**, after *every* refusal has returned. So a click the
+   room ignores makes no sound, and the anti-mash rules that bound the
+   animation (§12.4: one beat at a time per item plus a 1.2s cooldown, worst
+   case one beat per ~2s per item) bound the audio **identically**, with no
+   second copy of the rule. `REACT_SOUNDS` maps the four `REACT_KEYS` to
+   their voices explicitly rather than by string surgery, which is also how
+   a future clickable item with no voice says so — by not being in the
+   table.
+2. **`onCelebrate(reason)`**, *below* the `onBreak` guard. The jingle is
+   therefore suppressed by exactly the same condition the visible
+   celebration is (§12.3): a sleeping character cheering at an empty chair
+   was already refused as dishonest body language, and a jingle playing into
+   an empty room while its owner is away is the same lie with the volume up.
+   `reason` picks the voice, which is the second thing that parameter now
+   earns.
+
+Neither the flash router nor `onSessionComplete` in `main.ts` plays anything
+itself: routing both through `onCelebrate` is what keeps "the sound and the
+bounce are the same event" true by construction rather than by convention.
+
+### 13.6 Verified in the real running game
+
+Built as the real Go binary and run with the fake provider under throwaway
+`$DEXEL_HOME`s, from an **empty directory** (so every asset came from the
+copy embedded in the binary), driven with real clicks and real keypresses in
+headless Chromium. WebAudio was instrumented from **outside** the product —
+the gate wraps the `AudioContext` constructor, `resume()` and
+`AudioBufferSourceNode.prototype.start`, so there is no test-only code in the
+shipped bundle and what is asserted is the real API call. Because
+`start()`'s node exposes `buffer.duration`, the gate can name **which**
+sound played, not merely that one did.
+
+* **The binary really carries the sounds.** From an empty directory,
+  `/api/health` reported `"publicSource":"embedded"` and all six
+  `/sounds/*.wav` returned **200 `audio/wav`** at their exact generated byte
+  lengths; `/sounds/` (the directory) returned **404**, keeping
+  INTERACTION-HARDENING's no-listings rule.
+* **Each reaction plays its own voice.** Clicking the developer, the monitor
+  and the mug in turn produced buffer durations `[180, 300, 234]` ms —
+  `react_dexel`, `react_monitor`, `react_beverage`, in that order, each on
+  the beat of its own first frame.
+* **The very first gesture is audible.** On a returning save (no onboarding
+  modal), a page whose *first* interaction is a click on the mug played
+  `[234]` — the case that was silent before the grace window existed, and
+  the reason it exists (§13.3).
+* **A completion with no gesture at all is silent and clean.** With the
+  autoplay policy simulated by fault injection — `AudioContext.state` forced
+  to `suspended` for ever and `resume()` replaced with a rejecting promise,
+  because headless Chrome does not enforce the real policy — three
+  back-to-back completions produced **0 started sources, 0 console errors and
+  0 unhandled rejections**, and 4 seconds later (long after the buffers had
+  decoded) still nothing had arrived late. The retry loop terminates.
+* **A real sprint completion plays the sprint voice.** No fixture and no
+  `evaluate()`: the fake typing provider ground out the whole 50-unit first
+  sprint until `app/main.go` broadcast
+  `flash{kind:"sprint"}` — observed on screen as
+  `"Fix Bug #404 complete! +25 Dev Cash"` — and the page answered with one new
+  buffer of **600ms**, `sprint_complete.wav`. (The `[300]` before it is the
+  monitor click that unlocked audio at the start of the run, so this is the
+  sprint seam being tested and not the autoplay policy.) Zero problems.
+* **A real session completion plays the session voice.** A genuine 1m 12s
+  session, started and stopped through the Sessions modal against a real
+  server, produced the summary card and exactly one new sound: **900ms**,
+  `session_complete.wav` — not the sprint jingle.
+* **The toggle silences everything, and the animation keeps going.** With
+  `SOUND EFFECTS` off, three further reaction clicks left the play counter
+  frozen at its previous value while the monitor was still mid-react
+  (`monitor_shake_b.png` on screen) — muting is not disabling the feature.
+  Turning it back on made the next click audible again.
+* **The preference persists both ways.** Muted, then reloaded: the toggle
+  came back `OFF`. Muted, then the **process restarted**: still `OFF`, and
+  `config.json` carried `"soundEnabled": false` alongside an untouched
+  `autostart` and `name`.
+* **A pre-SOUND-1 `config.json` boots with sound ON.** A hand-written file
+  with `name`/`autostart`/`alwaysOnTop`/`showAwayTime` and **no**
+  `soundEnabled` key reported `sound on` from `dexel status`; adding
+  `"soundEnabled": false` by hand reported `sound off`; and a running dexel
+  writing that file back left `autostart: systemd-user` and the mute both
+  intact. `status --json` carried
+  `{"alwaysOnTop":…,"showAwayTime":…,"soundEnabled":…}`.
+* **The modal fits.** `#settings-body`'s measured `scrollHeight` is **276px**
+  against a `clientHeight` of **276px** — the authored budget exactly, no
+  overflow — with the dialog measuring 344px and *not* being capped by the UA
+  stylesheet. Four section titles in order (`NAME`, `WINDOW`, `SOUND`,
+  `PRIVACY`), five note lines, nothing clipped, identical at 1x (640x400) and
+  2x (1280x800). Judged from the screenshot: the `SOUND EFFECTS` row reads as
+  a peer of the two existing preference rows, with the gold `ON` the only
+  gold toggle on screen — which is itself the honest signal that this is the
+  one preference that ships enabled.
+* **The generator is honest about itself.** `python3 tools/gen_sounds.py`
+  passes every self-check (durations, declared peaks to ±0.05 dB, no DC
+  offset, zero first/last samples, size budget, two byte-identical synthesis
+  passes) and rewrites byte-identical files across separate process runs;
+  the manifest holds at exactly six files, 105.7 KB total.
+* **Clean.** `go vet`, `gofmt -l`, `bash scripts/test-race.sh` and
+  `tsc --noEmit` all green; the esbuild bundle is byte-identical across
+  rebuilds. Zero console errors and zero page errors across every run — the
+  only console noise in this app is a `/favicon.ico` 404 that predates this
+  work (the page declares no icon and the binary embeds none), which the gate
+  answers with a 204 so it cannot mask a real error.

@@ -11,32 +11,56 @@ import (
 // TestSetPrefAppliesEveryAllowListedKey walks the allow-list itself
 // rather than naming keys by hand, so a preference added to
 // prefTargets() without a working setter fails here immediately.
+//
+// It flips each preference AWAY FROM whatever a fresh game holds instead
+// of setting them all to true. It used to do the latter, on the stated
+// assumption that "every preference defaults to false" — an assumption
+// SOUND-1's soundEnabled (default ON) retired. Testing the flip rather
+// than a fixed value keeps this default-agnostic, which is what a test
+// that walks the allow-list has to be if the allow-list is allowed to
+// grow a preference with a different default.
 func TestSetPrefAppliesEveryAllowListedKey(t *testing.T) {
 	for _, key := range PrefKeys() {
 		g := New()
-		mutated, err := g.SetPref(key, true)
+		before := prefFromView(t, g, key)
+		want := !before
+		mutated, err := g.SetPref(key, want)
 		if err != nil {
-			t.Fatalf("SetPref(%q, true): %v", key, err)
+			t.Fatalf("SetPref(%q, %v): %v", key, want, err)
 		}
 		if !mutated {
-			t.Errorf("SetPref(%q, true) on a fresh game reported no mutation — every preference defaults to false", key)
+			t.Errorf("SetPref(%q, %v) on a fresh game (which holds %v) reported no mutation", key, want, before)
 		}
 		// The value has to be visible in the ONE place the client can
 		// see it: the state broadcast.
-		cfg := g.State().Config
-		switch key {
-		case PrefAlwaysOnTop:
-			if !cfg.AlwaysOnTop {
-				t.Errorf("SetPref(%q) did not reach ConfigView.AlwaysOnTop", key)
-			}
-		case PrefShowAwayTime:
-			if !cfg.ShowAwayTime {
-				t.Errorf("SetPref(%q) did not reach ConfigView.ShowAwayTime", key)
-			}
-		default:
-			t.Errorf("PrefKeys() reports %q, which this test does not check on the wire — add it", key)
+		if got := prefFromView(t, g, key); got != want {
+			t.Errorf("SetPref(%q, %v) did not reach ConfigView (still %v)", key, want, got)
 		}
 	}
+}
+
+// prefFromView reads one preference out of ConfigView BY ITS WIRE TAG,
+// via reflection over the same struct TestPrefKeysMatchesConfigViewsBoolFields
+// audits. Deliberately not a switch on the key: a hand-written switch is a
+// second list to keep in step with the allow-list, and the last one silently
+// became wrong (its default branch failed the build for a key it simply had
+// not been taught). Reflection makes "every settable key is readable on the
+// wire" the thing being tested rather than something this helper assumes.
+func prefFromView(t *testing.T, g *Game, key string) bool {
+	t.Helper()
+	view := reflect.ValueOf(g.State().Config)
+	typ := view.Type()
+	for i := 0; i < typ.NumField(); i++ {
+		if typ.Field(i).Tag.Get("json") != key {
+			continue
+		}
+		if view.Field(i).Kind() != reflect.Bool {
+			t.Fatalf("ConfigView field for pref %q is %s, want bool", key, view.Field(i).Kind())
+		}
+		return view.Field(i).Bool()
+	}
+	t.Fatalf("pref %q has no field on ConfigView — a preference the client cannot read back", key)
+	return false
 }
 
 // TestPrefKeysMatchesConfigViewsBoolFields is the anti-rot check: the
@@ -111,21 +135,61 @@ func TestSetPrefIsIdempotent(t *testing.T) {
 	}
 }
 
-// TestPrefsDefaultToFalseAndRestoreFromConfig is the default the owner
+// TestPrefDefaultsAndRestoreFromConfig is the set of defaults the owner
 // asked for, pinned: a fresh dexel does NOT pin its window and does NOT
-// show away time, and a restart restores whatever the user chose.
-func TestPrefsDefaultToFalseAndRestoreFromConfig(t *testing.T) {
+// show away time, but it DOES have sound on (SOUND-1: "default ON" — a
+// companion that ships silent is a companion nobody discovers has a
+// voice). A restart restores whatever the user chose, in both directions.
+func TestPrefDefaultsAndRestoreFromConfig(t *testing.T) {
 	g := New()
 	if g.AlwaysOnTop() || g.ShowAwayTime() {
 		t.Fatalf("a fresh game has alwaysOnTop=%v showAwayTime=%v, want both false", g.AlwaysOnTop(), g.ShowAwayTime())
 	}
-	g.RestorePrefs(true, true)
-	if !g.AlwaysOnTop() || !g.ShowAwayTime() {
-		t.Error("RestorePrefs(true,true) did not take")
+	if !g.SoundEnabled() {
+		t.Fatal("a fresh game has sound OFF — SOUND-1's default is ON")
 	}
-	g.RestorePrefs(false, false)
+	g.RestorePrefs(true, true, false)
+	if !g.AlwaysOnTop() || !g.ShowAwayTime() {
+		t.Error("RestorePrefs(true,true,...) did not take")
+	}
+	if g.SoundEnabled() {
+		t.Error("RestorePrefs could not restore a MUTE — the one direction a default-on preference has to be able to remember")
+	}
+	g.RestorePrefs(false, false, true)
 	if g.AlwaysOnTop() || g.ShowAwayTime() {
-		t.Error("RestorePrefs(false,false) did not take — a preference turned back off must restore off")
+		t.Error("RestorePrefs(false,false,...) did not take — a preference turned back off must restore off")
+	}
+	if !g.SoundEnabled() {
+		t.Error("RestorePrefs(...,true) did not restore sound")
+	}
+}
+
+// TestSoundEnabledChangesNothingButItself is the SOUND-1 sibling of
+// TestShowAwayTimeNeverChangesWhatIsRecorded below, and it exists for the
+// same reason: a preference about PRESENTATION must not reach the economy.
+// Muting dexel is not paying dexel less.
+func TestSoundEnabledChangesNothingButItself(t *testing.T) {
+	run := func(sound bool) StateMessage {
+		g := New()
+		if _, err := g.SetPref(PrefSoundEnabled, sound); err != nil {
+			t.Fatalf("SetPref: %v", err)
+		}
+		g.Tick(engine.TickResult{Mood: engine.MoodCoding, KeystrokeDelta: 9})
+		g.Tick(engine.TickResult{Mood: engine.MoodCoding, KeystrokeDelta: 7})
+		g.Tick(engine.TickResult{Mood: engine.MoodIdle})
+		return g.State()
+	}
+	on, off := run(true), run(false)
+	if on.Stats.Today != off.Stats.Today {
+		t.Errorf("today's counters differ by the sound preference:\n on:  %+v\n off: %+v", on.Stats.Today, off.Stats.Today)
+	}
+	if on.DevCash != off.DevCash || on.XP != off.XP || on.Sprint.Progress != off.Sprint.Progress {
+		t.Errorf("the economy differs by the sound preference: on={cash:%d xp:%d progress:%v} off={cash:%d xp:%d progress:%v}",
+			on.DevCash, on.XP, on.Sprint.Progress, off.DevCash, off.XP, off.Sprint.Progress)
+	}
+	// And the flag itself is the ONLY thing that moved.
+	if on.Config.SoundEnabled == off.Config.SoundEnabled {
+		t.Error("the two runs report the same soundEnabled — the fixture is not exercising the preference")
 	}
 }
 

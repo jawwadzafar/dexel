@@ -188,6 +188,15 @@ export interface ConfigView {
   // field. See docs/ui-spec.md §11.3 for why recording is deliberately
   // untouched.
   showAwayTime?: boolean;
+  // `soundEnabled` gates every sound effect this page plays (SOUND-1,
+  // docs/ui-spec.md §13). Optional like its siblings, but note that its
+  // DEFAULT is the opposite of theirs: the server defaults it ON, so
+  // render/audio.ts treats "absent" as on (`!== false`) rather than
+  // reading it as `!!undefined`. That is the honest degradation here — a
+  // frontend talking to a server too old to send the field is talking to
+  // a server that has no mute to respect, and silently muting itself
+  // would invent a preference nobody set.
+  soundEnabled?: boolean;
 }
 
 // Phase P2 — Sessions (docs/plan/P2-design.md §6.1). The counters are
@@ -359,7 +368,7 @@ export type ClientAction =
   // on/off choice; a future non-boolean preference is a deliberate wire
   // change (see app/internal/game/prefs.go), not something this type
   // should leave loose now.
-  | { action: 'SET_PREF'; key: 'alwaysOnTop' | 'showAwayTime'; value: boolean }
+  | { action: 'SET_PREF'; key: 'alwaysOnTop' | 'showAwayTime' | 'soundEnabled'; value: boolean }
   // Phase P2 (docs/plan/P2-design.md §6.2). Names PINNED: SESSION_START /
   // SESSION_STOP (the imperative pair matches the UI's Start/Stop buttons
   // and the STORE_OPEN/STORE_CLOSE verb-pair precedent). `name` is raw

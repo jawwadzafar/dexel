@@ -6,11 +6,12 @@
 //                   re-assert)
 //   - RENDER:       render/scene.ts, render/terminal.ts, render/chrome.ts,
 //                   render/overlays.ts, render/flash.ts, render/tint.ts,
-//                   render/viewport.ts (WINDOW-POLISH's letterbox scaling)
-//                   and render/interaction.ts (INTERACTION-HARDENING's
-//                   drag/selection backstops) — given the current store
-//                   state, update the DOM each owns; none of them send a
-//                   ClientAction.
+//                   render/viewport.ts (WINDOW-POLISH's letterbox scaling),
+//                   render/interaction.ts (INTERACTION-HARDENING's
+//                   drag/selection backstops) and render/audio.ts (SOUND-1's
+//                   six chiptune effects) — given the current store state,
+//                   update the DOM (or the speakers) each owns; none of them
+//                   send a ClientAction.
 //   - FEATURE/LOGIC: features/store-modal.ts, features/activity-modal.ts,
 //                   features/history-modal.ts, features/onboarding-modal.ts
 //                   (Phase P1's first-launch identity modal),
@@ -36,6 +37,7 @@ import { onCelebrate, renderScene } from './render/scene';
 import { hideConnOverlay, showConnOverlay } from './render/overlays';
 import { initViewport } from './render/viewport';
 import { initInteractionGuards } from './render/interaction';
+import { initAudio } from './render/audio';
 import { showFlash } from './render/flash';
 import * as storeModal from './features/store-modal';
 import * as activityModal from './features/activity-modal';
@@ -111,6 +113,14 @@ initViewport();
 // content into the scene, so there is no window in which a sprite is
 // draggable.
 initInteractionGuards();
+
+// SOUND-1 (docs/ui-spec.md §13) — arm the audio layer. This installs a
+// one-shot first-gesture listener and NOTHING else: no AudioContext is
+// created and no WAV is fetched until the user actually clicks or presses a
+// key, because a browser will not let a context started before then make any
+// sound anyway. Every play() call site (render/scene.ts) is safe before this
+// point and after it; the worst a too-early sound can do is be silent.
+initAudio();
 
 // WINDOW-POLISH — in the frameless shell, reveal and wire the in-page window
 // controls. Returns immediately in a browser tab, where the page must stay

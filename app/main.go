@@ -392,12 +392,18 @@ func runServe(mode serveMode, args []string) {
 	cfgPath, cfg := loadOrInitConfig()
 	g.RestoreConfigName(cfg.Name)
 	g.RestoreSessionNames(store.SessionNamesFromConfig(cfg))
-	// SET-1 (docs/ui-spec.md §11): the two user preferences ride the same
-	// config.json load as the name, so a restart comes back with the
-	// settings the user chose — and, since both default to false, a fresh
-	// install comes back with away time private and the window unpinned
-	// without any defaulting code here.
-	g.RestorePrefs(cfg.AlwaysOnTop, cfg.ShowAwayTime)
+	// SET-1 (docs/ui-spec.md §11) + SOUND-1 (§13): the user preferences ride
+	// the same config.json load as the name, so a restart comes back with
+	// the settings the user chose — and, since the first two default to
+	// false, a fresh install comes back with away time private and the
+	// window unpinned without any defaulting code here.
+	//
+	// soundEnabled is the exception and the ONE place its inverted default
+	// is applied: SoundEnabledOrDefault turns config.json's three states
+	// (absent / true / false) into the one bool game.Game holds. A
+	// config.json written before this field existed therefore boots with
+	// sound ON — the default — rather than with an accidental mute.
+	g.RestorePrefs(cfg.AlwaysOnTop, cfg.ShowAwayTime, cfg.SoundEnabledOrDefault())
 	if g.ConfigName() != "" {
 		log.Printf("dexel name: %q", g.ConfigName())
 	}
@@ -626,7 +632,8 @@ func runServe(mode serveMode, args []string) {
 	// survive a crash is worse than no name at all" — both forbid.
 	//
 	// This is the ONLY place any of them is written, and it writes
-	// game.Game.ConfigName()/SessionNames()/AlwaysOnTop()/ShowAwayTime()
+	// game.Game.ConfigName()/SessionNames()/AlwaysOnTop()/ShowAwayTime()/
+	// SoundEnabled()
 	// — the values NormalizeName/NormalizeSessionName already sanitised,
 	// and the bools game.Game.SetPref already checked against its
 	// key allow-list — never a raw client payload. cfgPath == "" means the home directory could not be
@@ -658,6 +665,7 @@ func runServe(mode serveMode, args []string) {
 		return writeConfigThrough(cfgPath, g.ConfigName(), store.SessionNamesToConfig(g.SessionNames()), configPrefs{
 			AlwaysOnTop:  g.AlwaysOnTop(),
 			ShowAwayTime: g.ShowAwayTime(),
+			SoundEnabled: g.SoundEnabled(),
 		})
 	}
 

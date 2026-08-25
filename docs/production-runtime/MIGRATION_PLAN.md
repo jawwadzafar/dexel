@@ -264,9 +264,30 @@ confirmation and never touches the legacy Rust save.
 - End-to-end on the runner: install v9.9.8, `dexel update` to v9.9.9 from a local
   fixture bucket, and assert `state.db` is byte-identical across the swap and the
   running version changed.
-- `dexel uninstall` removes the binary and leaves `state.db`/`config.json`/logs,
-  printing their paths; `--purge --yes` removes the state dir and still leaves
-  `~/.local/share/dev-companion/save.json` untouched.
+- ~~`dexel uninstall` removes the binary and leaves
+  `state.db`/`config.json`/logs, printing their paths; `--purge --yes` removes
+  the state dir and still leaves `~/.local/share/dev-companion/save.json`
+  untouched.~~ **SHIPPED** — `app/cmd_uninstall.go` + `app/cmd_uninstall_test.go`,
+  wired into `cli.go`'s table. It is the full reversal of what `install.sh` and
+  `install.ps1` create, not just the binary: the runtime is stopped
+  endpoint-first, autostart is disabled with every mechanism probed, and the
+  launcher entry, icon, `dexel-desktop*` shell files, `runtime.json`,
+  `runtime.lock` and `cache/` all go, each reported as `removed` or
+  `already absent` (a second run is a clean exit 0). Consent is two-stage:
+  one `[y/N]`, then the literal word `purge` for the data; `--yes` skips both
+  and a non-tty stdin without `--yes` REFUSES rather than assuming an answer.
+  A `.deb` install in `/usr/bin` is detected and handed back as
+  `sudo apt remove dexel` — never attempted, since this binary does not sudo.
+  Verified end-to-end on Linux against three real temp-prefix installs
+  (install.sh → autostart enable → runtime running + a headless-Chromium page
+  connected → uninstall): state kept with its paths printed, re-run idempotent,
+  `--purge --yes` removing the state dir. Windows/macOS branches are
+  unit-tested through goos-injected path arithmetic and cross-compiled; the
+  Windows self-delete (a detached `powershell -Command Wait-Process; Remove-Item`
+  keyed to this pid, since a running `.exe` cannot unlink itself) is
+  **FIELD-TEST-NEEDED**.
+- `dexel update` is the remaining half of this PR and is still outstanding —
+  `update` is deliberately absent from `cli.go`'s table until it does something.
 
 **Recommendation attached to this step:** resolve **FORK C** here. An updater
 implies a downgrade path, and today a downgrade quarantines the save and starts
@@ -347,8 +368,9 @@ replacing it: the window, origin and geometry decisions there all still stand.
 * Homebrew tap, winget, AUR — downstream consumers of the same manifest.
 * Automatic update checks (opt-in only; `--check` already exists as the
   primitive).
-* Windows real activity provider (`provider_select_other.go` is blind today) —
-  the biggest honest gap in the support matrix.
+* ~~Windows real activity provider~~ — shipped as `provider_select_windows.go`
+  (ADR 0021); what is left is *verifying* it on Windows hardware, which needs a
+  runner this project does not have.
 
 ---
 
