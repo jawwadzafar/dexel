@@ -518,6 +518,30 @@ in a 1px `shadow` contact row wider than itself.
 | `buddy_bot_b.png` | 28x30 | **Differs from A only in the 2 `screen` eye pixels** (blink) |
 | `buddy_cat.png` | 28x30 | Curled sleeping `hair` cat seen from above-behind, `cream` tail tip |
 
+### HUD currency — COIN (3) — 16x16, NOT a scene sprite
+
+dexel's own currency mark, authored by `tools/gen_assets.py` alongside the
+scene sprites but kept in its own `COIN_SPEC` manifest because it is a **UI
+icon**, not a behind-the-shoulder scene prop: it has no anchor in the 320x200
+room, no store thumbnail, and — because it floats in the HUD bar rather than
+resting on a surface — **no contact shadow** (the one manifest-wide rule it is
+exempt from, by the same "nothing is resting on anything" logic). It replaces
+the NES.css cash glyph in the top-left HUD (`#hud-cash`) and on the store's
+`TOTAL DEV CASH` line, both of which render a 16x16 CSS-px box at 1x, so the
+coin is authored at **16x16 native** — displayed 1:1, or a clean
+nearest-neighbour 2x on a retina panel. One key light, upper-left, like
+everything else. The warm depth ramp is entirely in-palette: `pot` < `gold` <
+`lamp` < `cream`.
+
+| File | Size | Content |
+|---|---|---|
+| `coin.png` | 16x16 | A 14px `gold` disc (1px clear margin): lit `lamp` rim on the upper-left arc, `pot` (ember) shadow rim on the lower-right, a `cream` specular glint high-left, and a `pot` "$" stamped through the centre so it reads as currency at 16px |
+| `coin_react_a.png` | 16x16 | Click-react frame A: the coin turned **edge-on**, a narrow vertical ellipse mid-flip — lit `lamp` left face, `pot` shadow right, a `cream` catch-light down the lit edge, no "$" |
+| `coin_react_b.png` | 16x16 | Click-react frame B: the coin landed back face-up (identical to `coin.png`) with a `cream`/`lamp` 4-point sparkle thrown off its upper-right rim — the satisfying end of the flip. Same canvas/anchor as `coin.png`, so the wiring swaps `src` in place |
+
+The click sound that pairs with this react is `coin.wav` (`tools/gen_sounds.py`):
+a two-note B5→E6 square-wave "ching", 0.18s, peak −14 dBFS.
+
 ### Store thumbnails (derived, not authored)
 
 The store grid draws each item into a 40x40 box. Rather than 32 more hand

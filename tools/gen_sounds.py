@@ -289,6 +289,19 @@ def build_react_buddy() -> list[float]:
     )
 
 
+def build_coin() -> list[float]:
+    """THE COIN CHING. dexel's own currency (COIN) answering a click with the
+    classic two-note up-flick: a short B5 grace note snapping up into a bright
+    E6 that rings out, both squares for the coin-bright timbre a triangle would
+    round off. 0.18s total - short enough to fire on every click without the
+    anti-mash cooldown ever being the thing that cuts it off - and modest
+    (-14 dB): a satisfying "you got a coin" blip, not an arcade payout."""
+    return seq(
+        tone(0.05, B5, wave_name="square", duty=0.5, curve=1.4),
+        tone(0.13, E6, E6 * 1.005, wave_name="square", duty=0.5, curve=1.1),
+    )
+
+
 # --------------------------------------------------------------------------
 # THE MANIFEST
 # --------------------------------------------------------------------------
@@ -307,6 +320,7 @@ SPEC: dict[str, tuple[object, float, float, float]] = {
     "react_monitor.wav":    (build_react_monitor,    -18.0, 0.24, 0.36),
     "react_beverage.wav":   (build_react_beverage,   -16.0, 0.20, 0.30),
     "react_buddy.wav":      (build_react_buddy,      -15.0, 0.18, 0.30),
+    "coin.wav":             (build_coin,             -14.0, 0.15, 0.22),
 }
 
 # The two bounds every sound must sit inside whatever SPEC declares for it —

@@ -2869,6 +2869,152 @@ def build_buddy_cat_react(stage: int) -> Sprite:
 
 
 # --------------------------------------------------------------------------
+# COIN - dexel's own HUD currency (COIN)
+# --------------------------------------------------------------------------
+#
+# NOT a scene sprite. The coin lives in the top-left HUD (index.html
+# #hud-cash) where it replaces the NES.css cash glyph, and on the store's
+# "TOTAL DEV CASH" line. game.css draws it in a 16x16 CSS-px box at 1x
+# (`.nes-icon.coin.is-small { transform: scale(1) }`, "a 16x16 `.nes-icon`,
+# twice the height of the text beside it"), so it is AUTHORED at 16x16 native
+# - displayed 1:1, or a clean nearest-neighbour 2x on a retina panel. It is a
+# UI icon that floats in the bar, so - unlike every scene prop - it carries NO
+# contact shadow (nothing-resting-on-a-surface, so rule 5 does not apply).
+#
+# One key light, upper-left, like everything else in the scene: a lit `lamp`
+# rim on the upper-left arc, a `pot` (ember) shadow rim on the lower-right, a
+# flat `gold` body, a `cream` specular glint high-left, and a `pot` "$" stamped
+# through the centre so the icon reads as CURRENCY at 16px, not just a disc.
+# The warm depth ramp is entirely in-palette: pot < gold < lamp < cream.
+
+COIN_SIZE = 16
+_COIN_CX = _COIN_CY = 7.5          # centre of the 16px canvas (even width)
+_COIN_R = 7.0                      # radius -> a 14px disc, 1px clear margin
+
+# The HUD/store coin manifest. Kept separate from the 75-entry scene SPEC
+# because the coin is a UI icon, not a behind-the-shoulder scene sprite: it
+# has no anchor in the 320x200 room, no contact shadow, and no store
+# thumbnail. main() builds, palette-checks and accounts for these exactly the
+# way it does the scene manifest.
+COIN_SPEC: list[tuple[str, int, int]] = [
+    ("coin.png", COIN_SIZE, COIN_SIZE),
+    ("coin_react_a.png", COIN_SIZE, COIN_SIZE),
+    ("coin_react_b.png", COIN_SIZE, COIN_SIZE),
+]
+COIN_NAMES = {name for name, _, _ in COIN_SPEC}
+
+# The "$" glyph: a 5x7 bitmap, a vertical bar through an S. Stamped in `pot`
+# (the coin's darkest warm) centred on the disc so the icon reads as money.
+_COIN_DOLLAR = (
+    "..X..",
+    ".XXX.",
+    "X.X..",
+    ".XXX.",
+    "..X.X",
+    ".XXX.",
+    "..X..",
+)
+
+
+def _coin_inside(x: int, y: int) -> bool:
+    """True inside the centred 14px disc."""
+    dx, dy = x - _COIN_CX, y - _COIN_CY
+    return dx * dx + dy * dy <= _COIN_R * _COIN_R
+
+
+def build_coin() -> Sprite:
+    """The rest coin: a cozy gold disc with an ember-shadowed lower-right rim,
+    a lit upper-left rim, a cream glint and a stamped "$"."""
+    s = Sprite(COIN_SIZE, COIN_SIZE)
+    inside = [[_coin_inside(x, y) for x in range(COIN_SIZE)]
+              for y in range(COIN_SIZE)]
+    # 1. flat gold body
+    for y in range(COIN_SIZE):
+        for x in range(COIN_SIZE):
+            if inside[y][x]:
+                s.dot(x, y, "gold")
+    # 2. rim ring, coloured by the one upper-left light: a rim pixel is an
+    #    inside pixel touching the outside. lamp on the upper-left arc, pot
+    #    (ember depth) on the lower-right arc, gold on the two sides - the
+    #    classic lit/shadow crescent that reads a flat fill as a raised disc.
+    for y in range(COIN_SIZE):
+        for x in range(COIN_SIZE):
+            if not inside[y][x]:
+                continue
+            edge = any(not (0 <= x + dx < COIN_SIZE and 0 <= y + dy < COIN_SIZE
+                            and inside[y + dy][x + dx])
+                       for dx, dy in ((1, 0), (-1, 0), (0, 1), (0, -1)))
+            if not edge:
+                continue
+            proj = (x - _COIN_CX) + (y - _COIN_CY)
+            if proj <= -1.0:
+                s.dot(x, y, "lamp")
+            elif proj >= 1.0:
+                s.dot(x, y, "pot")
+    # 3. "$" stamp in pot, centred (5x7 glyph -> x 5..9, y 4..10)
+    for gy, row in enumerate(_COIN_DOLLAR):
+        for gx, ch in enumerate(row):
+            if ch == "X":
+                s.dot(5 + gx, 4 + gy, "pot")
+    # 4. specular glint, high-left, cream (kept off the "$", <5% of the disc)
+    s.dots([(4, 4), (5, 4), (4, 5)], "cream")
+    return s
+
+
+def build_coin_react_a() -> Sprite:
+    """Frame A of the click flip: the coin turned edge-on - a narrow vertical
+    ellipse, mid-spin. Lit `lamp` on the left face, `pot` shadow on the right,
+    a `cream` catch-light down the lit edge. No "$": you cannot read the face
+    of a coin seen on its edge, and its absence is what sells the rotation."""
+    s = Sprite(COIN_SIZE, COIN_SIZE)
+    rx, ry = 2.5, 7.0
+    for y in range(COIN_SIZE):
+        row_inside = []
+        for x in range(COIN_SIZE):
+            dx, dy = x - _COIN_CX, y - _COIN_CY
+            if (dx * dx) / (rx * rx) + (dy * dy) / (ry * ry) <= 1.0:
+                row_inside.append(x)
+                if dx <= -1.3:
+                    s.dot(x, y, "lamp")
+                elif dx >= 1.0:
+                    s.dot(x, y, "pot")
+                else:
+                    s.dot(x, y, "gold")
+        # cream catch-light on the lit (left) edge of the middle rows
+        if row_inside and 4 <= y <= 11:
+            s.dot(min(row_inside), y, "cream")
+    return s
+
+
+def build_coin_react_b() -> Sprite:
+    """Frame B: the coin lands back face-up with a `cream`/`lamp` sparkle
+    thrown off its upper-right rim - the satisfying end of the flip. Same
+    canvas and anchor as the rest coin, so the wiring swaps `src` in place."""
+    s = build_coin()
+    s.dots([(13, 2), (12, 2), (14, 2), (13, 1), (13, 3)], "cream")   # 4-point spark
+    s.dot(14, 1, "lamp")                                             # twinkle tip
+    return s
+
+
+COIN_BUILDERS = {
+    "coin.png": build_coin,
+    "coin_react_a.png": build_coin_react_a,
+    "coin_react_b.png": build_coin_react_b,
+}
+assert set(COIN_BUILDERS) == COIN_NAMES, "COIN_BUILDERS and COIN_SPEC drifted apart"
+
+# The coin's opaque-footprint band (a ~14px disc, area ~= pi*7^2 ~= 154 px),
+# and the react-pair frame diffs. Filled in / asserted by the coin self-checks.
+COIN_FOOTPRINT_MIN = 130
+COIN_FOOTPRINT_MAX = 175
+COIN_REACT_PAIRS = (
+    ("coin.png", "coin_react_a.png"),        # rest -> edge-on: a big change
+    ("coin_react_a.png", "coin_react_b.png"),  # edge-on -> face+sparkle
+    ("coin.png", "coin_react_b.png"),        # rest differs from the landed frame
+)
+
+
+# --------------------------------------------------------------------------
 # Builders table + thumbnail catalog
 # --------------------------------------------------------------------------
 
@@ -3736,6 +3882,43 @@ def cleanup_stale(expected: set[str]) -> list[str]:
     return removed
 
 
+def assert_coin_round(name: str, s: Sprite) -> str:
+    """The rest coin must read as a DISC, not a square: every 2x2 corner block
+    of the 16x16 canvas is transparent, and the opaque footprint sits in the
+    band a ~14px disc occupies. A regression that squared it off, shrank it to
+    a dot, or grew it to a blob fails one of the two."""
+    px = s.img.load()
+    for cx0, cy0 in ((0, 0), (COIN_SIZE - 2, 0),
+                     (0, COIN_SIZE - 2), (COIN_SIZE - 2, COIN_SIZE - 2)):
+        for y in range(cy0, cy0 + 2):
+            for x in range(cx0, cx0 + 2):
+                if px[x, y][3] != 0:
+                    raise AssertionError(
+                        f"{name}: corner pixel ({x},{y}) is opaque - the coin is "
+                        "not round")
+    opaque = sum(1 for y in range(s.h) for x in range(s.w) if px[x, y][3] != 0)
+    if not COIN_FOOTPRINT_MIN <= opaque <= COIN_FOOTPRINT_MAX:
+        raise AssertionError(
+            f"{name}: {opaque} opaque px outside the disc band "
+            f"{COIN_FOOTPRINT_MIN}..{COIN_FOOTPRINT_MAX}")
+    return f"{name}: round ({opaque} opaque px, all four corners clear)"
+
+
+def assert_coin_glint(name: str, s: Sprite) -> str:
+    """The coin's highlight is load-bearing (it is what makes gold read as a
+    metal disc under the one upper-left light, not a flat sticker): at least
+    one `cream` specular pixel must sit in the upper-left quadrant."""
+    px = s.img.load()
+    cream = PALETTE["cream"] + (255,)
+    n = sum(1 for y in range(0, COIN_SIZE // 2) for x in range(0, COIN_SIZE // 2)
+            if px[x, y] == cream)
+    if n < 1:
+        raise AssertionError(
+            f"{name}: no cream glint pixel in the upper-left quadrant - the "
+            "coin's key highlight is missing")
+    return f"{name}: cream glint present ({n}px, upper-left quadrant)"
+
+
 def main() -> int:
     ASSETS.mkdir(parents=True, exist_ok=True)
 
@@ -3744,15 +3927,20 @@ def main() -> int:
         sprite = BUILDERS[filename]()
         sprite.save(filename)
         built[filename] = sprite
+    for filename, _w, _h in COIN_SPEC:
+        sprite = COIN_BUILDERS[filename]()
+        sprite.save(filename)
+        built[filename] = sprite
 
     ok = True
     print(f"{'file':<28}{'size':<9}{'opaque':>8}  {'kind':<5}status")
-    for filename, want_w, want_h in SPEC:
+    for filename, want_w, want_h in SPEC + COIN_SPEC:
         passed, detail = check(filename, want_w, want_h)
         ok = ok and passed
         print(f"{filename:<28}{detail}")
 
-    print(f"\n{len(SPEC)} manifest sprites written to {ASSETS}")
+    print(f"\n{len(SPEC)} manifest sprites + {len(COIN_SPEC)} coin (HUD currency) "
+          f"written to {ASSETS}")
 
     print("\n-- chair hard-region assertion --")
     for style in CHAIR_STYLES:
@@ -3906,6 +4094,26 @@ def main() -> int:
                 ok = False
                 print("  FAIL:", exc)
 
+    print("\n-- COIN (HUD currency): round footprint + glint --")
+    try:
+        print(" ", assert_coin_round("coin.png", built["coin.png"]))
+    except AssertionError as exc:
+        ok = False
+        print("  FAIL:", exc)
+    try:
+        print(" ", assert_coin_glint("coin.png", built["coin.png"]))
+    except AssertionError as exc:
+        ok = False
+        print("  FAIL:", exc)
+
+    print("\n-- COIN: click-react frame diffs (rest vs react, react pair) --")
+    for pair in COIN_REACT_PAIRS:
+        try:
+            print(" ", check_frame_diff(*pair))
+        except AssertionError as exc:
+            ok = False
+            print("  FAIL:", exc)
+
     print("\n-- derived store thumbnails --")
     plan = thumbnail_plan()
     thumb_names = set()
@@ -3929,7 +4137,7 @@ def main() -> int:
     print(f"{derived_count} thumbnails derived, {len(THUMB_OVERRIDES)} authored override(s) "
           "(chair_basic/racer/exec/antigrav form+detail - see THUMB_OVERRIDES comment)")
 
-    expected = SPEC_NAMES | thumb_names
+    expected = SPEC_NAMES | COIN_NAMES | thumb_names
     removed = cleanup_stale(expected)
     print("\n-- stale file cleanup --")
     if removed:
@@ -3949,7 +4157,8 @@ def main() -> int:
             print("UNEXPECTED EXTRA:", sorted(extra))
     else:
         print(f"\napp/assets/ contains exactly {len(expected)} files "
-              f"({len(SPEC)} manifest + {len(thumb_names)} thumbnails)")
+              f"({len(SPEC)} manifest + {len(COIN_NAMES)} coin + "
+              f"{len(thumb_names)} thumbnails)")
 
     if not ok:
         print("\nSELF-CHECK FAILED", file=sys.stderr)

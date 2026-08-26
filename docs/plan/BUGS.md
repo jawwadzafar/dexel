@@ -138,3 +138,29 @@ geometry), gated by real in-game renders judged by eye until it clearly reads as
   returns; and non-blocking fds must still DELIVER events (counted keystrokes),
   since an interruptible fd that stops counting would be a worse bug. Both
   fd-level tests were confirmed to FAIL against the old `Fd()` code.
+
+- **BUG-10 — input directed AT dexel counts as the user's work activity.**
+  The global provider (evdev/system hooks) counts ALL input; clicking/typing in
+  dexel's OWN window therefore accrues activity and animates the mouse hand —
+  i.e. fiddling with the companion reads as "working," the same self-referential
+  lie ADR 0019 rejects for the activity line. Fix (honest framing = "dexel does
+  not count itself"): the shell/page already knows its own focus (Tauri window
+  focus + document focus); send a self-focused signal over WS, and while dexel's
+  own window is focused, SUPPRESS accrual (treat like a scoped auto-pause — that
+  time counts in nothing, per ADR 0010), and don't drive the mouse-hand frame
+  from dexel-directed input. Cross-platform (doesn't need global ActiveApp, which
+  Wayland can't give). Medium effort — touches the engine honesty core + a WS
+  focus message + the frontend; sequence it carefully (well-tested honesty code).
+  Owner flagged it as OK-to-defer if big; it's medium, so queued after the store
+  batch.
+
+- **BUG-11 — hamburger menu items look unaligned/disharmonious.** Each menu
+  button has a different-length label + an inline key hint, so nothing lines up
+  and it reads as ragged. Fix (standard menu harmony, like a command palette):
+  in the monospace pixel font, LEFT-align the labels and RIGHT-align the [KEY]
+  hints into a single column (flex justify-between), consistent item width (full
+  menu width), consistent vertical padding/row height, and a consistent hover/
+  selected treatment. All the [S][A][H][W][G][P] hints then stack in a clean
+  right column. Frontend: features/menu.ts + the menu DOM in index.html +
+  game.css menu section. Small. Sequence with the other game.css/index.html work
+  (coin/store/store-size) to avoid file collisions.
