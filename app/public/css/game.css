@@ -2313,6 +2313,18 @@ body.shell #titlebar { cursor: default; }
   border-image-slice: 2;
   border-image-width: 2;
   border-image-repeat: stretch;
+  /* NES.css also sets `border-image-outset: 2`, which we do NOT want and
+     which is the last thing that made a button look bigger than it is. Outset
+     is a MULTIPLE of border-width, so at 2px it painted the notched border a
+     further 4px OUTSIDE the element box on all four sides — a ring standing
+     off every button, clearest on the small square close buttons where the
+     ring was wider than the glyph inside it ("why does the settings button
+     have an extra bg box"). NES.css can afford it: its buttons sit on a white
+     page with margin around them. Ours sit inside 4px-padded pixel panels and
+     a 24px title bar, where four pixels of overhang is a second frame.
+     0 keeps the border on the border box, which is where a 2px border
+     belongs. */
+  border-image-outset: 0;
   border-style: solid;
   border-width: 2px;
   border-color: var(--shadow);
