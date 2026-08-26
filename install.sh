@@ -53,9 +53,13 @@
 #
 #   1. BUILD FROM SOURCE  — auto when this script is run from INSIDE the dexel
 #      source tree (its own real directory holds app/main.go and an app/go.mod
-#      that declares dexel's module path) AND a Go toolchain is on PATH. This
-#      is the "clone it and run install.sh — it just works" path: no network
-#      and no published release needed. The committed frontend bundle
+#      that declares dexel's module path) AND a Go toolchain can be found —
+#      not only on PATH: find_go() (below) also checks GOROOT/bin/go,
+#      DEXEL_GO, and the common install locations a toolchain ends up in
+#      without ever touching PATH (/usr/local/go, $HOME/go,
+#      $HOME/go-toolchain, `go install golang.org/dl/...`'s $HOME/sdk/goX.Y.Z,
+#      …). This is the "clone it and run install.sh — it just works" path: no
+#      network and no published release needed. The committed frontend bundle
 #      (app/public/js/dexel.js) and the sprites (app/assets) are compiled into
 #      the binary by `go build` via app/embed.go, so there is no npm step —
 #      a plain `go build` produces the COMPLETE game in one file. The version
@@ -75,9 +79,10 @@
 #      the digest GitHub reports, install. Used when 1 and 2 do not apply, or
 #      forced with --from-release.
 #
-# Run from a clone, offline, with no Go toolchain and no DEXEL_ARCHIVE, none
-# of the three can proceed: the script says exactly that (install Go to build,
-# or set DEXEL_ARCHIVE) and exits non-zero. It never silently does nothing.
+# Run from a clone, offline, with no Go toolchain findable anywhere and no
+# DEXEL_ARCHIVE, none of the three can proceed: the script says exactly that
+# (install Go to build, point at one with GOROOT/DEXEL_GO, or set
+# DEXEL_ARCHIVE) and exits non-zero. It never silently does nothing.
 #
 # ON GIT BASH / MSYS2 / CYGWIN — a real Windows box whose `uname -s` answers
 # MINGW*/MSYS*/CYGWIN* — this script does not just print the PowerShell
@@ -91,9 +96,11 @@
 #
 # Options (flags, or the environment):
 #   --from-source            build from the source tree this script lives in
-#                            (needs `go` on PATH), even if a release exists.
-#                            The default already does this automatically when
-#                            run from a clone with a Go toolchain present.
+#                            (needs a Go toolchain — see find_go()'s search
+#                            order, or GOROOT/DEXEL_GO below), even if a
+#                            release exists. The default already does this
+#                            automatically when run from a clone with a Go
+#                            toolchain findable.
 #   --from-release           skip the source/local-archive rungs and always
 #                            resolve + download a GitHub release. With
 #                            DEXEL_ARCHIVE set, installs that local archive but
@@ -131,6 +138,12 @@
 #                            against the live release's sha256sums.txt instead.
 #   DEXEL_FROM_SOURCE=1      same as --from-source
 #   DEXEL_FROM_RELEASE=1     same as --from-release
+#   DEXEL_GO=/path/to/go     use this exact go binary for a source build.
+#                            Checked first, before PATH and everything else
+#                            find_go() knows about.
+#   GOROOT=/path/to/go       use $GOROOT/bin/go for a source build. Checked
+#                            right after DEXEL_GO, still before PATH and the
+#                            common install locations.
 #   NO_COLOR / DEXEL_NO_COLOR=1   same as --no-color
 #   DEXEL_QUIET=1            same as --quiet
 #   GITHUB_TOKEN / GH_TOKEN  sent as a bearer token. Required only while the
@@ -178,6 +191,7 @@ FROM_SOURCE=0    # --from-source / DEXEL_FROM_SOURCE
 FROM_RELEASE=0   # --from-release / DEXEL_FROM_RELEASE
 IN_REPO=0        # this script's real dir IS the dexel source tree
 REPO_DIR=""      # ...and this is that directory (the repo root)
+GO_BIN=""        # the go binary find_go() resolved, for the source build
 VERSION=""       # the version string a source build stamps in
 EXPECT_VERSION="" # what `dexel version` should echo back (TAG, or the built VERSION)
 ICON_SRC=""      # the 128x128 PNG to install: from the archive, or the tree
@@ -576,6 +590,85 @@ detect_repo() {
     fi
 }
 
+# find_go — the first usable Go toolchain, checked in the order a
+# from-source install should trust it. Mirrors find_powershell's shape:
+# try each candidate in priority order, echo the first one that resolves,
+# and return 1 with no output if none do — the caller decides how to fail.
+#
+#   1. DEXEL_GO         — an explicit full path to the go binary. Set this
+#                          to point at a toolchain that lives nowhere on the
+#                          list below.
+#   2. GOROOT/bin/go     — the same idea, spelled the way Go itself derives
+#                          its own binary path from $GOROOT.
+#   3. `command -v go`   — PATH. Today's only behaviour, and still the
+#                          first thing auto-discovery tries.
+#   4. Common install locations, most-likely first: the go.dev installer's
+#      own default (/usr/local/go), the two paths a distro package tends to
+#      use (/usr/lib/go, /opt/go), a manually-unpacked tarball under
+#      $HOME/go or $HOME/go-toolchain (the exact shape of the real case this
+#      exists for: Go installed, PATH untouched), and finally $HOME/sdk/go*
+#      — the layout `go install golang.org/dl/goX.Y.Z` leaves behind,
+#      glob-matched and compared numerically (major.minor.patch, zero-padded
+#      so plain string/integer comparison sorts them correctly — no `sort
+#      -V`, which BSD/macOS sort does not have) to take the newest when more
+#      than one SDK is present.
+find_go() {
+    if [ -n "${DEXEL_GO:-}" ] && [ -x "$DEXEL_GO" ]; then
+        printf '%s\n' "$DEXEL_GO"
+        return 0
+    fi
+    if [ -n "${GOROOT:-}" ] && [ -x "$GOROOT/bin/go" ]; then
+        printf '%s\n' "$GOROOT/bin/go"
+        return 0
+    fi
+    if have go; then
+        command -v go
+        return 0
+    fi
+
+    for _cand in /usr/local/go/bin/go /usr/lib/go/bin/go /opt/go/bin/go; do
+        if [ -x "$_cand" ]; then
+            printf '%s\n' "$_cand"
+            return 0
+        fi
+    done
+
+    if [ -n "${HOME:-}" ]; then
+        for _cand in "$HOME/go/bin/go" "$HOME/go-toolchain/go/bin/go"; do
+            if [ -x "$_cand" ]; then
+                printf '%s\n' "$_cand"
+                return 0
+            fi
+        done
+
+        _go_sdk=""
+        _go_sdk_key=""
+        for _cand in "$HOME"/sdk/go*/bin/go; do
+            [ -x "$_cand" ] || continue
+            # major.minor.patch out of .../sdk/go1.22.3/bin/go, zero-padded
+            # to a fixed-width all-digit key so plain numeric `-gt` orders
+            # SDKs correctly (1.9.0 must sort BELOW 1.22.3, which plain
+            # string/lexicographic comparison gets wrong). A version like
+            # go1.22rc1 loses the "rc1" here and keys as 1.22.0 — close
+            # enough for a tiebreak among installed SDKs, not exact enough
+            # to matter beyond it.
+            _key=$(printf '%s\n' "$_cand" |
+                sed -n 's#.*/go\([0-9][0-9.]*\).*#\1#p' |
+                awk -F. '{printf "%05d%05d%05d", $1, $2+0, $3+0}')
+            if [ -n "$_key" ] && { [ -z "$_go_sdk_key" ] || [ "$_key" -gt "$_go_sdk_key" ]; }; then
+                _go_sdk="$_cand"
+                _go_sdk_key="$_key"
+            fi
+        done
+        if [ -n "$_go_sdk" ]; then
+            printf '%s\n' "$_go_sdk"
+            return 0
+        fi
+    fi
+
+    return 1
+}
+
 # choose_source — walk the ladder and set SOURCE to source | archive | release.
 # Forcing flags short-circuit the auto choice; --from-source also validates its
 # two preconditions loudly rather than silently falling through to a download.
@@ -586,10 +679,12 @@ choose_source() {
 copy of install.sh is not sitting beside a dexel app/ (or was piped in with no
 file on disk). Clone the repo and run ./install.sh --from-source from its root."
         fi
-        have go ||
-            die "$E_TOOL" "--from-source needs a Go toolchain, but \`go\` is not on PATH.
-Install Go 1.27+ (https://go.dev/dl/) and re-run, or drop --from-source to
-download a release instead."
+        GO_BIN=$(find_go) ||
+            die "$E_TOOL" "--from-source needs a Go toolchain, but none could be found on PATH or
+in a common install location. Install Go 1.27+ (https://go.dev/dl/) and
+re-run, point at an existing install with GOROOT=/path/to/go or
+DEXEL_GO=/path/to/go/bin/go, or drop --from-source to download a release
+instead."
         SOURCE=source
         return 0
     fi
@@ -600,7 +695,7 @@ download a release instead."
     fi
 
     # Auto: highest-confidence rung that can actually proceed.
-    if [ "$IN_REPO" = 1 ] && have go; then
+    if [ "$IN_REPO" = 1 ] && GO_BIN=$(find_go); then
         SOURCE=source
         return 0
     fi
@@ -839,10 +934,13 @@ resolve_release() {
         # network is not the only door — name the two that do not need it.
         if [ "$IN_REPO" = 1 ]; then
             say ""
-            say "  You are inside the dexel source tree but could not reach GitHub, and"
-            say "  there was no Go toolchain to build from source and no DEXEL_ARCHIVE to"
-            say "  install from. Any ONE of these finishes the install with no network:"
+            say "  You are inside the dexel source tree but could not reach GitHub, and no"
+            say "  Go toolchain could be found (checked PATH and the usual install"
+            say "  locations) and no DEXEL_ARCHIVE was set. Any ONE of these finishes the"
+            say "  install with no network:"
             say "      * install Go 1.27+ (https://go.dev/dl/), then re-run — it will build"
+            say "      * already have Go somewhere unusual? point at it with"
+            say "        GOROOT=/path/to/go or DEXEL_GO=/path/to/go/bin/go, then re-run"
             say "      * DEXEL_ARCHIVE=/path/to/dexel-*.tar.gz ./install.sh"
         fi
         die "$E_NETWORK" "could not resolve $_rel_what."
@@ -1876,7 +1974,14 @@ derive_source_version() {
 }
 
 do_source_install() {
-    have go || die "$E_TOOL" "building from source needs \`go\` on PATH."
+    # choose_source() already resolved this on the way here (both the
+    # explicit --from-source path and the auto ladder call find_go()), but
+    # re-resolve defensively rather than trust a global stayed set.
+    [ -n "$GO_BIN" ] || GO_BIN=$(find_go) ||
+        die "$E_TOOL" "building from source needs a Go toolchain, but none could be found on
+PATH or in a common install location. Install Go 1.27+ (https://go.dev/dl/)
+and re-run, or point at an existing install with GOROOT=/path/to/go or
+DEXEL_GO=/path/to/go/bin/go."
     have mktemp || die "$E_TOOL" "need mktemp, which is not on PATH."
     make_tempdir
 
@@ -1885,7 +1990,7 @@ do_source_install() {
     step "building dexel from source ($OS-$ARCH)"
     info "source    $REPO_DIR"
     info "version   $VERSION"
-    info "toolchain $(command -v go)"
+    info "toolchain $GO_BIN"
 
     # CGO: darwin's activity provider is cgo (app/internal/activity/
     # provider_darwin.go), so a mac build needs CGO_ENABLED=1 and a C compiler,
@@ -1894,6 +1999,14 @@ do_source_install() {
     # is what keeps the common "clone and go" path dependency-free.
     _cgo=0
     if [ "$OS" = darwin ]; then _cgo=1; fi
+
+    # GO_BIN may have come from find_go()'s non-PATH rungs (GOROOT, DEXEL_GO,
+    # or one of the common install locations), so invoke it by its full path
+    # rather than assuming a bare `go` resolves — and put its own directory
+    # first on PATH for the build subshell, so anything the toolchain shells
+    # out to next to itself resolves the same way it would if it had been on
+    # PATH all along.
+    _go_dir=$(dirname "$GO_BIN")
 
     SRC_BIN="$TMPD/dexel"
     info "no network, no release, no npm needed — the frontend bundle"
@@ -1908,7 +2021,7 @@ do_source_install() {
     spin_start "Building dexel from source (go build)..."
     if (
         cd "$REPO_DIR/app" &&
-        CGO_ENABLED="$_cgo" go build -trimpath \
+        PATH="$_go_dir:$PATH" CGO_ENABLED="$_cgo" "$GO_BIN" build -trimpath \
             -ldflags "-s -w -X main.version=$VERSION" -o "$SRC_BIN" .
     ) >"$_build_log" 2>&1; then
         if [ ! -f "$SRC_BIN" ]; then

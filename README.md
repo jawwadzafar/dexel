@@ -134,7 +134,7 @@ force a rung; the environment equivalents are for a piped `curl | sh`.
 
 | Rung | When it is chosen automatically | Force it | Network? |
 |---|---|---|---|
-| **1. Build from source** | `install.sh` is run from *inside* the dexel source tree (its own directory holds `app/main.go` and a dexel `app/go.mod`) **and** `go` is on `PATH` | `--from-source` / `DEXEL_FROM_SOURCE=1` — builds even if a release exists, for testing your own changes | **No** |
+| **1. Build from source** | `install.sh` is run from *inside* the dexel source tree (its own directory holds `app/main.go` and a dexel `app/go.mod`) **and** a Go toolchain can be found | `--from-source` / `DEXEL_FROM_SOURCE=1` — builds even if a release exists, for testing your own changes | **No** |
 | **2. Local archive** | rung 1 does not apply and `DEXEL_ARCHIVE=<path>` is set | set `DEXEL_ARCHIVE` | **No** |
 | **3. Download a release** | neither of the above applies | `--from-release` / `DEXEL_FROM_RELEASE=1` | Yes |
 
@@ -143,7 +143,14 @@ compiles `app/`, and `app/embed.go` bakes the committed frontend bundle
 (`app/public/js/dexel.js`) and the sprites (`app/assets`) *into* the binary, so
 one plain build yields the complete game — **`npm` is never involved**. The
 version is stamped from `git describe` (or `dev` outside a git checkout), and
-the launcher icon comes straight from the tree. Only Go 1.27+ is required.
+the launcher icon comes straight from the tree. Only Go 1.27+ is required —
+and it does not need to be on `PATH`: `install.sh` also checks `GOROOT`,
+`DEXEL_GO`, and the common install locations a toolchain ends up in without
+ever touching PATH (`/usr/local/go`, `/usr/lib/go`, `/opt/go`, `$HOME/go`,
+`$HOME/go-toolchain`, and the `$HOME/sdk/goX.Y.Z` layout `go install
+golang.org/dl/...` leaves behind — newest wins if more than one is there).
+Point it at a toolchain in some other location with `GOROOT=/path/to/go` or
+`DEXEL_GO=/path/to/go/bin/go`.
 
 **Local archive** installs a `.tar.gz` you already have, fully offline. It is
 verified against a sibling `<archive>.sha256` when one sits beside it;
@@ -152,10 +159,11 @@ you pointed at, not a download). Adding `--from-release` instead verifies a
 local archive against the **live release's** `sha256sums.txt` — the strongest
 check, but that one needs the network.
 
-If you run from a clone with **no Go toolchain, no `DEXEL_ARCHIVE`, and no
-network**, none of the three can proceed: the installer says exactly that
-(install Go, or point `DEXEL_ARCHIVE` at an archive) and exits non-zero. It
-never silently does nothing.
+If you run from a clone with **no Go toolchain findable anywhere, no
+`DEXEL_ARCHIVE`, and no network**, none of the three can proceed: the
+installer says exactly that (install Go, point `GOROOT`/`DEXEL_GO` at an
+existing toolchain, or point `DEXEL_ARCHIVE` at an archive) and exits
+non-zero. It never silently does nothing.
 
 ### What the installer does, and what it will not do
 
@@ -194,7 +202,7 @@ not document, and use distinct exit codes so a piped run is diagnosable from
 |---|---|
 | `2` | usage error (e.g. `--from-source` outside the source tree) |
 | `3` | unsupported platform |
-| `4` | missing tool — `curl`/`wget`/`sha256`/`tar`, or `go` when building from source |
+| `4` | missing tool — `curl`/`wget`/`sha256`/`tar`, or no Go toolchain found when building from source |
 | `5` | no build for this platform in this release |
 | `6` | checksum mismatch |
 | `7` | network failure — including "cloned, but no Go, no archive, and no network" |
@@ -207,7 +215,10 @@ an "unverified local file" notice; with `--from-release` it is verified against
 the live release instead), `DEXEL_FROM_SOURCE` / `DEXEL_FROM_RELEASE` (the
 [source-selection](#how-installsh-picks-what-to-install) flags as env vars),
 `GH_TOKEN` / `GITHUB_TOKEN`, and the presentation knobs `NO_COLOR` /
-`DEXEL_NO_COLOR` and `DEXEL_QUIET`. A dry run (`--dry-run` on Linux,
+`DEXEL_NO_COLOR` and `DEXEL_QUIET`. `install.sh` (Linux/macOS) additionally
+honors `GOROOT` and `DEXEL_GO=/path/to/go/bin/go` to point rung 1 at a Go
+toolchain in a location it wouldn't otherwise find on its own — both checked
+before `PATH`. A dry run (`--dry-run` on Linux,
 `$env:DEXEL_DRY_RUN = '1'` on Windows) resolves/builds and verifies without
 installing anything — for the download path including the AppImage, which makes
 it a complete test of the release and every checksum in it.
@@ -354,9 +365,10 @@ terminal to leave open. Closing the browser tab does **not** stop it.
 | `dexel pause` / `resume` | stop / start observing activity |
 | `dexel logs` | the runtime log (`-n N`, `-f`, `--path`, `--truncate`) |
 | `dexel autostart enable\|disable\|status` | the login autostart entry — never enabled implicitly |
+| `dexel update` | update to the latest release in place, preserving your save (`--check` reports only, `-y` skips the prompt, `--force` reinstalls) |
 | `dexel uninstall` | remove dexel from this machine (`--purge` drops your save too) — see [Uninstall](#uninstall) |
 | `dexel serve` | the foreground developer server (see [Development](#development)) |
-| `dexel version` / `help` | version, commit, os/arch — or the full command list |
+| `dexel version` / `dexel --version` / `help` | version, commit, os/arch — or the full command list |
 
 State (`state.db`, `config.json`) and the runtime's own bookkeeping
 (`runtime.json`, `runtime.lock`, logs) live under `~/.config/dexel`
