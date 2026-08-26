@@ -110,6 +110,11 @@
 #   --app                    download the AppImage even with no detected
 #                            desktop session (e.g. installing over ssh for a
 #                            desktop you will log into later).
+#   --no-color               plain text: no colour, no spinner (also NO_COLOR=
+#                            in the environment, and automatic when stdout is
+#                            not a terminal, e.g. piped or in CI).
+#   --quiet                  suppress the banner and the animated spinner —
+#                            minimal output for scripting.
 #   --help                   this text
 #   DEXEL_INSTALL_DIR=DIR    where the binary goes (default ~/.local/bin)
 #   DEXEL_NO_START=1         same as --no-start
@@ -126,6 +131,8 @@
 #                            against the live release's sha256sums.txt instead.
 #   DEXEL_FROM_SOURCE=1      same as --from-source
 #   DEXEL_FROM_RELEASE=1     same as --from-release
+#   NO_COLOR / DEXEL_NO_COLOR=1   same as --no-color
+#   DEXEL_QUIET=1            same as --quiet
 #   GITHUB_TOKEN / GH_TOKEN  sent as a bearer token. Required only while the
 #                            repository is private; ignored once it is public.
 #   DEXEL_UNAME_S / _M       override `uname -s` / `uname -m` (testing)
@@ -195,21 +202,192 @@ SHIM_INSTALLED=0
 MAC_APP=""          # where Dexel.app was installed, if it was
 LAUNCHED=none       # none | open | start
 
+# presentation state — a single gate (USE_COLOR) decides colour/animation, and
+# every colour variable below is an EMPTY STRING when it is off, so each line is
+# written exactly once and simply degrades to plain text. See setup_colors.
+NO_COLOR_FLAG=0     # --no-color / DEXEL_NO_COLOR
+QUIET=0             # --quiet / DEXEL_QUIET (suppresses banner + spinner)
+USE_COLOR=0         # resolved by setup_colors: colour + animation are allowed
+UNICODE=0           # resolved by setup_colors: the locale is UTF-8
+C_INDIGO=''; C_MINT=''; C_OK=''; C_BAD=''; C_WARN=''
+C_DIM=''; C_BOLD=''; C_RESET=''; C_HIDE=''
+SYM_ARROW='==>'; SYM_OK='OK'; SYM_BAD='x'; SYM_WARN='!'
+SPIN_FRAMES='- \ | /'
+SPIN_PID=''         # PID of a running background spinner, or empty
+
 # ---------------------------------------------------------------------------
 # output helpers — every line is prefixed, because in a `curl | sh` the
 # user cannot tell our output from the shell's without one.
+#
+# Colour is applied by writing the (possibly empty) colour variables around a
+# literal `printf` format, never by scattering raw escapes inline: when
+# USE_COLOR is 0 every C_* is "" and the exact same line comes out plain.
 # ---------------------------------------------------------------------------
 
 say()  { printf '%s\n' "$*"; }
-info() { printf '  %s\n' "$*"; }
-warn() { printf 'dexel: %s\n' "$*" >&2; }
+info() { printf '  %s%s%s\n' "$C_DIM" "$*" "$C_RESET"; }
+# step — an action starting ("==> resolving ...").  ok — an action confirmed
+# ("✓ sha256 verified"). warn — a yellow skip/notice, on stderr as before.
+step() { printf '%s%s%s %s\n' "$C_INDIGO" "$SYM_ARROW" "$C_RESET" "$*"; }
+ok()   { printf '%s%s%s %s\n' "$C_OK" "$SYM_OK" "$C_RESET" "$*"; }
+warn() { printf '%s%s dexel:%s %s\n' "$C_WARN" "$SYM_WARN" "$C_RESET" "$*" >&2; }
 
 # die CODE MESSAGE... — the only exit path for a failure.
 die() {
     _die_code=$1
     shift
-    printf '\ndexel install failed: %s\n' "$*" >&2
+    spin_stop
+    printf '\n%s%s dexel install failed:%s %s\n' "$C_BAD" "$SYM_BAD" "$C_RESET" "$*" >&2
     exit "$_die_code"
+}
+
+# ---------------------------------------------------------------------------
+# colour, symbols and the spinner — the whole "bun / starship" surface
+# ---------------------------------------------------------------------------
+
+# supports_color — the ONE gate. Colour/animation only when stdout is a real
+# terminal AND NO_COLOR is unset AND TERM is not "dumb" AND --no-color was not
+# passed. `curl | sh` leaves stdin non-TTY but stdout usually a TTY, so this
+# keys off stdout ([ -t 1 ]) alone; a run piped/redirected anywhere goes plain.
+supports_color() {
+    [ "$NO_COLOR_FLAG" = 1 ] && return 1
+    [ -n "${NO_COLOR:-}" ] && return 1
+    [ "${TERM:-}" = dumb ] && return 1
+    [ -t 1 ] || return 1
+    return 0
+}
+
+# color_depth — truecolor | 256 | 8, degrading gracefully. Never assumes 256:
+# it is only claimed when COLORTERM says truecolor or `tput colors` proves it.
+color_depth() {
+    case "${COLORTERM:-}" in
+        truecolor|24bit) printf truecolor; return 0 ;;
+    esac
+    if have tput; then
+        _n=$(tput colors 2>/dev/null || echo 0)
+        case "$_n" in
+            ''|*[!0-9]*) _n=0 ;;
+        esac
+        if [ "$_n" -ge 256 ]; then printf 256; return 0; fi
+    fi
+    printf 8
+}
+
+setup_colors() {
+    # UTF-8? Decides the spinner frames and the ✓/✗ glyphs, independently of
+    # colour: a plain-but-UTF-8 pipe still wants a real checkmark, and an
+    # 8-colour non-UTF-8 xterm still wants the ASCII "OK".
+    case "${LC_ALL:-${LC_CTYPE:-${LANG:-}}}" in
+        *[Uu][Tt][Ff]8*|*[Uu][Tt][Ff]-8*) UNICODE=1 ;;
+        *) UNICODE=0 ;;
+    esac
+    if [ "$UNICODE" = 1 ]; then
+        SYM_ARROW='▸'; SYM_OK='✓'; SYM_BAD='✗'; SYM_WARN='!'
+        SPIN_FRAMES='⠋ ⠙ ⠹ ⠸ ⠼ ⠴ ⠦ ⠧ ⠇ ⠏'
+    else
+        SYM_ARROW='==>'; SYM_OK='OK'; SYM_BAD='x'; SYM_WARN='!'
+        SPIN_FRAMES='- \ | /'
+    fi
+
+    if supports_color; then
+        USE_COLOR=1
+        case "$(color_depth)" in
+            truecolor)
+                C_INDIGO=$(printf '\033[1;38;2;124;108;246m')
+                C_MINT=$(printf '\033[38;2;80;227;194m')
+                ;;
+            256)
+                C_INDIGO=$(printf '\033[1;38;5;99m')
+                C_MINT=$(printf '\033[38;5;79m')
+                ;;
+            *)
+                C_INDIGO=$(printf '\033[1;35m')
+                C_MINT=$(printf '\033[36m')
+                ;;
+        esac
+        C_OK=$(printf '\033[32m')
+        C_BAD=$(printf '\033[31m')
+        C_WARN=$(printf '\033[33m')
+        C_DIM=$(printf '\033[2m')
+        C_BOLD=$(printf '\033[1m')
+        C_RESET=$(printf '\033[0m')
+    else
+        USE_COLOR=0
+        C_INDIGO=''; C_MINT=''; C_OK=''; C_BAD=''; C_WARN=''
+        C_DIM=''; C_BOLD=''; C_RESET=''
+    fi
+}
+
+# banner — the wordmark, shown ONCE per run. ASCII-only so it is byte-for-byte
+# the same art install.ps1 draws (PowerShell 5.1 is ASCII-only). Suppressed by
+# --quiet and, like everything else, uncoloured when USE_COLOR is 0.
+# $1 = version hint, $2 = target (os-arch).
+banner() {
+    [ "$QUIET" = 1 ] && return 0
+    printf '\n'
+    printf '%s   /\\     %s####   #####  #   #  #####  #%s\n'        "$C_MINT" "$C_INDIGO" "$C_RESET"
+    printf '%s  /  \\    %s#   #  #       # #   #      #%s\n'        "$C_MINT" "$C_INDIGO" "$C_RESET"
+    printf '%s  |oo|    %s#   #  ####     #    ####   #%s\n'         "$C_MINT" "$C_INDIGO" "$C_RESET"
+    printf '%s  |  |    %s#   #  #       # #   #      #%s\n'         "$C_MINT" "$C_INDIGO" "$C_RESET"
+    printf '%s  |__|    %s####   #####  #   #  #####  #####%s\n'     "$C_MINT" "$C_INDIGO" "$C_RESET"
+    printf '\n'
+    printf '  %sa cozy pixel-art companion that runs on your real typing%s\n' "$C_DIM" "$C_RESET"
+    printf '  installing dexel %s%s%s on %s%s%s\n' \
+        "$C_BOLD" "$1" "$C_RESET" "$C_BOLD" "$2" "$C_RESET"
+    printf '\n'
+}
+
+# --- spinner -------------------------------------------------------------
+# A background process animates a frame + label on the op's behalf; the
+# foreground runs the real work and calls spin_stop when it returns. spin_stop
+# is idempotent and is ALSO called from die() and cleanup(), so no failure path
+# can leave a spinner process running or the terminal's cursor hidden.
+
+_spin_run() {
+    # $1 = label. Loops until killed. Cursor hidden for the duration.
+    printf '%s' "$C_HIDE" 2>/dev/null || true
+    while :; do
+        for _f in $SPIN_FRAMES; do
+            printf '\r%s%s%s %s' "$C_MINT" "$_f" "$C_RESET" "$1"
+            sleep 0.1
+        done
+    done
+}
+
+spin_start() {
+    # Plain / quiet: no animation — just announce the step and return. The op
+    # then runs with its own output going straight to the terminal, exactly as
+    # before the spinner existed.
+    if [ "$USE_COLOR" != 1 ] || [ "$QUIET" = 1 ]; then
+        step "$1"
+        SPIN_PID=''
+        return 0
+    fi
+    C_HIDE=$(printf '\033[?25l')
+    _spin_run "$1" &
+    SPIN_PID=$!
+}
+
+# spin_stop — clear the spinner line and reap the process. Safe to call when
+# none is running.
+spin_stop() {
+    [ -n "$SPIN_PID" ] || return 0
+    kill "$SPIN_PID" 2>/dev/null || true
+    wait "$SPIN_PID" 2>/dev/null || true
+    SPIN_PID=''
+    # Erase the animated line and restore the cursor (colour mode only, which
+    # is the only mode that started a spinner, so these escapes are safe).
+    printf '\r\033[2K\033[?25h'
+}
+
+# spin_ok MSG — stop the spinner, then confirm the step with a ✓ line.
+spin_ok() { spin_stop; ok "$1"; }
+
+cleanup() {
+    spin_stop
+    if [ -n "$TMPD" ] && [ -d "$TMPD" ]; then
+        rm -rf "$TMPD"
+    fi
 }
 
 usage() {
@@ -217,7 +395,7 @@ usage() {
     # script file to read, so fall back to the URL rather than printing
     # nothing at all.
     if [ -r "$0" ] && grep -q '^# install.sh' "$0" 2>/dev/null; then
-        sed -n '2,100p' "$0" | sed 's/^# \{0,1\}//'
+        sed -n '2,145p' "$0" | sed 's/^# \{0,1\}//'
     else
         say "dexel installer — see https://github.com/${REPO}#install"
         say "sources (auto-selected; flags force): --from-source, --from-release"
@@ -225,12 +403,7 @@ usage() {
         say "env: DEXEL_INSTALL_DIR, DEXEL_VERSION, DEXEL_REPO, DEXEL_ARCHIVE,"
         say "DEXEL_FROM_SOURCE, DEXEL_FROM_RELEASE, DEXEL_NO_START,"
         say "DEXEL_NO_DESKTOP, DEXEL_NO_APP, DEXEL_APP, GH_TOKEN/GITHUB_TOKEN"
-    fi
-}
-
-cleanup() {
-    if [ -n "$TMPD" ] && [ -d "$TMPD" ]; then
-        rm -rf "$TMPD"
+        say "presentation: --no-color / NO_COLOR, --quiet"
     fi
 }
 
@@ -582,8 +755,8 @@ PowerShell one-liner yourself:
     _ps1_url="https://raw.githubusercontent.com/${REPO}/main/install.ps1"
     _ps1_path="$TMPD/install.ps1"
 
-    say "==> Windows detected ($_uname_s) — delegating to install.ps1 via $_psbin"
-    say "==> downloading install.ps1"
+    step "Windows detected ($_uname_s) — delegating to install.ps1 via $_psbin"
+    step "downloading install.ps1"
     # Honesty check: install.ps1 has no checksum sidecar of its own — only
     # the release ARCHIVE is sha256-verified, by both scripts. Fetching this
     # file over HTTPS from a pinned raw.githubusercontent.com URL is the
@@ -656,7 +829,7 @@ resolve_release() {
         _rel_what="the latest release"
     fi
 
-    say "==> resolving $_rel_what of ${REPO}"
+    step "resolving $_rel_what of ${REPO}"
     if ! http_get "$_rel_url" "$TMPD/release.json" "application/vnd.github+json"; then
         say ""
         say "Could not read $_rel_url"
@@ -813,19 +986,22 @@ download() {
     if [ -n "${DEXEL_ARCHIVE:-}" ]; then
         [ -f "$DEXEL_ARCHIVE" ] ||
             die "$E_USAGE" "DEXEL_ARCHIVE=$DEXEL_ARCHIVE is not a file."
-        say "==> using local archive $DEXEL_ARCHIVE (checksum still verified)"
+        step "using local archive $DEXEL_ARCHIVE (checksum still verified)"
         cp "$DEXEL_ARCHIVE" "$ARCHIVE_PATH"
     else
-        say "==> downloading $ARCHIVE_NAME"
-        http_get "$(asset_url "$ARCHIVE_NAME")" "$ARCHIVE_PATH" "$(asset_accept)" ||
+        spin_start "Downloading dexel $TAG..."
+        if http_get "$(asset_url "$ARCHIVE_NAME")" "$ARCHIVE_PATH" "$(asset_accept)"; then
+            spin_ok "downloaded $ARCHIVE_NAME"
+        else
             die "$E_NETWORK" "download of $ARCHIVE_NAME failed."
+        fi
     fi
 
     _sums_url=$(asset_url sha256sums.txt)
     [ -n "$_sums_url" ] ||
         die "$E_CHECKSUM" "release $TAG has no sha256sums.txt, so this download cannot be
 verified. Refusing to install."
-    say "==> downloading sha256sums.txt"
+    step "downloading sha256sums.txt"
     http_get "$_sums_url" "$TMPD/sha256sums.txt" "$(asset_accept)" ||
         die "$E_NETWORK" "download of sha256sums.txt failed."
 }
@@ -873,7 +1049,7 @@ cannot be verified. Refusing to install."
 $ARCHIVE_NAME. Refusing to install."
     fi
 
-    say "==> sha256 verified"
+    ok "sha256 verified"
     info "$_got"
 }
 
@@ -997,9 +1173,12 @@ download_appimage() {
         return 0
     fi
     APPIMAGE_PATH="$TMPD/$APPIMAGE_NAME"
-    say "==> downloading $APPIMAGE_NAME — the optional desktop shell"
-    http_get "$(asset_url "$APPIMAGE_NAME")" "$APPIMAGE_PATH" "$(asset_accept)" ||
+    spin_start "Downloading the desktop shell ($APPIMAGE_NAME)..."
+    if http_get "$(asset_url "$APPIMAGE_NAME")" "$APPIMAGE_PATH" "$(asset_accept)"; then
+        spin_ok "downloaded $APPIMAGE_NAME — the optional desktop shell"
+    else
         die "$E_NETWORK" "download of $APPIMAGE_NAME failed."
+    fi
 }
 
 # verify_appimage — same refusal, one fewer witness.
@@ -1039,7 +1218,7 @@ $APPIMAGE_NAME. Refusing to install."
         say "  Nothing was unpacked and nothing was installed."
         die "$E_CHECKSUM" "sha256 mismatch on $APPIMAGE_NAME."
     fi
-    say "==> sha256 verified (desktop shell)"
+    ok "sha256 verified (desktop shell)"
     info "$_got"
 }
 
@@ -1062,7 +1241,7 @@ install_desktop_app() {
         fi
         chmod 0755 "$_img" || true
     fi
-    say "==> installed $_img"
+    ok "installed $_img"
 
     # The shim's path is injected as a single-quoted literal, so nothing in
     # it is re-expanded when the shim runs.
@@ -1103,7 +1282,7 @@ SHIM
     } > "$_shim"; then
         chmod 0755 "$_shim" || true
         SHIM_INSTALLED=1
-        say "==> installed $_shim"
+        ok "installed $_shim"
         info "the name \`dexel open\` looks for, so the window is now the default"
     else
         warn "could not write $_shim; \`dexel open\` will use your browser."
@@ -1144,7 +1323,7 @@ install_icon() {
         chmod 0644 "$_icon_dir/dexel.png" || true
     fi
     ICON_INSTALLED=1
-    say "==> installed $_icon_dir/dexel.png"
+    ok "installed $_icon_dir/dexel.png"
 }
 
 # write_desktop_file — the launcher entry.
@@ -1187,7 +1366,7 @@ write_desktop_file() {
     fi
     chmod 0644 "$_entry" || true
     DESKTOP_ENTRY="$_entry"
-    say "==> installed $_entry"
+    ok "installed $_entry"
 
     # Best-effort, and genuinely optional: GNOME, KDE and most other
     # environments notice a new .desktop file on their own. This only
@@ -1297,20 +1476,26 @@ install_mac_app() {
     _missing=$(mac_app_toolchain_missing)
     if [ -n "$_missing" ]; then
         say ""
-        say "==> skipping the desktop window: no $_missing"
+        step "skipping the desktop window: no $_missing"
         info "the CLI is installed and works; \`dexel open\` will use your browser."
         info "install that, re-run this script, and you get the frameless window."
         return 0
     fi
 
     say ""
-    say "==> building Dexel.app — the frameless desktop window (optional)"
-    info "this compiles Rust and takes a few minutes the first time"
+    info "building Dexel.app — this compiles Rust and takes a few minutes the"
+    info "first time; output is shown only if a step fails"
+    # Both sub-builds are captured to one log and shown only on failure, so the
+    # spinner owns the line during the (multi-minute) Rust compile.
+    _mac_log="$TMPD/mac-app-build.log"
 
     # The Go daemon that lives INSIDE the bundle, named for this host's Rust
     # target triple (scripts/build-sidecar.sh explains the capital D). With
     # no arguments it builds exactly the host triple, which is what we want.
-    if ! ( cd "$REPO_DIR" && bash scripts/build-sidecar.sh >&2 ); then
+    spin_start "Building Dexel.app — the frameless desktop window (optional)..."
+    if ! ( cd "$REPO_DIR" && bash scripts/build-sidecar.sh ) >"$_mac_log" 2>&1; then
+        spin_stop
+        cat "$_mac_log" >&2
         warn "could not build the bundled runtime for Dexel.app. The CLI is
        installed and works; \`dexel open\` will use your browser."
         return 0
@@ -1319,11 +1504,14 @@ install_mac_app() {
     # --bundles app: the .app only. The default also builds a .dmg, which is
     # a disk image for SHIPPING a build to someone else — pure waste when the
     # destination is this machine's own /Applications.
-    if ! ( cd "$REPO_DIR/desktop/src-tauri" && cargo tauri build --bundles app >&2 ); then
+    if ! ( cd "$REPO_DIR/desktop/src-tauri" && cargo tauri build --bundles app ) >>"$_mac_log" 2>&1; then
+        spin_stop
+        cat "$_mac_log" >&2
         warn "\`cargo tauri build\` failed — see the output above. The CLI is
        installed and works; \`dexel open\` will use your browser."
         return 0
     fi
+    spin_ok "compiled Dexel.app"
 
     _built="$REPO_DIR/desktop/src-tauri/target/release/bundle/macos/Dexel.app"
     if [ ! -d "$_built" ]; then
@@ -1358,7 +1546,7 @@ install_mac_app() {
         return 0
     fi
     MAC_APP="$_dest"
-    say "==> installed $_dest"
+    ok "installed $_dest"
     if [ "$_parent" != /Applications ]; then
         info "/Applications was not writable without sudo, so this is a"
         info "personal install. \`dexel open\` looks here too."
@@ -1386,13 +1574,13 @@ launch() {
     fi
     say ""
     if [ "$HAS_SESSION" = 1 ]; then
-        say "==> starting dexel and opening the game"
+        step "starting dexel and opening the game"
         if "$BINDIR/dexel" open; then
             LAUNCHED=open
             return 0
         fi
     else
-        say "==> starting the dexel runtime (no desktop session, so nothing is opened)"
+        step "starting the dexel runtime (no desktop session, so nothing is opened)"
         if "$BINDIR/dexel" start; then
             LAUNCHED=start
             return 0
@@ -1418,7 +1606,7 @@ stop_running_runtime() {
         grep -q '"running"[[:space:]]*:[[:space:]]*true'; then
         return 0
     fi
-    say "==> a dexel runtime is running — stopping it before upgrading"
+    step "a dexel runtime is running — stopping it before upgrading"
     if "$BINDIR/dexel" stop >/dev/null 2>&1; then
         STOPPED_RUNTIME=1
     else
@@ -1484,7 +1672,7 @@ install_binary_from() {
             die "$E_TOOL" "could not install to $BINDIR/dexel."
         fi
     fi
-    say "==> installed $BINDIR/dexel"
+    ok "installed $BINDIR/dexel"
 }
 
 # Step 8 of the contract: create the state dir and its logs dir, so a first
@@ -1564,8 +1752,11 @@ The binary may not match this platform ($OS-$ARCH)."
 
 report() {
     say ""
-    say "$INSTALLED_VERSION"
-    say "installed to $BINDIR/dexel"
+    # The polished last screen: a green banner line, then the key facts with the
+    # things that matter (version, install path) in bold.
+    printf '%s%s dexel is installed%s  %s%s%s\n' \
+        "$C_OK" "$SYM_OK" "$C_RESET" "$C_BOLD" "$INSTALLED_VERSION" "$C_RESET"
+    printf 'installed to %s%s/dexel%s\n' "$C_BOLD" "$BINDIR" "$C_RESET"
     if [ "$SHIM_INSTALLED" = 1 ]; then
         say "desktop shell at $BINDIR/dexel-desktop.AppImage"
     fi
@@ -1691,7 +1882,7 @@ do_source_install() {
 
     VERSION=$(derive_source_version)
     EXPECT_VERSION="$VERSION"
-    say "==> dexel installer — building from source ($OS-$ARCH)"
+    step "building dexel from source ($OS-$ARCH)"
     info "source    $REPO_DIR"
     info "version   $VERSION"
     info "toolchain $(command -v go)"
@@ -1705,19 +1896,31 @@ do_source_install() {
     if [ "$OS" = darwin ]; then _cgo=1; fi
 
     SRC_BIN="$TMPD/dexel"
-    say "==> compiling dexel — no network, no release, no npm needed"
-    info "the frontend bundle (app/public/js/dexel.js) and sprites (app/assets)"
-    info "are committed and embedded by go build (app/embed.go)"
-    if ! (
+    info "no network, no release, no npm needed — the frontend bundle"
+    info "(app/public/js/dexel.js) and sprites (app/assets) are committed and"
+    info "embedded by go build (app/embed.go)"
+    # Build output is captured to a log and shown ONLY on failure, so the
+    # spinner owns the line while go works (go build is silent on success). On
+    # failure the log is dumped just above the die message — "the compiler
+    # output above" is then literally right there, in both colour and plain
+    # modes.
+    _build_log="$TMPD/go-build.log"
+    spin_start "Building dexel from source (go build)..."
+    if (
         cd "$REPO_DIR/app" &&
         CGO_ENABLED="$_cgo" go build -trimpath \
             -ldflags "-s -w -X main.version=$VERSION" -o "$SRC_BIN" .
-    ); then
+    ) >"$_build_log" 2>&1; then
+        if [ ! -f "$SRC_BIN" ]; then
+            spin_stop
+            die "$E_TOOL" "\`go build\` reported success but produced no binary."
+        fi
+        spin_ok "built $SRC_BIN"
+    else
+        spin_stop
+        cat "$_build_log" >&2
         die "$E_TOOL" "\`go build\` failed — see the compiler output above."
     fi
-    [ -f "$SRC_BIN" ] ||
-        die "$E_TOOL" "\`go build\` reported success but produced no binary."
-    say "==> built $SRC_BIN"
 
     # The launcher icon, straight from the tree (build-release.sh copies this
     # exact file into the release archive as dexel.png).
@@ -1770,7 +1973,7 @@ shasum to check it with."
             say "  Nothing was unpacked and nothing was installed."
             die "$E_CHECKSUM" "sha256 mismatch on $ARCHIVE_NAME."
         fi
-        say "==> sha256 verified against $(basename "$_sum")"
+        ok "sha256 verified against $(basename "$_sum")"
         info "$_got"
     else
         warn "no $(basename "$_f").sha256 beside the archive — installing it UNVERIFIED.
@@ -1791,7 +1994,7 @@ do_archive_install() {
     ARCHIVE_NAME=$(basename "$_arch")
     ARCHIVE_PATH="$_arch"          # unpack it where it lies; no copy needed
     EXPECT_VERSION=""              # a local archive's version is not known up front
-    say "==> dexel installer — installing from local archive ($OS-$ARCH)"
+    step "installing from local archive ($OS-$ARCH)"
     info "archive   $_arch"
     verify_local_archive "$_arch"
 
@@ -1821,7 +2024,7 @@ do_release_install() {
     resolve_token
     make_tempdir
     configure_http
-    say "==> dexel installer — $OS-$ARCH"
+    step "installing from a GitHub release ($OS-$ARCH)"
     resolve_release                        # 3
     require_platform_asset                 # 3b: macOS/absent-build honesty
     EXPECT_VERSION="$TAG"
@@ -1884,6 +2087,8 @@ main() {
             --no-desktop) NO_DESKTOP=1 ;;
             --no-app) NO_APP=1 ;;
             --app) FORCE_APP=1 ;;
+            --no-color|--no-colour) NO_COLOR_FLAG=1 ;;
+            --quiet) QUIET=1 ;;
             -h|--help) usage; return 0 ;;
             *) printf 'dexel install: unknown option %s\n' "$1" >&2
                printf 'try --help\n' >&2
@@ -1905,6 +2110,11 @@ main() {
     if [ "${DEXEL_NO_DESKTOP:-}" = 1 ]; then NO_DESKTOP=1; fi
     if [ "${DEXEL_NO_APP:-}" = 1 ]; then NO_APP=1; fi
     if [ "${DEXEL_APP:-}" = 1 ]; then FORCE_APP=1; fi
+    if [ "${DEXEL_NO_COLOR:-}" = 1 ]; then NO_COLOR_FLAG=1; fi
+    if [ "${DEXEL_QUIET:-}" = 1 ]; then QUIET=1; fi
+
+    # Resolve the colour/animation gate ONCE, before any output is written.
+    setup_colors
 
     if [ "$FROM_SOURCE" = 1 ] && [ "$FROM_RELEASE" = 1 ]; then
         die "$E_USAGE" "--from-source and --from-release are mutually exclusive; pick one."
@@ -1925,6 +2135,17 @@ main() {
     detect_session
     detect_repo                            # am I inside the dexel source tree?
     choose_source                          # -> SOURCE = source | archive | release
+
+    # The banner, once, with the best version hint we can give BEFORE resolving:
+    # the git-describe on the source rung, the file name on the archive rung, and
+    # the requested tag (or "latest") on the download rung. The exact resolved
+    # version is still confirmed by a step line and by the final report.
+    case "$SOURCE" in
+        source)  _ver_hint=$(derive_source_version) ;;
+        archive) _ver_hint=$(basename "${DEXEL_ARCHIVE:-archive}") ;;
+        *)       _ver_hint="${DEXEL_VERSION:-latest}" ;;
+    esac
+    banner "$_ver_hint" "$OS-$ARCH"
 
     # The ladder: the highest-confidence source that can actually proceed.
     # Each do_* function verifies before it writes, honours --dry-run, and ends

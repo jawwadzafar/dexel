@@ -45,6 +45,10 @@
 #   $env:DEXEL_NO_PATH       "1" = do not touch the user PATH
 #   $env:GH_TOKEN / $env:GITHUB_TOKEN
 #                            bearer token; needed only while the repo is private
+#   $env:DEXEL_NO_COLOR / $env:NO_COLOR
+#                            "1" = plain text, no colour, no spinner (also
+#                            automatic when output is redirected/piped)
+#   $env:DEXEL_QUIET         "1" = suppress the banner and the spinner
 #   $env:DEXEL_ARCH_RAW      override the detected architecture string (testing)
 #
 # Exit codes match install.sh: 2 usage, 3 unsupported platform, 4 missing
@@ -68,16 +72,130 @@ $script:StoppedRuntime = $false
 $script:UnpackedDir = ''
 $script:Launched = 'none'
 
+# ---------------------------------------------------------------------------
+# presentation -- colour, the banner, and the spinner
+#
+# Windows PowerShell renders colour through Write-Host -ForegroundColor (the
+# console API), NOT ANSI escape sequences, so a redirected/piped run is plain
+# text automatically -- there are no escape codes to leak. The one gate below
+# still decides whether to COLOUR and whether to ANIMATE, keying off output
+# redirection (the pipe case) plus NO_COLOR / DEXEL_NO_COLOR and DEXEL_QUIET.
+# ---------------------------------------------------------------------------
+
+$script:UseColor = $false
+$script:Quiet    = $false
+$script:Spinner  = $null
+
+function Initialize-Presentation {
+    if ($env:DEXEL_QUIET -eq '1') { $script:Quiet = $true }
+    if ($env:DEXEL_NO_COLOR -eq '1' -or $env:NO_COLOR) { $script:UseColor = $false; return }
+    try {
+        if ([Console]::IsOutputRedirected) { $script:UseColor = $false; return }
+    } catch {
+        $script:UseColor = $false; return
+    }
+    $script:UseColor = $true
+}
+
+# Write-Marked -- a coloured prefix ("==>", "OK", "!") + a plain message, or
+# the same line uncoloured when colour is off. One code path, two looks.
+function Write-Marked([string]$Prefix, [string]$Color, [string]$Text) {
+    if ($script:UseColor) {
+        Write-Host $Prefix -ForegroundColor $Color -NoNewline
+        Write-Host " $Text"
+    } else {
+        Write-Host "$Prefix $Text"
+    }
+}
+
 function Say([string]$Text)  { Write-Host $Text }
-function Step([string]$Text) { Write-Host "==> $Text" }
-function Note([string]$Text) { Write-Host "  $Text" }
+function Step([string]$Text) { Write-Marked '==>' 'Magenta' $Text }
+function Ok([string]$Text)   { Write-Marked 'OK' 'Green' $Text }
+function Note([string]$Text) {
+    if ($script:UseColor) { Write-Host "  $Text" -ForegroundColor DarkGray }
+    else { Write-Host "  $Text" }
+}
 function Warn([string]$Text) { Write-Warning $Text }
+
+# Show-Banner -- the DEXEL wordmark, once per run. Byte-for-byte the same ASCII
+# art install.sh draws (PowerShell 5.1 is ASCII-only). $Version and $Target are
+# the best hints known before the release is resolved.
+function Show-Banner([string]$Version, [string]$Target) {
+    if ($script:Quiet) { return }
+    $fig = @(
+        '   /\     ####   #####  #   #  #####  #',
+        '  /  \    #   #  #       # #   #      #',
+        '  |oo|    #   #  ####     #    ####   #',
+        '  |  |    #   #  #       # #   #      #',
+        '  |__|    ####   #####  #   #  #####  #####'
+    )
+    Write-Host ''
+    foreach ($line in $fig) {
+        if ($script:UseColor) { Write-Host $line -ForegroundColor Magenta }
+        else { Write-Host $line }
+    }
+    Write-Host ''
+    if ($script:UseColor) {
+        Write-Host '  a cozy pixel-art companion that runs on your real typing' -ForegroundColor DarkGray
+    } else {
+        Write-Host '  a cozy pixel-art companion that runs on your real typing'
+    }
+    Write-Host "  installing dexel $Version on $Target"
+    Write-Host ''
+}
+
+# Start-Spinner / Stop-Spinner -- an animated frame + label while a blocking
+# operation (the release download) runs. The animation lives in its own
+# runspace so the main thread is free to do the real work; Stop-Spinner is
+# idempotent and is ALSO invoked from the outer finally, so no failure path can
+# leave a runspace running or a half-drawn line on screen. When colour/animation
+# is off it degrades to a plain "==> label" step and a matching "OK" line.
+function Start-Spinner([string]$Label) {
+    if (-not $script:UseColor -or $script:Quiet) { Step $Label; $script:Spinner = $null; return }
+    $flag = [hashtable]::Synchronized(@{ Stop = $false })
+    $rs = [runspacefactory]::CreateRunspace()
+    $rs.Open()
+    $ps = [powershell]::Create()
+    $ps.Runspace = $rs
+    $null = $ps.AddScript({
+        param($flag, $label)
+        $frames = @('-', '\', '|', '/')
+        $i = 0
+        while (-not $flag.Stop) {
+            $f = $frames[$i % 4]
+            try {
+                [Console]::Write("`r")
+                [Console]::Write("$f $label")
+            } catch { $null = $_ }
+            Start-Sleep -Milliseconds 100
+            $i++
+        }
+    }).AddArgument($flag).AddArgument($Label)
+    $async = $ps.BeginInvoke()
+    $script:Spinner = @{ Flag = $flag; PS = $ps; RS = $rs; Async = $async; Width = ($Label.Length + 4) }
+}
+
+function Stop-Spinner {
+    if (-not $script:Spinner) { return }
+    $s = $script:Spinner
+    $script:Spinner = $null
+    try { $s.Flag.Stop = $true } catch { $null = $_ }
+    try { if ($s.Async) { $s.PS.EndInvoke($s.Async) } } catch { $null = $_ }
+    try { $s.PS.Dispose() } catch { $null = $_ }
+    try { $s.RS.Close(); $s.RS.Dispose() } catch { $null = $_ }
+    # Erase the animated line: carriage return, blanks, carriage return.
+    try { [Console]::Write("`r" + (' ' * $s.Width) + "`r") } catch { $null = $_ }
+}
+
+# Complete-Spinner MESSAGE -- stop the animation, then confirm with an OK line.
+function Complete-Spinner([string]$Text) { Stop-Spinner; Ok $Text }
 
 # Fail is the only failure path: it records the exit code the caller should
 # see, then throws so the single try/catch at the bottom does the reporting
 # and the cleanup in one place.
 function Fail([int]$Code, [string]$Message) {
     $script:ExitCode = $Code
+    Stop-Spinner
     throw $Message
 }
 
@@ -312,7 +430,7 @@ verified. Refusing to install.
         Fail 6 "the release's checksum file and GitHub disagree about $ArchiveName. Refusing to install."
     }
 
-    Step 'sha256 verified'
+    Ok 'sha256 verified'
     Note $got
 }
 
@@ -388,7 +506,7 @@ could not write $dest : $($_.Exception.Message)
 If a dexel runtime is still running, run ``dexel stop`` and re-run this installer.
 "@
     }
-    Step "installed $dest"
+    Ok "installed $dest"
     return $dest
 }
 
@@ -484,7 +602,7 @@ function Install-StartMenuShortcut([string]$Exe, [string]$IconPath) {
     # collected with the runspace, and there is no external process to leave
     # running. An installer is not a long-lived host.
 
-    Step "installed $lnk"
+    Ok "installed $lnk"
     if ($IconPath) {
         Note 'dexel is now in your Start Menu, with its own icon'
     } else {
@@ -620,7 +738,13 @@ The archive may not match this machine's architecture.
 
 function Write-Report([string]$VersionLine, [string]$Exe, [string]$StateDir, [string]$Shortcut) {
     Say ''
-    Say $VersionLine
+    if ($script:UseColor) {
+        Write-Host 'OK' -ForegroundColor Green -NoNewline
+        Write-Host " dexel is installed  " -NoNewline
+        Write-Host $VersionLine -ForegroundColor White
+    } else {
+        Say "OK dexel is installed  $VersionLine"
+    }
     Say "installed to $Exe"
     if ($Shortcut) { Say "in your Start Menu as `"Dexel`"" }
     Say ''
@@ -710,6 +834,7 @@ function Write-Report([string]$VersionLine, [string]$Exe, [string]$StateDir, [st
 # --------------------------------------------------------------------------
 
 function Invoke-DexelInstall {
+    Initialize-Presentation
     $arch = Resolve-Platform
     Enable-Tls12
 
@@ -724,7 +849,9 @@ function Invoke-DexelInstall {
     }
 
     $script:TempDir = New-TempDirectory
-    Step "dexel installer -- windows-$arch"
+    $verHint = $env:DEXEL_VERSION
+    if (-not $verHint) { $verHint = 'latest' }
+    Show-Banner $verHint "windows-$arch"
 
     $rel = Resolve-Release                                          # 3
     $tag = $rel.tag_name
@@ -749,8 +876,9 @@ Build from source: https://github.com/$($script:Repo)#building-from-source
         Step "using local archive $($env:DEXEL_ARCHIVE) (checksum still verified)"
         Copy-Item -LiteralPath $env:DEXEL_ARCHIVE -Destination $archivePath -Force
     } else {
-        Step "downloading $archiveName"
+        Start-Spinner "Downloading dexel $tag..."
         Save-Asset $asset $archivePath
+        Complete-Spinner "downloaded $archiveName"
     }
 
     Assert-Checksum $rel $archivePath $archiveName                   # 6
@@ -777,10 +905,17 @@ try {
 }
 catch {
     if ($script:ExitCode -eq 0) { $script:ExitCode = 1 }
+    Stop-Spinner
     Say ''
-    Write-Host "dexel install failed: $($_.Exception.Message)" -ForegroundColor Red
+    if ($script:UseColor) {
+        Write-Host 'x' -ForegroundColor Red -NoNewline
+        Write-Host " dexel install failed: $($_.Exception.Message)"
+    } else {
+        Write-Host "x dexel install failed: $($_.Exception.Message)"
+    }
 }
 finally {
+    Stop-Spinner
     if ($script:TempDir -and (Test-Path -LiteralPath $script:TempDir)) {
         Remove-Item -LiteralPath $script:TempDir -Recurse -Force -ErrorAction SilentlyContinue
     }

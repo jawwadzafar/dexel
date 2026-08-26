@@ -38,6 +38,15 @@ has an icon in your desktop's app grid (Linux) or Start Menu (Windows), and
 then starts the runtime and opens the game. No `sudo`, no elevation, no
 autostart.
 
+It shows its work as it goes — a `DEXEL` banner, a colour-coded line per phase
+(detect, resolve, download, verify, install, desktop, start) and a spinner
+during the slow steps (the release download, a source build, the AppImage
+fetch), finishing on a `dexel is installed` summary with where things landed
+and how to open or uninstall it. Colour and animation appear only on a real
+terminal: piped, redirected or in CI it prints plain text with no escape codes
+and no spinner, and `--no-color` / `NO_COLOR` and `--quiet` turn them off
+explicitly.
+
 `install.sh` installs **however you run it** — from the download path above,
 from a fresh clone with no network, or from a `.tar.gz` you already have — by
 picking the highest-confidence source available and falling back automatically
@@ -195,7 +204,8 @@ offline — verified against a sibling `.sha256` if present, else installed with
 an "unverified local file" notice; with `--from-release` it is verified against
 the live release instead), `DEXEL_FROM_SOURCE` / `DEXEL_FROM_RELEASE` (the
 [source-selection](#how-installsh-picks-what-to-install) flags as env vars),
-and `GH_TOKEN` / `GITHUB_TOKEN`. A dry run (`--dry-run` on Linux,
+`GH_TOKEN` / `GITHUB_TOKEN`, and the presentation knobs `NO_COLOR` /
+`DEXEL_NO_COLOR` and `DEXEL_QUIET`. A dry run (`--dry-run` on Linux,
 `$env:DEXEL_DRY_RUN = '1'` on Windows) resolves/builds and verifies without
 installing anything — for the download path including the AppImage, which makes
 it a complete test of the release and every checksum in it.
@@ -211,6 +221,8 @@ either platform:
 | `--no-desktop` | `DEXEL_NO_DESKTOP=1` | no icon, no launcher entry, no GUI shell |
 | `--no-app` | `DEXEL_NO_APP=1` | keep the icon and the launcher, skip the ~84 MB AppImage |
 | `--app` | `DEXEL_APP=1` | fetch the AppImage even with no `$DISPLAY` — e.g. installing over ssh for a desktop you will log into later |
+| `--no-color` | `NO_COLOR=1` / `DEXEL_NO_COLOR=1` | plain text: no colour, no spinner (already automatic when output is piped or redirected, or in CI) |
+| `--quiet` | `DEXEL_QUIET=1` | suppress the banner and the animated spinner — minimal output for scripting |
 
 </details>
 
