@@ -1,0 +1,62 @@
+# Deploy the dexel landing page (site/) to GitHub Pages.
+#
+# OWNER SETUP (one time): Settings -> Pages -> Build and deployment ->
+#   Source: "GitHub Actions". Then push to main (or run this workflow
+#   manually) and the site publishes at the URL shown on that page.
+#
+# NOTE: GitHub Pages on a PRIVATE repo requires GitHub Pro / Team /
+#   Enterprise. On a free private repo the deploy step will fail until the
+#   plan is upgraded OR the repo is made public. This workflow is ready
+#   for either case — nothing here needs to change.
+#
+# RUNNER: uses the GitHub-hosted `ubuntu-latest` runner because the
+#   `deploy-pages` action talks to the GitHub Pages service and is designed
+#   for hosted runners. If hosted minutes are unavailable for this account,
+#   swap `runs-on: ubuntu-latest` for `runs-on: [self-hosted, darkmirror]`
+#   on the build job (the deploy job should stay hosted where possible).
+
+name: Deploy landing page (Pages)
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "site/**"
+      - ".github/workflows/pages.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# Allow one concurrent deployment; don't cancel an in-progress run.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure Pages
+        uses: actions/configure-pages@v5
+
+      - name: Upload static site artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

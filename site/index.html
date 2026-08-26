@@ -1,0 +1,559 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dusk">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>dexel — a cozy pixel-art companion that runs on your real typing</title>
+<meta name="description" content="dexel is a cozy pixel-art desktop companion whose workday runs on your real typing. Sprints, a store, sessions and history — counts and durations only, never content. One binary, 100% local." />
+<meta name="theme-color" content="#241f2e" />
+<link rel="icon" type="image/png" href="assets/img/favicon.png" />
+<link rel="apple-touch-icon" href="assets/img/favicon.png" />
+
+<!-- Open Graph / Twitter -->
+<meta property="og:type" content="website" />
+<meta property="og:title" content="dexel — a cozy pixel-art companion that runs on your real typing" />
+<meta property="og:description" content="A small pixel-art developer who lives at a desk on your screen. Your real typing advances their sprints. Counts and durations only, never content." />
+<meta property="og:image" content="assets/img/hero.png" />
+<meta name="twitter:card" content="summary_large_image" />
+<meta name="twitter:title" content="dexel — a cozy pixel-art companion" />
+<meta name="twitter:description" content="A cozy pixel-art desktop companion whose workday runs on your real typing." />
+<meta name="twitter:image" content="assets/img/hero.png" />
+
+<style>
+  /* ---------- Self-hosted pixel font ---------- */
+  @font-face {
+    font-family: "Press Start 2P";
+    src: url("assets/fonts/PressStart2P.woff2") format("woff2");
+    font-weight: 400;
+    font-style: normal;
+    font-display: swap;
+  }
+
+  /* ---------- Palette (dexel's own 18 colours) ----------
+     Identity is the dusk/dark look; a warm parchment light theme
+     follows the viewer's system preference. */
+  :root, :root[data-theme="dusk"] {
+    --wall-dark:#2f2a3d; --wall-light:#3d3550;
+    --floor:#5b4433; --floor-light:#6d5240;
+    --desk:#8b5e3c; --desk-dark:#6b452b;
+    --metal:#2b2b33; --screen:#7fd4c1; --screen-dim:#4a8f83;
+    --skin:#e8b48c; --hair:#3a2a20; --shirt:#4a7fa8;
+    --plant:#4e8b4f; --pot:#a45c3a; --gold:#e8c46a;
+    --lamp:#ffd98a; --cream:#f2e0c9; --shadow:#241f2e;
+
+    /* semantic tokens */
+    --bg:            #201b2a;
+    --bg-2:          var(--wall-dark);
+    --surface:       #2b2637;
+    --surface-2:     var(--wall-light);
+    --border:        #453d5c;
+    --border-strong: var(--gold);
+    --ink:           var(--cream);
+    --ink-dim:       #b9aecb;
+    --accent:        var(--screen);
+    --accent-2:      var(--gold);
+    --link:          var(--screen);
+    --code-bg:       #17131f;
+    --shadow-cast:   0 6px 0 rgba(0,0,0,.35), 0 14px 40px rgba(0,0,0,.45);
+  }
+
+  @media (prefers-color-scheme: light) {
+    :root:not([data-theme="dusk"]) {
+      --bg:            #f2e0c9;
+      --bg-2:          #e9d5ba;
+      --surface:       #fbf1e0;
+      --surface-2:     #f2e0c9;
+      --border:        #cdb495;
+      --ink:           #2f2a3d;
+      --ink-dim:       #6b5a4a;
+      --accent:        #2c8b78;
+      --accent-2:      #b7862a;
+      --link:          #2c8b78;
+      --code-bg:       #2b2637;
+      --shadow-cast:   0 4px 0 rgba(90,68,51,.25), 0 12px 30px rgba(90,68,51,.20);
+    }
+    :root:not([data-theme="dusk"]) .code-block,
+    :root:not([data-theme="dusk"]) .terminal { color: var(--cream); }
+  }
+
+  /* ---------- Reset-ish ---------- */
+  *, *::before, *::after { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  @media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } }
+  body {
+    margin:0;
+    background:
+      radial-gradient(1200px 600px at 50% -10%, var(--bg-2), transparent 60%),
+      var(--bg);
+    color: var(--ink);
+    font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    line-height: 1.65;
+    font-size: 17px;
+    -webkit-font-smoothing: antialiased;
+    overflow-x: hidden;
+  }
+  img { max-width:100%; display:block; }
+  a { color: var(--link); text-underline-offset: 3px; }
+  a:focus-visible, button:focus-visible, .btn:focus-visible {
+    outline: 3px solid var(--gold);
+    outline-offset: 3px;
+  }
+
+  .pixel { image-rendering: pixelated; image-rendering: crisp-edges; }
+  .px { font-family: "Press Start 2P", ui-monospace, monospace; line-height: 1.5; letter-spacing: .5px; }
+
+  /* skip link */
+  .skip { position:absolute; left:-9999px; top:0; background:var(--gold); color:#241f2e; padding:10px 14px; z-index:100; border-radius:6px; }
+  .skip:focus { left:12px; top:12px; }
+
+  .wrap { width: min(1120px, 92vw); margin-inline: auto; }
+  section { padding: clamp(56px, 8vw, 104px) 0; }
+  .eyebrow { font-size: 11px; color: var(--accent-2); text-transform: uppercase; letter-spacing: 2px; margin: 0 0 14px; }
+
+  h2.px { font-size: clamp(18px, 3.4vw, 26px); margin: 0 0 10px; color: var(--ink); line-height:1.4; }
+  .lede { color: var(--ink-dim); max-width: 60ch; margin: 0 0 8px; }
+
+  /* ---------- Scanline / dither ambience ---------- */
+  .scanlines::before {
+    content:""; position: fixed; inset:0; pointer-events:none; z-index: 50;
+    background: repeating-linear-gradient(to bottom, rgba(0,0,0,.05) 0 1px, transparent 1px 3px);
+    mix-blend-mode: multiply; opacity:.5;
+  }
+
+  /* ---------- Buttons ---------- */
+  .btn {
+    display:inline-flex; align-items:center; gap:10px;
+    font-family:"Press Start 2P", ui-monospace, monospace; font-size:12px;
+    text-decoration:none; cursor:pointer;
+    padding:14px 20px; border-radius:8px;
+    border:2px solid var(--border);
+    background: var(--surface); color: var(--ink);
+    box-shadow: 0 4px 0 rgba(0,0,0,.35);
+    transition: transform .08s ease, box-shadow .08s ease, background .15s ease;
+  }
+  .btn:hover { transform: translateY(-2px); box-shadow: 0 6px 0 rgba(0,0,0,.35); }
+  .btn:active { transform: translateY(2px); box-shadow: 0 2px 0 rgba(0,0,0,.35); }
+  .btn-primary { background: var(--gold); color:#241f2e; border-color:#caa542; }
+  .btn-primary:hover { background:#f0d07f; }
+  .btn-ghost { background: transparent; }
+
+  /* ---------- Nav ---------- */
+  header.nav {
+    position: sticky; top:0; z-index:40;
+    backdrop-filter: blur(8px);
+    background: color-mix(in srgb, var(--bg) 82%, transparent);
+    border-bottom: 1px solid var(--border);
+  }
+  .nav-inner { display:flex; align-items:center; justify-content:space-between; gap:16px; padding:12px 0; }
+  .brand { display:flex; align-items:center; gap:12px; text-decoration:none; color:var(--ink); }
+  .brand img { width:26px; height:26px; }
+  .brand .name { font-family:"Press Start 2P", monospace; font-size:16px; }
+  .nav-links { display:flex; gap:22px; align-items:center; }
+  .nav-links a { color:var(--ink-dim); text-decoration:none; font-size:14px; }
+  .nav-links a:hover { color:var(--ink); }
+  .nav-links .btn { padding:10px 14px; font-size:11px; }
+  @media (max-width: 820px){ .nav-links a.navlink { display:none; } }
+
+  /* ---------- Hero ---------- */
+  .hero { padding-top: clamp(36px, 6vw, 64px); }
+  .hero-grid { display:grid; grid-template-columns: 1.05fr 1fr; gap: clamp(28px, 5vw, 56px); align-items:center; }
+  @media (max-width: 900px){ .hero-grid { grid-template-columns: 1fr; } }
+
+  .wordmark { display:flex; align-items:center; gap:16px; margin-bottom: 18px; }
+  .wordmark img { width: 46px; height:46px; }
+  .wordmark h1 { font-family:"Press Start 2P", monospace; font-size: clamp(34px, 8vw, 60px); margin:0; color:var(--ink); text-shadow: 0 3px 0 rgba(0,0,0,.4); }
+  .tagline { font-size: clamp(18px, 2.6vw, 23px); color: var(--ink); max-width: 20ch; margin: 0 0 8px; font-weight:600; }
+  .tagline .hl { color: var(--accent); }
+  .subtag { color: var(--ink-dim); max-width: 46ch; margin: 0 0 26px; }
+  .cta-row { display:flex; flex-wrap:wrap; gap:14px; margin-bottom: 22px; }
+  .trust { display:flex; flex-wrap:wrap; gap:8px 18px; color:var(--ink-dim); font-size:13px; }
+  .trust b { color: var(--accent-2); }
+  .trust span { display:inline-flex; align-items:center; gap:6px; }
+
+  /* monitor frame for the hero screenshot */
+  .monitor {
+    position:relative;
+    border:3px solid var(--metal);
+    border-radius:12px;
+    background:#0d0b12;
+    padding:10px 10px 26px;
+    box-shadow: var(--shadow-cast);
+  }
+  .monitor .screen-img { border-radius:6px; overflow:hidden; border:1px solid #000; }
+  .monitor::after {
+    content:""; position:absolute; left:50%; bottom:6px; transform:translateX(-50%);
+    width:64px; height:8px; border-radius:0 0 6px 6px;
+    background: var(--metal);
+  }
+  .monitor .float {
+    position:absolute; right:-14px; top:-26px; width:74px; height:74px;
+    filter: drop-shadow(0 4px 6px rgba(0,0,0,.5));
+    animation: bob 3.6s ease-in-out infinite;
+  }
+  @keyframes bob { 0%,100%{ transform: translateY(0);} 50%{ transform: translateY(-7px);} }
+  @media (prefers-reduced-motion: reduce){ .monitor .float{ animation:none; } }
+
+  /* ---------- Install ---------- */
+  .install-card {
+    border:2px solid var(--border); border-radius:12px; overflow:hidden;
+    background: var(--surface); box-shadow: var(--shadow-cast);
+  }
+  .os-tabs { display:flex; border-bottom:2px solid var(--border); background: var(--bg-2); }
+  .os-tab {
+    appearance:none; border:0; background:transparent; cursor:pointer;
+    font-family:"Press Start 2P", monospace; font-size:11px; color:var(--ink-dim);
+    padding:14px 18px; border-bottom:3px solid transparent;
+  }
+  .os-tab[aria-selected="true"]{ color:var(--ink); border-bottom-color: var(--accent); background: color-mix(in srgb, var(--accent) 12%, transparent); }
+  .os-panel { padding: 18px; }
+  .os-panel[hidden]{ display:none; }
+  .os-note { color:var(--ink-dim); font-size:13px; margin: 10px 2px 0; }
+
+  .code-block {
+    display:flex; align-items:center; gap:12px;
+    background: var(--code-bg); color: var(--screen);
+    border:1px solid #000; border-radius:8px;
+    padding:14px 14px 14px 16px;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 14px; overflow-x:auto;
+  }
+  .code-block code { white-space:pre; }
+  .code-block .prompt { color: var(--screen-dim); user-select:none; }
+  .copy-btn {
+    margin-left:auto; flex:0 0 auto;
+    font-family:"Press Start 2P", monospace; font-size:10px;
+    background: var(--surface-2); color: var(--ink);
+    border:2px solid var(--border); border-radius:6px;
+    padding:8px 10px; cursor:pointer; transition: background .15s ease;
+  }
+  .copy-btn:hover { background: var(--gold); color:#241f2e; }
+  .copy-btn.copied { background: var(--accent); color:#0d0b12; }
+
+  /* ---------- Features ---------- */
+  .feature-grid { display:grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 18px; }
+  .feature {
+    background: var(--surface); border:2px solid var(--border); border-radius:12px;
+    padding: 22px; transition: transform .1s ease, border-color .15s ease;
+  }
+  .feature:hover { transform: translateY(-3px); border-color: var(--accent); }
+  .feature .icon { width:52px; height:52px; margin-bottom:14px; }
+  .feature h3 { font-family:"Press Start 2P", monospace; font-size:13px; margin:0 0 10px; line-height:1.5; color:var(--ink); }
+  .feature p { margin:0; color: var(--ink-dim); font-size:15px; }
+
+  /* ---------- Screenshots ---------- */
+  .shots { display:grid; grid-template-columns: repeat(3, 1fr); gap:18px; }
+  @media (max-width: 860px){ .shots { grid-template-columns: 1fr; } }
+  .shot { border:2px solid var(--border); border-radius:10px; overflow:hidden; background:#0d0b12; box-shadow: var(--shadow-cast); }
+  .shot img { width:100%; }
+  .shot figcaption { font-family:"Press Start 2P", monospace; font-size:10px; color:var(--ink-dim); padding:12px; background: var(--surface); border-top:2px solid var(--border); }
+
+  /* ---------- Privacy ---------- */
+  .privacy {
+    background:
+      linear-gradient(180deg, color-mix(in srgb, var(--accent) 10%, transparent), transparent),
+      var(--surface);
+    border:2px solid var(--accent); border-radius:16px;
+    padding: clamp(28px, 5vw, 48px);
+    box-shadow: var(--shadow-cast);
+  }
+  .privacy .eyebrow { color: var(--accent); }
+  .privacy ul { list-style:none; padding:0; margin: 18px 0 0; display:grid; grid-template-columns: repeat(auto-fit, minmax(240px,1fr)); gap:16px; }
+  .privacy li { display:flex; gap:12px; align-items:flex-start; color: var(--ink-dim); }
+  .privacy li b { color: var(--ink); display:block; margin-bottom:2px; }
+  .privacy .check { color: var(--accent); font-weight:900; margin-top:1px; }
+
+  /* ---------- Download ---------- */
+  .download { text-align:center; }
+  .download .btn { margin: 6px; }
+  .platforms { display:flex; flex-wrap:wrap; gap:10px 22px; justify-content:center; color:var(--ink-dim); font-size:14px; margin-top:20px; }
+  .platforms b { color: var(--accent-2); }
+
+  /* ---------- Footer ---------- */
+  footer { border-top:1px solid var(--border); padding: 32px 0 48px; color: var(--ink-dim); font-size:14px; }
+  .foot-inner { display:flex; flex-wrap:wrap; gap:16px; align-items:center; justify-content:space-between; }
+  .foot-inner a { color: var(--ink-dim); }
+  .foot-inner a:hover { color: var(--ink); }
+  .foot-brand { display:flex; align-items:center; gap:10px; font-family:"Press Start 2P", monospace; font-size:12px; color:var(--ink); }
+  .foot-brand img { width:20px; height:20px; }
+
+  .center { text-align:center; margin-inline:auto; }
+  .section-head { max-width: 60ch; margin: 0 auto clamp(28px, 4vw, 44px); text-align:center; }
+</style>
+</head>
+<body class="scanlines">
+<a class="skip" href="#main">Skip to content</a>
+
+<header class="nav">
+  <div class="wrap nav-inner">
+    <a class="brand" href="#top" aria-label="dexel home">
+      <img class="pixel" src="assets/img/favicon.png" alt="" width="26" height="26" />
+      <span class="name">dexel</span>
+    </a>
+    <nav class="nav-links" aria-label="Primary">
+      <a class="navlink" href="#install">Install</a>
+      <a class="navlink" href="#features">Features</a>
+      <a class="navlink" href="#screens">Screenshots</a>
+      <a class="navlink" href="#privacy">Privacy</a>
+      <a class="btn btn-primary" href="https://github.com/jawwadzafar/dexel">GitHub</a>
+    </nav>
+  </div>
+</header>
+
+<main id="main">
+<a id="top"></a>
+
+<!-- ===================== HERO ===================== -->
+<section class="hero">
+  <div class="wrap hero-grid">
+    <div class="hero-copy">
+      <div class="wordmark">
+        <img class="pixel" src="assets/img/favicon.png" alt="" width="46" height="46" />
+        <h1>dexel</h1>
+      </div>
+      <p class="tagline">A cozy pixel-art companion that runs on your <span class="hl">real typing</span>.</p>
+      <p class="subtag">A small pixel-art developer who lives at a desk on your screen. Your real typing — in <em>any</em> app — advances their sprints, and finished sprints pay coins you spend making the desk your own.</p>
+      <div class="cta-row">
+        <a class="btn btn-primary" href="#install">Install dexel</a>
+        <a class="btn btn-ghost" href="https://github.com/jawwadzafar/dexel">View on GitHub</a>
+      </div>
+      <div class="trust">
+        <span>✓ <b>One</b> self-contained binary</span>
+        <span>✓ <b>100%</b> local</span>
+        <span>✓ Counts, <b>never</b> content</span>
+      </div>
+    </div>
+
+    <div class="hero-visual">
+      <div class="monitor">
+        <img class="float pixel" src="assets/img/mascot.png" alt="" aria-hidden="true" width="74" height="74" />
+        <div class="screen-img">
+          <img class="pixel" src="assets/img/hero.png" width="1280" height="800"
+               alt="dexel running: a hooded pixel developer typing at a desk, with a coin and level HUD, a live sprint progress bar reading 34 of 75 units, and a terminal panel." />
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ===================== INSTALL ===================== -->
+<section id="install">
+  <div class="wrap">
+    <div class="section-head">
+      <p class="eyebrow">Get started</p>
+      <h2 class="px">One line, and dexel is running</h2>
+      <p class="lede center">No <code>sudo</code>, no elevation, no autostart. Installed, added to your app grid, and running. Remove it any time with <code>dexel uninstall</code>.</p>
+    </div>
+
+    <div class="install-card">
+      <div class="os-tabs" role="tablist" aria-label="Install command by platform">
+        <button class="os-tab" id="tab-unix" role="tab" aria-selected="true" aria-controls="panel-unix">Linux / macOS / WSL</button>
+        <button class="os-tab" id="tab-win" role="tab" aria-selected="false" aria-controls="panel-win" tabindex="-1">Windows</button>
+      </div>
+
+      <div class="os-panel" id="panel-unix" role="tabpanel" aria-labelledby="tab-unix">
+        <div class="code-block">
+          <span class="prompt" aria-hidden="true">$&nbsp;</span>
+          <code id="cmd-unix">curl -fsSL https://raw.githubusercontent.com/jawwadzafar/dexel/main/install.sh | bash</code>
+          <button class="copy-btn" type="button" data-copy="cmd-unix" aria-label="Copy install command">Copy</button>
+        </div>
+        <p class="os-note">Works on Linux, and on Windows via Git Bash / MSYS2 / Cygwin and WSL.</p>
+      </div>
+
+      <div class="os-panel" id="panel-win" role="tabpanel" aria-labelledby="tab-win" hidden>
+        <div class="code-block">
+          <span class="prompt" aria-hidden="true">&gt;&nbsp;</span>
+          <code id="cmd-win">irm https://raw.githubusercontent.com/jawwadzafar/dexel/main/install.ps1 | iex</code>
+          <button class="copy-btn" type="button" data-copy="cmd-win" aria-label="Copy PowerShell install command">Copy</button>
+        </div>
+        <p class="os-note">Run in PowerShell. macOS can also <a href="https://github.com/jawwadzafar/dexel#build-from-source">build from source</a> — one <code>go build</code>.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ===================== FEATURES ===================== -->
+<section id="features">
+  <div class="wrap">
+    <div class="section-head">
+      <p class="eyebrow">What it does</p>
+      <h2 class="px">Pure idle. Nothing to feed or lose.</h2>
+      <p class="lede center">There are no meters and no hunger. Leave it running, keep working, and watch the desk fill in.</p>
+    </div>
+
+    <div class="feature-grid">
+      <div class="feature">
+        <img class="icon pixel" src="assets/sprites/keyboard.png" alt="" width="96" height="24" />
+        <h3>Runs on real typing</h3>
+        <p>Global keystroke and mouse <em>counts</em> advance sprints — from whatever app you're actually working in, not just the game window.</p>
+      </div>
+      <div class="feature">
+        <img class="icon pixel" src="assets/sprites/coin.png" alt="" width="52" height="52" />
+        <h3>Sprints → cash → store</h3>
+        <p>Completed sprints pay coins. Spend them on hoodies, chairs, keyboards, plants and more — with colours as items and level-locked unlocks that all render on the desk.</p>
+      </div>
+      <div class="feature">
+        <img class="icon pixel" src="assets/sprites/plant.png" alt="" width="52" height="52" />
+        <h3>Sessions &amp; history</h3>
+        <p>An activity log (Today / Lifetime), a 30-day history with streaks and insights, and a per-signal breakdown of how coins were earned — all derived from counts.</p>
+      </div>
+      <div class="feature">
+        <img class="icon pixel" src="assets/sprites/buddy_cat.png" alt="" width="52" height="52" />
+        <h3>Cozy details</h3>
+        <p>A gold coin HUD, sound effects, click reactions, buddies on the desk, and pixel art generated from committed code — so every sprite is a reviewable diff.</p>
+      </div>
+      <div class="feature">
+        <img class="icon pixel" src="assets/sprites/mug.png" alt="" width="52" height="52" />
+        <h3>Honest by design</h3>
+        <p>Moods and idle time reflect only what the platform can actually see. If it can't see globally, it freezes rather than guessing — it never claims a workday it didn't witness.</p>
+      </div>
+      <div class="feature">
+        <img class="icon pixel" src="assets/sprites/buddy_bot.png" alt="" width="52" height="52" />
+        <h3>One binary</h3>
+        <p>A Go backend embeds the frontend and every sprite — nothing to unpack. An optional native desktop window is available via Tauri.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ===================== SCREENSHOTS ===================== -->
+<section id="screens">
+  <div class="wrap">
+    <div class="section-head">
+      <p class="eyebrow">Look inside</p>
+      <h2 class="px">A whole little desk to run</h2>
+      <p class="lede center">Press <kbd>S</kbd> for the store, <kbd>A</kbd> for the activity log, <kbd>H</kbd> for history.</p>
+    </div>
+
+    <div class="shots">
+      <figure class="shot">
+        <img class="pixel" src="assets/img/store.png" width="1280" height="800"
+             alt="The store: per-slot tabs (Hoodie, Chair, Keyboard, and more), colour cards with prices in coins, owned items outlined in gold, and live cash." />
+        <figcaption>Store · buy &amp; customise</figcaption>
+      </figure>
+      <figure class="shot">
+        <img class="pixel" src="assets/img/activity.png" width="1280" height="800"
+             alt="The activity log with Today and Lifetime tabs: keystrokes, mouse-active time, active time, sprints done, and a breakdown of coins earned by signal." />
+        <figcaption>Activity · counts, never content</figcaption>
+      </figure>
+      <figure class="shot">
+        <img class="pixel" src="assets/img/history.png" width="1280" height="800"
+             alt="The history view: current and longest streaks, a 7-day activity bar chart, a 30-day streak strip, plus busiest day and longest focus insights." />
+        <figcaption>History · streaks &amp; insights</figcaption>
+      </figure>
+    </div>
+  </div>
+</section>
+
+<!-- ===================== PRIVACY ===================== -->
+<section id="privacy">
+  <div class="wrap">
+    <div class="privacy">
+      <p class="eyebrow">The defining constraint, not a footnote</p>
+      <h2 class="px">Counts and durations only. Never content.</h2>
+      <p class="lede">Dexel records <em>that</em> a key was pressed and <em>that</em> the mouse moved — never which key, never any typed text, never the clipboard. It's the whole point.</p>
+      <ul>
+        <li><span class="check" aria-hidden="true">✓</span><span><b>Never what you type.</b> Only that you did — no keycodes, no text, no clipboard.</span></li>
+        <li><span class="check" aria-hidden="true">✓</span><span><b>App names, never window titles.</b> The foreground signal is an app name — never a document or URL.</span></li>
+        <li><span class="check" aria-hidden="true">✓</span><span><b>Enforced by tests, not promises.</b> A structural allow-list test <em>fails the build</em> if a content-shaped field is ever added.</span></li>
+        <li><span class="check" aria-hidden="true">✓</span><span><b>100% local.</b> Everything runs on your machine over loopback. Nothing phones home.</span></li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<!-- ===================== DOWNLOAD ===================== -->
+<section id="download">
+  <div class="wrap download">
+    <p class="eyebrow">Ready when you are</p>
+    <h2 class="px">Bring dexel to your desk</h2>
+    <p class="lede center">Grab the latest release, or install with the one-liner above.</p>
+    <div style="margin-top:24px">
+      <a class="btn btn-primary" href="https://github.com/jawwadzafar/dexel/releases/latest">Download latest release</a>
+      <a class="btn btn-ghost" href="https://github.com/jawwadzafar/dexel">Star on GitHub</a>
+    </div>
+    <div class="platforms">
+      <span><b>macOS</b> — permissionless</span>
+      <span><b>Linux</b> — one group add</span>
+      <span><b>Windows</b> — permissionless</span>
+    </div>
+  </div>
+</section>
+</main>
+
+<footer>
+  <div class="wrap foot-inner">
+    <div class="foot-brand">
+      <img class="pixel" src="assets/img/favicon.png" alt="" width="20" height="20" />
+      <span>dexel</span>
+    </div>
+    <div>
+      <a href="https://github.com/jawwadzafar/dexel">GitHub</a> ·
+      <a href="https://github.com/jawwadzafar/dexel/releases/latest">Releases</a> ·
+      <a href="https://github.com/jawwadzafar/dexel/blob/main/docs/README.md">Docs</a>
+    </div>
+    <div>Apache-2.0 · © 2026 Jawwad Zafar</div>
+  </div>
+</footer>
+
+<script>
+  // ---- Copy-to-clipboard ----
+  (function () {
+    function flash(btn){
+      var prev = btn.textContent;
+      btn.textContent = "Copied!";
+      btn.classList.add("copied");
+      setTimeout(function(){ btn.textContent = prev; btn.classList.remove("copied"); }, 1600);
+    }
+    async function copy(text){
+      try {
+        if (navigator.clipboard && window.isSecureContext) {
+          await navigator.clipboard.writeText(text);
+          return true;
+        }
+      } catch (e) { /* fall through */ }
+      // Fallback for insecure contexts / older browsers
+      try {
+        var ta = document.createElement("textarea");
+        ta.value = text; ta.style.position="fixed"; ta.style.opacity="0";
+        document.body.appendChild(ta); ta.focus(); ta.select();
+        var ok = document.execCommand("copy");
+        document.body.removeChild(ta);
+        return ok;
+      } catch (e) { return false; }
+    }
+    document.querySelectorAll(".copy-btn").forEach(function(btn){
+      btn.addEventListener("click", async function(){
+        var el = document.getElementById(btn.getAttribute("data-copy"));
+        if (!el) return;
+        var ok = await copy(el.textContent.trim());
+        if (ok) flash(btn);
+      });
+    });
+  })();
+
+  // ---- OS tabs (install) ----
+  (function () {
+    var tabs = Array.prototype.slice.call(document.querySelectorAll(".os-tab"));
+    function select(tab){
+      tabs.forEach(function(t){
+        var on = t === tab;
+        t.setAttribute("aria-selected", on ? "true" : "false");
+        t.tabIndex = on ? 0 : -1;
+        document.getElementById(t.getAttribute("aria-controls")).hidden = !on;
+      });
+      tab.focus();
+    }
+    tabs.forEach(function(tab, i){
+      tab.addEventListener("click", function(){ select(tab); });
+      tab.addEventListener("keydown", function(e){
+        if (e.key === "ArrowRight" || e.key === "ArrowLeft"){
+          e.preventDefault();
+          var next = (i + (e.key === "ArrowRight" ? 1 : tabs.length - 1)) % tabs.length;
+          select(tabs[next]);
+        }
+      });
+    });
+  })();
+</script>
+</body>
+</html>
