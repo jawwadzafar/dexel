@@ -30,6 +30,7 @@
 // refreshIfOpen() (called from main.ts's renderAll()) just re-paints
 // whatever the store already holds.
 import { byId } from '../dom';
+import { enableClickAwayDismiss } from './modal-dismiss';
 import * as store from '../state/store';
 import { sendAction } from '../state/ws-client';
 import { fmtCount, fmtDuration, fmtInt, truncate } from '../format';
@@ -256,6 +257,7 @@ el.dialog.addEventListener('close', function () {
 });
 el.openBtn.addEventListener('click', open);
 el.close.addEventListener('click', close);
+enableClickAwayDismiss(el.dialog, close);
 el.niceBtn.addEventListener('click', close);
 
 function submitStart(): void {

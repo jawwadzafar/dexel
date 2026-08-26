@@ -16,6 +16,7 @@ import {
 import { buildTintLayer, plainImg, positionEl, swatchColor } from '../render/tint';
 import { currentDevFrame } from '../render/scene';
 import { flashInsufficientFunds } from '../render/flash';
+import { enableClickAwayDismiss } from './modal-dismiss';
 import type { CatalogItem, CatalogSlot } from '../wire';
 
 const el = {
@@ -493,6 +494,7 @@ el.store.addEventListener('close', function () {
 });
 el.storeOpenBtn.addEventListener('click', open);
 el.storeClose.addEventListener('click', close);
+enableClickAwayDismiss(el.store, close);
 
 function updateStoreCash(): void {
   const state = store.getState();

@@ -41,6 +41,7 @@
 // ships reading ON while the other two ship OFF: the pre-render label has
 // to be the default too, or the modal flashes a lie for one frame.
 import { byId } from '../dom';
+import { enableClickAwayDismiss } from './modal-dismiss';
 import * as store from '../state/store';
 import { sendAction } from '../state/ws-client';
 import { truncate } from '../format';
@@ -147,6 +148,7 @@ el.dialog.addEventListener('close', function () {
 });
 el.openBtn.addEventListener('click', open);
 el.close.addEventListener('click', close);
+enableClickAwayDismiss(el.dialog, close);
 
 // ---------------------------------------------------------------------
 // rename — the EXISTING SET_NAME action

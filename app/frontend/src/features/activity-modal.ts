@@ -23,6 +23,7 @@
 // user made, and it is driven by a field the SERVER sends, not by
 // anything this module decided on its own. ADR 0010/0013 are untouched.
 import { byId } from '../dom';
+import { enableClickAwayDismiss } from './modal-dismiss';
 import * as store from '../state/store';
 import { fmtCount, fmtDuration, fmtInt } from '../format';
 import type { CoinBreakdown, StatBlock, Stats } from '../wire';
@@ -212,6 +213,7 @@ el.activity.addEventListener('close', function () {
 });
 el.activityOpenBtn.addEventListener('click', open);
 el.activityClose.addEventListener('click', close);
+enableClickAwayDismiss(el.activity, close);
 
 export function handleKeydown(e: KeyboardEvent): void {
   switch (e.key) {

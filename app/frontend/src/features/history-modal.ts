@@ -30,6 +30,7 @@
 // exactly the blur the A2 gate already caught on the "→" glyph. Bars are
 // plain divs with an integer-px inline height set here.
 import { byId } from '../dom';
+import { enableClickAwayDismiss } from './modal-dismiss';
 import * as store from '../state/store';
 import { fmtCount, fmtDayCount, fmtDuration, rollsToYears } from '../format';
 import type { DayStat, Stats } from '../wire';
@@ -218,6 +219,7 @@ el.history.addEventListener('close', function () {
 });
 el.historyOpenBtn.addEventListener('click', open);
 el.historyClose.addEventListener('click', close);
+enableClickAwayDismiss(el.history, close);
 
 export function handleKeydown(e: KeyboardEvent): void {
   switch (e.key) {

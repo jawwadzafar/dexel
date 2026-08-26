@@ -798,12 +798,22 @@ buttons leave no room for a name like "Executive Leather".
 height:296px; background: rgba(36,31,46,0.45)` (that is `--shadow` at 45%).
 The title bar and both bottom panels stay unobscured.
 
-**[DESIGN CALL] the scrim is deliberately light, and clicking it does NOT
-close the modal.** The whole point of equipping from the store is watching the
-scene change; the PDF calls for the main companion screen to update the instant
-an item is equipped. A dark scrim hides the payoff, and a click-to-close scrim
-punishes you for clicking on the thing you just bought to look at it. Close is
-`X`, `Esc`, or `S`/`Tab`.
+**[DESIGN CALL] the scrim is deliberately light** so you can watch the scene
+change while the modal is open; the PDF calls for the main companion screen to
+update the instant an item is equipped, and a dark scrim would hide the payoff.
+Close is `X`, `Esc`, `S`/`Tab`, **or a click in the empty area outside the
+panel** (§5.4).
+
+> **Click-away close is an owner mandate (2026-08) that reverses this
+> section's original "clicking outside does NOT close" rule.** With a modal
+> open, its `::backdrop` sits in the top layer above the whole window,
+> including the frameless desktop titlebar — so the menu / minimise / close
+> buttons stopped responding while a modal was up, which is confusing and (in
+> the frameless shell) removes the only way to move or close the window.
+> Dismissing on an outside click frees the titlebar for the next click. The
+> light scrim still does its job: the scene is visible behind the open modal
+> exactly as before; only a *click* in that empty area now dismisses instead
+> of doing nothing.
 
 On a successful `EQUIP_ITEM`, the backend broadcasts a fresh `state`; the
 frontend re-renders `#scene-sprites` from it. The scene must visibly change
@@ -831,7 +841,8 @@ DOM rects *are* the numbers in this document.
 | swatch chip | select that tint for that card (updates preview and the thumbnail) |
 | card action button | run the §4.3 action |
 | `#store-grid` wheel | scroll; update `#store-scroll` |
-| `#scrim` | **nothing** (see §4.5) |
+| `#scrim` | **nothing** — it is a `pointer-events:none` visual dim; the click lands on the modal's `::backdrop` instead (see below) |
+| click in the empty area OUTSIDE the panel (the `::backdrop`) | close the modal (click-away, §5.4) |
 | the dexel / the monitor / the beverage / the buddy | play that item's reaction (SCENE-REACTIONS, §12) |
 | anywhere else in the scene | nothing |
 
@@ -862,6 +873,7 @@ Store modal open:
 | `Enter` | run the selected card's §4.3 action |
 | `Esc` | close (native `<dialog>` behaviour — do not intercept) |
 | `S` / `Tab` | close |
+| click outside the panel | close (click-away, §5.4) |
 
 Onboarding modal open (§7):
 
@@ -878,6 +890,7 @@ Sessions modal open (P2, §9):
 | any printable key | idle view only: goes to `#sessions-name`; **no global shortcut fires** (the modal owns an input, so it claims the keyboard-ownership tier the same way onboarding does) |
 | `Enter` | idle view only, input focused: start the session — same as `START SESSION` |
 | `W` / `Esc` | close (idle or live view); on the summary card, closes back to the live view — the same action as `[ NICE ]` |
+| click outside the panel | close (click-away, §5.4) |
 
 * The card list auto-scrolls to keep the selection fully visible.
 * `Tab` is bound to *open* on the main screen but must **not** be captured
@@ -904,6 +917,7 @@ Settings modal open (SET-1, §11):
 | `Enter` | rename field focused: save the name — same as `SAVE NAME` |
 | `Space` / `Enter` | a toggle button focused: flip that preference (native `<button>` activation) |
 | `G` / `Esc` | close |
+| click outside the panel | close (click-away, §5.4) |
 
 * Window-level shortcuts (quit, minimise) belong to the desktop shell, not
   to this document. **Always-on-top is no longer one of them:** it was a
@@ -930,6 +944,39 @@ Therefore:
   must not claim.
 * The connection dropping while `storeOpen` is true must clear the flag
   server-side, or a crashed tab freezes progression forever.
+
+### 5.4 Click-away dismiss — every browsable modal
+
+A click in the empty area **outside** an open modal's panel closes it. This
+applies to all five browsable modals — **Store, Activity, History, Sessions,
+Settings** — and is the fix for the frameless titlebar being unreachable while
+a modal is up (a `<dialog>` opened with `showModal()` puts its `::backdrop`
+in the top layer, above the whole window including the titlebar buttons; see
+the owner-mandate note in §4.5). `Esc` still closes every modal natively, and
+every in-panel control keeps working — a click *inside* the panel never
+dismisses.
+
+**Onboarding is deliberately excluded.** It is the one-time first-run naming
+flow, not a browsable modal; a stray click must not silently auto-skip it and
+lose a half-typed name. It stays dismissable only by its explicit `[ SKIP ]`
+button and by `Esc` (both of which name the dexel with the skip default —
+§7.3), never by a click-away.
+
+**Mechanism (`features/modal-dismiss.ts`, wired once, called from each of the
+five modal files).** On the dialog's own `click`, close only when the pointer
+falls outside the panel's `getBoundingClientRect()` — NOT when
+`event.target === dialog`. The panels carry 12px of padding and lay their
+children out absolutely, so there are empty gaps *inside* the panel where the
+click target is the `<dialog>` itself; a `target === dialog` test would wrongly
+dismiss on those. The rect test is also transform-proof: each modal is scaled
+by the shared window-fit transform (§0.1, BUG-2), and both
+`getBoundingClientRect()` and `clientX/clientY` are post-transform viewport
+coordinates, so the test holds identically at 1x, 2x and every fractional
+letterbox scale. A `mousedown`-started-inside guard stops a text selection that
+begins in a name input and releases outside from reading as a click-away, and a
+`detail === 0` guard ignores the synthetic (0,0) click a keyboard-activated
+button fires. The opening click never reaches this handler, because it targets
+a top-bar / menu button that is not an ancestor of the dialog.
 
 ## 6. WebSocket state contract
 
@@ -1371,8 +1418,9 @@ Field notes the implementers must not improvise on:
   client-side, defaulting to false. See §7.
 * The **`[H] HISTORY`** modal (`features/history-modal.ts`, A3, ADR 0013) is
   a second read-only render, opened the same way `[A]`/`[S]` are — native
-  `<dialog>`, its own titlebar button, the `H` key, `Esc` to close — and
-  gates nothing (no earning to freeze, same as Activity). Rect: `#history`
+  `<dialog>`, its own titlebar button, the `H` key, `Esc` or a click-away
+  (§5.4) to close — and gates nothing (no earning to freeze, same as
+  Activity). Rect: `#history`
   at `left:40 top:44 width:560 height:312` (the store's wide footprint,
   centered in the 640x400 viewport — charts need horizontal room the
   360x396 Activity modal does not have). Contents, top to bottom: a
