@@ -148,43 +148,59 @@
       <div id="activity-title">ACTIVITY LOG</div>
       <button id="activity-close" class="nes-btn">X</button>
 
-      <div class="activity-section" id="activity-today">
-        <div class="activity-section-title">TODAY</div>
-        <div class="activity-row"><span class="label">KEYSTROKES</span><span class="value" id="stat-today-keystrokes">0</span></div>
-        <div class="activity-row"><span class="label">MOUSE ACTIVE</span><span class="value" id="stat-today-mouse">0s</span></div>
-        <div class="activity-row"><span class="label">ACTIVE TIME</span><span class="value" id="stat-today-active">0m 0s</span></div>
-        <!-- SET-1 (docs/ui-spec.md §11.3): the row a user used to read as
-             "IDLE TIME" now says AWAY, and it is HIDDEN unless
-             config.showAwayTime is true (features/activity-modal.ts owns
-             that toggle via #activity-row-today-away). The underlying wire
-             field is still `stats.today.idleSeconds` and it is still
-             recorded and still sent — only the DISPLAY is optional. -->
-        <div class="activity-row" id="activity-row-today-away"><span class="label">AWAY</span><span class="value" id="stat-today-away">0m 0s</span></div>
-        <div class="activity-row"><span class="label">SPRINTS DONE</span><span class="value" id="stat-today-sprints">0</span></div>
-        <div class="activity-row"><span class="label">FOCUS SESSIONS</span><span class="value" id="stat-today-focus-sessions">0</span></div>
-        <div class="activity-row" id="activity-row-today-app-switches"><span class="label">APP SWITCHES</span><span class="value" id="stat-today-app-switches">0</span></div>
+      <!-- TABS (BUG-8): the old single box stacked today + lifetime + coins
+           into ~14 rows and got scroll-clipped under the browser's ~362px
+           dialog:modal cap. The two tabs below split that into TODAY (today
+           stats + the coins-earned-today breakdown) and LIFETIME, so each
+           set has room to breathe under the cap. Selected state is driven by
+           aria-selected (features/activity-modal.ts), which the CSS styles;
+           roving tabindex + Left/Right arrows make it keyboard-accessible. -->
+      <div id="activity-tabs" role="tablist" aria-label="Activity views">
+        <button id="activity-tab-today-btn" class="activity-tab" role="tab" aria-controls="activity-tab-today" aria-selected="true" tabindex="0">TODAY</button>
+        <button id="activity-tab-lifetime-btn" class="activity-tab" role="tab" aria-controls="activity-tab-lifetime" aria-selected="false" tabindex="-1">LIFETIME</button>
       </div>
 
-      <div class="activity-section" id="activity-lifetime">
-        <div class="activity-section-title">LIFETIME</div>
-        <div class="activity-row"><span class="label">KEYSTROKES</span><span class="value" id="stat-life-keystrokes">0</span></div>
-        <div class="activity-row"><span class="label">MOUSE ACTIVE</span><span class="value" id="stat-life-mouse">0s</span></div>
-        <div class="activity-row"><span class="label">ACTIVE TIME</span><span class="value" id="stat-life-active">0m 0s</span></div>
-        <div class="activity-row" id="activity-row-life-away"><span class="label">AWAY</span><span class="value" id="stat-life-away">0m 0s</span></div>
-        <div class="activity-row"><span class="label">SPRINTS DONE</span><span class="value" id="stat-life-sprints">0</span></div>
-        <div class="activity-row"><span class="label">FOCUS SESSIONS</span><span class="value" id="stat-life-focus-sessions">0</span></div>
-        <div class="activity-row" id="activity-row-life-app-switches"><span class="label">APP SWITCHES</span><span class="value" id="stat-life-app-switches">0</span></div>
+      <div id="activity-tab-today" class="activity-panel" role="tabpanel" aria-labelledby="activity-tab-today-btn">
+        <div class="activity-section" id="activity-today">
+          <div class="activity-section-title">TODAY</div>
+          <div class="activity-row"><span class="label">KEYSTROKES</span><span class="value" id="stat-today-keystrokes">0</span></div>
+          <div class="activity-row"><span class="label">MOUSE ACTIVE</span><span class="value" id="stat-today-mouse">0s</span></div>
+          <div class="activity-row"><span class="label">ACTIVE TIME</span><span class="value" id="stat-today-active">0m 0s</span></div>
+          <!-- SET-1 (docs/ui-spec.md §11.3): the row a user used to read as
+               "IDLE TIME" now says AWAY, and it is HIDDEN unless
+               config.showAwayTime is true (features/activity-modal.ts owns
+               that toggle via #activity-row-today-away). The underlying wire
+               field is still `stats.today.idleSeconds` and it is still
+               recorded and still sent — only the DISPLAY is optional. -->
+          <div class="activity-row" id="activity-row-today-away"><span class="label">AWAY</span><span class="value" id="stat-today-away">0m 0s</span></div>
+          <div class="activity-row"><span class="label">SPRINTS DONE</span><span class="value" id="stat-today-sprints">0</span></div>
+          <div class="activity-row"><span class="label">FOCUS SESSIONS</span><span class="value" id="stat-today-focus-sessions">0</span></div>
+          <div class="activity-row" id="activity-row-today-app-switches"><span class="label">APP SWITCHES</span><span class="value" id="stat-today-app-switches">0</span></div>
+        </div>
+
+        <div class="activity-section" id="activity-coins">
+          <div class="activity-section-title">COINS EARNED TODAY</div>
+          <div class="coins-row"><span class="label">KEYSTROKES</span><span class="value" id="coins-today-keystrokes">0 -&gt; <span class="coin-amt">0</span></span></div>
+          <div class="coins-row"><span class="label">MOUSE</span><span class="value" id="coins-today-mouse">-&gt; <span class="coin-amt">0</span></span></div>
+          <div class="coins-row"><span class="label">FOCUS SESSIONS</span><span class="value" id="coins-today-focus-sessions">0 -&gt; <span class="coin-amt">0</span></span></div>
+          <div class="coins-row" id="activity-row-coins-app-switches"><span class="label">APP SWITCHES</span><span class="value" id="coins-today-app-switches">-&gt; <span class="coin-amt">0</span></span></div>
+        </div>
       </div>
 
-      <div class="activity-section" id="activity-coins">
-        <div class="activity-section-title">COINS EARNED TODAY</div>
-        <div class="coins-row"><span class="label">KEYSTROKES</span><span class="value" id="coins-today-keystrokes">0 -&gt; <span class="coin-amt">0</span></span></div>
-        <div class="coins-row"><span class="label">MOUSE</span><span class="value" id="coins-today-mouse">-&gt; <span class="coin-amt">0</span></span></div>
-        <div class="coins-row"><span class="label">FOCUS SESSIONS</span><span class="value" id="coins-today-focus-sessions">0 -&gt; <span class="coin-amt">0</span></span></div>
-        <div class="coins-row" id="activity-row-coins-app-switches"><span class="label">APP SWITCHES</span><span class="value" id="coins-today-app-switches">-&gt; <span class="coin-amt">0</span></span></div>
+      <div id="activity-tab-lifetime" class="activity-panel" role="tabpanel" aria-labelledby="activity-tab-lifetime-btn" hidden>
+        <div class="activity-section" id="activity-lifetime">
+          <div class="activity-section-title">LIFETIME</div>
+          <div class="activity-row"><span class="label">KEYSTROKES</span><span class="value" id="stat-life-keystrokes">0</span></div>
+          <div class="activity-row"><span class="label">MOUSE ACTIVE</span><span class="value" id="stat-life-mouse">0s</span></div>
+          <div class="activity-row"><span class="label">ACTIVE TIME</span><span class="value" id="stat-life-active">0m 0s</span></div>
+          <div class="activity-row" id="activity-row-life-away"><span class="label">AWAY</span><span class="value" id="stat-life-away">0m 0s</span></div>
+          <div class="activity-row"><span class="label">SPRINTS DONE</span><span class="value" id="stat-life-sprints">0</span></div>
+          <div class="activity-row"><span class="label">FOCUS SESSIONS</span><span class="value" id="stat-life-focus-sessions">0</span></div>
+          <div class="activity-row" id="activity-row-life-app-switches"><span class="label">APP SWITCHES</span><span class="value" id="stat-life-app-switches">0</span></div>
+        </div>
       </div>
 
-      <div id="activity-help">A / ESC CLOSE</div>
+      <div id="activity-help">&lt; &gt; TAB   A / ESC CLOSE</div>
     </dialog>
 
     <dialog id="history" class="nes-dialog is-dark">

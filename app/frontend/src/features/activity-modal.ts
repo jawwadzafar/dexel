@@ -33,6 +33,15 @@ const el = {
   activityOpenBtn: byId<HTMLButtonElement>('activity-open'),
   activityClose: byId<HTMLButtonElement>('activity-close'),
   scrim: byId<HTMLDivElement>('scrim'),
+  // TABS (BUG-8): the modal is split into a TODAY tab (today stats + the
+  // coins-earned-today breakdown) and a LIFETIME tab, so each set of rows
+  // has room to breathe under the browser's ~362px dialog:modal cap instead
+  // of ~14 rows crammed into one box that scroll-clipped. The two header
+  // buttons and the two panels they toggle.
+  tabTodayBtn: byId<HTMLButtonElement>('activity-tab-today-btn'),
+  tabLifeBtn: byId<HTMLButtonElement>('activity-tab-lifetime-btn'),
+  panelToday: byId<HTMLDivElement>('activity-tab-today'),
+  panelLife: byId<HTMLDivElement>('activity-tab-lifetime'),
   statTodayKeystrokes: byId('stat-today-keystrokes'),
   statTodayMouse: byId('stat-today-mouse'),
   statTodayActive: byId('stat-today-active'),
@@ -109,6 +118,51 @@ function buildValue(prefix: string, coins: number | undefined): DocumentFragment
 // stays in sync with whatever count/coins just changed.
 function setValue(el: HTMLElement, node: DocumentFragment): void {
   el.replaceChildren(node);
+}
+
+// TABS: which panel is showing. Remembered across opens WITHIN the session
+// (a module var — survives close/reopen while the app runs), and, best
+// effort, across restarts via localStorage. localStorage is a convenience,
+// never a dependency: every access is wrapped so a private-mode throw or a
+// cleared store just falls back to the in-memory default, never breaks the
+// modal (the same try/catch discipline the artifact/runtime notes call for).
+type TabName = 'today' | 'lifetime';
+const TAB_STORAGE_KEY = 'dexel.activity.tab';
+let activeTab: TabName = readStoredTab();
+
+function readStoredTab(): TabName {
+  try {
+    return localStorage.getItem(TAB_STORAGE_KEY) === 'lifetime' ? 'lifetime' : 'today';
+  } catch {
+    return 'today';
+  }
+}
+function storeTab(tab: TabName): void {
+  try { localStorage.setItem(TAB_STORAGE_KEY, tab); } catch { /* best effort */ }
+}
+
+// Applies `activeTab` to the DOM: aria-selected on the two headers (the CSS
+// styles the selected state off that attribute — one source of truth for
+// accessibility and appearance), the `hidden` attribute on the inactive
+// panel (so ONLY the active tab's rows are in flow/rendered), and a roving
+// tabindex so Tab lands on the selected header and Left/Right move between
+// them. `render()` keeps BOTH panels' numbers current every tick regardless,
+// so switching is instant with no stale flash.
+function applyTab(): void {
+  const onToday = activeTab === 'today';
+  el.tabTodayBtn.setAttribute('aria-selected', String(onToday));
+  el.tabLifeBtn.setAttribute('aria-selected', String(!onToday));
+  el.tabTodayBtn.tabIndex = onToday ? 0 : -1;
+  el.tabLifeBtn.tabIndex = onToday ? -1 : 0;
+  el.panelToday.hidden = !onToday;
+  el.panelLife.hidden = onToday;
+}
+
+function selectTab(tab: TabName, focusHeader: boolean): void {
+  activeTab = tab;
+  storeTab(tab);
+  applyTab();
+  if (focusHeader) (tab === 'today' ? el.tabTodayBtn : el.tabLifeBtn).focus();
 }
 
 export function isOpen(): boolean { return el.activity.open; }
@@ -200,6 +254,9 @@ export function refreshIfOpen(): void {
 
 export function open(): void {
   if (el.activity.open) return;
+  // Restore the remembered tab before showing, so the modal opens on
+  // whichever view was last active this session (no flash of the wrong tab).
+  applyTab();
   renderActivity();
   el.activity.showModal();
   el.scrim.classList.add('visible');
@@ -213,11 +270,27 @@ el.activity.addEventListener('close', function () {
 });
 el.activityOpenBtn.addEventListener('click', open);
 el.activityClose.addEventListener('click', close);
+// A click on a tab HEADER lands inside the dialog's bounding rect, so the
+// rect-based click-away helper already treats it as "inside" and does NOT
+// dismiss (verified: the headers sit within #activity's box). These handlers
+// only switch tabs. focusHeader:false — a mouse user keeps focus where the
+// pointer put it; the arrow-key path below focuses so the roving tabindex
+// follows the keyboard.
+el.tabTodayBtn.addEventListener('click', function () { selectTab('today', false); });
+el.tabLifeBtn.addEventListener('click', function () { selectTab('lifetime', false); });
 enableClickAwayDismiss(el.activity, close);
 
 export function handleKeydown(e: KeyboardEvent): void {
   switch (e.key) {
     case 'a': case 'A': close(); break;
+    // Left/Right switch tabs. The input-focus + modifier guards that gate
+    // this handler live upstream in keybindings.ts (isTextEntryTarget /
+    // hasModifier run before activityModal.handleKeydown is called), so no
+    // guard is repeated here. There are only two tabs, so either arrow just
+    // toggles to the other one; focusHeader:true keeps the keyboard focus on
+    // the newly selected header (roving tabindex).
+    case 'ArrowLeft': e.preventDefault(); selectTab('today', true); break;
+    case 'ArrowRight': e.preventDefault(); selectTab('lifetime', true); break;
     default: break; // Esc: native <dialog> behaviour, not intercepted
   }
 }

@@ -1255,14 +1255,45 @@ Field notes the implementers must not improvise on:
   ago); `longest` is the running all-time max and never decreases. Optional
   client-side, matching the rest of `stats`.
 * The Activity modal (`features/activity-modal.ts`) is a read-only render of
-  `stats`: under the existing TODAY/LIFETIME keystroke/mouse/active/idle/
-  sprints rows it adds a **Focus sessions** row (`today.focusSessions` /
-  `lifetime.focusSessions`) and an **App switches** row
-  (`today.appSwitches` / `lifetime.appSwitches`), plus a **"Coins earned
-  today"** block reading `stats.coinsToday` as four
-  `label → count` lines (Keystrokes, Mouse, Focus sessions, App switches).
-  All five/four values render with `fmtInt`; nothing is formatted
-  server-side.
+  `stats`, laid out as **two tabs** (BUG-8). The old single box stacked
+  today + lifetime + the coins breakdown into ~14 rows and got scroll-clipped
+  under the browser's ~362px `dialog:modal` height cap; splitting it gives
+  each set room to breathe:
+  * **TODAY** tab (`#activity-tab-today`) — today's stats
+    (keystroke/mouse/active/idle/sprints, plus a **Focus sessions** row
+    `today.focusSessions` and an **App switches** row `today.appSwitches`)
+    **and** the **"Coins earned today"** block reading `stats.coinsToday` as
+    four `label → count` lines (Keystrokes, Mouse, Focus sessions, App
+    switches) — coins belong with today.
+  * **LIFETIME** tab (`#activity-tab-lifetime`) — the same seven stat rows
+    for `lifetime`.
+
+  Counts render with `fmtCount` ("88.4k"), durations with `fmtDuration`
+  ("3d 4h") per §14; coin deltas stay exact via `fmtInt`. Nothing is
+  formatted server-side.
+
+  **Tabs (UX).** Two header buttons (`#activity-tab-today-btn`,
+  `#activity-tab-lifetime-btn`) with `role=tab` in a `role=tablist` toggle
+  the two `role=tabpanel` panels. The selected state is driven by
+  `aria-selected` (the CSS styles the gold selected fill/underline off that
+  one attribute — one source of truth for accessibility and appearance).
+  **Only the active panel is in flow** — the inactive one carries the
+  `hidden` attribute — but `renderActivity()` writes **both** panels' values
+  every ~1Hz broadcast regardless, so switching is instant with no stale
+  flash and the away/adaptive hide rules stay applied per tab. Switch by
+  **click** on a header or **Left/Right arrow** (Left → TODAY, Right →
+  LIFETIME) via `handleKeydown`; the input-focus + modifier guards upstream
+  in `keybindings.ts` (`isTextEntryTarget` / `hasModifier`) still gate it. A
+  **roving tabindex** keeps Tab landing on the selected header. The active
+  tab is remembered across opens **within the session** (a module var) and,
+  best-effort, across restarts via `localStorage` under
+  `dexel.activity.tab` — every access is `try/catch`-wrapped so a
+  private-mode throw or cleared store just falls back to the TODAY default,
+  never breaking the modal. A click on a tab **header** lands inside
+  `#activity`'s bounding rect, so the rect-based click-away helper
+  (`enableClickAwayDismiss`) treats it as "inside" and does **not** dismiss;
+  only a click on the backdrop beyond the panel closes, and Esc still closes
+  natively.
 
   **ADAPTIVE-STATS — the three app-derived rows adapt to platform
   capability.** App switches are only countable where app identity is

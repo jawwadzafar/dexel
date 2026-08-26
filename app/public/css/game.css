@@ -1227,20 +1227,67 @@ body.shell #titlebar { cursor: default; }
   line-height: 6px;
 }
 
-.activity-section {
+/* TABS (BUG-8): the modal is now two tabs — TODAY (today stats + the
+   coins-earned-today breakdown) and LIFETIME — so each set of rows has room
+   to breathe under the browser's ~362px dialog:modal height cap instead of
+   ~14 rows crammed into one box. The tab bar sits under the title; only the
+   active panel is in flow (the other carries the `hidden` attribute). Both
+   panels still get their data written on every render (features/
+   activity-modal.ts) so switching is instant with no stale flash. */
+#activity-tabs {
   position: absolute;
   left: 12px;
+  top: 36px;
+  width: 336px;
+  height: 20px;
+  display: flex;
+  gap: 6px;
+}
+/* One clickable tab header each. Same pixel idiom as the store's category
+   rows (.cat-row: --wall-light selected fill) and the gold DevCash accent
+   used everywhere for emphasis, since Press Start 2P is a single 400-weight
+   face and colour is the only safe emphasis lever (see .coins-row comment).
+   The selected state is driven by aria-selected so accessibility and the
+   visual are one source of truth. */
+.activity-tab {
+  flex: 1;
+  height: 20px;
+  line-height: 18px;
+  padding: 0;
+  font-family: 'Press Start 2P', monospace;
+  font-size: 8px;
+  text-align: center;
+  color: var(--screen-dim);
+  background: var(--wall-dark);
+  border: 2px solid var(--shadow);
+  cursor: pointer;
+}
+.activity-tab:hover:not([aria-selected="true"]) { color: var(--cream); }
+.activity-tab[aria-selected="true"] {
+  background: var(--wall-light);
+  color: var(--gold);
+  border-bottom-color: var(--gold);
+}
+.activity-tab:focus-visible { outline: 2px solid var(--gold); outline-offset: -2px; }
+
+/* Panels: both anchored at the same top under the tab bar (only one is in
+   flow at a time). Sections inside flow normally now — the fixed per-section
+   `top` values the old single-box layout needed are gone, so a row hidden by
+   the away/adaptive rules simply collapses the gap. */
+.activity-panel {
+  position: absolute;
+  left: 12px;
+  top: 64px;
   width: 336px;
 }
-/* Each of today/lifetime carries 7 rows (5 A1 rows + A2's focus
-   sessions/app switches): title(16)+margin(4) + 7*12 = 104px tall.
-   (BUG-8: row height dropped 16px -> 12px, see .activity-row below, to
-   fit the whole modal under the browser's 362px dialog:modal cap.) */
-#activity-today { top: 36px; } /* 12 (title row) + 16 (its height) + 8px gap */
-#activity-lifetime { top: 148px; } /* 36 + 104 + 8px gap */
-#activity-coins { top: 258px; } /* 148 + 104 + 6px gap — leaves the coins
-   rows below room (10px each) without overflowing the fixed 346px modal;
-   see the block below for the budget. */
+.activity-panel[hidden] { display: none; }
+
+.activity-section {
+  position: relative;
+  width: 336px;
+}
+/* Gap between the TODAY stats and the coins breakdown that shares its tab. */
+#activity-coins { margin-top: 14px; }
 
 .activity-section-title {
   height: 16px;
@@ -1252,13 +1299,13 @@ body.shell #titlebar { cursor: default; }
 }
 
 .activity-row {
-  /* BUG-8: 16px -> 12px so today/lifetime's 7 rows each fit under the
-     browser's dialog:modal height cap; still comfortably above the 10px
-     BUG-3 established as the minimum safe line-height for this 8px
-     pixel font (no glyph clipping). */
+  /* BUG-8 (tabs): back to a comfortable 16px now that TODAY and LIFETIME
+     each own their own tab instead of stacking into one capped box — a
+     single tab's 7 rows (+ TODAY's coins section) fit the modal with room
+     to spare, so the cramped 12px the single-box layout forced is gone. */
   position: relative;
-  height: 12px;
-  line-height: 12px;
+  height: 16px;
+  line-height: 16px;
   font-size: 8px;
   white-space: nowrap;
 }
@@ -1274,14 +1321,14 @@ body.shell #titlebar { cursor: default; }
 /* Coins-today breakdown (A2-design.md §6): title + 4 rows of "count -> coins"
    per signal, same .label/.value split as .activity-row above (inherits
    .activity-section's left:12/width:336, so values sit flush with the
-   TODAY/LIFETIME columns and never crowd the modal's border).
-   Budget inside the fixed 346px modal (BUG-8), footer fixed at top:322px:
-     #activity-coins top(258) + title(16) + title margin(2) + 4*10 rows(40)
-     = 316 -> 6px clear of the footer, no overflow.
-   Row height went 8px->10px and font 7px->8px (matches TODAY/LIFETIME's
-   8px) so this reads as a real section instead of an afterthought; the
-   4px inter-section gap above (was 8px) and the 2px title margin (was the
-   shared 4px, overridden below) is what paid for the taller rows.
+   TODAY column and never crowd the modal's border). It lives on the TODAY
+   tab, below the today stats (coins belong with today).
+   Budget on the TODAY tab (panel at top:64, footer fixed at top:322px):
+     TODAY section: title(16)+margin(4) + 7*16 rows = 132
+     + #activity-coins margin-top(14) + title(16)+margin(2) + 4*14 rows(56)
+     = 220 -> panel bottom 284, ~38px clear of the footer, no overflow.
+   Row height is 14px (up from the single-box layout's cramped 10px) now
+   that the tab split freed the vertical budget.
    Arrow glyph: A2-design.md's example uses a real "→" (U+2192), but at
    this modal's 1x-DPI shipping resolution that glyph isn't in the pixel
    font (Press Start 2P has no arrow glyphs) and falls back to a thin
@@ -1293,8 +1340,8 @@ body.shell #titlebar { cursor: default; }
    this stack — used instead of U+2192 for that reason. */
 .coins-row {
   position: relative;
-  height: 10px;
-  line-height: 10px;
+  height: 14px;
+  line-height: 14px;
   font-size: 8px;
   white-space: nowrap;
 }
