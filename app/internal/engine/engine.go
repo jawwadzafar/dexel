@@ -119,6 +119,18 @@ type TickResult struct {
 	ActiveApp        string
 	ActiveAppDisplay string
 
+	// AppIdentityAvailable mirrors Snapshot.AppIdentityAvailable verbatim
+	// (activity/provider.go): whether this provider can OBSERVE the
+	// foreground app's identity at all in the current process context — a
+	// capability bit about the provider, not an observation about the user.
+	// Carried through the engine unchanged so the game layer can tell "0
+	// app switches because none happened" (identity available, real 0)
+	// apart from "0 app switches because we are app-blind here" (Linux /
+	// Wayland, ADR 0009), and hide the app-derived stat rows in the latter
+	// rather than showing a misleading frozen 0. Content-free by
+	// construction — a single bool, no new observation.
+	AppIdentityAvailable bool
+
 	// KeystrokeDelta/MouseActive are the same raw, already-honest signals
 	// WorkUnits was computed from (this tick's counted keystrokes and
 	// whether mouse activity was flagged), re-exposed for the game layer's
@@ -296,6 +308,7 @@ func (e *Engine) Tick() TickResult {
 		Honesty:                honesty,
 		ActiveApp:              snap.ActiveApp,
 		ActiveAppDisplay:       snap.ActiveAppDisplay,
+		AppIdentityAvailable:   snap.AppIdentityAvailable,
 		KeystrokeDelta:         keyDelta,
 		MouseActive:            snap.MouseActive,
 		FocusSessionsCompleted: focusSessionsCompleted,

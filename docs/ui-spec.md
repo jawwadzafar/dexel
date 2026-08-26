@@ -284,7 +284,7 @@ it has been inside it since BUG-2.)
 | | |
 | --- | --- |
 | inner size range | **min 640x400 (1x)**, **max 1920x1200 (3x)**, via Tauri's `min_inner_size`/`max_inner_size` — the OS enforces it during a drag, so no size outside the range ever has to be corrected |
-| opening size | the largest crisp size that fits the monitor's **work area**, capped at **2x** (1280x800 on a 1080p display, 640x400 on a 1366x768 one). No size is remembered between launches |
+| opening size | the fixed **1x surface, 640x400**, on every display — 1x is pixel-crisp, and the user resizes up (snapping to 2x/3x) whenever they want. No size is remembered between launches |
 | after a resize | when resize events go quiet for **200ms**, the inner size is set to the **nearest crisp size** — Euclidean-nearest in logical pixels, ties to the smaller — bounded by the monitor's work area so a snap can never grow the window off the screen |
 | maximize / fullscreen | **not snapped.** `maximizable(false)` removes the gesture on macOS/Windows, `max_inner_size` caps how big a WM maximize can get, and the page's letterbox covers what is left (a keyboard/WM maximize on Linux). A maximized window is the display's shape, which is the one shape an 8:5 game cannot fill |
 
@@ -1034,6 +1034,7 @@ second to reflect a click.
   "xp": 1240,
   "storeOpen": false,
   "paused": false,
+  "appIdentityAvailable": true,
   "sprint": {
     "index": 3,
     "name": "Fix Bug #404",
@@ -1145,9 +1146,15 @@ Field notes the implementers must not improvise on:
   `mouseActiveSeconds`, `activeSeconds`, `idleSeconds`, `sprintsCompleted`.
   Phase A2 adds two more counts to that same shape: `focusSessions` — a
   completed sustained-typing block (ADR 0012, A2-design.md §3) — and
-  `appSwitches` — a counted foreground-app change; tracked on **macOS only**
-  and always `0` on Linux, shown as-is with no special-casing (no focus
-  detection there, ADR 0009). Seconds are whole seconds; the frontend
+  `appSwitches` — a counted foreground-app change; countable only where the
+  platform can observe the foreground app (**macOS** has a real active-app
+  source; **Linux/Wayland** is honestly app-blind, ADR 0009, so it is a
+  permanent `0` there). The count is still recorded and sent as-is with no
+  special-casing; whether the client *displays* it now adapts to the
+  platform's capability (ADAPTIVE-STATS, see `appIdentityAvailable` and the
+  Activity-modal note below) so an app-blind platform never paints a
+  misleading frozen `0` that reads as "you never switched apps". Seconds are
+  whole seconds; the frontend
   formats them (`fmtDuration`/`fmtInt`), never the server. `stats` itself
   stays optional so a pre-A1 server degrades to an all-zero block.
   `pausedSeconds` (PR-5, `docs/production-runtime/MIGRATION_PLAN.md`
@@ -1209,6 +1216,40 @@ Field notes the implementers must not improvise on:
   `label → count` lines (Keystrokes, Mouse, Focus sessions, App switches).
   All five/four values render with `fmtInt`; nothing is formatted
   server-side.
+
+  **ADAPTIVE-STATS — the three app-derived rows adapt to platform
+  capability.** App switches are only countable where app identity is
+  observable (see `appIdentityAvailable` below), so the modal hides an
+  app-switch row exactly when the current platform is app-blind **and that
+  row's own value is `0`** — this is the same display-only spirit as the
+  §11.3 away-rows hide (recording is untouched; the counts still arrive on
+  every broadcast), but deliberately narrower in one respect: **history is
+  preserved**. `appSwitches` is cumulative, so a user who ran dexel on macOS
+  (real app data) and then moved to Linux still has a real, non-zero
+  **lifetime** total from those macOS days — that value *was* observed and
+  is not a lie, so it is still shown even on the app-blind platform. The net
+  effect: on macOS all three rows always show (including an honest real
+  `0`); on Linux the TODAY App-switches row and the App-switches coin line
+  hide (a misleading current-platform `0`), while a real LIFETIME total
+  survives and a genuinely-never-observed lifetime `0` hides too. The three
+  rows carry id hooks `#activity-row-today-app-switches`,
+  `#activity-row-life-app-switches`, `#activity-row-coins-app-switches` for
+  the whole-row (label included) hide, exactly like the away rows.
+* `appIdentityAvailable` — ADAPTIVE-STATS. A server-computed `bool`
+  capability bit (Go: `StateMessage.AppIdentityAvailable`, sourced verbatim
+  from `activity.Snapshot.AppIdentityAvailable` through
+  `engine.TickResult`): whether **this host's** provider can observe the
+  foreground application at all — `true` on macOS with a real active-app
+  source, `false` on Linux/Wayland (ADR 0009). It is content-free by
+  construction (a bool **about the provider**, never about the user — the
+  same not-a-privacy-concern shape as `paused`) and is on the content-free
+  allow-list with that citation. The Activity modal reads it for the hide
+  rule above; the personalized `activityLine` already degrades on the same
+  underlying capability. Optional client-side (`wire.ts:
+  appIdentityAvailable?`); an **absent** field degrades to `!== false` →
+  "assume available, show the rows" — the pre-existing behaviour, so a stale
+  client is never made worse, and rows are only ever hidden when the server
+  *explicitly* reports the platform app-blind.
 * `config` — Phase P1 (Identity & first minutes,
   `docs/plan/PRODUCT-EVOLUTION.md` §5), extended by SET-1 (§11).
   `config.name`: the Dexel's name, **user-authored**, `""` when unset. The

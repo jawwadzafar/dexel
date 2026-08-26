@@ -75,6 +75,16 @@ func contentFreeRegistry() contentfree.Registry {
 				// privacy concern, and it can carry nothing but
 				// true/false.
 				"Paused": "bool",
+				// ADAPTIVE-STATS: the provider's app-identity CAPABILITY
+				// bit (activity.Snapshot.AppIdentityAvailable, carried
+				// through engine.TickResult). A single server-computed bool
+				// ABOUT THE PROVIDER — "can this process see the foreground
+				// app at all" (false on Linux/Wayland, ADR 0009) — never
+				// about the user; it can carry nothing but true/false, the
+				// same not-a-privacy-concern shape as Paused above. Lets
+				// the client hide app-derived stat rows where identity is
+				// unobservable instead of showing a misleading frozen 0.
+				"AppIdentityAvailable": "bool",
 			},
 		},
 

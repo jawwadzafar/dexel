@@ -44,6 +44,13 @@ const el = {
   // of itself rather than an orphaned "AWAY" with a blank beside it.
   rowTodayAway: byId('activity-row-today-away'),
   rowLifeAway: byId('activity-row-life-away'),
+  // ADAPTIVE-STATS: the three APP-DERIVED rows (whole rows, label
+  // included) — App switches today/lifetime and the App-switches coin
+  // line — hidden where app identity is unobservable, the same
+  // whole-row hide the away rows above use.
+  rowTodayAppSwitches: byId('activity-row-today-app-switches'),
+  rowLifeAppSwitches: byId('activity-row-life-app-switches'),
+  rowCoinsAppSwitches: byId('activity-row-coins-app-switches'),
   statLifeKeystrokes: byId('stat-life-keystrokes'),
   statLifeMouse: byId('stat-life-mouse'),
   statLifeActive: byId('stat-life-active'),
@@ -144,6 +151,40 @@ export function renderActivity(): void {
   const showAway = !!(state.config && state.config.showAwayTime);
   el.rowTodayAway.style.display = showAway ? '' : 'none';
   el.rowLifeAway.style.display = showAway ? '' : 'none';
+
+  // ADAPTIVE-STATS (docs/ui-spec.md §11.6): the app-derived rows adapt to
+  // the CURRENT platform's ability to observe the foreground app. App
+  // switches are only countable where app identity is observable — macOS
+  // has a real active-app source; Linux/Wayland is honestly app-blind
+  // (ADR 0009), so on Linux `appSwitches` is a permanent 0 that would read
+  // as the false fact "you never switched apps". The server now says which
+  // it is via `appIdentityAvailable`, exactly the content-free capability
+  // bit the personalized status line already degrades on.
+  //
+  // Same DISPLAY-ONLY spirit as the away rows above: recording is
+  // untouched (the counts still arrive on every broadcast), this only
+  // decides whether a row is on screen. The rule is deliberately narrower
+  // than the away one, to honour the one subtlety app switches have that
+  // away time does not — HISTORY. `appSwitches` is cumulative, so a user
+  // who ran dexel on macOS (real app data) and then moved to Linux still
+  // has a real, non-zero LIFETIME total from those macOS days. That value
+  // WAS observed and is not a lie, so it must not be erased just because
+  // the current platform is app-blind. Hence: hide a row only when the
+  // platform is app-blind AND that row's own value is 0 — which hides the
+  // misleading current-platform zero (today, and a genuinely-never-observed
+  // lifetime) while preserving any real historical total. macOS
+  // (`appIdentityAvailable` true) always shows every row, including an
+  // honest real 0.
+  //
+  // Degradation: `!== false` treats an absent field (stale server) as
+  // "available, show the rows" — the pre-existing behaviour, never worse.
+  const appBlind = state.appIdentityAvailable === false;
+  const hideAppRow = function (row: HTMLElement, value: number | undefined): void {
+    row.style.display = appBlind && !value ? 'none' : '';
+  };
+  hideAppRow(el.rowTodayAppSwitches, today?.appSwitches);
+  hideAppRow(el.rowLifeAppSwitches, life?.appSwitches);
+  hideAppRow(el.rowCoinsAppSwitches, coins?.appSwitches);
 }
 
 export function refreshIfOpen(): void {

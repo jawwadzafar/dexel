@@ -248,8 +248,8 @@ setup()
   3. WebviewWindowBuilder::new(app, "main",
   |        WebviewUrl::External(shell_url(url)))   // url + "?shell=1"
   |      .title("Dexel")
-  |      .inner_size(opening_size(..))             // WINDOW-FIT: 1280x800 on
-  |      .min_inner_size(640,400)                  //   a 1080p display; the
+  |      .inner_size(opening_size(..))             // WINDOW-FIT: 640x400 (1x)
+  |      .min_inner_size(640,400)                  //   on every display; the
   |      .max_inner_size(1920,1200)                //   range is 1x..3x of the
   |      .maximizable(false)                       //   640x400 game surface
   |      .always_on_top(prefs.always_on_top)       // SET-1: the USER's choice
@@ -491,15 +491,15 @@ need an owner with a visible window on macOS or X11:
 6. **No double title bar** anywhere, and no leftover native frame shadow.
 
 The next four are WINDOW-FIT (see "The window is sized to the game" below).
-Its arithmetic is pure and covered by 31 unit tests in `mod window_sizing`, so
+Its arithmetic is pure and covered by 33 unit tests in `mod window_sizing`, so
 what is *not* verified is precisely the part that needs a screen: how the snap
 feels, and whether a real compositor honours the size hints.
 
 7. **The opening size, and that the game touches all four edges.** A fresh
-   window should open at 1280x800 on a 1080p display (640x400 on a small
-   laptop, 1280x800 even on a 4K one) with **no bezel at all** — no 10px
-   pillarbox, no 30px letterbox, no dead band anywhere. That band is the whole
-   bug this item fixes, so if any of it survives, WINDOW-FIT did not land.
+   window should open at 640x400 (1x) on every display — small and
+   pixel-crisp, no scaling — with **no bezel at all** — no 10px pillarbox, no
+   30px letterbox, no dead band anywhere. That band is the whole bug this
+   item fixes, so if any of it survives, WINDOW-FIT did not land.
 8. **The drag-resize snap feel.** Drag an edge or a corner around and let go:
    the window should settle onto 640x400 / 1280x800 / 1920x1200 (plus 960x600
    and 1600x1000 on a retina display) about a fifth of a second after the
@@ -626,7 +626,7 @@ its own. Nothing in `app/` changed.
 | --- | --- |
 | `min_inner_size` | 640x400 — 1x, the surface itself |
 | `max_inner_size` | 1920x1200 — 3x, the same cap as the page's `MAX_SCALE` |
-| opening size | `opening_size()`: the largest crisp size that fits the **work area** of the primary monitor, capped at 2x |
+| opening size | `opening_size()`: the fixed 1x surface, 640x400, on every display — small and pixel-crisp; the user resizes up from there |
 | on resize | `keep_the_game_filling_the_window()`: 200ms after the last resize event, `set_size` to `nearest_crisp_size()` |
 | maximize | `maximizable(false)` (macOS/Windows only per tauri 2.11.5) plus the max size; a maximized window is deliberately **not** snapped |
 

@@ -140,6 +140,19 @@ type StateMessage struct {
 	// obviously false, so the honest encoding is "the mood says nothing,
 	// and `paused` says why".
 	Paused bool `json:"paused"`
+	// AppIdentityAvailable is the provider's app-identity CAPABILITY bit
+	// (activity.Snapshot.AppIdentityAvailable, carried through
+	// engine.TickResult unchanged): whether this process's provider can
+	// observe the foreground application at all. It is content-free by
+	// construction — a single bool ABOUT THE PROVIDER, never about the user
+	// — and it exists so the client can tell a real "0 app switches" (Mac,
+	// identity available) apart from an unobservable one (Linux/Wayland,
+	// ADR 0009) and HIDE the app-derived stat rows in the latter case
+	// rather than paint a frozen, misleading "0". The frontend types it
+	// optional (`wire.ts: appIdentityAvailable?`); an absent field degrades
+	// to "assume available, show the rows" — the pre-existing behaviour, so
+	// a stale client is never made worse.
+	AppIdentityAvailable bool `json:"appIdentityAvailable"`
 }
 
 // StatCounters is one bucket's plain activity counts — content-free by
@@ -257,6 +270,18 @@ type Game struct {
 	Mood             engine.Mood
 	ActiveApp        string
 	ActiveAppDisplay string
+
+	// appIdentityAvailable is the last tick's provider capability bit
+	// (engine.TickResult.AppIdentityAvailable, itself Snapshot's — see
+	// activity/provider.go). NOT persisted and NOT part of the economy or
+	// the analytics tally: it is a live description of THIS process's
+	// provider, replayed onto the wire (StateMessage.AppIdentityAvailable)
+	// so the client can hide app-derived stat rows where app identity
+	// cannot be observed (Linux/Wayland, ADR 0009) instead of rendering a
+	// misleading frozen "0 app switches". Zero value (false) is the honest
+	// default before any tick has been taken: assume app-blind until a
+	// provider says otherwise.
+	appIdentityAvailable bool
 
 	sprintIndex int
 	Progress    float64 // work units into the current sprint
@@ -742,6 +767,14 @@ func (g *Game) Tick(r engine.TickResult) (completed bool) {
 	// rule" under STORE_OPEN, §2.4), i.e. BEFORE the StoreOpen gate below.
 	g.advanceSessionActivity(r, now)
 
+	// The provider's app-identity capability is recorded UNCONDITIONALLY,
+	// like the analytics tally above and unlike Mood/ActiveApp below: it
+	// describes what THIS provider can see right now, which does not stop
+	// being true because the store is open. It never touches the economy
+	// or the persisted save — it only rides the next State() onto the wire
+	// so the client can hide app-derived rows where identity is unobservable.
+	g.appIdentityAvailable = r.AppIdentityAvailable
+
 	if g.StoreOpen() {
 		return false
 	}
@@ -1110,7 +1143,8 @@ func (g *Game) State() StateMessage {
 			ShowAwayTime: g.prefShowAwayTime,
 			SoundEnabled: g.prefSoundEnabled,
 		},
-		Onboarding: g.onboarding,
-		Paused:     g.paused,
+		Onboarding:           g.onboarding,
+		Paused:               g.paused,
+		AppIdentityAvailable: g.appIdentityAvailable,
 	}
 }

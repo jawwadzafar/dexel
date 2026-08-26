@@ -26,17 +26,33 @@ func selectProvider(kind, fakeScript string) (activity.Provider, string) {
 			log.Printf("bad -fake-script %q: %v; falling back to the default demo script", fakeScript, err)
 			steps = activity.DefaultFakeScript()
 		}
-		return activity.NewFakeProvider(steps, activity.HonestyGlobal), "fake (explicit -fake-script)"
+		return maybeAppBlind(activity.NewFakeProvider(steps, activity.HonestyGlobal)), "fake (explicit -fake-script)"
 	}
 	switch kind {
 	case "fake":
-		return activity.NewFakeProviderFromEnv(), "fake (DEXEL_FAKE_SCRIPT or built-in demo)"
+		return maybeAppBlind(activity.NewFakeProviderFromEnv()), "fake (DEXEL_FAKE_SCRIPT or built-in demo)"
 	case "auto":
 		return platformProvider(), platformProviderName
 	default:
 		log.Fatalf(`unknown -provider %q (want "auto" or "fake")`, kind)
 		return nil, ""
 	}
+}
+
+// maybeAppBlind lets a fake-provider run model a globally-honest input
+// source that nonetheless CANNOT name the foreground app — the capability
+// combination real Linux/Wayland hosts are in (ADR 0009) — when
+// DEXEL_FAKE_APP_BLIND is set (any non-empty value). It exists so the
+// adaptive-stats behaviour (hiding app-derived rows where app identity is
+// unobservable) can be exercised end-to-end in the real running app with a
+// scripted timeline, alongside the default (app-visible) fake. It only ever
+// touches the fake provider — never a native capture path — and is a dev/
+// demo/test seam exactly like DEXEL_FAKE_SCRIPT.
+func maybeAppBlind(p *activity.FakeProvider) activity.Provider {
+	if os.Getenv("DEXEL_FAKE_APP_BLIND") != "" {
+		return p.WithActiveApp("", "")
+	}
+	return p
 }
 
 // staticSource labels where one of the two static trees is being served

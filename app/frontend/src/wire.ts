@@ -320,6 +320,24 @@ export interface StateMessage {
   // fourth value for this (ADR 0010) — pausedness is conveyed only via
   // this bool, never by inventing a mood string.
   paused?: boolean;
+  // ADAPTIVE-STATS — the provider's app-identity CAPABILITY bit
+  // (Go: StateMessage.AppIdentityAvailable, itself
+  // activity.Snapshot.AppIdentityAvailable): whether THIS host's provider
+  // can observe the foreground application at all. FALSE on Linux/Wayland
+  // (ADR 0009), true on macOS with a real active-app source. The Activity
+  // modal uses it to HIDE its app-derived rows (App switches today/
+  // lifetime, and the App-switches coin line) where identity is
+  // unobservable AND the value is 0 — so an app-blind platform never shows
+  // a misleading frozen "0 app switches" that reads as "you never switched
+  // apps", exactly the away-time hiding pattern.
+  //
+  // Optional for the same stale-server reason as `paused`/`onboarding`
+  // above, but note the degradation direction: an ABSENT field means
+  // "assume available, show the rows" (`!== false`), which is the
+  // pre-existing behaviour — a stale server is never made worse, and the
+  // rows are only ever hidden when the server EXPLICITLY says the platform
+  // is app-blind.
+  appIdentityAvailable?: boolean;
 }
 
 export interface FlashMessage {

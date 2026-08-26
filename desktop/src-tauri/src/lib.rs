@@ -174,13 +174,12 @@ const SURFACE_H: f64 = 400.0;
 const MIN_SCALE: f64 = 1.0;
 const MAX_SCALE: f64 = 3.0;
 
-/// The largest scale a FRESH window opens at, as opposed to the largest it
-/// can be dragged to. 2x (1280x800) is a companion-sized window on a 1080p
-/// screen; 3x (1920x1200) is most of one, and a first launch that fills the
-/// display reads as an app that thinks it is the main event. The user can
-/// still drag to 3x, and this shell does not remember that they did — see
-/// `opening_size`.
-const DEFAULT_MAX_SCALE: f64 = 2.0;
+// dexel used to open a fresh window at a companion-sized 2x cap (a constant
+// once named `DEFAULT_MAX_SCALE`); now every launch opens at [`MIN_SCALE`]
+// instead (see `opening_size`) and the user drags up from there. The 2.0
+// value that constant held lives on only inline, in `crisp_sizes`' own
+// tests below, as a cap distinct from `MAX_SCALE` to exercise the inclusive
+// boundary — a step landing exactly on the cap must not be dropped.
 
 /// How long after the LAST resize event the snap fires. tao exposes no
 /// resize-END event on any platform (`tauri::WindowEvent` has only
@@ -994,8 +993,9 @@ fn shell_url(url: &tauri::Url) -> tauri::Url {
 //   * `min_inner_size` = 640x400 (1x), `max_inner_size` = 1920x1200 (3x).
 //     The OS/window manager enforces the range during a drag, so there is no
 //     size to "correct" outside it and no fight with the compositor.
-//   * a fresh window opens at the largest crisp size that fits the monitor's
-//     work area, capped at 2x (`opening_size`).
+//   * a fresh window opens at the fixed 1x surface, 640x400, regardless of
+//     the monitor (`opening_size`) — small and pixel-crisp; the user drags
+//     up from there.
 //   * after a user resize SETTLES, the window's inner size is set to the
 //     nearest crisp size (`nearest_crisp_size`), so the surface fills it
 //     exactly. The page then computes `exact = 1/1.5/2/...`, snaps to itself,
@@ -1157,17 +1157,29 @@ fn nearest_crisp_size(reported: Logical, scale_factor: f64, bound: Option<Logica
     best
 }
 
-/// The size a fresh window opens at: the largest crisp size that fits the
-/// monitor, capped at [`DEFAULT_MAX_SCALE`].
+/// The size a fresh window opens at: the fixed 1x surface, 640x400, every
+/// time, on every display.
 ///
-/// This shell deliberately does NOT remember the last size. A remembered size
-/// is a file to write, a file to migrate and a file to be wrong (a size
-/// remembered from a 4K monitor is off the screen of the laptop the user
-/// opens the lid on), and the value it buys is small when every available
-/// size is one of three or five. What it does instead is open at a size that
-/// is right for the display it is actually on, every time.
+/// 1x is the game's native pixel-art resolution — no scaling, so no scaling
+/// artifact — and small reads as crisp where a companion-sized 2x window
+/// reads as merely "medium". The user can still drag the window bigger
+/// whenever they want; `keep_the_game_filling_the_window` snaps that drag to
+/// 2x/3x. This shell just no longer opens there FOR them.
+///
+/// This shell also deliberately does NOT remember the last size. A
+/// remembered size is a file to write, a file to migrate and a file to be
+/// wrong (a size remembered from a 4K monitor is off the screen of the
+/// laptop the user opens the lid on) — moot now that the opening size does
+/// not vary by display at all.
+///
+/// Still routed through `crisp_sizes_within` rather than returning the
+/// `(640, 400)` constant outright, so the one real guard applies: on a
+/// pathologically tiny work area (smaller than 640x400, which essentially
+/// never happens) the result clamps to what fits rather than overflowing it
+/// — the same "never drop the 1x floor" rule `crisp_sizes_within` already
+/// guarantees for `min_inner_size`.
 fn opening_size(scale_factor: f64, bound: Option<Logical>) -> Logical {
-    let ladder = crisp_sizes_within(scale_factor, DEFAULT_MAX_SCALE, bound);
+    let ladder = crisp_sizes_within(scale_factor, MIN_SCALE, bound);
     *ladder
         .last()
         .unwrap_or(&(SURFACE_W as u32, SURFACE_H as u32))
@@ -2110,9 +2122,15 @@ mod shell_mode {
 mod window_sizing {
     use super::{
         crisp_sizes, crisp_sizes_within, crisp_step, is_own_echo, nearest_crisp_size, opening_size,
-        Logical, SnapGuard, DEFAULT_MAX_SCALE, MAX_SCALE, MAX_UNANSWERED, MIN_SCALE, SURFACE_H,
-        SURFACE_W,
+        Logical, SnapGuard, MAX_SCALE, MAX_UNANSWERED, MIN_SCALE, SURFACE_H, SURFACE_W,
     };
+
+    /// A cap distinct from [`MAX_SCALE`] — 2x, 1280x800 — used only to
+    /// exercise `crisp_sizes`' inclusive cap boundary below (a step landing
+    /// exactly on the cap must not be dropped). Not a product default: the
+    /// window no longer opens at 2x, see `opening_size`'s own tests further
+    /// down.
+    const TEST_CAP: f64 = 2.0;
 
     /// The page's own scale rule, transcribed from `chooseScale` in
     /// `app/frontend/src/render/viewport.ts`. Every size this shell hands the
@@ -2202,14 +2220,11 @@ mod window_sizing {
     #[test]
     fn the_cap_keeps_the_step_that_lands_exactly_on_it() {
         assert_eq!(
-            crisp_sizes(2.0, DEFAULT_MAX_SCALE),
+            crisp_sizes(2.0, TEST_CAP),
             vec![(640, 400), (960, 600), (1280, 800)]
         );
         assert_eq!(*crisp_sizes(1.0, MAX_SCALE).last().unwrap(), (1920, 1200));
-        assert_eq!(
-            *crisp_sizes(3.0, DEFAULT_MAX_SCALE).last().unwrap(),
-            (1280, 800)
-        );
+        assert_eq!(*crisp_sizes(3.0, TEST_CAP).last().unwrap(), (1280, 800));
     }
 
     /// The property that makes a size "crisp" at all: one art pixel covers a
@@ -2407,32 +2422,55 @@ mod window_sizing {
 
     // -- the opening size ---------------------------------------------------
 
+    /// dexel opens at its native 1x surface, 640x400, full stop: 1x is
+    /// pixel-crisp with no scaling, so it is where the pixel art looks its
+    /// best on the very first frame. The user can still drag the window
+    /// bigger (`keep_the_game_filling_the_window` snaps that to 2x/3x); this
+    /// shell just no longer opens there for them.
     #[test]
-    fn a_fresh_window_opens_at_2x_on_a_display_that_fits_it() {
+    fn the_default_opening_size_is_the_1x_surface() {
+        assert_eq!(
+            opening_size(1.0, None),
+            (SURFACE_W as u32, SURFACE_H as u32)
+        );
+        assert_eq!(opening_size(1.0, None), (640, 400));
+    }
+
+    #[test]
+    fn a_fresh_window_opens_at_1x_however_big_the_display() {
         // 1080p, minus a taskbar.
-        assert_eq!(opening_size(1.0, Some((1920, 1040))), (1280, 800));
-        // A 4K display could fit 3x, but a first launch that fills the screen
-        // is not what this product is: the default is capped at 2x.
-        assert_eq!(opening_size(1.0, Some((3840, 2100))), (1280, 800));
+        assert_eq!(opening_size(1.0, Some((1920, 1040))), (640, 400));
+        // A 4K display could fit 3x; a first launch that fills the screen is
+        // not what this product is, so it opens small and crisp anyway.
+        assert_eq!(opening_size(1.0, Some((3840, 2100))), (640, 400));
         // The same 4K panel at dpr 2 is a 1920x1080 logical desktop.
-        assert_eq!(opening_size(2.0, Some((1920, 1040))), (1280, 800));
+        assert_eq!(opening_size(2.0, Some((1920, 1040))), (640, 400));
     }
 
     #[test]
-    fn a_small_display_opens_smaller() {
-        // A 1366x768 laptop cannot fit 1280x800 (768 < 800), so 1x it is.
+    fn a_small_display_still_opens_at_1x() {
+        // A 1366x768 laptop and a retina display of the same logical size
+        // both open at 640x400 — there is no display this changes for.
         assert_eq!(opening_size(1.0, Some((1366, 728))), (640, 400));
-        // A retina display of the same logical size has a rung in between.
-        assert_eq!(opening_size(2.0, Some((1366, 728))), (960, 600));
+        assert_eq!(opening_size(2.0, Some((1366, 728))), (640, 400));
     }
 
-    /// With no readable work area the cap is the only bound — never larger
-    /// than the default cap, so an unknown display cannot produce a 3x window.
+    /// With no readable work area at all, the answer still does not depend
+    /// on the monitor.
     #[test]
-    fn an_unknown_display_opens_at_the_default_cap() {
-        assert_eq!(opening_size(1.0, None), (1280, 800));
-        assert_eq!(opening_size(2.0, None), (1280, 800));
-        assert_eq!(opening_size(1.25, None), (1280, 800));
+    fn an_unknown_display_still_opens_at_1x() {
+        assert_eq!(opening_size(1.0, None), (640, 400));
+        assert_eq!(opening_size(2.0, None), (640, 400));
+        assert_eq!(opening_size(1.25, None), (640, 400));
+    }
+
+    /// A pathologically tiny work area (smaller than the surface itself)
+    /// still gets 640x400: it is the window's own `min_inner_size`, so "the
+    /// smallest window this game has" beats no size at all — the same floor
+    /// guarantee `crisp_sizes_within` already gives every other caller.
+    #[test]
+    fn a_bound_smaller_than_the_surface_still_opens_at_1x() {
+        assert_eq!(opening_size(1.0, Some((500, 300))), (640, 400));
     }
 
     #[test]
