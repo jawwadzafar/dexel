@@ -85,12 +85,3 @@ export function plainImg(file: string | null | undefined, rect: Rect, cls?: stri
   positionEl(img, rect);
   return img;
 }
-// "swatch chip = tint * 0xd4/0xff" (art-direction.md, step-4 base fabric)
-export function swatchColor(hex: string): string {
-  const r = parseInt(hex.slice(1, 3), 16);
-  const g = parseInt(hex.slice(3, 5), 16);
-  const b = parseInt(hex.slice(5, 7), 16);
-  const f = 0xd4 / 0xff;
-  const rr = Math.round(r * f), gg = Math.round(g * f), bb = Math.round(b * f);
-  return 'rgb(' + rr + ',' + gg + ',' + bb + ')';
-}

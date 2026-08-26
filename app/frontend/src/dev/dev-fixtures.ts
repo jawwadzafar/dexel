@@ -3,66 +3,99 @@
 // operation. Pure data, no runtime logic.
 import type { CatalogMessage, DayStat, SessionsView, SessionView, StateMessage, StreakView } from '../wire';
 
+// STORE-2.0 (docs/plan/ROADMAP.md §STORE-2.0): tint-free wire. Slots have no
+// `tintable`, there is no `tints` array, and an item is just id/slot/name/
+// price/minLevel/sprite/thumb/flavor. Colours are ITEMS (hoodie_<style>_
+// <colour>, chair_<style>_<colour>, monitor_<colour>) and there is a 9th
+// "monitor" slot. Mirrors app/internal/game/catalog.go; for the colour slots
+// the render layer derives the tinted grayscale form from the id
+// (../colours.ts), so sprite/thumb follow the catalog's "<id>.png" convention
+// even though those name the deferred stage-B per-colour files.
+const ci = (id: string, slot: string, name: string, price: number, minLevel: number, flavor: string): CatalogMessage['items'][number] =>
+  ({ id, slot, name, price, minLevel, sprite: id + '.png', thumb: 'thumb_' + id + '.png', flavor });
+
 export const DEV_CATALOG: CatalogMessage = {
   type: 'catalog', v: 1,
   slots: [
-    { id: 'hoodie', name: 'Hoodie', tintable: true },
-    { id: 'chair', name: 'Chair', tintable: true },
-    { id: 'keyboard', name: 'Keyboard', tintable: false },
-    { id: 'mouse', name: 'Mouse', tintable: false },
-    { id: 'beverage', name: 'Beverage', tintable: false },
-    { id: 'plant', name: 'Plant', tintable: false },
-    { id: 'wall', name: 'Wall', tintable: false },
-    { id: 'buddy', name: 'Buddy', tintable: false }
-  ],
-  tints: [
-    { id: 'slate', name: 'Classic Black', hex: '#2b2b33', price: 40 },
-    { id: 'cobalt', name: 'Cobalt Blue', hex: '#4a7fa8', price: 40 },
-    { id: 'forest', name: 'Forest Green', hex: '#4e8b4f', price: 40 },
-    { id: 'ember', name: 'Cyberpunk Orange', hex: '#a45c3a', price: 40 },
-    { id: 'neon', name: 'Neon Pink', hex: '#e86aa4', price: 40 },
-    { id: 'indigo', name: 'Midnight Indigo', hex: '#6a5aa0', price: 40 }
+    { id: 'hoodie', name: 'Hoodie' },
+    { id: 'chair', name: 'Chair' },
+    { id: 'keyboard', name: 'Keyboard' },
+    { id: 'mouse', name: 'Mouse' },
+    { id: 'beverage', name: 'Beverage' },
+    { id: 'plant', name: 'Plant' },
+    { id: 'wall', name: 'Wall' },
+    { id: 'buddy', name: 'Buddy' },
+    { id: 'monitor', name: 'Monitor' }
   ],
   items: [
-    { id: 'hoodie_classic', slot: 'hoodie', name: 'Classic Pullover', price: 0, sprite: 'hoodie_classic.png', detail: null, thumb: null, thumbForm: 'thumb_hoodie_classic_form.png', thumbDetail: 'thumb_hoodie_classic_detail.png', defaultTint: 'indigo', flavor: 'Drawstrings, one pocket, no opinions.' },
-    { id: 'hoodie_zip', slot: 'hoodie', name: 'Zip-Up', price: 120, sprite: 'hoodie_zip.png', detail: null, thumb: null, thumbForm: 'thumb_hoodie_zip_form.png', thumbDetail: 'thumb_hoodie_zip_detail.png', defaultTint: 'slate', flavor: 'For when the office is exactly two degrees off.' },
-    { id: 'hoodie_tech', slot: 'hoodie', name: 'Techwear', price: 300, sprite: 'hoodie_tech.png', detail: null, thumb: null, thumbForm: 'thumb_hoodie_tech_form.png', thumbDetail: 'thumb_hoodie_tech_detail.png', defaultTint: 'forest', flavor: 'Straps that hold nothing. Reflective, though.' },
-    { id: 'hoodie_cloak', slot: 'hoodie', name: 'Night Cloak', price: 500, sprite: 'hoodie_cloak.png', detail: null, thumb: null, thumbForm: 'thumb_hoodie_cloak_form.png', thumbDetail: 'thumb_hoodie_cloak_detail.png', defaultTint: 'neon', flavor: 'Ships at 3am or not at all.' },
+    ci('hoodie_classic_indigo', 'hoodie', 'Indigo Pullover', 0, 0, 'Drawstrings, one pocket, no opinions.'),
+    ci('hoodie_classic_slate', 'hoodie', 'Slate Pullover', 40, 0, 'Drawstrings, one pocket, no opinions.'),
+    ci('hoodie_classic_cobalt', 'hoodie', 'Cobalt Pullover', 40, 0, 'Drawstrings, one pocket, no opinions.'),
+    ci('hoodie_classic_ember', 'hoodie', 'Ember Pullover', 40, 0, 'Drawstrings, one pocket, no opinions.'),
+    ci('hoodie_zip_slate', 'hoodie', 'Slate Zip-Up', 120, 3, 'For when the office is exactly two degrees off.'),
+    ci('hoodie_zip_cobalt', 'hoodie', 'Cobalt Zip-Up', 160, 3, 'For when the office is exactly two degrees off.'),
+    ci('hoodie_zip_ember', 'hoodie', 'Ember Zip-Up', 160, 3, 'For when the office is exactly two degrees off.'),
+    ci('hoodie_zip_indigo', 'hoodie', 'Indigo Zip-Up', 160, 3, 'For when the office is exactly two degrees off.'),
+    ci('hoodie_tech_forest', 'hoodie', 'Forest Techwear', 300, 5, 'Straps that hold nothing. Reflective, though.'),
+    ci('hoodie_tech_slate', 'hoodie', 'Slate Techwear', 340, 5, 'Straps that hold nothing. Reflective, though.'),
+    ci('hoodie_tech_cobalt', 'hoodie', 'Cobalt Techwear', 340, 5, 'Straps that hold nothing. Reflective, though.'),
+    ci('hoodie_tech_neon', 'hoodie', 'Neon Techwear', 340, 5, 'Straps that hold nothing. Reflective, though.'),
+    ci('hoodie_cloak_neon', 'hoodie', 'Neon Night Cloak', 500, 8, 'Ships at 3am or not at all.'),
+    ci('hoodie_cloak_slate', 'hoodie', 'Slate Night Cloak', 540, 8, 'Ships at 3am or not at all.'),
+    ci('hoodie_cloak_indigo', 'hoodie', 'Indigo Night Cloak', 540, 8, 'Ships at 3am or not at all.'),
+    ci('hoodie_cloak_ember', 'hoodie', 'Ember Night Cloak', 540, 8, 'Ships at 3am or not at all.'),
 
-    { id: 'chair_basic', slot: 'chair', name: 'Basic Office', price: 0, sprite: 'chair_basic_form.png', detail: 'chair_basic_detail.png', thumb: null, thumbForm: 'thumb_chair_basic_form.png', thumbDetail: 'thumb_chair_basic_detail.png', defaultTint: 'slate', flavor: 'Adjusts in one axis. That axis is "no".' },
-    { id: 'chair_racer', slot: 'chair', name: 'Racer', price: 100, sprite: 'chair_racer_form.png', detail: 'chair_racer_detail.png', thumb: null, thumbForm: 'thumb_chair_racer_form.png', thumbDetail: 'thumb_chair_racer_detail.png', defaultTint: 'ember', flavor: 'Bolstered wings. Zero laps completed.' },
-    { id: 'chair_exec', slot: 'chair', name: 'Executive Leather', price: 300, sprite: 'chair_exec_form.png', detail: 'chair_exec_detail.png', thumb: null, thumbForm: 'thumb_chair_exec_form.png', thumbDetail: 'thumb_chair_exec_detail.png', defaultTint: 'ember', flavor: 'Tufted. Reclines further than the deadline.' },
-    { id: 'chair_antigrav', slot: 'chair', name: 'Anti-Gravity', price: 500, sprite: 'chair_antigrav_form.png', detail: 'chair_antigrav_detail.png', thumb: null, thumbForm: 'thumb_chair_antigrav_form.png', thumbDetail: 'thumb_chair_antigrav_detail.png', defaultTint: 'cobalt', flavor: 'Floats. Physics pending review.' },
+    ci('chair_basic_slate', 'chair', 'Slate Office Chair', 0, 0, 'Adjusts in one axis. That axis is "no".'),
+    ci('chair_basic_cobalt', 'chair', 'Cobalt Office Chair', 40, 0, 'Adjusts in one axis. That axis is "no".'),
+    ci('chair_basic_forest', 'chair', 'Forest Office Chair', 40, 0, 'Adjusts in one axis. That axis is "no".'),
+    ci('chair_basic_ember', 'chair', 'Ember Office Chair', 40, 0, 'Adjusts in one axis. That axis is "no".'),
+    ci('chair_racer_ember', 'chair', 'Ember Racer', 100, 3, 'Bolstered wings. Zero laps completed.'),
+    ci('chair_racer_slate', 'chair', 'Slate Racer', 140, 3, 'Bolstered wings. Zero laps completed.'),
+    ci('chair_racer_cobalt', 'chair', 'Cobalt Racer', 140, 3, 'Bolstered wings. Zero laps completed.'),
+    ci('chair_racer_neon', 'chair', 'Neon Racer', 140, 3, 'Bolstered wings. Zero laps completed.'),
+    ci('chair_exec_ember', 'chair', 'Ember Executive', 300, 5, 'Tufted. Reclines further than the deadline.'),
+    ci('chair_exec_slate', 'chair', 'Slate Executive', 340, 5, 'Tufted. Reclines further than the deadline.'),
+    ci('chair_exec_cobalt', 'chair', 'Cobalt Executive', 340, 5, 'Tufted. Reclines further than the deadline.'),
+    ci('chair_exec_forest', 'chair', 'Forest Executive', 340, 5, 'Tufted. Reclines further than the deadline.'),
+    ci('chair_antigrav_cobalt', 'chair', 'Cobalt Anti-Grav', 500, 8, 'Floats. Physics pending review.'),
+    ci('chair_antigrav_slate', 'chair', 'Slate Anti-Grav', 540, 8, 'Floats. Physics pending review.'),
+    ci('chair_antigrav_forest', 'chair', 'Forest Anti-Grav', 540, 8, 'Floats. Physics pending review.'),
+    ci('chair_antigrav_neon', 'chair', 'Neon Anti-Grav', 540, 8, 'Floats. Physics pending review.'),
 
-    { id: 'kb_membrane', slot: 'keyboard', name: 'Stock Membrane', price: 0, sprite: 'kb_membrane.png', detail: null, thumb: null, thumbForm: null, thumbDetail: null, defaultTint: null, flavor: 'Came with the machine. Still here.' },
-    { id: 'kb_mech', slot: 'keyboard', name: 'Mechanical', price: 60, sprite: 'kb_mech.png', detail: null, thumb: null, thumbForm: null, thumbDetail: null, defaultTint: null, flavor: 'Audible from the next room. Intentionally.' },
-    { id: 'kb_split', slot: 'keyboard', name: 'Split Ergo', price: 180, sprite: 'kb_split.png', detail: null, thumb: null, thumbForm: null, thumbDetail: null, defaultTint: null, flavor: 'Two halves, one wrist, endless smugness.' },
-    { id: 'kb_neon', slot: 'keyboard', name: 'Neon 60%', price: 300, sprite: 'kb_neon.png', detail: null, thumb: null, thumbForm: null, thumbDetail: null, defaultTint: null, flavor: 'Fewer keys, more colours, same bugs.' },
+    { id: 'kb_membrane', slot: 'keyboard', name: 'Stock Membrane', price: 0, sprite: 'kb_membrane.png', thumb: 'thumb_kb_membrane.png', flavor: 'Came with the machine. Still here.' },
+    { id: 'kb_mech', slot: 'keyboard', name: 'Mechanical', price: 60, minLevel: 2, sprite: 'kb_mech.png', thumb: 'thumb_kb_mech.png', flavor: 'Audible from the next room. Intentionally.' },
+    { id: 'kb_split', slot: 'keyboard', name: 'Split Ergo', price: 180, minLevel: 4, sprite: 'kb_split.png', thumb: 'thumb_kb_split.png', flavor: 'Two halves, one wrist, endless smugness.' },
+    { id: 'kb_neon', slot: 'keyboard', name: 'Neon 60%', price: 300, minLevel: 7, sprite: 'kb_neon.png', thumb: 'thumb_kb_neon.png', flavor: 'Fewer keys, more colours, same bugs.' },
 
-    { id: 'mouse_stock', slot: 'mouse', name: 'Stock Mouse', price: 0, sprite: 'mouse_stock.png', detail: null, thumb: null, thumbForm: null, thumbDetail: null, defaultTint: null, flavor: 'Two buttons and a wheel. It works.' },
-    { id: 'mouse_gaming', slot: 'mouse', name: 'Gaming Mouse', price: 50, sprite: 'mouse_gaming.png', detail: null, thumb: null, thumbForm: null, thumbDetail: null, defaultTint: null, flavor: 'Seven buttons. Two are bound.' },
-    { id: 'mouse_trackball', slot: 'mouse', name: 'Trackball', price: 150, sprite: 'mouse_trackball.png', detail: null, thumb: null, thumbForm: null, thumbDetail: null, defaultTint: null, flavor: 'The wrist thanks you. The cursor does not.' },
-    { id: 'mouse_vertical', slot: 'mouse', name: 'Vertical Ergo', price: 220, sprite: 'mouse_vertical.png', detail: null, thumb: null, thumbForm: null, thumbDetail: null, defaultTint: null, flavor: 'Held like a handshake with your desk.' },
+    { id: 'mouse_stock', slot: 'mouse', name: 'Stock Mouse', price: 0, sprite: 'mouse_stock.png', thumb: 'thumb_mouse_stock.png', flavor: 'Two buttons and a wheel. It works.' },
+    { id: 'mouse_gaming', slot: 'mouse', name: 'Gaming Mouse', price: 50, minLevel: 2, sprite: 'mouse_gaming.png', thumb: 'thumb_mouse_gaming.png', flavor: 'Seven buttons. Two are bound.' },
+    { id: 'mouse_trackball', slot: 'mouse', name: 'Trackball', price: 150, minLevel: 4, sprite: 'mouse_trackball.png', thumb: 'thumb_mouse_trackball.png', flavor: 'The wrist thanks you. The cursor does not.' },
+    { id: 'mouse_vertical', slot: 'mouse', name: 'Vertical Ergo', price: 220, minLevel: 7, sprite: 'mouse_vertical.png', thumb: 'thumb_mouse_vertical.png', flavor: 'Held like a handshake with your desk.' },
 
-    { id: 'bev_mug', slot: 'beverage', name: 'Chipped Mug', price: 0, sprite: 'bev_mug.png', detail: null, thumb: null, thumbForm: null, thumbDetail: null, defaultTint: null, flavor: 'The chip is load-bearing.' },
-    { id: 'bev_thermos', slot: 'beverage', name: 'Thermos', price: 40, sprite: 'bev_thermos.png', detail: null, thumb: null, thumbForm: null, thumbDetail: null, defaultTint: null, flavor: 'Still hot at 4pm. Suspiciously.' },
-    { id: 'bev_teacup', slot: 'beverage', name: 'Tea & Saucer', price: 90, sprite: 'bev_teacup.png', detail: null, thumb: null, thumbForm: null, thumbDetail: null, defaultTint: null, flavor: 'A saucer. On a developer’s desk.' },
-    { id: 'bev_energy', slot: 'beverage', name: 'Energy Can', price: 140, sprite: 'bev_energy.png', detail: null, thumb: null, thumbForm: null, thumbDetail: null, defaultTint: null, flavor: 'Tastes like a changelog.' },
+    { id: 'bev_mug', slot: 'beverage', name: 'Chipped Mug', price: 0, sprite: 'bev_mug.png', thumb: 'thumb_bev_mug.png', flavor: 'The chip is load-bearing.' },
+    { id: 'bev_thermos', slot: 'beverage', name: 'Thermos', price: 40, minLevel: 2, sprite: 'bev_thermos.png', thumb: 'thumb_bev_thermos.png', flavor: 'Still hot at 4pm. Suspiciously.' },
+    { id: 'bev_teacup', slot: 'beverage', name: 'Tea & Saucer', price: 90, minLevel: 4, sprite: 'bev_teacup.png', thumb: 'thumb_bev_teacup.png', flavor: 'A saucer. On a desk.' },
+    { id: 'bev_energy', slot: 'beverage', name: 'Energy Can', price: 140, minLevel: 7, sprite: 'bev_energy.png', thumb: 'thumb_bev_energy.png', flavor: 'Tastes like a changelog.' },
 
-    { id: 'plant_none', slot: 'plant', name: 'Bare Desk', price: 0, sprite: null, detail: null, thumb: null, thumbForm: null, thumbDetail: null, defaultTint: null, flavor: 'Minimalism, or forgetfulness.' },
-    { id: 'plant_succulent', slot: 'plant', name: 'Succulent', price: 50, sprite: 'plant_succulent.png', detail: null, thumb: null, thumbForm: null, thumbDetail: null, defaultTint: null, flavor: 'Survives neglect. Relatable.' },
-    { id: 'plant_monstera', slot: 'plant', name: 'Monstera', price: 140, sprite: 'plant_monstera.png', detail: null, thumb: null, thumbForm: null, thumbDetail: null, defaultTint: null, flavor: 'Big leaves. Bigger commitment.' },
-    { id: 'plant_bonsai', slot: 'plant', name: 'Bonsai', price: 260, sprite: 'plant_bonsai.png', detail: null, thumb: null, thumbForm: null, thumbDetail: null, defaultTint: null, flavor: 'Pruned more carefully than the git history.' },
+    { id: 'plant_none', slot: 'plant', name: 'Bare Desk', price: 0, sprite: null, thumb: null, flavor: 'Minimalism, or forgetfulness.' },
+    { id: 'plant_succulent', slot: 'plant', name: 'Succulent', price: 50, minLevel: 2, sprite: 'plant_succulent.png', thumb: 'thumb_plant_succulent.png', flavor: 'Survives neglect. Relatable.' },
+    { id: 'plant_monstera', slot: 'plant', name: 'Monstera', price: 140, minLevel: 4, sprite: 'plant_monstera.png', thumb: 'thumb_plant_monstera.png', flavor: 'Big leaves. Bigger commitment.' },
+    { id: 'plant_bonsai', slot: 'plant', name: 'Bonsai', price: 260, minLevel: 8, sprite: 'plant_bonsai.png', thumb: 'thumb_plant_bonsai.png', flavor: 'Pruned more carefully than the git history.' },
 
-    { id: 'wall_bare', slot: 'wall', name: 'Bare Wall', price: 0, sprite: null, detail: null, thumb: null, thumbForm: null, thumbDetail: null, defaultTint: null, flavor: 'Ready for anything.' },
-    { id: 'wall_poster', slot: 'wall', name: '"Works On My Machine"', price: 80, sprite: 'wall_poster.png', detail: null, thumb: null, thumbForm: null, thumbDetail: null, defaultTint: null, flavor: 'The oldest defence.' },
-    { id: 'wall_shelf', slot: 'wall', name: 'Shelf: Books & Trophy', price: 200, sprite: 'wall_shelf.png', detail: null, thumb: null, thumbForm: null, thumbDetail: null, defaultTint: null, flavor: 'Four books, one trophy, zero pages read.' },
-    { id: 'wall_neon', slot: 'wall', name: 'Neon Sign', price: 380, sprite: 'wall_neon.png', detail: null, thumb: null, thumbForm: null, thumbDetail: null, defaultTint: null, flavor: 'Casts a glow on every late commit.' },
+    { id: 'wall_bare', slot: 'wall', name: 'Bare Wall', price: 0, sprite: null, thumb: null, flavor: 'Ready for anything.' },
+    { id: 'wall_poster', slot: 'wall', name: '"Works On My Machine"', price: 80, minLevel: 2, sprite: 'wall_poster.png', thumb: 'thumb_wall_poster.png', flavor: 'The oldest defence.' },
+    { id: 'wall_shelf', slot: 'wall', name: 'Shelf: Books & Trophy', price: 200, minLevel: 5, sprite: 'wall_shelf.png', thumb: 'thumb_wall_shelf.png', flavor: 'Four books, one trophy, zero pages read.' },
+    { id: 'wall_neon', slot: 'wall', name: 'Neon Sign', price: 380, minLevel: 9, sprite: 'wall_neon.png', thumb: 'thumb_wall_neon.png', flavor: 'Casts a glow on every late commit.' },
 
-    { id: 'buddy_none', slot: 'buddy', name: 'No Buddy', price: 0, sprite: null, detail: null, thumb: null, thumbForm: null, thumbDetail: null, defaultTint: null, flavor: 'Solo run.' },
-    { id: 'buddy_duck', slot: 'buddy', name: 'Rubber Duck', price: 60, sprite: 'buddy_duck.png', detail: null, thumb: null, thumbForm: null, thumbDetail: null, defaultTint: null, flavor: 'Best listener on the team.' },
-    { id: 'buddy_bot', slot: 'buddy', name: 'Desk Bot', price: 250, sprite: 'buddy_bot_a.png', detail: null, thumb: null, thumbForm: null, thumbDetail: null, defaultTint: null, flavor: 'Blinks. Judges. Blinks again.' },
-    { id: 'buddy_cat', slot: 'buddy', name: 'Sleeping Cat', price: 300, sprite: 'buddy_cat.png', detail: null, thumb: null, thumbForm: null, thumbDetail: null, defaultTint: null, flavor: 'Has opinions about the keyboard. Asleep.' }
+    { id: 'buddy_none', slot: 'buddy', name: 'No Buddy', price: 0, sprite: null, thumb: null, flavor: 'Solo run.' },
+    { id: 'buddy_duck', slot: 'buddy', name: 'Rubber Duck', price: 60, minLevel: 2, sprite: 'buddy_duck.png', thumb: 'thumb_buddy_duck.png', flavor: 'Best listener on the team.' },
+    { id: 'buddy_bot', slot: 'buddy', name: 'Desk Bot', price: 250, minLevel: 6, sprite: 'buddy_bot_a.png', thumb: 'thumb_buddy_bot.png', flavor: 'Blinks. Judges. Blinks again.' },
+    { id: 'buddy_cat', slot: 'buddy', name: 'Sleeping Cat', price: 300, minLevel: 10, sprite: 'buddy_cat.png', thumb: 'thumb_buddy_cat.png', flavor: 'Has opinions about the keyboard. Asleep.' },
+
+    ci('monitor_slate', 'monitor', 'Slate Monitor', 0, 0, 'Matte bezel, honest pixels.'),
+    ci('monitor_cobalt', 'monitor', 'Cobalt Monitor', 80, 2, 'A cool frame for warm takes.'),
+    ci('monitor_forest', 'monitor', 'Forest Monitor', 160, 5, 'Evergreen edges, deciduous focus.'),
+    ci('monitor_neon', 'monitor', 'Neon Monitor', 280, 8, 'The bezel glows so the code does not have to.')
   ]
 };
 
@@ -253,22 +286,22 @@ export const DEV_STATE: StateMessage = {
   ],
   tickerLines: ['Running unit 42...', 'Resolving dependencies...', 'Compiling...'],
   equipped: {
-    hoodie: { itemId: 'hoodie_zip', tintId: 'cobalt' },
-    chair: { itemId: 'chair_racer', tintId: 'ember' },
-    keyboard: { itemId: 'kb_mech', tintId: null },
-    mouse: { itemId: 'mouse_gaming', tintId: null },
-    beverage: { itemId: 'bev_thermos', tintId: null },
-    plant: { itemId: 'plant_none', tintId: null },
-    wall: { itemId: 'wall_poster', tintId: null },
-    buddy: { itemId: 'buddy_duck', tintId: null }
+    hoodie: { itemId: 'hoodie_zip_cobalt' },
+    chair: { itemId: 'chair_racer_ember' },
+    keyboard: { itemId: 'kb_mech' },
+    mouse: { itemId: 'mouse_gaming' },
+    beverage: { itemId: 'bev_thermos' },
+    plant: { itemId: 'plant_none' },
+    wall: { itemId: 'wall_poster' },
+    buddy: { itemId: 'buddy_duck' },
+    monitor: { itemId: 'monitor_cobalt' }
   },
   ownedItems: [
-    'hoodie_classic', 'hoodie_zip', 'chair_basic', 'chair_racer',
+    'hoodie_classic_indigo', 'hoodie_zip_cobalt', 'chair_basic_slate', 'chair_racer_ember',
     'kb_membrane', 'kb_mech', 'mouse_stock', 'mouse_gaming',
     'bev_mug', 'bev_thermos', 'plant_none', 'wall_bare', 'wall_poster',
-    'buddy_none', 'buddy_duck'
+    'buddy_none', 'buddy_duck', 'monitor_slate', 'monitor_cobalt'
   ],
-  ownedTints: ['hoodie_zip:cobalt', 'chair_racer:ember'],
   stats: {
     today: { keystrokes: 842, mouseActiveSeconds: 96, activeSeconds: 610, idleSeconds: 340, sprintsCompleted: 1 },
     lifetime: { keystrokes: 58120, mouseActiveSeconds: 7400, activeSeconds: 42300, idleSeconds: 19800, sprintsCompleted: 37 },
@@ -306,20 +339,20 @@ export const DEV_STATE_ONBOARDING: Partial<StateMessage> = {
   xp: 0,
   sprint: { index: 0, name: 'Set Up Environment', progress: 0, target: 40, unitLabel: 'units' },
   equipped: {
-    hoodie: { itemId: 'hoodie_classic', tintId: 'indigo' },
-    chair: { itemId: 'chair_basic', tintId: 'slate' },
-    keyboard: { itemId: 'kb_membrane', tintId: null },
-    mouse: { itemId: 'mouse_stock', tintId: null },
-    beverage: { itemId: 'bev_mug', tintId: null },
-    plant: { itemId: 'plant_none', tintId: null },
-    wall: { itemId: 'wall_bare', tintId: null },
-    buddy: { itemId: 'buddy_none', tintId: null }
+    hoodie: { itemId: 'hoodie_classic_indigo' },
+    chair: { itemId: 'chair_basic_slate' },
+    keyboard: { itemId: 'kb_membrane' },
+    mouse: { itemId: 'mouse_stock' },
+    beverage: { itemId: 'bev_mug' },
+    plant: { itemId: 'plant_none' },
+    wall: { itemId: 'wall_bare' },
+    buddy: { itemId: 'buddy_none' },
+    monitor: { itemId: 'monitor_slate' }
   },
   ownedItems: [
-    'hoodie_classic', 'chair_basic', 'kb_membrane', 'mouse_stock',
-    'bev_mug', 'plant_none', 'wall_bare', 'buddy_none'
+    'hoodie_classic_indigo', 'chair_basic_slate', 'kb_membrane', 'mouse_stock',
+    'bev_mug', 'plant_none', 'wall_bare', 'buddy_none', 'monitor_slate'
   ],
-  ownedTints: [],
   config: { name: '' },
   onboarding: true
 };

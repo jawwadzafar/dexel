@@ -56,11 +56,11 @@ const (
 // actionBuyAndEquip is the STORE-REDESIGN one-click action's wire literal
 // (docs/plan/ROADMAP.md §STORE-REDESIGN): the card-grid store sends this
 // single action for every purchase/equip interaction instead of chaining
-// BUY_ITEM/BUY_TINT then EQUIP_ITEM across the 1Hz broadcast. It maps to
-// game.Game.BuyAndEquip, which buys the item and/or tint (if not already
-// owned) and equips it as one atomic transaction — validated and refused
-// as a unit, never half-applied. Named once here for the same
-// drift-prevention reason every other literal above is.
+// BUY_ITEM then EQUIP_ITEM across the 1Hz broadcast. It maps to
+// game.Game.BuyAndEquip, which buys the item (if not already owned) and
+// equips it as one atomic transaction — validated and refused as a unit,
+// never half-applied (item-only since STORE-2.0). Named once here for the
+// same drift-prevention reason every other literal above is.
 const actionBuyAndEquip = "BUY_AND_EQUIP"
 
 // applyAction runs one client action against g and reports whether state
@@ -86,43 +86,24 @@ func applyAction(g *game.Game, msg actionMessage, connID uint64) (mutated bool, 
 		slot, _ := g.SlotByID(item.Slot)
 		return true, &flashMessage{Type: "flash", Kind: "purchase", Text: fmt.Sprintf("%s %s!", item.Name, strings.ToLower(slot.Name))}
 
-	case "BUY_TINT":
-		if err := g.BuyTint(msg.ItemID, msg.TintID); err != nil {
-			return false, errFlash(err)
-		}
-		item, _ := g.ItemByID(msg.ItemID)
-		tint, _ := g.TintByID(msg.TintID)
-		slot, _ := g.SlotByID(item.Slot)
-		return true, &flashMessage{Type: "flash", Kind: "purchase", Text: fmt.Sprintf("%s %s!", tint.Name, strings.ToLower(slot.Name))}
-
 	case "EQUIP_ITEM":
-		var tintPtr *string
-		if msg.TintID != "" {
-			tintPtr = &msg.TintID
-		}
-		if err := g.EquipItem(msg.Slot, msg.ItemID, tintPtr); err != nil {
+		if err := g.EquipItem(msg.Slot, msg.ItemID); err != nil {
 			return false, errFlash(err)
 		}
 		item, _ := g.ItemByID(msg.ItemID)
 		return true, &flashMessage{Type: "flash", Kind: "equip", Text: fmt.Sprintf("Equipped %s!", item.Name)}
 
 	case actionBuyAndEquip:
-		// STORE-REDESIGN (docs/plan/ROADMAP.md §STORE-REDESIGN). The
-		// one-click card store's combined action: buy the item and/or its
-		// tint if not yet owned, then equip, ALL atomically inside
-		// game.Game.BuyAndEquip (which validates unknown-item/slot/tint,
-		// the level gate and the COMBINED cost before mutating anything, so
-		// a refusal is never a half-applied purchase). The flash is a plain
-		// equip toast: the user-visible outcome is "it is now equipped",
-		// and any coins spent show in the HUD balance — content-free, a
-		// command not user data. tintPtr mirrors EQUIP_ITEM's handling:
-		// an empty TintID becomes nil (a non-tintable slot), which
-		// BuyAndEquip treats as "no tint required".
-		var tintPtr *string
-		if msg.TintID != "" {
-			tintPtr = &msg.TintID
-		}
-		if err := g.BuyAndEquip(msg.Slot, msg.ItemID, tintPtr); err != nil {
+		// STORE-REDESIGN (docs/plan/ROADMAP.md §STORE-REDESIGN), item-only
+		// since STORE-2.0. The one-click card store's combined action: buy
+		// the item if not yet owned, then equip, ALL atomically inside
+		// game.Game.BuyAndEquip (which validates unknown-item/slot, the
+		// level gate and the cost before mutating anything, so a refusal is
+		// never a half-applied purchase). The flash is a plain equip toast:
+		// the user-visible outcome is "it is now equipped", and any coins
+		// spent show in the HUD balance — content-free, a command not user
+		// data.
+		if err := g.BuyAndEquip(msg.Slot, msg.ItemID); err != nil {
 			return false, errFlash(err)
 		}
 		item, _ := g.ItemByID(msg.ItemID)

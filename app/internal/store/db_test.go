@@ -22,14 +22,10 @@ func TestDBSaveLoadRoundTrip(t *testing.T) {
 	g := game.New()
 	g.DevCash = 4000
 	g.XP = 900
-	if err := g.BuyItem("chair_racer"); err != nil {
+	if err := g.BuyItem("chair_racer_ember"); err != nil {
 		t.Fatalf("BuyItem: %v", err)
 	}
-	if err := g.BuyTint("chair_racer", "neon"); err != nil {
-		t.Fatalf("BuyTint: %v", err)
-	}
-	neon := "neon"
-	if err := g.EquipItem("chair", "chair_racer", &neon); err != nil {
+	if err := g.EquipItem("chair", "chair_racer_ember"); err != nil {
 		t.Fatalf("EquipItem: %v", err)
 	}
 	g.RestoreSprint(2, 30.5)
@@ -57,8 +53,8 @@ func TestDBSaveLoadRoundTrip(t *testing.T) {
 	if g2.DevCash != want.DevCash {
 		t.Errorf("after Apply: DevCash = %d, want %d", g2.DevCash, want.DevCash)
 	}
-	if !g2.OwnedItems["chair_racer"] {
-		t.Error("after Apply: chair_racer not owned")
+	if !g2.OwnedItems["chair_racer_ember"] {
+		t.Error("after Apply: chair_racer_ember not owned")
 	}
 }
 
@@ -562,7 +558,7 @@ func TestMacPreimageIsByteIdenticalToTheJSONEraPreimage(t *testing.T) {
 		DevCash:    12345,
 		XP:         678,
 		Sprint:     SprintSave{Index: 2, UnitsDone: 30.5},
-		OwnedItems: []string{"chair_basic", "chair_racer"},
+		OwnedItems: []string{"chair_basic_slate", "chair_racer_ember"},
 		Mac:        "this-must-be-zeroed-before-hashing",
 	}
 
@@ -592,10 +588,9 @@ func TestSaveIsDeterministicForLogicallyEqualState(t *testing.T) {
 		DevCash:    500,
 		XP:         200,
 		Sprint:     SprintSave{Index: 1, UnitsDone: 10.25},
-		OwnedItems: []string{"chair_basic", "chair_racer"},
-		OwnedTints: []string{"chair_racer:neon"},
+		OwnedItems: []string{"chair_basic_slate", "chair_racer_ember"},
 		Equipped: map[string]EquippedSave{
-			"chair": {ItemID: "chair_racer", TintID: strp("neon")},
+			"chair": {ItemID: "chair_racer_ember"},
 		},
 	}
 

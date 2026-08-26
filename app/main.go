@@ -725,7 +725,7 @@ func runServe(mode serveMode, args []string) {
 				reward := g.DevCash - prevCash
 				hub.broadcastFlash(flashMessage{
 					Type: "flash", Kind: "sprint",
-					Text: fmt.Sprintf("%s complete! +%d Dev Cash", prevSprintName, reward),
+					Text: fmt.Sprintf("%s complete! +%d Cash", prevSprintName, reward),
 				})
 			}
 			// P2 (docs/plan/P2-design.md §2.2's pending-record seam):

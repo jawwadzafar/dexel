@@ -133,10 +133,10 @@
     <!-- STORE-REDESIGN (docs/plan/ROADMAP.md §STORE-REDESIGN): a direct
          card grid with one-click buy+equip. The list+preview split is gone
          — every item IS a card (its own art thumbnail), grouped under a
-         slot header, with the price in the top-right corner and, on
-         tintable slots, a row of colour swatches. features/store-modal.ts
-         builds every child of #store-grid; #store-scroll is its custom
-         scroll thumb. -->
+         slot header, with the price in the top-right corner. STORE-2.0 groups them under
+         a tab per slot (#store-tabs) instead of one long cross-slot scroll.
+         features/store-modal.ts builds the tabs and #store-grid; #store-scroll
+         is its custom scroll thumb. -->
     <dialog id="store" class="nes-dialog is-dark">
       <div id="store-title">DEV STORE &amp; CUSTOMIZATION</div>
       <button id="store-close" class="nes-btn">X</button>
@@ -144,6 +144,11 @@
            across the app. Not clickable here (no #hud-coin id) — the store's
            coin is a label, not a toy. -->
       <div id="store-cash"><span class="label">CASH: </span><img class="coin-img" src="/assets/coin.png" alt="" draggable="false"><span class="value">0</span></div>
+
+      <!-- STORE-2.0: a tab per slot (Hoodie/Chair/Keyboard/Mouse/Beverage/
+           Plant/Wall/Buddy/Monitor). features/store-modal.ts builds the tab
+           buttons and swaps #store-grid to the active slot's cards. -->
+      <div id="store-tabs"></div>
 
       <div id="store-grid"></div>
 
@@ -378,7 +383,6 @@
       <div class="onboarding-hello" id="onboarding-hello-2">and slowly gets better dressed.</div>
 
       <div id="onboarding-preview"></div>
-      <div id="onboarding-tint-name"></div>
 
       <!-- 12, for the same reason #settings-name is 12: the status line is
            composed around this name inside a 34-character budget and drops
@@ -388,9 +392,6 @@
       <input id="onboarding-name" type="text" maxlength="12" autocomplete="off"
              spellcheck="false" placeholder="dexel" aria-describedby="onboarding-help">
 
-      <div id="onboarding-colour-label">STARTER COLOUR</div>
-      <div id="onboarding-swatches"></div>
-      <div id="onboarding-colour-hint"></div>
 
       <button id="onboarding-confirm" class="nes-btn">SAY HELLO</button>
       <button id="onboarding-skip" class="nes-btn">SKIP</button>

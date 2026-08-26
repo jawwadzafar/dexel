@@ -9,33 +9,27 @@ import (
 	"github.com/jawwadzafar/dexel/app/internal/engine"
 )
 
-// TestCatalogIntegrity guards the transcribed table itself against the
-// invariants docs/upgrade-design.md states explicitly: 8 slots, 4 items
-// each (32 total), every slot has exactly one free (price-0) tier-0 item,
-// exactly the 3 "nothing" items have no sprite, exactly hoodie+chair items
-// carry a defaultTint, and every id/slot/tint reference resolves.
+// TestCatalogIntegrity guards the catalog against the structural invariants
+// that survive STORE-2.0: 9 slots, every slot has at least one item and
+// exactly one free (price-0) tier-0 item, the three "nothing" items carry no
+// sprite, and every tier-zero mapping resolves. Colours are now ordinary
+// items and the tint system is gone, so the old fixed per-slot count and
+// defaultTint checks are retired.
 func TestCatalogIntegrity(t *testing.T) {
 	slots := DefaultSlots()
-	if len(slots) != 8 {
-		t.Fatalf("got %d slots, want 8", len(slots))
+	if len(slots) != 9 {
+		t.Fatalf("got %d slots, want 9", len(slots))
 	}
 	slotByID := SlotsByID(slots)
-	tints := DefaultTints()
-	if len(tints) != 6 {
-		t.Fatalf("got %d tints, want 6", len(tints))
-	}
-	tintByID := TintsByID(tints)
 
 	items := DefaultCatalog()
-	if len(items) != 32 {
-		t.Fatalf("got %d items, want 32", len(items))
+	if len(items) == 0 {
+		t.Fatal("catalog is empty")
 	}
 
 	seenIDs := map[string]bool{}
 	perSlot := map[string]int{}
 	freeCountPerSlot := map[string]int{}
-	noSpriteCount := 0
-	defaultTintCount := 0
 
 	for _, it := range items {
 		if it.ID == "" {
@@ -46,8 +40,7 @@ func TestCatalogIntegrity(t *testing.T) {
 		}
 		seenIDs[it.ID] = true
 
-		slot, ok := slotByID[it.Slot]
-		if !ok {
+		if _, ok := slotByID[it.Slot]; !ok {
 			t.Errorf("item %q references unknown slot %q", it.ID, it.Slot)
 			continue
 		}
@@ -56,37 +49,18 @@ func TestCatalogIntegrity(t *testing.T) {
 			freeCountPerSlot[it.Slot]++
 		}
 
-		if it.Sprite == nil {
-			noSpriteCount++
-			if it.Detail != nil || it.Thumb != nil {
-				t.Errorf("item %q has no sprite but a non-nil detail/thumb", it.ID)
-			}
-		}
-
-		if slot.Tintable {
-			if it.DefaultTint == nil {
-				t.Errorf("tintable slot %q item %q has no DefaultTint", it.Slot, it.ID)
-			} else {
-				defaultTintCount++
-				if _, ok := tintByID[*it.DefaultTint]; !ok {
-					t.Errorf("item %q defaultTint %q is not a known tint", it.ID, *it.DefaultTint)
-				}
-			}
-		} else if it.DefaultTint != nil {
-			t.Errorf("non-tintable slot %q item %q unexpectedly has a DefaultTint", it.Slot, it.ID)
+		if it.Sprite == nil && it.Thumb != nil {
+			t.Errorf("item %q has no sprite but a non-nil thumb", it.ID)
 		}
 	}
 
 	for _, slot := range slots {
-		if perSlot[slot.ID] != 4 {
-			t.Errorf("slot %q has %d items, want 4", slot.ID, perSlot[slot.ID])
+		if perSlot[slot.ID] < 1 {
+			t.Errorf("slot %q has no items", slot.ID)
 		}
 		if freeCountPerSlot[slot.ID] != 1 {
 			t.Errorf("slot %q has %d free (price 0) items, want exactly 1", slot.ID, freeCountPerSlot[slot.ID])
 		}
-	}
-	if noSpriteCount != 3 {
-		t.Errorf("got %d no-sprite items, want exactly 3 (plant_none, wall_bare, buddy_none)", noSpriteCount)
 	}
 	for _, id := range []string{"plant_none", "wall_bare", "buddy_none"} {
 		it, ok := ByID(items)[id]
@@ -97,9 +71,6 @@ func TestCatalogIntegrity(t *testing.T) {
 		if it.Sprite != nil {
 			t.Errorf("nothing-item %q unexpectedly has a sprite", id)
 		}
-	}
-	if defaultTintCount != 8 {
-		t.Errorf("got %d items with a defaultTint, want 8 (4 hoodie + 4 chair)", defaultTintCount)
 	}
 
 	// Every tier-zero mapping must point at a real, free, correctly-slotted item.
@@ -133,12 +104,6 @@ func TestNewGameOwnsAndEquipsEveryTierZeroItem(t *testing.T) {
 		if ref.ItemID != id {
 			t.Errorf("slot %q equipped %q, want tier-0 %q", slot.ID, ref.ItemID, id)
 		}
-		if slot.Tintable && ref.TintID == nil {
-			t.Errorf("tintable slot %q equipped with a nil tint", slot.ID)
-		}
-		if !slot.Tintable && ref.TintID != nil {
-			t.Errorf("non-tintable slot %q equipped with a non-nil tint", slot.ID)
-		}
 	}
 }
 
@@ -146,16 +111,16 @@ func TestBuyItemSpendsAndOwns(t *testing.T) {
 	g := New()
 	g.DevCash = 1000
 	g.XP = 5000 // LV10: unlock every level-gated item; this test exercises funds/ownership, not the level gate
-	if err := g.BuyItem("chair_racer"); err != nil {
+	if err := g.BuyItem("chair_racer_ember"); err != nil {
 		t.Fatalf("BuyItem: %v", err)
 	}
-	if !g.OwnedItems["chair_racer"] {
-		t.Error("chair_racer not marked owned after purchase")
+	if !g.OwnedItems["chair_racer_ember"] {
+		t.Error("chair_racer_ember not marked owned after purchase")
 	}
 	if g.DevCash != 900 {
 		t.Errorf("DevCash = %d, want 900", g.DevCash)
 	}
-	if err := g.BuyItem("chair_racer"); !errors.Is(err, ErrAlreadyOwned) {
+	if err := g.BuyItem("chair_racer_ember"); !errors.Is(err, ErrAlreadyOwned) {
 		t.Errorf("BuyItem again: got %v, want ErrAlreadyOwned", err)
 	}
 }
@@ -163,10 +128,10 @@ func TestBuyItemSpendsAndOwns(t *testing.T) {
 func TestBuyItemRejectsInsufficientFundsAndUnknownID(t *testing.T) {
 	g := New()
 	g.XP = 5000 // LV10 so the level gate passes and the funds check is what refuses (DevCash stays 0)
-	if err := g.BuyItem("chair_racer"); !errors.Is(err, ErrInsufficientFunds) {
+	if err := g.BuyItem("chair_racer_ember"); !errors.Is(err, ErrInsufficientFunds) {
 		t.Errorf("got %v, want ErrInsufficientFunds", err)
 	}
-	if g.OwnedItems["chair_racer"] {
+	if g.OwnedItems["chair_racer_ember"] {
 		t.Error("item should not be owned after a failed purchase")
 	}
 	if err := g.BuyItem("does_not_exist"); !errors.Is(err, ErrUnknownItem) {
@@ -174,92 +139,44 @@ func TestBuyItemRejectsInsufficientFundsAndUnknownID(t *testing.T) {
 	}
 }
 
-func TestDefaultTintIsFreeOnOwnershipButExtraTintsCostMoney(t *testing.T) {
+func TestEquipRequiresOwnershipAndCorrectSlot(t *testing.T) {
 	g := New()
 	g.DevCash = 1000
-	g.XP = 5000 // LV10: unlock chair_racer so this tint test isn't blocked by the level gate
-	if err := g.BuyItem("chair_racer"); err != nil {
-		t.Fatalf("BuyItem: %v", err)
-	}
-	if !g.IsTintOwned("chair_racer", "ember") {
-		t.Error("chair_racer's default tint (ember) should be owned for free the moment the item is")
-	}
-	if g.IsTintOwned("chair_racer", "neon") {
-		t.Error("a non-default tint should not be owned before BuyTint")
-	}
-	before := g.DevCash
-	if err := g.BuyTint("chair_racer", "neon"); err != nil {
-		t.Fatalf("BuyTint: %v", err)
-	}
-	if g.DevCash != before-40 {
-		t.Errorf("DevCash = %d, want %d (tint costs 40)", g.DevCash, before-40)
-	}
-	if !g.IsTintOwned("chair_racer", "neon") {
-		t.Error("neon should be owned after BuyTint")
-	}
-	if err := g.BuyTint("chair_racer", "neon"); !errors.Is(err, ErrAlreadyOwned) {
-		t.Errorf("buying the same tint twice: got %v, want ErrAlreadyOwned", err)
-	}
-	if err := g.BuyTint("chair_racer", "ember"); !errors.Is(err, ErrAlreadyOwned) {
-		t.Errorf("buying the already-free default tint: got %v, want ErrAlreadyOwned", err)
-	}
-}
+	g.XP = 5000 // LV10: unlock chair_racer_ember so BuyItem below succeeds regardless of the level gate
 
-func TestBuyTintRejectsUnownedItemAndNonTintableSlot(t *testing.T) {
-	g := New()
-	g.DevCash = 1000
-	if err := g.BuyTint("chair_racer", "neon"); !errors.Is(err, ErrNotOwned) {
-		t.Errorf("got %v, want ErrNotOwned", err)
-	}
-	if err := g.BuyTint("kb_mech", "neon"); !errors.Is(err, ErrNotTintable) {
-		t.Errorf("got %v, want ErrNotTintable", err)
-	}
-}
-
-func TestEquipRequiresOwnershipAndCorrectSlotAndTint(t *testing.T) {
-	g := New()
-	g.DevCash = 1000
-	g.XP = 5000 // LV10: unlock chair_racer so BuyItem below succeeds regardless of the level gate
-
-	if err := g.EquipItem("chair", "chair_racer", strp("ember")); !errors.Is(err, ErrNotOwned) {
+	if err := g.EquipItem("chair", "chair_racer_ember"); !errors.Is(err, ErrNotOwned) {
 		t.Errorf("equipping unowned item: got %v, want ErrNotOwned", err)
 	}
-	if err := g.BuyItem("chair_racer"); err != nil {
+	if err := g.BuyItem("chair_racer_ember"); err != nil {
 		t.Fatalf("BuyItem: %v", err)
 	}
-	if err := g.EquipItem("hoodie", "chair_racer", strp("ember")); !errors.Is(err, ErrSlotMismatch) {
+	if err := g.EquipItem("hoodie", "chair_racer_ember"); !errors.Is(err, ErrSlotMismatch) {
 		t.Errorf("equipping into the wrong slot: got %v, want ErrSlotMismatch", err)
 	}
-	if err := g.EquipItem("chair", "chair_racer", strp("neon")); !errors.Is(err, ErrNotOwned) {
-		t.Errorf("equipping an unowned tint: got %v, want ErrNotOwned", err)
+	if err := g.EquipItem("chair", "chair_racer_ember"); err != nil {
+		t.Fatalf("EquipItem: %v", err)
 	}
-	if err := g.EquipItem("chair", "chair_racer", nil); !errors.Is(err, ErrUnknownTint) {
-		t.Errorf("equipping a tintable slot with no tint: got %v, want ErrUnknownTint", err)
-	}
-	if err := g.EquipItem("chair", "chair_racer", strp("ember")); err != nil {
-		t.Fatalf("EquipItem with the default (free) tint: %v", err)
-	}
-	if g.Equipped["chair"].ItemID != "chair_racer" || *g.Equipped["chair"].TintID != "ember" {
-		t.Errorf("Equipped[chair] = %+v, want chair_racer/ember", g.Equipped["chair"])
+	if g.Equipped["chair"].ItemID != "chair_racer_ember" {
+		t.Errorf("Equipped[chair] = %+v, want chair_racer_ember", g.Equipped["chair"])
 	}
 }
 
 func TestEquipOneWinsPerSlot(t *testing.T) {
 	g := New()
 	g.DevCash = 1000
-	g.XP = 5000 // LV10: unlock hoodie_zip so this equip test isn't blocked by the level gate
-	_ = g.BuyItem("hoodie_zip")
-	_ = g.EquipItem("hoodie", "hoodie_zip", strp("slate"))
-	if g.Equipped["hoodie"].ItemID != "hoodie_zip" {
-		t.Fatalf("Equipped[hoodie] = %+v, want hoodie_zip", g.Equipped["hoodie"])
+	g.XP = 5000 // LV10: unlock hoodie_zip_slate so this equip test isn't blocked by the level gate
+	_ = g.BuyItem("hoodie_zip_slate")
+	_ = g.EquipItem("hoodie", "hoodie_zip_slate")
+	if g.Equipped["hoodie"].ItemID != "hoodie_zip_slate" {
+		t.Fatalf("Equipped[hoodie] = %+v, want hoodie_zip_slate", g.Equipped["hoodie"])
 	}
-	if !g.OwnedItems["hoodie_classic"] {
-		t.Error("equipping hoodie_zip should not un-own the tier-0 hoodie_classic")
+	if !g.OwnedItems["hoodie_classic_indigo"] {
+		t.Error("equipping hoodie_zip_slate should not un-own the tier-0 hoodie_classic_indigo")
 	}
 	// Switch back — own-many, equip-one: nothing was destroyed.
-	_ = g.EquipItem("hoodie", "hoodie_classic", strp("indigo"))
-	if g.Equipped["hoodie"].ItemID != "hoodie_classic" {
-		t.Fatalf("Equipped[hoodie] = %+v, want hoodie_classic", g.Equipped["hoodie"])
+	_ = g.EquipItem("hoodie", "hoodie_classic_indigo")
+	if g.Equipped["hoodie"].ItemID != "hoodie_classic_indigo" {
+		t.Fatalf("Equipped[hoodie] = %+v, want hoodie_classic_indigo", g.Equipped["hoodie"])
 	}
 }
 
@@ -272,7 +189,7 @@ func TestBuyAndEquipBuysAndEquipsInOneCall(t *testing.T) {
 	g := New()
 	g.DevCash = 1000
 	g.XP = 5000 // LV10 so no level gate interferes with this funds/equip path
-	if err := g.BuyAndEquip("keyboard", "kb_mech", nil); err != nil {
+	if err := g.BuyAndEquip("keyboard", "kb_mech"); err != nil {
 		t.Fatalf("BuyAndEquip(kb_mech): %v", err)
 	}
 	if !g.OwnedItems["kb_mech"] {
@@ -286,7 +203,7 @@ func TestBuyAndEquipBuysAndEquipsInOneCall(t *testing.T) {
 	}
 	// A second click on the now-owned+equipped item is a harmless no-op:
 	// nothing more is charged.
-	if err := g.BuyAndEquip("keyboard", "kb_mech", nil); err != nil {
+	if err := g.BuyAndEquip("keyboard", "kb_mech"); err != nil {
 		t.Fatalf("re-BuyAndEquip(kb_mech): %v", err)
 	}
 	if g.DevCash != 940 {
@@ -294,67 +211,33 @@ func TestBuyAndEquipBuysAndEquipsInOneCall(t *testing.T) {
 	}
 }
 
-func TestBuyAndEquipTintableChargesItemPlusTintOnce(t *testing.T) {
-	// Tintable slot with a NON-default tint the player owns neither the
-	// item nor the tint for: the combined cost is item + tint, charged as
-	// one unit, and both end up owned and equipped.
-	g := New()
-	g.DevCash = 1000
-	g.XP = 5000
-	if err := g.BuyAndEquip("chair", "chair_racer", strp("neon")); err != nil {
-		t.Fatalf("BuyAndEquip(chair_racer/neon): %v", err)
-	}
-	if !g.OwnedItems["chair_racer"] || !g.IsTintOwned("chair_racer", "neon") {
-		t.Error("chair_racer and its neon tint should both be owned")
-	}
-	eq := g.Equipped["chair"]
-	if eq.ItemID != "chair_racer" || eq.TintID == nil || *eq.TintID != "neon" {
-		t.Errorf("Equipped[chair] = %+v, want chair_racer/neon", eq)
-	}
-	if g.DevCash != 860 { // chair_racer 100 + neon tint 40 = 140
-		t.Errorf("DevCash = %d, want 860 (item 100 + tint 40, charged once)", g.DevCash)
-	}
-	// Buying the same item with its DEFAULT (free) tint charges nothing
-	// extra — a fresh game proves the default tint is free-on-ownership.
-	g2 := New()
-	g2.DevCash = 1000
-	g2.XP = 5000
-	if err := g2.BuyAndEquip("chair", "chair_racer", strp("ember")); err != nil { // ember is chair_racer's default
-		t.Fatalf("BuyAndEquip(chair_racer/ember): %v", err)
-	}
-	if g2.DevCash != 900 { // only the item's 100, default tint free
-		t.Errorf("DevCash = %d, want 900 (item 100, default tint free)", g2.DevCash)
-	}
-}
-
 func TestBuyAndEquipIsAtomicOnRefusal(t *testing.T) {
-	// Combined cost exceeds funds: nothing is bought, nothing equipped —
-	// no half-applied purchase (item bought, tint refused).
+	// Cost exceeds funds: nothing is bought, nothing equipped, nothing spent.
 	g := New()
-	g.DevCash = 100 // enough for chair_racer (100) but NOT for +neon tint (40)
+	g.DevCash = 50 // NOT enough for chair_racer_ember (100)
 	g.XP = 5000
-	err := g.BuyAndEquip("chair", "chair_racer", strp("neon"))
+	err := g.BuyAndEquip("chair", "chair_racer_ember")
 	if !errors.Is(err, ErrInsufficientFunds) {
 		t.Fatalf("got %v, want ErrInsufficientFunds", err)
 	}
-	if g.OwnedItems["chair_racer"] || g.IsTintOwned("chair_racer", "neon") {
-		t.Error("a refused combined buy must own NOTHING (no half-applied purchase)")
+	if g.OwnedItems["chair_racer_ember"] {
+		t.Error("a refused buy must own NOTHING")
 	}
-	if g.DevCash != 100 {
-		t.Errorf("DevCash = %d, want 100 (untouched on refusal)", g.DevCash)
+	if g.DevCash != 50 {
+		t.Errorf("DevCash = %d, want 50 (untouched on refusal)", g.DevCash)
 	}
-	if g.Equipped["chair"].ItemID == "chair_racer" {
+	if g.Equipped["chair"].ItemID == "chair_racer_ember" {
 		t.Error("a refused buy must not equip the item")
 	}
 
 	// Level gate wins over affordability and mutates nothing.
 	g2 := New()
 	g2.DevCash = 100000 // rich, but...
-	g2.XP = 0           // ...LV1, below chair_racer's gate
-	if err := g2.BuyAndEquip("chair", "chair_racer", strp("ember")); !errors.Is(err, ErrLevelLocked) {
+	g2.XP = 0           // ...LV1, below chair_racer_ember's LV3 gate
+	if err := g2.BuyAndEquip("chair", "chair_racer_ember"); !errors.Is(err, ErrLevelLocked) {
 		t.Fatalf("got %v, want ErrLevelLocked", err)
 	}
-	if g2.OwnedItems["chair_racer"] || g2.DevCash != 100000 {
+	if g2.OwnedItems["chair_racer_ember"] || g2.DevCash != 100000 {
 		t.Error("a level-locked buy must own nothing and spend nothing")
 	}
 }
@@ -468,8 +351,8 @@ func TestStateActivityLineIsHonestAndScreenLinesAlwaysElevenTickerAlwaysThree(t 
 	if len(s.TickerLines) != 3 {
 		t.Errorf("len(TickerLines) = %d, want 3", len(s.TickerLines))
 	}
-	if len(s.Equipped) != 8 {
-		t.Errorf("len(Equipped) = %d, want 8 (every slot, always)", len(s.Equipped))
+	if len(s.Equipped) != 9 {
+		t.Errorf("len(Equipped) = %d, want 9 (every slot, always)", len(s.Equipped))
 	}
 }
 

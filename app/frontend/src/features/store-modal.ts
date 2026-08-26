@@ -1,30 +1,40 @@
 // FEATURE/LOGIC layer — the store modal (ui-spec.md §4, redesigned per
-// docs/plan/ROADMAP.md §STORE-REDESIGN). Owns every DOM node under #store
-// and its own UI-selection state (storeUI). It is the only module that
-// sends BUY_AND_EQUIP / STORE_OPEN / STORE_CLOSE.
+// docs/plan/ROADMAP.md §STORE-2.0). Owns every DOM node under #store and its
+// own UI-selection state (storeUI). It is the only module that sends
+// BUY_AND_EQUIP / STORE_OPEN / STORE_CLOSE.
 //
-// STORE-REDESIGN: the old list+preview split is gone. The store is now a
-// single scrollable GRID of cards, grouped by slot (a slot header, then
-// that slot's item cards). Each card IS its own preview (the item art
-// thumbnail), shows the item name and the PRICE in the top-right corner,
-// and — on tintable slots (hoodie, chair) — a row of colour swatches.
+// STORE-2.0: the runtime tint SYSTEM is gone and colours are ordinary items.
+// The store is now a TAB per slot (Hoodie / Chair / Keyboard / Mouse /
+// Beverage / Plant / Wall / Buddy / Monitor); each tab shows that slot's
+// colour-item / style cards, so the old single long cross-slot scroll is
+// replaced by a short per-slot grid. Each card IS its own preview (the item's
+// art thumbnail — tinted from the item id for the colour slots, a flat image
+// otherwise), shows the item name and the PRICE in the top-right corner. There
+// are NO swatches: each colour is its own card.
 //
-// ONE CLICK = BUY + EQUIP. Clicking a card sends a single BUY_AND_EQUIP
-// action; the server buys the item and/or tint if not yet owned and equips
+// ONE CLICK = BUY + EQUIP. Clicking a card sends a single item-only
+// BUY_AND_EQUIP action; the server buys the item if not yet owned and equips
 // it atomically (app/actions.go -> game.BuyAndEquip), so the client never
 // chains BUY then EQUIP across the 1Hz broadcast and can never leave a
-// half-applied purchase. The client renders state FROM the server
-// broadcast (render-from-server-state); it never asserts ownership the
-// server did not send.
+// half-applied purchase. The client renders state FROM the server broadcast
+// (render-from-server-state); it never asserts ownership the server did not
+// send. LEVEL-GATING is preserved: an unowned item whose catalog minLevel
+// exceeds the player's level is padlocked ("LV n"), not buyable at any price.
 import { byId, spriteImg } from '../dom';
 import * as store from '../state/store';
 import { sendAction, setStoreOpenHoldDesired } from '../state/ws-client';
 import { assetUrl } from '../assets';
 import { clamp, fmtInt } from '../format';
-import { buildTintLayer, swatchColor } from '../render/tint';
+import { buildTintLayer } from '../render/tint';
+import {
+  MONITOR_THUMB_FILE, chairThumbDetailFile, chairThumbFormFile, colourHexForItem,
+  hoodieThumbDetailFile, hoodieThumbFormFile, isColourSlot
+} from '../colours';
 import { flashInsufficientFunds } from '../render/flash';
 import { enableClickAwayDismiss } from './modal-dismiss';
 import type { CatalogItem, CatalogSlot } from '../wire';
+
+const CARDS_PER_ROW = 3;
 
 const el = {
   store: byId<HTMLDialogElement>('store'),
@@ -32,6 +42,7 @@ const el = {
   storeClose: byId<HTMLButtonElement>('store-close'),
   scrim: byId<HTMLDivElement>('scrim'),
   storeCash: byId('store-cash').querySelector('.value') as HTMLElement,
+  tabs: byId<HTMLDivElement>('store-tabs'),
   grid: byId<HTMLDivElement>('store-grid'),
   scrollTrack: byId<HTMLDivElement>('store-scroll'),
   scrollThumb: document.querySelector('#store-scroll .thumb-bar') as HTMLElement
@@ -39,49 +50,34 @@ const el = {
 
 interface StoreUI {
   initialized: boolean;
-  cardIndex: number; // keyboard selection over the FLAT card list
-  selectedTintByItem: Record<string, string>;
+  activeSlot: string;   // which tab is showing
+  cardIndex: number;    // keyboard selection over the active tab's card list
 }
 
 const storeUI: StoreUI = {
   initialized: false,
-  cardIndex: 0,
-  selectedTintByItem: {}
+  activeSlot: '',
+  cardIndex: 0
 };
 
-// The flat card list, in grid order (headers excluded), rebuilt by
-// buildGrid(). Keyboard nav and refresh-in-place both index into this.
+// The active tab's flat card list, in grid order, rebuilt by buildGrid().
+// Keyboard nav and refresh-in-place both index into this.
 interface CardEntry {
   el: HTMLDivElement;
   slot: CatalogSlot;
   item: CatalogItem;
 }
 let cards: CardEntry[] = [];
+const tabButtons: Record<string, HTMLButtonElement> = {};
 
 export function isOpen(): boolean { return el.store.open; }
 
-// The tint a tintable card currently shows: an explicit swatch pick wins,
-// else the tint this item is equipped with (if it is), else the item's
-// free default tint.
-function selectedTintFor(item: CatalogItem): string | null {
-  if (Object.prototype.hasOwnProperty.call(storeUI.selectedTintByItem, item.id)) {
-    return storeUI.selectedTintByItem[item.id];
-  }
-  const state = store.getState();
-  const eq = state && state.equipped[item.slot];
-  if (eq && eq.itemId === item.id && eq.tintId) return eq.tintId;
-  return item.defaultTint;
-}
-
 // ---------------------------------------------------------------------
-// Card state (ui-spec.md §4.3 precedence, re-expressed for one-click).
-// LEVEL-GATING is PRESERVED: an unowned item whose catalog minLevel
-// exceeds the player's level is 'locked' — a padlock + "LV n" badge, not
-// buyable at any price (mirrors the server's ErrLevelLocked, checked
-// before affordability). `cost` is the COMBINED price this click would
-// spend (item price if unowned + tint price if a non-owned tint is
-// selected), which is what drives affordability, exactly like the server's
-// BuyAndEquip.
+// Card state (ui-spec.md §4.3 precedence, re-expressed for one-click,
+// item-only). LEVEL-GATING is PRESERVED: an unowned item whose catalog
+// minLevel exceeds the player's level is 'locked' — a padlock + "LV n" badge,
+// not buyable at any price (mirrors the server's ErrLevelLocked, checked
+// before affordability).
 // ---------------------------------------------------------------------
 type CardKind = 'locked' | 'equipped' | 'equip' | 'buy' | 'cant-afford';
 interface CardState {
@@ -91,22 +87,10 @@ interface CardState {
   minLevel: number;
 }
 
-function computeCardState(slot: CatalogSlot, item: CatalogItem, tintId: string | null): CardState {
+function computeCardState(item: CatalogItem): CardState {
   const state = store.getState()!;
   const owned = (state.ownedItems || []).indexOf(item.id) !== -1;
   const minLevel = item.minLevel || 0;
-
-  // Combined cost of the click (what BuyAndEquip would charge).
-  let cost = 0;
-  if (!owned) cost += item.price;
-  let tintOwned = true;
-  if (slot.tintable) {
-    tintOwned = store.isTintOwned(item, tintId);
-    if (!tintOwned) {
-      const tint = store.getTintById(tintId as string);
-      cost += tint ? tint.price : 0;
-    }
-  }
 
   // Level gate wins over everything for an unowned item — non-buyable.
   if (!owned && state.level < minLevel) {
@@ -115,43 +99,72 @@ function computeCardState(slot: CatalogSlot, item: CatalogItem, tintId: string |
 
   const priceText = owned ? 'OWNED' : fmtInt(item.price) + ' ◆';
 
-  // Already wearing exactly this item + tint.
-  const eq = state.equipped[slot.id];
-  const sameEquip = !!eq && eq.itemId === item.id && (!slot.tintable || eq.tintId === tintId);
-  if (sameEquip) return { kind: 'equipped', stateText: '✓ EQUIPPED', priceText, minLevel };
+  // Already wearing exactly this item.
+  const eq = state.equipped[item.slot];
+  if (eq && eq.itemId === item.id) return { kind: 'equipped', stateText: '✓ EQUIPPED', priceText, minLevel };
 
+  const cost = owned ? 0 : item.price;
   // Nothing to buy — just an equip of something already owned.
   if (cost === 0) return { kind: 'equip', stateText: 'EQUIP', priceText, minLevel };
-
   // A purchase is involved: affordable or not.
   if (cost > state.devCash) return { kind: 'cant-afford', stateText: 'NEED ' + fmtInt(cost), priceText, minLevel };
   return { kind: 'buy', stateText: 'BUY + EQUIP', priceText, minLevel };
 }
 
 // ---------------------------------------------------------------------
-// Grid build (grouped by slot: header, then that slot's cards)
+// Tabs (one per slot) + the active tab's card grid
 // ---------------------------------------------------------------------
+function buildTabs(): void {
+  el.tabs.replaceChildren();
+  for (const k of Object.keys(tabButtons)) delete tabButtons[k];
+  const catalog = store.getCatalog();
+  if (!catalog) return;
+  catalog.slots.forEach(function (slot) {
+    const btn = document.createElement('button');
+    btn.className = 'store-tab';
+    btn.type = 'button';
+    btn.textContent = slot.name.toUpperCase();
+    btn.dataset.slot = slot.id;
+    btn.addEventListener('click', function () { setActiveSlot(slot.id); });
+    el.tabs.appendChild(btn);
+    tabButtons[slot.id] = btn;
+  });
+}
+
+function setActiveSlot(slotId: string): void {
+  if (storeUI.activeSlot === slotId) return;
+  storeUI.activeSlot = slotId;
+  storeUI.cardIndex = 0;
+  buildGrid();
+  el.grid.scrollTop = 0;
+  updateScrollThumb();
+}
+
+function updateTabStates(): void {
+  Object.keys(tabButtons).forEach(function (slotId) {
+    tabButtons[slotId].classList.toggle('active', slotId === storeUI.activeSlot);
+  });
+}
+
 export function buildGrid(): void {
   el.grid.innerHTML = '';
   cards = [];
   const catalog = store.getCatalog();
   const state = store.getState();
   if (!catalog || !state) return;
+  if (!storeUI.activeSlot && catalog.slots.length) storeUI.activeSlot = catalog.slots[0].id;
 
-  catalog.slots.forEach(function (slot) {
-    const head = document.createElement('div');
-    head.className = 'slot-head';
-    head.textContent = slot.name.toUpperCase();
-    el.grid.appendChild(head);
+  const slot = catalog.slots.filter(function (s) { return s.id === storeUI.activeSlot; })[0];
+  if (!slot) return;
 
-    store.getCatalogBySlot(slot.id).forEach(function (item) {
-      const card = buildCard(slot, item);
-      el.grid.appendChild(card);
-      cards.push({ el: card, slot: slot, item: item });
-    });
+  store.getCatalogBySlot(slot.id).forEach(function (item) {
+    const card = buildCard(slot, item);
+    el.grid.appendChild(card);
+    cards.push({ el: card, slot: slot, item: item });
   });
 
   if (storeUI.cardIndex >= cards.length) storeUI.cardIndex = 0;
+  updateTabStates();
   refreshCardStates();
   updateScrollThumb();
 }
@@ -175,53 +188,45 @@ function buildCard(slot: CatalogSlot, item: CatalogItem): HTMLDivElement {
   name.textContent = item.name;
   card.appendChild(name);
 
-  if (slot.tintable) {
-    const swatches = document.createElement('div');
-    swatches.className = 'swatches';
-    const catalog = store.getCatalog()!;
-    catalog.tints.forEach(function (tint) {
-      const chip = document.createElement('div');
-      chip.className = 'swatch';
-      chip.style.background = swatchColor(tint.hex);
-      chip.dataset.tint = tint.id;
-      chip.addEventListener('click', function (ev) {
-        ev.stopPropagation(); // a swatch is its own target, never a card click
-        storeUI.selectedTintByItem[item.id] = tint.id;
-        runCardAction(slot, item);
-        refreshCardStates();
-      });
-      swatches.appendChild(chip);
-    });
-    card.appendChild(swatches);
-  }
-
   const band = document.createElement('div');
   band.className = 'state';
   card.appendChild(band);
 
   // The whole card is the buy/equip button (one click = buy AND equip).
-  card.addEventListener('click', function () { runCardAction(slot, item); });
+  card.addEventListener('click', function () { runCardAction(item); });
   card.addEventListener('mouseenter', function () { card.classList.add('hovered'); });
   card.addEventListener('mouseleave', function () { card.classList.remove('hovered'); });
   return card;
 }
 
-// Tintable slots (hoodie, chair) get a live-tinted thumbnail (form layer +
-// detail layer, the art-direction.md tintable-thumbnail rule); the tint
-// follows the selected swatch on refresh. Non-tintable slots get one flat
-// thumb image. A "nothing" item (no sprite) gets an empty box.
+// A colour-slot card (hoodie, chair, monitor) composes the shared grayscale
+// thumbnail form (+ detail, where the style has one) and CSS-tints it with the
+// item's own colour — the same recipe the scene uses, so a card matches what
+// the Dexel will wear. Every other slot names a real, already-coloured
+// thumbnail; a "nothing" item (no thumb) gets an empty box.
 function buildThumb(slot: CatalogSlot, item: CatalogItem): HTMLElement {
-  if (!item.sprite) return document.createElement('span');
-  if (slot.tintable) {
-    const tintId = selectedTintFor(item);
-    const formFile = item.thumbForm || ('thumb_' + item.id + '_form.png');
-    const detailFile = item.thumbDetail || ('thumb_' + item.id + '_detail.png');
-    const wrap = document.createElement('div');
-    wrap.style.position = 'absolute';
-    wrap.style.inset = '0';
-    const tint = buildTintLayer(formFile, store.tintHexFor(tintId));
-    tint.style.left = '0'; tint.style.top = '0'; tint.style.width = '100%'; tint.style.height = '100%';
-    wrap.appendChild(tint);
+  if (isColourSlot(slot.id)) return buildTintedThumb(slot.id, item);
+  if (!item.thumb) return document.createElement('span');
+  const img = spriteImg();
+  img.alt = '';
+  img.src = assetUrl(item.thumb) || '';
+  return img;
+}
+
+function buildTintedThumb(slotId: string, item: CatalogItem): HTMLElement {
+  let formFile: string;
+  let detailFile: string | null = null;
+  if (slotId === 'hoodie') { formFile = hoodieThumbFormFile(item.id); detailFile = hoodieThumbDetailFile(item.id); }
+  else if (slotId === 'chair') { formFile = chairThumbFormFile(item.id); detailFile = chairThumbDetailFile(item.id); }
+  else { formFile = MONITOR_THUMB_FILE; } // monitor: bezel-only, no detail layer
+
+  const wrap = document.createElement('div');
+  wrap.style.position = 'absolute';
+  wrap.style.inset = '0';
+  const tint = buildTintLayer(formFile, colourHexForItem(item.id));
+  tint.style.left = '0'; tint.style.top = '0'; tint.style.width = '100%'; tint.style.height = '100%';
+  wrap.appendChild(tint);
+  if (detailFile) {
     const detail = spriteImg();
     detail.alt = '';
     detail.src = assetUrl(detailFile) || '';
@@ -230,25 +235,20 @@ function buildThumb(slot: CatalogSlot, item: CatalogItem): HTMLElement {
     detail.style.width = '100%';
     detail.style.height = '100%';
     wrap.appendChild(detail);
-    return wrap;
   }
-  const img = spriteImg();
-  img.alt = '';
-  img.src = assetUrl(item.thumb || ('thumb_' + item.id + '.png')) || '';
-  return img;
+  return wrap;
 }
 
-// Refresh every card's state text/classes/swatches in place from the
-// current server state — called on the 1Hz broadcast (refreshIfOpen) and
-// right after any local action, so a card flips to "✓ EQUIPPED" and the
-// cash balance drops as soon as the server confirms the purchase.
+// Refresh every card's state text/classes in place from the current server
+// state — called on the 1Hz broadcast (refreshIfOpen) and right after any
+// local action, so a card flips to "✓ EQUIPPED" and the cash balance drops as
+// soon as the server confirms the purchase.
 export function refreshCardStates(): void {
   const state = store.getState();
   if (!state) return;
   cards.forEach(function (entry, idx) {
-    const { el: card, slot, item } = entry;
-    const tintId = slot.tintable ? selectedTintFor(item) : null;
-    const cs = computeCardState(slot, item, tintId);
+    const { el: card, item } = entry;
+    const cs = computeCardState(item);
 
     card.classList.toggle('equipped', cs.kind === 'equipped');
     card.classList.toggle('cant-afford', cs.kind === 'cant-afford');
@@ -260,21 +260,11 @@ export function refreshCardStates(): void {
     const band = card.querySelector('.state');
     if (band) band.textContent = cs.stateText;
 
-    // Padlock overlay: present only while locked (owner refinement —
-    // the lock is a sibling of .thumb so the thumb's dim never touches it).
+    // Padlock overlay: present only while locked (owner refinement — the
+    // lock is a sibling of .thumb so the thumb's dim never touches it).
     const hasLock = !!card.querySelector('.lock');
     if (cs.kind === 'locked' && !hasLock) card.appendChild(buildLock());
     if (cs.kind !== 'locked' && hasLock) card.querySelector('.lock')!.remove();
-
-    if (slot.tintable) {
-      card.querySelectorAll('.swatch').forEach(function (chip) {
-        const tid = (chip as HTMLElement).dataset.tint || '';
-        chip.classList.toggle('selected', tid === tintId);
-        chip.classList.toggle('unowned', !store.isTintOwned(item, tid));
-      });
-      const tintLayer = card.querySelector('.tintable') as HTMLElement | null;
-      if (tintLayer) tintLayer.style.setProperty('--tint', store.tintHexFor(tintId));
-    }
   });
 }
 
@@ -293,17 +283,16 @@ function buildLock(): HTMLDivElement {
 }
 
 // ---------------------------------------------------------------------
-// The one action: buy AND equip (or just equip) in one click.
+// The one action: buy AND equip (or just equip) in one click. Item-only.
 // ---------------------------------------------------------------------
-function runCardAction(slot: CatalogSlot, item: CatalogItem): void {
-  const tintId = slot.tintable ? selectedTintFor(item) : null;
-  const cs = computeCardState(slot, item, tintId);
+function runCardAction(item: CatalogItem): void {
+  const cs = computeCardState(item);
   switch (cs.kind) {
     case 'buy':
     case 'equip':
-      // ONE action. The server buys the item and/or tint if needed and
-      // equips it atomically — no client-side BUY-then-EQUIP chaining.
-      sendAction({ action: 'BUY_AND_EQUIP', slot: slot.id, itemId: item.id, tintId });
+      // ONE action. The server buys the item if needed and equips it
+      // atomically — no client-side BUY-then-EQUIP chaining, no tint.
+      sendAction({ action: 'BUY_AND_EQUIP', slot: item.slot, itemId: item.id });
       break;
     case 'cant-afford':
       flashInsufficientFunds();
@@ -319,7 +308,7 @@ function runCardAction(slot: CatalogSlot, item: CatalogItem): void {
 // Scroll thumb (native scroll, custom pixel thumb — scrollbar is hidden)
 // ---------------------------------------------------------------------
 function updateScrollThumb(): void {
-  const trackH = 300;
+  const trackH = 264;
   const sh = el.grid.scrollHeight, ch = el.grid.clientHeight, st = el.grid.scrollTop;
   if (sh <= ch) {
     el.scrollThumb.style.height = trackH + 'px';
@@ -338,6 +327,8 @@ el.grid.addEventListener('scroll', updateScrollThumb);
 // ---------------------------------------------------------------------
 function ensureStoreDefaults(): void {
   if (storeUI.initialized) return;
+  const catalog = store.getCatalog();
+  storeUI.activeSlot = catalog && catalog.slots.length ? catalog.slots[0].id : '';
   storeUI.cardIndex = 0;
   storeUI.initialized = true;
 }
@@ -345,6 +336,7 @@ function ensureStoreDefaults(): void {
 export function open(): void {
   if (el.store.open) return;
   ensureStoreDefaults();
+  buildTabs();
   buildGrid();
   updateStoreCash();
   el.store.showModal();
@@ -384,14 +376,13 @@ export function refreshIfOpen(): void {
   updateScrollThumb();
 }
 export function onCatalogChanged(): void {
-  if (el.store.open) buildGrid();
+  if (el.store.open) { buildTabs(); buildGrid(); }
 }
 
 // ---------------------------------------------------------------------
-// Keyboard (ui-spec.md §5.2). Number-key colour picking and the colour-help
-// clutter are gone (STORE-REDESIGN — swatches replace them). What remains:
-// arrows move a linear selection over the flat card list, Enter acts on it,
-// and S / Tab / Esc close.
+// Keyboard (ui-spec.md §5.2). Arrows move a linear selection over the ACTIVE
+// tab's card list; Enter acts on it. Tab-switching is a mouse click (the tab
+// bar) — S / Tab / Esc still close the modal.
 // ---------------------------------------------------------------------
 function moveSelection(delta: number): void {
   if (cards.length === 0) return;
@@ -401,17 +392,27 @@ function moveSelection(delta: number): void {
   if (sel && sel.el.scrollIntoView) sel.el.scrollIntoView({ block: 'nearest' });
   updateScrollThumb();
 }
+function cycleTab(delta: number): void {
+  const catalog = store.getCatalog();
+  if (!catalog || !catalog.slots.length) return;
+  const ids = catalog.slots.map(function (s) { return s.id; });
+  const cur = ids.indexOf(storeUI.activeSlot);
+  const next = clamp((cur < 0 ? 0 : cur) + delta, 0, ids.length - 1);
+  setActiveSlot(ids[next]);
+}
 function runSelectedCardAction(): void {
   const sel = cards[storeUI.cardIndex];
-  if (sel) runCardAction(sel.slot, sel.item);
+  if (sel) runCardAction(sel.item);
 }
 
 export function handleKeydown(e: KeyboardEvent): void {
   switch (e.key) {
-    case 'ArrowUp': e.preventDefault(); moveSelection(-3); break;   // one row up (3/row)
-    case 'ArrowDown': e.preventDefault(); moveSelection(3); break;  // one row down
+    case 'ArrowUp': e.preventDefault(); moveSelection(-CARDS_PER_ROW); break;
+    case 'ArrowDown': e.preventDefault(); moveSelection(CARDS_PER_ROW); break;
     case 'ArrowLeft': e.preventDefault(); moveSelection(-1); break;
     case 'ArrowRight': e.preventDefault(); moveSelection(1); break;
+    case '[': e.preventDefault(); cycleTab(-1); break; // previous tab
+    case ']': e.preventDefault(); cycleTab(1); break;  // next tab
     case 'Enter': runSelectedCardAction(); break;
     case 's': case 'S': close(); break;
     case 'Tab': close(); break; // do not preventDefault: leave native focus cycling alone

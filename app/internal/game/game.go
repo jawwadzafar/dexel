@@ -1,10 +1,13 @@
 // Package game holds the deterministic, persistable game state: mood +
 // activity display, the in-progress sprint, Dev Cash/XP, and the owned/
-// equipped store items and tints. It is pure — no file I/O — so
-// persistence (internal/store) and the server both wrap it without the
-// package needing to know about either. Field names and JSON shapes here
-// implement docs/ui-spec.md's WebSocket contract and
-// docs/upgrade-design.md's model verbatim.
+// equipped store items. It is pure — no file I/O — so persistence
+// (internal/store) and the server both wrap it without the package needing
+// to know about either. Field names and JSON shapes here implement
+// docs/ui-spec.md's WebSocket contract verbatim.
+//
+// STORE-2.0 (docs/plan/ROADMAP.md): the runtime TINT system is gone —
+// colours are ordinary items now (see catalog.go), so equipping is item-only
+// and there is no per-item tint ownership.
 package game
 
 import (
@@ -16,12 +19,12 @@ import (
 	"github.com/jawwadzafar/dexel/app/internal/engine"
 )
 
-// EquippedRef is one slot's equipped item + tint (docs/ui-spec.md §6.1:
-// "equipped has an entry for every slot, always... empty is expressed by
-// the slot's *_none item"). TintID is nil for a non-tintable slot's item.
+// EquippedRef is one slot's equipped item (docs/ui-spec.md §6.1: "equipped
+// has an entry for every slot, always... empty is expressed by the slot's
+// *_none item"). STORE-2.0: equipping is item-only — colours are items now,
+// so there is no tint field.
 type EquippedRef struct {
-	ItemID string  `json:"itemId"`
-	TintID *string `json:"tintId"`
+	ItemID string `json:"itemId"`
 }
 
 // SprintView is the `sprint` object inside a `state` message.
@@ -105,7 +108,6 @@ type StateMessage struct {
 	TickerLines  []string               `json:"tickerLines"`
 	Equipped     map[string]EquippedRef `json:"equipped"`
 	OwnedItems   []string               `json:"ownedItems"`
-	OwnedTints   []string               `json:"ownedTints"`
 	Stats        StatsView              `json:"stats"`
 	// Sessions (Phase P2, docs/plan/P2-design.md §6.1) is the `sessions`
 	// block: the active session (nil when none), the derived summary
@@ -263,7 +265,6 @@ type StatsView struct {
 // owns synchronization.
 type Game struct {
 	itemsByID map[string]CatalogItem
-	tintsByID map[string]Tint
 	slotsByID map[string]Slot
 	slots     []Slot
 
@@ -290,8 +291,7 @@ type Game struct {
 	XP      uint64
 
 	OwnedItems map[string]bool        // item id -> owned
-	OwnedTints map[string]bool        // "<itemId>:<tintId>" -> owned (non-default tints only)
-	Equipped   map[string]EquippedRef // slot -> {itemId, tintId}, always populated
+	Equipped   map[string]EquippedRef // slot -> {itemId}, always populated
 
 	// openStoreConns is the set of connection ids currently holding the
 	// work gate open (docs/ui-spec.md §5.3). Refcounted by connID rather
@@ -474,12 +474,10 @@ func New() *Game {
 	slots := DefaultSlots()
 	g := &Game{
 		itemsByID:   ByID(DefaultCatalog()),
-		tintsByID:   TintsByID(DefaultTints()),
 		slotsByID:   SlotsByID(slots),
 		slots:       slots,
 		Mood:        engine.MoodIdle,
 		OwnedItems:  map[string]bool{},
-		OwnedTints:  map[string]bool{},
 		Equipped:    map[string]EquippedRef{},
 		tickerLines: make([]string, 3),
 		now:         time.Now,
@@ -506,8 +504,7 @@ func (g *Game) GrantTierZeroDefaults() {
 		itemID := tierZeroItemBySlot[slot.ID]
 		g.OwnedItems[itemID] = true
 		if _, equipped := g.Equipped[slot.ID]; !equipped {
-			item := g.itemsByID[itemID]
-			g.Equipped[slot.ID] = EquippedRef{ItemID: itemID, TintID: cloneTintPtr(item.DefaultTint)}
+			g.Equipped[slot.ID] = EquippedRef{ItemID: itemID}
 		}
 	}
 }
@@ -524,11 +521,10 @@ func (g *Game) Catalog() []CatalogItem {
 }
 func (g *Game) Slots() []Slot { return g.slots }
 
-// ItemByID/TintByID/SlotByID are read-only catalog lookups for callers
-// outside this package (internal/store's load validation and legacy
-// import) that need to check an id without duplicating the tables.
+// ItemByID/SlotByID are read-only catalog lookups for callers outside this
+// package (internal/store's load validation) that need to check an id
+// without duplicating the tables.
 func (g *Game) ItemByID(id string) (CatalogItem, bool) { it, ok := g.itemsByID[id]; return it, ok }
-func (g *Game) TintByID(id string) (Tint, bool)        { t, ok := g.tintsByID[id]; return t, ok }
 func (g *Game) SlotByID(id string) (Slot, bool)        { s, ok := g.slotsByID[id]; return s, ok }
 
 // TierZeroItem returns the guaranteed free default item id for a slot, or
@@ -556,47 +552,26 @@ func (g *Game) RestoreSprint(index int, progress float64) {
 	g.Progress = progress
 }
 
-// IsTintOwned reports whether tintID is usable on itemID — either it is
-// that item's implicit free default, or it was bought explicitly.
-func (g *Game) IsTintOwned(itemID, tintID string) bool {
-	item, ok := g.itemsByID[itemID]
-	if ok && item.DefaultTint != nil && *item.DefaultTint == tintID {
-		return true
-	}
-	return g.OwnedTints[ownedTintKey(itemID, tintID)]
-}
-
-func ownedTintKey(itemID, tintID string) string { return itemID + ":" + tintID }
-
-// SetEquipped directly sets a slot's equipped ref, bypassing ownership
+// SetEquipped directly sets a slot's equipped item, bypassing ownership
 // validation — used only by internal/store, which has already validated
-// (or corrected) the item/tint per docs/upgrade-design.md's load rules.
-func (g *Game) SetEquipped(slot, itemID string, tintID *string) {
-	g.Equipped[slot] = EquippedRef{ItemID: itemID, TintID: cloneTintPtr(tintID)}
-}
-
-func cloneTintPtr(p *string) *string {
-	if p == nil {
-		return nil
-	}
-	v := *p
-	return &v
+// (or corrected) the item per docs/upgrade-design.md's load rules.
+func (g *Game) SetEquipped(slot, itemID string) {
+	g.Equipped[slot] = EquippedRef{ItemID: itemID}
 }
 
 // --- Action errors -----------------------------------------------------
 //
-// Every BUY_ITEM/BUY_TINT/EQUIP_ITEM failure mode docs/ui-spec.md §6.2
-// enumerates ("unknown itemId/slot/tintId, an item whose slot does not
-// match, buying something already owned, equipping something not owned,
-// and affordability") maps to exactly one of these.
+// Every BUY_ITEM/EQUIP_ITEM failure mode docs/ui-spec.md §6.2 enumerates
+// ("unknown itemId/slot, an item whose slot does not match, buying
+// something already owned, equipping something not owned, and
+// affordability") maps to exactly one of these. STORE-2.0 removed the
+// tint-specific modes (ErrUnknownTint/ErrNotTintable) with the tint system.
 var (
 	ErrUnknownItem       = errors.New("unknown item id")
 	ErrUnknownSlot       = errors.New("unknown slot id")
-	ErrUnknownTint       = errors.New("unknown tint id")
 	ErrSlotMismatch      = errors.New("item does not belong to that slot")
 	ErrAlreadyOwned      = errors.New("already owned")
 	ErrNotOwned          = errors.New("not owned")
-	ErrNotTintable       = errors.New("slot is not tintable")
 	ErrInsufficientFunds = errors.New("insufficient dev cash")
 	// ErrLevelLocked — the item's CatalogItem.MinLevel exceeds the player's
 	// current level (levelForXP(g.XP)). A new refusal mode on top of the
@@ -609,8 +584,7 @@ var (
 )
 
 // BuyItem spends DevCash to own an item permanently. Buying never
-// auto-equips and grants the item's default tint implicitly (it need not
-// be added to OwnedTints — see IsTintOwned).
+// auto-equips (STORE-2.0: item-only — there are no tints to grant).
 func (g *Game) BuyItem(itemID string) error {
 	item, ok := g.itemsByID[itemID]
 	if !ok {
@@ -633,39 +607,10 @@ func (g *Game) BuyItem(itemID string) error {
 	return nil
 }
 
-// BuyTint buys a non-default colour for an already-owned tintable item.
-func (g *Game) BuyTint(itemID, tintID string) error {
-	item, ok := g.itemsByID[itemID]
-	if !ok {
-		return fmt.Errorf("%w: %s", ErrUnknownItem, itemID)
-	}
-	slot, ok := g.slotsByID[item.Slot]
-	if !ok || !slot.Tintable {
-		return fmt.Errorf("%w: %s", ErrNotTintable, item.Slot)
-	}
-	if !g.OwnedItems[itemID] {
-		return fmt.Errorf("%w: %s", ErrNotOwned, itemID)
-	}
-	tint, ok := g.tintsByID[tintID]
-	if !ok {
-		return fmt.Errorf("%w: %s", ErrUnknownTint, tintID)
-	}
-	if g.IsTintOwned(itemID, tintID) {
-		return fmt.Errorf("%w: %s", ErrAlreadyOwned, ownedTintKey(itemID, tintID))
-	}
-	if g.DevCash < tint.Price {
-		return fmt.Errorf("%w: have %d, need %d", ErrInsufficientFunds, g.DevCash, tint.Price)
-	}
-	g.DevCash -= tint.Price
-	g.OwnedTints[ownedTintKey(itemID, tintID)] = true
-	return nil
-}
-
-// EquipItem wears an owned item (+ owned tint, for a tintable slot),
-// replacing whatever else occupied that slot. "EQUIP_ITEM with a tintId
-// the player does not own is rejected — equipping is not a back door
-// around BUY_TINT" (docs/ui-spec.md §6.2).
-func (g *Game) EquipItem(slot, itemID string, tintID *string) error {
+// EquipItem wears an owned item, replacing whatever else occupied that
+// slot (docs/ui-spec.md §6.2). STORE-2.0: item-only — colours are items, so
+// there is no tint to validate.
+func (g *Game) EquipItem(slot, itemID string) error {
 	item, ok := g.itemsByID[itemID]
 	if !ok {
 		return fmt.Errorf("%w: %s", ErrUnknownItem, itemID)
@@ -676,48 +621,24 @@ func (g *Game) EquipItem(slot, itemID string, tintID *string) error {
 	if !g.OwnedItems[itemID] {
 		return fmt.Errorf("%w: %s", ErrNotOwned, itemID)
 	}
-	slotDef, ok := g.slotsByID[slot]
-	if !ok {
+	if _, ok := g.slotsByID[slot]; !ok {
 		return fmt.Errorf("%w: %s", ErrUnknownSlot, slot)
 	}
-
-	var finalTint *string
-	if slotDef.Tintable {
-		want := ""
-		if tintID != nil {
-			want = *tintID
-		}
-		if want == "" {
-			return fmt.Errorf("%w: slot %s requires a tintId", ErrUnknownTint, slot)
-		}
-		if _, ok := g.tintsByID[want]; !ok {
-			return fmt.Errorf("%w: %s", ErrUnknownTint, want)
-		}
-		if !g.IsTintOwned(itemID, want) {
-			return fmt.Errorf("%w: %s", ErrNotOwned, ownedTintKey(itemID, want))
-		}
-		finalTint = &want
-	}
-	g.Equipped[slot] = EquippedRef{ItemID: itemID, TintID: finalTint}
+	g.Equipped[slot] = EquippedRef{ItemID: itemID}
 	return nil
 }
 
-// BuyAndEquip performs BUY (if the item is not yet owned), BUY_TINT (if the
-// slot is tintable and the requested tint is not yet owned) and EQUIP as ONE
+// BuyAndEquip performs BUY (if the item is not yet owned) and EQUIP as ONE
 // atomic transaction — the one-click store's combined action
-// (docs/plan/ROADMAP.md §STORE-REDESIGN). It VALIDATES everything before it
-// mutates any state, so a refusal (unknown item/slot/tint, slot mismatch,
-// level lock, insufficient funds) leaves DevCash, OwnedItems, OwnedTints and
-// Equipped exactly as they were — there is never a half-applied purchase
-// (bought-but-not-equipped, or item-bought-then-tint-refused). The
-// validation mirrors BuyItem / BuyTint / EquipItem exactly (same errors,
-// same precedence: the level gate is checked before affordability, and the
-// tint must be owned-or-buyable just as EQUIP_ITEM refuses an unowned tint);
-// the only thing this method removes is the wait for a client round-trip
-// between the steps. Funds are checked against the COMBINED cost so a click
-// that would buy both an item and a non-default tint is refused as one unit
-// rather than buying the item and then failing on the tint.
-func (g *Game) BuyAndEquip(slot, itemID string, tintID *string) error {
+// (docs/plan/ROADMAP.md §STORE-REDESIGN, item-only since STORE-2.0). It
+// VALIDATES everything before it mutates any state, so a refusal (unknown
+// item/slot, slot mismatch, level lock, insufficient funds) leaves DevCash,
+// OwnedItems and Equipped exactly as they were — there is never a
+// half-applied purchase (bought-but-not-equipped). The validation mirrors
+// BuyItem / EquipItem exactly (same errors, same precedence: the level gate
+// is checked before affordability); the only thing this method removes is
+// the wait for a client round-trip between the buy and the equip.
+func (g *Game) BuyAndEquip(slot, itemID string) error {
 	item, ok := g.itemsByID[itemID]
 	if !ok {
 		return fmt.Errorf("%w: %s", ErrUnknownItem, itemID)
@@ -725,13 +646,11 @@ func (g *Game) BuyAndEquip(slot, itemID string, tintID *string) error {
 	if item.Slot != slot {
 		return fmt.Errorf("%w: item %s belongs to slot %s, not %s", ErrSlotMismatch, itemID, item.Slot, slot)
 	}
-	slotDef, ok := g.slotsByID[slot]
-	if !ok {
+	if _, ok := g.slotsByID[slot]; !ok {
 		return fmt.Errorf("%w: %s", ErrUnknownSlot, slot)
 	}
 
 	// ---- validate only (no state has mutated past this block) ----
-	var cost uint64
 	buyItem := !g.OwnedItems[itemID]
 	if buyItem {
 		// Level gate before affordability, exactly as BuyItem does: a
@@ -740,43 +659,17 @@ func (g *Game) BuyAndEquip(slot, itemID string, tintID *string) error {
 		if lvl := levelForXP(g.XP); lvl < item.MinLevel {
 			return fmt.Errorf("%w: reach LV %d (currently LV %d)", ErrLevelLocked, item.MinLevel, lvl)
 		}
-		cost += item.Price
-	}
-
-	var finalTint *string
-	buyTint := false
-	if slotDef.Tintable {
-		want := ""
-		if tintID != nil {
-			want = *tintID
+		if g.DevCash < item.Price {
+			return fmt.Errorf("%w: have %d, need %d", ErrInsufficientFunds, g.DevCash, item.Price)
 		}
-		if want == "" {
-			return fmt.Errorf("%w: slot %s requires a tintId", ErrUnknownTint, slot)
-		}
-		tint, ok := g.tintsByID[want]
-		if !ok {
-			return fmt.Errorf("%w: %s", ErrUnknownTint, want)
-		}
-		if !g.IsTintOwned(itemID, want) {
-			buyTint = true
-			cost += tint.Price
-		}
-		finalTint = &want
-	}
-
-	if g.DevCash < cost {
-		return fmt.Errorf("%w: have %d, need %d", ErrInsufficientFunds, g.DevCash, cost)
 	}
 
 	// ---- apply (validation passed; all-or-nothing) ----
-	g.DevCash -= cost
 	if buyItem {
+		g.DevCash -= item.Price
 		g.OwnedItems[itemID] = true
 	}
-	if buyTint {
-		g.OwnedTints[ownedTintKey(itemID, *finalTint)] = true
-	}
-	g.Equipped[slot] = EquippedRef{ItemID: itemID, TintID: finalTint}
+	g.Equipped[slot] = EquippedRef{ItemID: itemID}
 	return nil
 }
 
@@ -1163,22 +1056,11 @@ func (g *Game) ownedItemsSorted() []string {
 	return out
 }
 
-func (g *Game) ownedTintsSorted() []string {
-	out := make([]string, 0, len(g.OwnedTints))
-	for key, owned := range g.OwnedTints {
-		if owned {
-			out = append(out, key)
-		}
-	}
-	sort.Strings(out)
-	return out
-}
-
 // State builds the outward-facing `"type":"state"` snapshot.
 func (g *Game) State() StateMessage {
 	equipped := make(map[string]EquippedRef, len(g.Equipped))
 	for slot, ref := range g.Equipped {
-		equipped[slot] = EquippedRef{ItemID: ref.ItemID, TintID: cloneTintPtr(ref.TintID)}
+		equipped[slot] = EquippedRef{ItemID: ref.ItemID}
 	}
 
 	def := sprintAt(g.sprintIndex)
@@ -1220,7 +1102,6 @@ func (g *Game) State() StateMessage {
 		TickerLines: ticker,
 		Equipped:    equipped,
 		OwnedItems:  g.ownedItemsSorted(),
-		OwnedTints:  g.ownedTintsSorted(),
 		Stats: StatsView{
 			Today:      g.statsToday,
 			Lifetime:   g.statsLifetime,

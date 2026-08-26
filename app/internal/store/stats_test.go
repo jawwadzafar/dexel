@@ -123,8 +123,7 @@ func TestSchema1FileHasNoStatsKeyAndMigratesToZero(t *testing.T) {
 		"devCash": 250,
 		"xp": 100,
 		"sprint": {"index": 0, "unitsDone": 0},
-		"ownedItems": ["chair_basic"],
-		"ownedTints": [],
+		"ownedItems": ["chair_basic_slate"],
 		"equipped": {}
 	}`
 	// Signed, not grandfathered: B-1 removed the unsigned-schema<=4
@@ -193,8 +192,7 @@ func TestSchema2FileMigratesToSchema3WithNewCountersAndCoinsZero(t *testing.T) {
 		"devCash": 4200,
 		"xp": 777,
 		"sprint": {"index": 2, "unitsDone": 3.5},
-		"ownedItems": ["chair_basic", "chair_racer"],
-		"ownedTints": [],
+		"ownedItems": ["chair_basic_slate", "chair_racer_ember"],
 		"equipped": {},
 		"stats": {
 			"date": "2026-06-15",
@@ -258,8 +256,8 @@ func TestSchema2FileMigratesToSchema3WithNewCountersAndCoinsZero(t *testing.T) {
 	if g.SprintIndex() != 2 || g.Progress != 3.5 {
 		t.Errorf("after migrating a schema-2 save: sprint = (%d,%v), want (2,3.5)", g.SprintIndex(), g.Progress)
 	}
-	if !g.OwnedItems["chair_racer"] {
-		t.Error("after migrating a schema-2 save: chair_racer should still be owned")
+	if !g.OwnedItems["chair_racer_ember"] {
+		t.Error("after migrating a schema-2 save: chair_racer_ember should still be owned")
 	}
 	if state.Stats.Today.Keystrokes != 42 || state.Stats.Lifetime.Keystrokes != 9000 {
 		t.Errorf("after migrating a schema-2 save: today/lifetime keystrokes = (%d,%d), want (42,9000)",
@@ -352,26 +350,26 @@ func TestSchema3SaveRoundTripsWithNewCountersAndCoins(t *testing.T) {
 	}
 }
 
-// TestFutureSchema8RefusalStillFiresAfterTheSchema7Bump re-proves, at the
-// literal number CurrentSchema (7) + 1 = 8, that ErrFutureSchema still
+// TestFutureSchema9RefusalStillFiresAfterTheSchema8Bump re-proves, at the
+// literal number CurrentSchema (8) + 1 = 9, that ErrFutureSchema still
 // refuses to load a newer-than-supported save rather than silently
 // downgrading it — the invariant SEC-1's Task GO-1
 // (docs/plan/SEC-1-design.md §5/§8, ADR
 // 0014-save-integrity-hmac-and-config-split.md) requires stay intact
 // through every subsequent bump, restated by P2 (docs/plan/P2-design.md
 // §5.6) and again by PR-5 (docs/production-runtime/MIGRATION_PLAN.md
-// §PR-5's exit criterion: "a schema-8 save is still refused"). (This test
-// has pinned the future/refused schema one bump past CurrentSchema at
+// §PR-5's exit criterion: "a schema-N+1 save is still refused"). (This
+// test has pinned the future/refused schema one bump past CurrentSchema at
 // every prior bump too — schema 5 back when CurrentSchema was 4, then
-// schema 6 when CurrentSchema became 5, then schema 7 after P2's 5->6; it
-// now pins schema 8, one bump later still, following PR-5's own schema
-// 6->7 pause bump.)
+// schema 6 when CurrentSchema became 5, then schema 7 after P2's 5->6, then
+// schema 8 after PR-5's 6->7 pause bump; it now pins schema 9, one bump
+// later still, following STORE-2.0's own schema 7->8 tint-removal bump.)
 // TestLoadFutureSchemaIsBackedUpNeverDowngradedInPlace
 // already proves this generically (using CurrentSchema+1); this test
-// pins the concrete number 8 so a future reader can see, without doing
-// the arithmetic, that schema 8 specifically is refused post-bump. The
+// pins the concrete number 9 so a future reader can see, without doing
+// the arithmetic, that schema 9 specifically is refused post-bump. The
 // raw fixture deliberately carries no "mac" key, no "session" key, no
-// "sessionLogHead" key and no "paused" key — schema 8 must be refused as a
+// "sessionLogHead" key and no "paused" key — schema 9 must be refused as a
 // FUTURE save before MAC verification (or session-log verification) is
 // ever considered, exactly like every other future-schema save.
 // DB-1 retargets this to the one-time import branch (docs/plan/
@@ -380,37 +378,37 @@ func TestSchema3SaveRoundTripsWithNewCountersAndCoins(t *testing.T) {
 // importJSON, which calls loadJSON(jsonPath) — this function's pre-DB-1
 // body, unchanged — and propagates its ErrFutureSchema verbatim without
 // ever creating a DB (§4.2's "failure branches create no DB").
-func TestFutureSchema8RefusalStillFiresAfterTheSchema7Bump(t *testing.T) {
-	if CurrentSchema != 7 {
-		t.Fatalf("CurrentSchema = %d, want 7 — this test's literal schema-8 refusal check assumes the PR-5 pause bump landed at exactly 7", CurrentSchema)
+func TestFutureSchema9RefusalStillFiresAfterTheSchema8Bump(t *testing.T) {
+	if CurrentSchema != 8 {
+		t.Fatalf("CurrentSchema = %d, want 8 — this test's literal schema-9 refusal check assumes the STORE-2.0 tint-removal bump landed at exactly 8", CurrentSchema)
 	}
 	dir := t.TempDir()
 	dbPath := filepath.Join(dir, "state.db")
 	jsonPath := filepath.Join(dir, "state.json")
 
-	raw := `{"schema": 8, "devCash": 999999}`
+	raw := `{"schema": 9, "devCash": 999999}`
 	if err := os.WriteFile(jsonPath, []byte(raw), 0o644); err != nil {
 		t.Fatalf("WriteFile: %v", err)
 	}
 
 	d, ok, err := Load(dbPath)
 	if err == nil {
-		t.Fatal("expected an error loading a schema-8 save against CurrentSchema 7, got nil")
+		t.Fatal("expected an error loading a schema-9 save against CurrentSchema 8, got nil")
 	}
 	if !errors.Is(err, ErrFutureSchema) {
 		t.Errorf("Load err = %v, want it to wrap ErrFutureSchema", err)
 	}
 	if ok {
-		t.Error("ok=true for a schema-8 save, want false — it must be refused, not silently downgraded")
+		t.Error("ok=true for a schema-9 save, want false — it must be refused, not silently downgraded")
 	}
 	if !reflect.DeepEqual(d, SaveData{}) {
 		t.Errorf("d = %+v, want the zero value", d)
 	}
 	if _, statErr := os.Stat(jsonPath); !os.IsNotExist(statErr) {
-		t.Error("schema-7 file should have been moved away from jsonPath (renamed to .future), not left in place")
+		t.Error("schema-9 file should have been moved away from jsonPath (renamed to .future), not left in place")
 	}
 	if _, statErr := os.Stat(jsonPath + ".future"); statErr != nil {
-		t.Errorf("expected %s.future to exist (schema-7 original must be preserved, never deleted): %v", jsonPath, statErr)
+		t.Errorf("expected %s.future to exist (schema-9 original must be preserved, never deleted): %v", jsonPath, statErr)
 	}
 	if _, statErr := os.Stat(dbPath); !os.IsNotExist(statErr) {
 		t.Error("a future-schema import failure must create NO state.db")
@@ -441,8 +439,7 @@ func TestSchema3FileMigratesToSchema4WithEmptyHistoryAndZeroStreak(t *testing.T)
 		"devCash": 4200,
 		"xp": 777,
 		"sprint": {"index": 2, "unitsDone": 3.5},
-		"ownedItems": ["chair_basic", "chair_racer"],
-		"ownedTints": [],
+		"ownedItems": ["chair_basic_slate", "chair_racer_ember"],
 		"equipped": {},
 		"stats": {
 			"date": "2026-06-15",
@@ -516,8 +513,8 @@ func TestSchema3FileMigratesToSchema4WithEmptyHistoryAndZeroStreak(t *testing.T)
 	if g.DevCash != 4200 || g.XP != 777 {
 		t.Errorf("after migrating a schema-3 save: devCash/xp = (%d,%d), want (4200,777)", g.DevCash, g.XP)
 	}
-	if !g.OwnedItems["chair_racer"] {
-		t.Error("after migrating a schema-3 save: chair_racer should still be owned")
+	if !g.OwnedItems["chair_racer_ember"] {
+		t.Error("after migrating a schema-3 save: chair_racer_ember should still be owned")
 	}
 	state := g.State()
 	if state.Stats.Today.Keystrokes != 42 || state.Stats.Lifetime.Keystrokes != 9000 {

@@ -22,25 +22,22 @@
 //    additionally ignores any keydown whose target is an input/textarea/
 //    contenteditable.
 //
-// Gates nothing: it captures keyboard input, but unlike the store it
-// cannot mint money, because the engine's economy gate is about ACCRUING
-// work and this modal exists only before any work has been accrued — a
-// fresh install with 0 Dev Cash and no sprint progress. (It also cannot
-// spend: the starter colour is applied with EQUIP_ITEM against a tint the
-// player already owns, never BUY_TINT. There is no free-cash path here
-// and no new economy path at all.)
+// STORE-2.0 (docs/plan/ROADMAP.md §STORE-2.0): the starter-colour swatch
+// picker is GONE. Colours are ordinary items now, and the only FREE hoodie
+// colour is the tier-0 default the Dexel already wears — there is nothing to
+// pick for free, so this modal collapses to a name and a portrait of the
+// Dexel as it currently looks (which keeps it to the ~30-second budget
+// PRODUCT-EVOLUTION.md §2.9's own risk guard demands). It sends only
+// SET_NAME: no equip, no spend, no economy path at all.
 import { byId } from '../dom';
 import * as store from '../state/store';
 import { sendAction } from '../state/ws-client';
-import { truncate } from '../format';
 import { DEV_RECT, DEV_Z_BASE, DEV_Z_FORM, DEV_Z_STYLE } from '../geometry';
-import { buildTintLayer, plainImg, positionEl, swatchColor } from '../render/tint';
-import type { CatalogItem, CatalogTint } from '../wire';
+import { buildTintLayer, plainImg, positionEl } from '../render/tint';
+import { colourHexForItem, hoodieOverlayFile } from '../colours';
+import type { CatalogItem } from '../wire';
 
-// The slot the starter colour applies to. Phase P1 offers exactly one
-// choice on exactly one slot — the hoodie the Dexel is already wearing —
-// because "keep it to ~30 seconds... not a wizard"
-// (PRODUCT-EVOLUTION.md §2.9's own risk guard).
+// The slot the portrait shows — the hoodie the Dexel is already wearing.
 const STARTER_SLOT = 'hoodie';
 
 // The name SKIP applies. Pinned to game.DefaultName on the Go side (see
@@ -62,18 +59,9 @@ const el = {
   scrim: byId<HTMLDivElement>('scrim'),
   preview: byId<HTMLDivElement>('onboarding-preview'),
   nameInput: byId<HTMLInputElement>('onboarding-name'),
-  tintName: byId('onboarding-tint-name'),
-  colourLabel: byId('onboarding-colour-label'),
-  colourHint: byId('onboarding-colour-hint'),
-  swatches: byId<HTMLDivElement>('onboarding-swatches'),
   confirm: byId<HTMLButtonElement>('onboarding-confirm'),
   skip: byId<HTMLButtonElement>('onboarding-skip')
 };
-
-// Local UI state. selectedTint is a pure UI selection (which chip is
-// outlined, what colour the preview shows) — it becomes real state only
-// when EQUIP_ITEM is sent and the server broadcasts it back.
-let selectedTint: string | null = null;
 
 // awaitingAck suppresses the auto-open between "we sent SET_NAME" and
 // "the server's next state confirms onboarding is false". Without it, the
@@ -98,26 +86,16 @@ function hoodieItem(): CatalogItem | undefined {
   const equippedItem = eq ? store.getItemById(eq.itemId) : undefined;
   // On a fresh install the equipped hoodie IS the free tier-0 one; fall
   // back to the slot's free default so a missing/unknown equipped id can
-  // never leave this modal with nothing to tint.
+  // never leave this modal with nothing to show.
   return equippedItem || store.freeDefaultItem(STARTER_SLOT);
-}
-
-// The tint currently selected, defaulting to whatever the Dexel is
-// already wearing (server truth), then to the item's own default tint.
-function effectiveTint(item: CatalogItem | undefined): string | null {
-  if (selectedTint) return selectedTint;
-  const state = store.getState();
-  const eq = state && state.equipped && state.equipped[STARTER_SLOT];
-  if (eq && eq.tintId) return eq.tintId;
-  return item ? item.defaultTint : null;
 }
 
 // The portrait. Composes the REAL developer sprite stack — the same
 // three layers, the same z-order and the same 2x scale render/scene.ts
 // uses (#scene-sprites is scale(2)) — then lets #onboarding-preview's
 // overflow:hidden crop it to the hood and shoulders. So the colour the
-// chip promises is literally the colour the Dexel is wearing, at the
-// exact pixel size the game will show it at.
+// Dexel wears is literally the colour the game shows, at the exact pixel
+// size the game will show it at.
 //
 // PORTRAIT_CROP is in sprite-local (1x) coordinates, chosen from the
 // sprites' own alpha bounds rather than guessed: dev_base_idle occupies
@@ -127,16 +105,16 @@ function effectiveTint(item: CatalogItem | undefined): string | null {
 // local y 58 = room row 150 — exactly where chairs begin painting, so
 // this crop looks complete with no chair drawn (and none is).
 //
-// PORTRAIT_FRAME is fixed to 'idle' rather than following
-// currentDevFrame(): the 'mouse' pose reaches out to x190 and would clip
-// against the right edge of this crop, and a portrait that changes pose
-// under the user mid-decision is noise, not life. The LIVE Dexel is the
-// one in the scene; this is a still.
+// PORTRAIT_FRAME is fixed to 'idle' rather than following the live pose:
+// the 'mouse' pose reaches out to x190 and would clip against the right
+// edge of this crop, and a portrait that changes pose under the user
+// mid-decision is noise, not life. The LIVE Dexel is the one in the scene;
+// this is a still.
 const PORTRAIT_CROP = { left: 44, top: 5, w: 104, h: 52 };
 const PORTRAIT_SCALE = 2;
 const PORTRAIT_FRAME = 'idle';
 
-function renderPreview(item: CatalogItem | undefined, tintId: string | null): void {
+function renderPreview(item: CatalogItem | undefined): void {
   el.preview.replaceChildren();
 
   // One 2x-scaled sprite-space canvas, shifted so PORTRAIT_CROP's
@@ -153,13 +131,15 @@ function renderPreview(item: CatalogItem | undefined, tintId: string | null): vo
   const rect = { left: 0, top: 0, w: DEV_RECT.w * PORTRAIT_SCALE, h: DEV_RECT.h * PORTRAIT_SCALE };
   const frame = PORTRAIT_FRAME;
 
-  const form = buildTintLayer('dev_form_' + frame + '.png', store.tintHexFor(tintId));
+  // STORE-2.0: colour comes from the equipped hoodie's id, tinting the
+  // shared grayscale form; the style overlay is derived from the same id.
+  const form = buildTintLayer('dev_form_' + frame + '.png', colourHexForItem(item && item.id));
   positionEl(form, rect);
   form.style.zIndex = String(DEV_Z_FORM);
   canvas.appendChild(form);
 
-  if (item && item.sprite) {
-    const style = plainImg(item.sprite, rect);
+  if (item) {
+    const style = plainImg(hoodieOverlayFile(item.id), rect);
     style.style.zIndex = String(DEV_Z_STYLE);
     canvas.appendChild(style);
   }
@@ -167,61 +147,12 @@ function renderPreview(item: CatalogItem | undefined, tintId: string | null): vo
   const base = plainImg('dev_base_' + frame + '.png', rect);
   base.style.zIndex = String(DEV_Z_BASE);
   canvas.appendChild(base);
-
-  // The chosen colour's own name, under the portrait — the store's
-  // preview pane does the same thing (#store-preview-color), and it is
-  // what makes a swatch row of six squares nameable.
-  const tint = tintId ? store.getTintById(tintId) : undefined;
-  el.tintName.textContent = tint ? truncate(tint.name, 24) : '';
-}
-
-// One chip per catalog tint, in catalog order (the frontend hardcodes
-// nothing about the tint table). Ownership comes from the server
-// (store.isTintOwned reads state.ownedTints + the item's implicit free
-// default) — an unowned colour is shown SLASHED and inert rather than
-// hidden, so the row reads as "this is your colour, and there are more to
-// earn" instead of quietly shrinking to whatever a fresh install happens
-// to grant. If a later catalog change makes more tier-0 tints free, this
-// row lights up with zero code change here.
-function renderSwatches(item: CatalogItem | undefined, tintId: string | null): void {
-  const catalog = store.getCatalog();
-  el.swatches.replaceChildren();
-  if (!catalog || !item) return;
-  let lockedCount = 0;
-  catalog.tints.forEach(function (tint: CatalogTint) {
-    const owned = store.isTintOwned(item, tint.id);
-    if (!owned) lockedCount++;
-    const chip = document.createElement('div');
-    chip.className = 'swatch' + (owned ? '' : ' unowned') + (tint.id === tintId ? ' selected' : '');
-    chip.style.background = swatchColor(tint.hex);
-    chip.dataset.tint = tint.id;
-    chip.title = owned ? tint.name : tint.name + ' — ' + tint.price + ' in the store';
-    if (owned) {
-      chip.addEventListener('click', function (ev) {
-        ev.stopPropagation();
-        selectedTint = tint.id;
-        render();
-      });
-    }
-    el.swatches.appendChild(chip);
-  });
-  el.colourLabel.textContent = 'STARTER COLOUR';
-  // Said out loud, because on a real fresh install FIVE of the six are
-  // locked (only the hoodie's own default tint is owned — see
-  // internal/game/catalog.go: every tint in catalogTints costs 40, and
-  // GrantTierZeroDefaults grants items, not tints). Without this line the
-  // row reads as a broken picker; with it, it reads as a wardrobe you
-  // have barely started.
-  el.colourHint.textContent = lockedCount > 0 ? 'MORE TO EARN IN THE STORE' : '';
 }
 
 // Full re-render of the modal's contents from the central store. Safe to
 // call while closed (it just writes to hidden nodes).
 export function render(): void {
-  const item = hoodieItem();
-  const tintId = effectiveTint(item);
-  renderSwatches(item, tintId);
-  renderPreview(item, tintId);
+  renderPreview(hoodieItem());
 }
 
 export function refreshIfOpen(): void {
@@ -253,7 +184,6 @@ export function syncWithServer(): void {
 
 function open(): void {
   if (el.dialog.open) return;
-  selectedTint = null;
   nameSubmitted = false;
   render();
   el.dialog.showModal();
@@ -265,25 +195,10 @@ function open(): void {
   el.nameInput.focus();
 }
 
-// submit sends the starter colour first, then the name. Order matters
-// only for the flash: SET_NAME's "Hello, <name>!" is the moment worth
-// landing last, so it is the toast the user is left looking at.
-//
-// The colour is sent as EQUIP_ITEM against a tint the player ALREADY owns
-// (renderSwatches only wires clicks on owned chips) — the existing equip
-// path, no BUY_TINT, no new economy path. It is skipped entirely when the
-// selection already matches what is equipped, so the common case sends
-// exactly one action.
+// submit sends only the name. The Dexel already wears its free tier-0
+// loadout (GrantTierZeroDefaults on the server), so there is no colour to
+// equip and no spend — STORE-2.0 removed the starter-colour path.
 function submit(rawName: string): void {
-  const item = hoodieItem();
-  const tintId = effectiveTint(item);
-  const state = store.getState();
-  const eq = state && state.equipped && state.equipped[STARTER_SLOT];
-  const alreadyWorn = !!eq && !!item && eq.itemId === item.id && eq.tintId === tintId;
-  if (item && !alreadyWorn) {
-    sendAction({ action: 'EQUIP_ITEM', slot: STARTER_SLOT, itemId: item.id, tintId: tintId });
-  }
-
   // The server does the real validation (game.NormalizeName: trim, strip
   // control chars, cap at 24 runes, reject empty). This trim + the empty
   // fallback exist so the client never sends something it KNOWS would be

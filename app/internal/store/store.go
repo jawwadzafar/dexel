@@ -28,10 +28,10 @@ import (
 // file's schema is newer than CurrentSchema — see Load's doc comment.
 var ErrFutureSchema = errors.New("save schema is newer than this build supports")
 
-// EquippedSave is one slot's persisted equip choice.
+// EquippedSave is one slot's persisted equip choice. STORE-2.0: item-only
+// (colours are items now, so there is no tint to persist).
 type EquippedSave struct {
-	ItemID string  `json:"itemId"`
-	TintID *string `json:"tintId,omitzero"`
+	ItemID string `json:"itemId"`
 }
 
 // SprintSave is the persisted in-progress sprint.
@@ -259,7 +259,6 @@ type SaveData struct {
 	XP         uint64                  `json:"xp"`
 	Sprint     SprintSave              `json:"sprint"`
 	OwnedItems []string                `json:"ownedItems"`
-	OwnedTints []string                `json:"ownedTints"`
 	Equipped   map[string]EquippedSave `json:"equipped"`
 	// ImportedFromRust/ImportedAt are VESTIGIAL as of B-2
 	// (docs/plan/REVIEW-2026-08-22.md): the legacy-Rust import that was
@@ -395,7 +394,23 @@ type SaveData struct {
 // a schema-8 save is still renamed ".future" and refused, never silently
 // downgraded (see TestFutureSchema8RefusalStillFiresAfterTheSchema7Bump,
 // which pins the concrete future number one bump later again).
-const CurrentSchema = 7
+//
+// Bumped 7 -> 8 for STORE-2.0 (docs/plan/ROADMAP.md §STORE-2.0): the tint
+// system is gone. SaveData drops OwnedTints entirely and EquippedSave drops
+// TintID, so the save FORMAT genuinely changed and an older (schema-7)
+// build must not silently reinterpret a schema-8 file — hence the bump, so
+// that build renames it ".future" and refuses it. Loading in the OTHER
+// direction — a pre-STORE-2.0 save read by this build — needs no migration
+// code, per the owner's pre-release "start fresh, no migration" stance: a
+// schema<=7 payload's now-unknown "ownedTints" key and per-slot "tintId"
+// are ignored by json.Unmarshal, and Apply's own load validation degrades
+// the rest against the new catalog — a now-removed owned id (e.g. the old
+// style "chair_racer") is dropped as unknown, and an equipped slot naming a
+// vanished item falls back to that slot's tier-0 default. The catalog is
+// the source of truth, so such a save simply comes back with the default
+// look for the changed slots rather than being rejected. ErrFutureSchema is
+// unchanged: a schema-9 save is still renamed ".future" and refused.
+const CurrentSchema = 8
 
 // DefaultPath returns <StateDir>/state.db — on Linux with
 // $XDG_CONFIG_HOME unset this is byte-identical to the
@@ -440,12 +455,7 @@ func quantizeUnits(v float64) float64 {
 func Snapshot(g *game.Game) SaveData {
 	equipped := make(map[string]EquippedSave, len(g.Equipped))
 	for slot, ref := range g.Equipped {
-		var tint *string
-		if ref.TintID != nil {
-			v := *ref.TintID
-			tint = &v
-		}
-		equipped[slot] = EquippedSave{ItemID: ref.ItemID, TintID: tint}
+		equipped[slot] = EquippedSave{ItemID: ref.ItemID}
 	}
 	owned := make([]string, 0, len(g.OwnedItems))
 	for id, ok := range g.OwnedItems {
@@ -454,13 +464,6 @@ func Snapshot(g *game.Game) SaveData {
 		}
 	}
 	sort.Strings(owned)
-	tints := make([]string, 0, len(g.OwnedTints))
-	for key, ok := range g.OwnedTints {
-		if ok {
-			tints = append(tints, key)
-		}
-	}
-	sort.Strings(tints)
 
 	statsDate, statsToday, statsLifetime := g.StatsSnapshot()
 	coinsToday := g.CoinsTodaySnapshot()
@@ -495,7 +498,6 @@ func Snapshot(g *game.Game) SaveData {
 		XP:               g.XP,
 		Sprint:           SprintSave{Index: g.SprintIndex(), UnitsDone: quantizeUnits(g.Progress)},
 		OwnedItems:       owned,
-		OwnedTints:       tints,
 		Equipped:         equipped,
 		ImportedFromRust: g.ImportedFromRust,
 		ImportedAt:       g.ImportedAt,
@@ -590,7 +592,7 @@ func coinBreakdownFromSave(c CoinBreakdownSave) game.CoinBreakdown {
 
 // Apply restores a SaveData onto a freshly-constructed game.New(). Every
 // value is validated against the live catalog per docs/upgrade-design.md's
-// "Load validation, never trust the file" rules: an unknown itemId/tintId
+// "Load validation, never trust the file" rules: an unknown owned itemId
 // is dropped, sprint.index is clamped, an equipped entry naming an
 // unowned/unknown/wrong-slot item falls back to that slot's tier-0 item, a
 // missing slot is filled with its tier-0 item, and unitsDone is clamped to
@@ -671,54 +673,22 @@ func Apply(g *game.Game, d SaveData) {
 	// the file said — a save can never un-grant a guaranteed default.
 	g.GrantTierZeroDefaults()
 
-	g.OwnedTints = map[string]bool{}
-	for _, key := range d.OwnedTints {
-		itemID, tintID, ok := splitTintKey(key)
-		if !ok {
-			continue
-		}
-		if !g.OwnedItems[itemID] {
-			continue
-		}
-		if _, ok := g.ItemByID(itemID); !ok {
-			continue
-		}
-		if _, ok := g.TintByID(tintID); !ok {
-			continue
-		}
-		g.OwnedTints[key] = true
-	}
-
 	for _, slot := range g.Slots() {
 		entry, hasEntry := d.Equipped[slot.ID]
 		itemID := entry.ItemID
 		if !hasEntry || itemID == "" {
 			itemID = g.TierZeroItem(slot.ID)
 		}
-		item, ok := g.ItemByID(itemID)
-		if !ok || item.Slot != slot.ID || !g.OwnedItems[itemID] {
+		// An equipped entry naming an unknown/wrong-slot/unowned item falls
+		// back to that slot's tier-0 default. STORE-2.0: this also cleanly
+		// absorbs a pre-STORE-2.0 save whose equipped slot named a now-gone
+		// item id (the old un-coloured style id, e.g. "chair_racer") — it is
+		// unknown to the new catalog, so the slot resets to its default
+		// colour rather than the file being rejected.
+		if item, ok := g.ItemByID(itemID); !ok || item.Slot != slot.ID || !g.OwnedItems[itemID] {
 			itemID = g.TierZeroItem(slot.ID)
-			item, _ = g.ItemByID(itemID)
 		}
-
-		var tintPtr *string
-		if slot.Tintable {
-			want := ""
-			if entry.TintID != nil {
-				want = *entry.TintID
-			}
-			if want == "" || !g.IsTintOwned(itemID, want) {
-				if item.DefaultTint != nil {
-					want = *item.DefaultTint
-				} else {
-					want = ""
-				}
-			}
-			if want != "" {
-				tintPtr = &want
-			}
-		}
-		g.SetEquipped(slot.ID, itemID, tintPtr)
+		g.SetEquipped(slot.ID, itemID)
 	}
 }
 
@@ -843,15 +813,6 @@ func SessionNamesToConfig(names map[int]string) map[string]string {
 		out[strconv.Itoa(id)] = name
 	}
 	return out
-}
-
-func splitTintKey(key string) (itemID, tintID string, ok bool) {
-	for i := len(key) - 1; i >= 0; i-- {
-		if key[i] == ':' {
-			return key[:i], key[i+1:], true
-		}
-	}
-	return "", "", false
 }
 
 // Save writes d to path (state.db) via one SQLite transaction — an
