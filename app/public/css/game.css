@@ -2288,10 +2288,34 @@ body.shell #titlebar { cursor: default; }
    sizing with an explicit 4px solid border + zero margin. */
 .nes-btn {
   margin: 0;
-  border-image-source: none;
+  /* NES.css's OWN border, restored. We used to set `border-image-source: none`
+     and a solid 4px `--wall-light` border instead, and that was the "extra
+     background around every button": NES.css's border is near-black
+     (rgb(33,37,41)) and reads as an OUTLINE, while ours was LIGHTER than the
+     `--wall-dark` face and therefore read as a panel sitting behind the
+     button. Same markup as nostalgic-css.github.io/NES.css — `<button
+     class="nes-btn">` and nothing else — so the button should look like
+     theirs, and the only reason it did not was this override.
+
+     The source is NES.css's own 5x5 SVG, unchanged except for `fill`, which
+     is `--shadow` (#241f2e) rather than their #212529 so the one baked colour
+     in this file is still one of art-direction.md's 18. It has to be baked:
+     a data-URI cannot read a CSS custom property. `border-color` is the
+     fallback for a browser that refuses the data URI, and is deliberately the
+     same colour so that path degrades to a plain dark outline rather than to
+     the light frame we just removed.
+
+     2px, not NES.css's 4px: on a 640x400 layout 4px is four ART pixels around
+     a 16-20px button. The slice/width/repeat trio is theirs verbatim — those
+     are what produce the notched pixel corners, and dropping them is what
+     made our corners square. */
+  border-image-source: url('data:image/svg+xml;utf8,<?xml version="1.0" encoding="UTF-8" ?><svg version="1.1" width="5" height="5" xmlns="http://www.w3.org/2000/svg"><path d="M2 1 h1 v1 h-1 z M1 2 h1 v1 h-1 z M3 2 h1 v1 h-1 z M2 3 h1 v1 h-1 z" fill="rgb(36,31,46)" /></svg>');
+  border-image-slice: 2;
+  border-image-width: 2;
+  border-image-repeat: stretch;
   border-style: solid;
-  border-width: 4px;
-  border-color: var(--wall-light);
+  border-width: 2px;
+  border-color: var(--shadow);
   background-color: var(--wall-dark);
   color: var(--cream);
   font-family: 'Press Start 2P', monospace;
@@ -2333,9 +2357,11 @@ body.shell #titlebar { cursor: default; }
    2. IT SAT OUTSIDE THE BUTTON. The pseudo is inset -4px on every side, so
       the band painted BEYOND the border box — the three 32x16 window buttons
       hung a shelf past the title bar's own 2px bottom rule, and in
-      #menu-panel each item's shelf ate the panel's 6px right padding. Pulled
-      to inset 0 so it lights the button's own bottom/right border and
-      nothing else.
+      #menu-panel each item's shelf ate the panel's 6px right padding. It
+      still sits OUTSIDE, at -2px: an offset drop shadow on the bottom/right
+      is exactly what NES.css does and what makes a button read as raised.
+      Two pixels of overhang clears both the title bar's rule and the
+      panel's padding.
    3. IT GREW ON HOVER (4px -> 6px), so the button visibly changed size under
       the cursor. Hover now changes only the face colour (the rule above).
 
@@ -2350,10 +2376,10 @@ body.shell #titlebar { cursor: default; }
 .nes-btn::after,
 .nes-btn:hover::after,
 .nes-btn:focus::after {
-  top: 0;
-  right: 0;
-  bottom: 0;
-  left: 0;
+  top: -2px;
+  right: -2px;
+  bottom: -2px;
+  left: -2px;
   box-shadow: inset -2px -2px #adafbc;
 }
 .nes-btn:active:not(.is-disabled)::after {
