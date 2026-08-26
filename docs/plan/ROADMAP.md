@@ -408,3 +408,25 @@ SYSTEM and turns colours into ordinary purchasable items.
   Likely staged — (A) catalog+game: drop tints, add colour-items + monitor-
   colour slot; (B) gen_assets: the colour-item sprites+thumbs; (C) store UI:
   per-slot tabs, remove swatches. Screenshot-gated.
+
+### INSTALL-LOCAL-FALLBACK (2026-08-27, owner)
+install.sh already auto-builds from source when run inside the clone with Go,
+but the RELEASE-download path fails hard if the release lacks this OS/arch asset
+(e.g. darwin before the mac runner, or any partial release). Add: when the
+resolved release has no asset for this platform (or on an explicit
+`--build-local` flag), FALL BACK to a local source build — clone the repo to a
+temp dir if not already inside it, then build via the existing find_go +
+build path. So "the release doesn't have my platform" degrades to "build it
+locally" instead of an error. Keep all safety (checksums where applicable,
+no-sudo, honest messaging).
+
+### LANDING-PAGE (2026-08-27, owner) — GitHub Pages site, NOT generic
+A polished marketing/landing site for dexel served via GitHub Pages — cozy
+pixel aesthetic reusing the game's OWN assets (sprites from app/assets, the
+Press Start 2P font, the 18-colour palette). Hero with the dexel character,
+the one-line install command (copy button), features, real screenshots,
+download links to the release, GitHub link. Self-contained HTML/CSS/JS
+(framework-free, matching the app). Lives in a `/site` dir; a Pages deploy
+workflow (actions/deploy-pages) publishes it. "Best site ever" — must NOT look
+like a default template. (Pages on a private repo needs Pro/Enterprise or the
+repo going public; the workflow is ready either way.)
