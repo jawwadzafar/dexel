@@ -96,8 +96,7 @@ export function render(): void {
   const state = store.getState();
   const config = (state && state.config) || null;
   const name = (config && config.name) || '';
-  // An unnamed dexel renders nothing rather than a placeholder — the same
-  // call render/chrome.ts makes for #status-name.
+  // An unnamed dexel renders nothing rather than a placeholder.
   el.nameCurrent.textContent = name ? truncate(name, MAX_NAME_LEN) : '';
   paintToggle(el.onTopBtn, !!(config && config.alwaysOnTop));
   // SOUND-1: read through the same default-aware helper the click handler

@@ -51,8 +51,12 @@ import (
 // The phrasing is drawn from a small pool per app type so the panel feels
 // alive rather than printing one frozen string forever — stably, see
 // activityLineComposer.pick for the no-churn rule.
-func ActivityLine(mood engine.Mood, appID, appDisplay string) string {
-	return defaultActivityLineComposer.line(mood, appID, appDisplay)
+// name is the dexel's user-authored name ("" when unnamed). When set, the
+// line is composed as a personal sentence — "{name} is coding in {app}" and
+// friends (see linePersonal). When empty, the line keeps EXACTLY today's
+// impersonal phrasing, so a nameless dexel reads as it always has.
+func ActivityLine(mood engine.Mood, appID, appDisplay, name string) string {
+	return defaultActivityLineComposer.line(mood, appID, appDisplay, name)
 }
 
 // activityLineRerollInterval is how long a chosen phrasing sticks while the
@@ -238,8 +242,28 @@ var defaultActivityLineComposer = &activityLineComposer{
 	rerollAfter: activityLineRerollInterval,
 }
 
-func (c *activityLineComposer) line(mood engine.Mood, appID, appDisplay string) string {
+func (c *activityLineComposer) line(mood engine.Mood, appID, appDisplay, name string) string {
 	appType := activity.AppTypeOf(appID)
+
+	display := appDisplay
+	if display == "" {
+		// An honest raw id beats a fabricated name — the same fallback
+		// activity.FriendlyName makes, repeated here because a caller may
+		// pass an id with no display name at all.
+		display = appID
+	}
+
+	// A NAMED dexel gets a personal sentence composed HERE on the server
+	// (docs/ui-spec.md §3's zero-client-side-assembly rule): the client
+	// renders state.activityLine verbatim and never concatenates the name.
+	// The privacy contract is UNCHANGED — a work verb ("coding in {app}")
+	// is still reachable only for a coding-class app in Coding mood, and
+	// dexel's own window still never names itself (the personal work forms
+	// are offered only for coding/terminal app types, never AppTypeSelf).
+	// See linePersonal.
+	if name != "" {
+		return c.linePersonal(mood, appType, appID, name, display)
+	}
 
 	// dexel's own window is treated exactly like "no app identity at all"
 	// (activity.SelfAppID's doc comment has the reasoning, and
@@ -257,14 +281,6 @@ func (c *activityLineComposer) line(mood engine.Mood, appID, appDisplay string) 
 			return "Coding"
 		}
 		return "Working..."
-	}
-
-	display := appDisplay
-	if display == "" {
-		// An honest raw id beats a fabricated name — the same fallback
-		// activity.FriendlyName makes, repeated here because a caller may
-		// pass an id with no display name at all.
-		display = appID
 	}
 
 	pool := activityLinePoolsByType[appType].poolFor(mood)
@@ -354,4 +370,160 @@ func (c *activityLineComposer) index(appID string, n int) int {
 	h.Write([]byte{'|'})
 	h.Write([]byte(strconv.FormatInt(bucket, 10)))
 	return int(h.Sum64() % uint64(n))
+}
+
+// --- Personal phrasing (the dexel HAS a name) --------------------------------
+//
+// When the user has named their dexel, the status line becomes a personal
+// sentence — "{name} is coding in {app}" — instead of the impersonal
+// "Coding in {app}". This is composed on the SERVER (docs/ui-spec.md §3's
+// zero-client-side-assembly rule): the frontend still renders
+// state.activityLine verbatim and never touches the name.
+//
+// Two invariants carry over unchanged from the impersonal pools:
+//
+//  1. PRIVACY. A work verb ("coding in {app}", "typing in {app}",
+//     "heads-down in {app}") asserts the user was WORKING in a named app, so
+//     it is offered ONLY for a coding-class app type in Coding mood — exactly
+//     the join the impersonal `work` tier makes. Every other case is cozy,
+//     mood-only phrasing that names NO app, which is why "{name} is coding in
+//     Brave" is unrepresentable and dexel can never name itself.
+//  2. WIDTH. #status-line is maxActivityLineLen (34) chars. The name eats
+//     into that budget, and a name may be up to game.MaxNameLen (24) runes,
+//     so each mood carries a short, app-less FALLBACK anchor ("{name} is
+//     coding" / "{name} is here" / "{name} is away") that still fits at the
+//     longest name. The composer offers the rich "primary" phrasings only
+//     while they fit and drops to the anchor when they do not — so a long
+//     name degrades to "{name} is coding" rather than clipping the panel.
+//     See personalPick.
+//
+// The "{name}" token is the dexel's name; "{app}" the friendly app display
+// name, same as the impersonal pools.
+
+// personalPools holds the primary (rich) and fallback (short, app-less)
+// phrasings for one mood/tier.
+type personalPools struct {
+	// primary is the phrasing worth showing when it fits. It may name the
+	// app; a work verb lives here ONLY for the coding-class work tier.
+	primary []string
+	// fallback is the guaranteed-short, app-less anchor used when no primary
+	// phrasing fits the width at the current name. Every entry here must fit
+	// maxActivityLineLen for a name of MaxNameLen ASCII chars —
+	// TestPersonalLineFitsAtMaxName pins exactly that.
+	fallback []string
+}
+
+var (
+	// Coding mood + a coding-class app: the one place a work verb is earned.
+	personalWork = personalPools{
+		primary: []string{
+			"{name} is coding in {app}",
+			"{name} is typing in {app}",
+			"{name} is heads-down in {app}",
+		},
+		fallback: []string{"{name} is coding"},
+	}
+	// Coding mood, but no coding-class app to name (no app id, dexel's own
+	// window, or a non-coding app in front): honestly "at it", app-unnamed.
+	personalZone = personalPools{
+		primary: []string{
+			"{name} is in the zone",
+			"{name} is heads-down",
+		},
+		fallback: []string{"{name} is coding"},
+	}
+	// Present at the desk but not typing (mood Idle): cozy, never a claim
+	// about an app or an activity dexel cannot see.
+	personalPresent = personalPools{
+		primary: []string{
+			"{name} is thinking…",
+			"{name} is here",
+		},
+		fallback: []string{"{name} is here"},
+	}
+	// Provably away (mood OnBreak).
+	personalBreak = personalPools{
+		primary: []string{
+			"{name} is on break",
+			"{name} is away",
+			"{name} is recharging",
+		},
+		fallback: []string{"{name} is away"},
+	}
+)
+
+// linePersonal composes the named-dexel line. It routes to the personalPools
+// the two signals license — the work tier only for a coding-class app in
+// Coding mood, everything else cozy and app-less — then picks a rendering
+// that fits (personalPick).
+func (c *activityLineComposer) linePersonal(mood engine.Mood, appType activity.AppType, appID, name, display string) string {
+	var pools personalPools
+	switch mood {
+	case engine.MoodOnBreak:
+		pools = personalBreak
+	case engine.MoodCoding:
+		if appType == activity.AppTypeCoding || appType == activity.AppTypeTerminal {
+			pools = personalWork
+		} else {
+			pools = personalZone
+		}
+	default: // MoodIdle
+		pools = personalPresent
+	}
+	return c.personalPick(pools, appID, name, display)
+}
+
+// personalPick renders and chooses one personal line. It offers the rich
+// primary phrasings first, drops to the app-less fallback anchor when none of
+// them fit the width, and — only for an absurdly long (multibyte) name where
+// even the anchor overflows — returns the shortest true rendering, which the
+// frontend clips. The deterministic chooser (index) keys off appID so the
+// phrasing re-rolls when the frontmost app changes, and is stable within a
+// reroll bucket otherwise, exactly like the impersonal path.
+func (c *activityLineComposer) personalPick(pools personalPools, appID, name, display string) string {
+	if line, ok := c.personalFit(pools.primary, appID, name, display); ok {
+		return line
+	}
+	if line, ok := c.personalFit(pools.fallback, appID, name, display); ok {
+		return line
+	}
+	return shortestPersonal(append(append([]string{}, pools.primary...), pools.fallback...), name, display)
+}
+
+// personalFit renders every template in pool with the name and app, keeps the
+// ones within maxActivityLineLen, and deterministically picks one. It reports
+// ok=false when nothing fits, so personalPick can fall to the next tier.
+func (c *activityLineComposer) personalFit(pool []string, appID, name, display string) (string, bool) {
+	fits := make([]string, 0, len(pool))
+	for _, tpl := range pool {
+		line := renderPersonal(tpl, name, display)
+		if len(line) <= maxActivityLineLen {
+			fits = append(fits, line)
+		}
+	}
+	if len(fits) == 0 {
+		return "", false
+	}
+	return fits[c.index(appID, len(fits))], true
+}
+
+// renderPersonal substitutes both tokens. Name first, then app, so a name
+// containing the literal "{app}" cannot inject an app substitution
+// (NormalizeName strips control characters, but the ordering is the honest
+// belt-and-braces).
+func renderPersonal(tpl, name, display string) string {
+	return strings.ReplaceAll(strings.ReplaceAll(tpl, "{name}", name), "{app}", display)
+}
+
+// shortestPersonal returns the shortest rendered line across the given
+// templates — the last-resort fallback when even the anchor does not fit.
+func shortestPersonal(templates []string, name, display string) string {
+	shortest := ""
+	for _, tpl := range templates {
+		line := renderPersonal(tpl, name, display)
+		if shortest == "" || len(line) < len(shortest) {
+			shortest = line
+		}
+	}
+	return shortest
 }

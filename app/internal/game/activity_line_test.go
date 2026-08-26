@@ -26,7 +26,7 @@ import (
 func TestActivityLineNeverClaimsYouTypedInDexel(t *testing.T) {
 	for _, mood := range []engine.Mood{engine.MoodCoding, engine.MoodIdle, engine.MoodOnBreak} {
 		t.Run(string(mood), func(t *testing.T) {
-			got := ActivityLine(mood, activity.SelfAppID, "dexel")
+			got := ActivityLine(mood, activity.SelfAppID, "dexel", "")
 			if strings.Contains(strings.ToLower(got), "dexel") {
 				t.Errorf("ActivityLine(%s, self) = %q — dexel must never name ITSELF as the app you were working in", mood, got)
 			}
@@ -119,7 +119,7 @@ func TestActivityLineMatrix(t *testing.T) {
 		c := testComposer(unix)
 		for _, app := range apps {
 			for _, mood := range moods {
-				got := c.line(mood, app.id, app.display)
+				got := c.line(mood, app.id, app.display, "")
 
 				// 1. Classification must be what we think it is, or the rest
 				//    of this subtest is checking the wrong pool.
@@ -180,7 +180,7 @@ func TestCodingAppsStillGetTheirWorkVerb(t *testing.T) {
 			seenWork := false
 			for i := int64(0); i < 200; i++ {
 				c := testComposer(i * int64(activityLineRerollInterval/time.Second))
-				got := c.line(engine.MoodCoding, app.id, app.display)
+				got := c.line(engine.MoodCoding, app.id, app.display, "")
 				if claimsWork(got) != "" {
 					seenWork = true
 					if !strings.Contains(got, app.display) && got != "In the terminal" {
@@ -281,7 +281,7 @@ func TestActivityLineDoesNotChurnAtOneHertz(t *testing.T) {
 				prev := ""
 				changes := 0
 				for i := 0; i < seconds; i++ {
-					got := c.line(mood, app.id, app.display)
+					got := c.line(mood, app.id, app.display, "")
 					if i > 0 && got != prev {
 						changes++
 					}
@@ -309,7 +309,7 @@ func TestActivityLineIsStableWithinOneRerollBucket(t *testing.T) {
 
 	want := ""
 	for off := int64(0); off < rerollSeconds; off++ {
-		got := testComposer(base+off).line(engine.MoodIdle, "brave-browser", "Brave")
+		got := testComposer(base+off).line(engine.MoodIdle, "brave-browser", "Brave", "")
 		if off == 0 {
 			want = got
 			continue
@@ -320,7 +320,7 @@ func TestActivityLineIsStableWithinOneRerollBucket(t *testing.T) {
 	}
 	// ...and the next bucket is allowed to differ, which is what keeps it
 	// from being one frozen string forever (see TestActivityLineVaries).
-	if next := testComposer(base+rerollSeconds).line(engine.MoodIdle, "brave-browser", "Brave"); next == "" {
+	if next := testComposer(base+rerollSeconds).line(engine.MoodIdle, "brave-browser", "Brave", ""); next == "" {
 		t.Fatal("the next bucket produced an empty line")
 	}
 }
@@ -340,7 +340,7 @@ func TestActivityLineVaries(t *testing.T) {
 	} {
 		// Rendering with the literal "{app}" recovers the TEMPLATE, so
 		// different app names cannot masquerade as different phrasings.
-		seen[c.line(engine.MoodIdle, app.id, app.display)] = true
+		seen[c.line(engine.MoodIdle, app.id, app.display, "")] = true
 	}
 	if len(seen) < 2 {
 		t.Errorf("seven browsers at one instant produced %d distinct phrasing(s) %v — the pool is not being used", len(seen), seen)
@@ -350,7 +350,7 @@ func TestActivityLineVaries(t *testing.T) {
 	rerollSeconds := int64(activityLineRerollInterval / time.Second)
 	overTime := map[string]bool{}
 	for i := int64(0); i < 40; i++ {
-		overTime[testComposer(i*rerollSeconds).line(engine.MoodIdle, "brave-browser", "{app}")] = true
+		overTime[testComposer(i*rerollSeconds).line(engine.MoodIdle, "brave-browser", "{app}", "")] = true
 	}
 	if len(overTime) < 3 {
 		t.Errorf("40 reroll buckets on one app produced %d distinct phrasing(s) %v — the line would feel like a treadmill", len(overTime), overTime)
@@ -361,6 +361,13 @@ func TestActivityLineVaries(t *testing.T) {
 // docs/ui-spec.md §2.3 gives #status-line (34 chars). A phrasing that does not
 // fit for a given app is not offered at all, so a long friendly name can
 // never choose a line the frontend would clip.
+//
+// The name is swept alongside the app because it eats into the same 34-char
+// budget: an UNNAMED dexel, a short name ("Pixel"), and a name at the full
+// MaxNameLen (a long real name like "Professor Longbottom", and the absolute
+// worst case of MaxNameLen ASCII chars) must ALL stay within budget for every
+// app + mood — the composer drops the rich app-naming phrasing to the short
+// "{name} is coding"/"here"/"away" anchor when the full sentence would clip.
 func TestActivityLineFitsTheStatusLine(t *testing.T) {
 	apps := []struct{ id, display string }{
 		{"code", "VS Code"},
@@ -371,13 +378,168 @@ func TestActivityLineFitsTheStatusLine(t *testing.T) {
 		{"microsoft-powerpoint", "PowerPoint"},
 		{"finder", "Finder"},
 	}
+	names := []string{
+		"",                              // unnamed — today's impersonal phrasing
+		"Pixel",                         // a short, ordinary name
+		"Professor Longbottom",          // a long but realistic name (20 chars)
+		strings.Repeat("N", MaxNameLen), // the absolute worst case (24 ASCII)
+	}
+	rerollSeconds := int64(activityLineRerollInterval / time.Second)
+	for _, name := range names {
+		for _, app := range apps {
+			for _, mood := range []engine.Mood{engine.MoodCoding, engine.MoodIdle, engine.MoodOnBreak} {
+				for i := int64(0); i < 50; i++ {
+					got := testComposer(i*rerollSeconds).line(mood, app.id, app.display, name)
+					if len(got) > maxActivityLineLen {
+						t.Errorf("line(%s, %q, name=%q) = %q is %d chars, over #status-line's %d", mood, app.id, name, got, len(got), maxActivityLineLen)
+					}
+				}
+			}
+		}
+	}
+}
+
+// TestPersonalLineFitsAtMaxName is the sharp version of the width rule for the
+// personal path: for a name at the full MaxNameLen, EVERY mood must have a
+// rendering that fits — the app-less fallback anchor is what guarantees it, so
+// this fails the instant an anchor grows past what a max-length name allows.
+func TestPersonalLineFitsAtMaxName(t *testing.T) {
+	name := strings.Repeat("W", MaxNameLen) // 24 ASCII, the widest legal name
+	c := testComposer(1_755_000_000)
+	// A coding-class app (work tier), a non-coding app (zone/present tiers via
+	// mood), and no app at all — the anchor must save all of them.
+	for _, app := range []struct{ id, display string }{
+		{"code", "VS Code"},
+		{"brave-browser", "Brave"},
+		{"", ""},
+	} {
+		for _, mood := range []engine.Mood{engine.MoodCoding, engine.MoodIdle, engine.MoodOnBreak} {
+			got := c.line(mood, app.id, app.display, name)
+			if len(got) > maxActivityLineLen {
+				t.Errorf("personal line(%s, %q, max-name) = %q is %d chars, over %d — the fallback anchor must fit at MaxNameLen", mood, app.id, got, len(got), maxActivityLineLen)
+			}
+			if !strings.HasPrefix(got, name+" is ") {
+				t.Errorf("personal line(%s, %q) = %q does not read as \"{name} is …\"", mood, app.id, got)
+			}
+		}
+	}
+}
+
+// TestPersonalLineIsAlwaysASentenceAboutTheName pins the shape of the feature:
+// whenever a name is set, the line reads "{name} is …" — never the impersonal
+// "Coding in X" / "Working..." forms, and never a bare echo of the name.
+func TestPersonalLineIsAlwaysASentenceAboutTheName(t *testing.T) {
+	const name = "Pixel"
+	apps := []struct {
+		id, display string
+	}{
+		{"code", "VS Code"}, {"iterm2", "iTerm"}, {"brave-browser", "Brave"},
+		{"slack", "Slack"}, {"figma", "Figma"}, {"spotify", "Spotify"},
+		{"finder", "Finder"}, {"some-app-nobody-classified", "some-app-nobody-classified"},
+		{"", ""}, {activity.SelfAppID, "dexel"},
+	}
+	for _, unix := range []int64{0, 47, 91, 1_755_000_000, 1_755_000_123} {
+		c := testComposer(unix)
+		for _, app := range apps {
+			for _, mood := range []engine.Mood{engine.MoodCoding, engine.MoodIdle, engine.MoodOnBreak} {
+				got := c.line(mood, app.id, app.display, name)
+				if !strings.HasPrefix(got, name+" is ") {
+					t.Errorf("named line(%s, %q) = %q must read \"%s is …\"", mood, app.id, got, name)
+				}
+				// dexel never names itself, personal or not.
+				if strings.Contains(strings.ToLower(got), "dexel") {
+					t.Errorf("named line(%s, %q) = %q names dexel", mood, app.id, got)
+				}
+			}
+		}
+	}
+}
+
+// TestPersonalWorkVerbOnlyForCodingApps is the personal-path twin of the
+// impersonal privacy rule: a work verb ("coding in {app}" &c) may appear ONLY
+// for a coding-class app in Coding mood, because `Coding` still only means "a
+// key went down SOMEWHERE" (ADR 0011's global HID timer). A named browser
+// session must never become "Pixel is coding in Brave".
+func TestPersonalWorkVerbOnlyForCodingApps(t *testing.T) {
+	const name = "Pixel"
+	apps := []struct {
+		id, display string
+		typ         activity.AppType
+	}{
+		{"code", "VS Code", activity.AppTypeCoding},
+		{"iterm2", "iTerm", activity.AppTypeTerminal},
+		{"brave-browser", "Brave", activity.AppTypeBrowser},
+		{"slack", "Slack", activity.AppTypeComms},
+		{"figma", "Figma", activity.AppTypeDesign},
+		{"", "", activity.AppTypeUnknown},
+	}
 	rerollSeconds := int64(activityLineRerollInterval / time.Second)
 	for _, app := range apps {
+		codingClass := app.typ == activity.AppTypeCoding || app.typ == activity.AppTypeTerminal
 		for _, mood := range []engine.Mood{engine.MoodCoding, engine.MoodIdle, engine.MoodOnBreak} {
-			for i := int64(0); i < 50; i++ {
-				got := testComposer(i*rerollSeconds).line(mood, app.id, app.display)
-				if len(got) > maxActivityLineLen {
-					t.Errorf("line(%s, %q) = %q is %d chars, over #status-line's %d", mood, app.id, got, len(got), maxActivityLineLen)
+			for i := int64(0); i < 60; i++ {
+				got := testComposer(i*rerollSeconds).line(mood, app.id, app.display, name)
+				if frag := claimsWork(got); frag != "" {
+					if !codingClass {
+						t.Errorf("named line(%s, %q [%s]) = %q claims work (%q) for a non-coding app type", mood, app.id, app.typ, got, frag)
+					}
+					if mood != engine.MoodCoding {
+						t.Errorf("named line(%s, %q) = %q claims work (%q) with no recent keystroke", mood, app.id, got, frag)
+					}
+					// A work claim must name the app it claims work in.
+					if app.display != "" && !strings.Contains(got, app.display) {
+						t.Errorf("named work line %q does not name its app %q", got, app.display)
+					}
+				}
+			}
+		}
+	}
+}
+
+// TestPersonalCodingAppStillNamesTheApp keeps the good half: a short name on a
+// coding-class app in Coding mood must be able to say "Pixel is coding in VS
+// Code" (naming the app), not just degrade to the bare "Pixel is coding".
+func TestPersonalCodingAppStillNamesTheApp(t *testing.T) {
+	rerollSeconds := int64(activityLineRerollInterval / time.Second)
+	sawAppNamed := false
+	for i := int64(0); i < 60; i++ {
+		got := testComposer(i*rerollSeconds).line(engine.MoodCoding, "code", "VS Code", "Pixel")
+		if claimsWork(got) != "" && strings.Contains(got, "VS Code") {
+			sawAppNamed = true
+		}
+	}
+	if !sawAppNamed {
+		t.Error(`a named dexel coding in VS Code never produced "Pixel is coding in VS Code" — the app-naming work form must be reachable`)
+	}
+}
+
+// TestPersonalPoolsContainNoUnearnedClaims is the structural guard on the
+// personal pools, mirroring TestActivityLinePoolsContainNoUnearnedClaims: a
+// work verb may live ONLY in personalWork.primary, never in a cozy pool.
+func TestPersonalPoolsContainNoUnearnedClaims(t *testing.T) {
+	for _, p := range []struct {
+		name  string
+		pools personalPools
+	}{
+		{"personalZone", personalZone},
+		{"personalPresent", personalPresent},
+		{"personalBreak", personalBreak},
+	} {
+		for _, tier := range [][]string{p.pools.primary, p.pools.fallback} {
+			for _, line := range tier {
+				if frag := claimsWork(line); frag != "" {
+					t.Errorf("%s contains %q (%q) — only the coding-class work pool may claim work", p.name, line, frag)
+				}
+			}
+		}
+	}
+	// And every personal line, once the tokens are stripped, must open with
+	// "{name} is " — the shape the whole feature promises.
+	for _, p := range []personalPools{personalWork, personalZone, personalPresent, personalBreak} {
+		for _, tier := range [][]string{p.primary, p.fallback} {
+			for _, tpl := range tier {
+				if !strings.HasPrefix(tpl, "{name} is ") {
+					t.Errorf("personal template %q does not start with \"{name} is \"", tpl)
 				}
 			}
 		}
@@ -395,11 +557,11 @@ func TestActivityLineHandlesTheAwkwardIdentities(t *testing.T) {
 	// No app identity at all — the provider looked and nothing was frontmost,
 	// or it cannot see app identity here (activity.AppIdentity.Available).
 	// The mood is still reported; nothing is claimed about where.
-	if got := c.line(engine.MoodCoding, "", ""); got != "Coding" {
+	if got := c.line(engine.MoodCoding, "", "", ""); got != "Coding" {
 		t.Errorf("line(coding, no app) = %q, want %q", got, "Coding")
 	}
 	for _, mood := range []engine.Mood{engine.MoodIdle, engine.MoodOnBreak} {
-		if got := c.line(mood, "", ""); got != "Working..." {
+		if got := c.line(mood, "", "", ""); got != "Working..." {
 			t.Errorf("line(%s, no app) = %q, want %q", mood, got, "Working...")
 		}
 	}
@@ -407,7 +569,7 @@ func TestActivityLineHandlesTheAwkwardIdentities(t *testing.T) {
 	// An unknown app with no friendly name: the raw sanitized id is used. An
 	// honest raw id beats a fabricated name, and it must still never get a
 	// work verb.
-	got := c.line(engine.MoodCoding, "obscure-editor-2000", "")
+	got := c.line(engine.MoodCoding, "obscure-editor-2000", "", "")
 	if !strings.Contains(got, "obscure-editor-2000") {
 		t.Errorf("line(coding, unclassified app, no display) = %q — it should fall back to the sanitized id", got)
 	}
@@ -420,7 +582,7 @@ func TestActivityLineHandlesTheAwkwardIdentities(t *testing.T) {
 	// presence pool; being clipped by the frontend is a display problem,
 	// inventing a shorter claim would be a lie.
 	long := strings.Repeat("a", activity.MaxAppIDLen)
-	if got := c.line(engine.MoodIdle, long, ""); got != "In "+long {
+	if got := c.line(engine.MoodIdle, long, "", ""); got != "In "+long {
 		t.Errorf("line(idle, %d-char id) = %q, want %q — the shortest true rendering", activity.MaxAppIDLen, got, "In "+long)
 	}
 }
@@ -429,7 +591,7 @@ func TestActivityLineHandlesTheAwkwardIdentities(t *testing.T) {
 // to the same code path the tests exercise: whatever ActivityLine returns for
 // a real app must be a member of that app's pool, with the production clock.
 func TestActivityLineUsesTheDefaultComposer(t *testing.T) {
-	got := ActivityLine(engine.MoodIdle, "brave-browser", "Brave")
+	got := ActivityLine(engine.MoodIdle, "brave-browser", "Brave", "")
 	want := renderPool(activity.AppTypeBrowser, engine.MoodIdle, "Brave")
 	for _, w := range want {
 		if got == w {

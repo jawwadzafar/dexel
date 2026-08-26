@@ -279,8 +279,8 @@ export const DEV_STATE: StateMessage = {
   // RETURNING, already-named player — the same "seeded, well-populated"
   // spirit as everything else here — so the onboarding modal does NOT
   // ambush every dev-mode screenshot of the main screen. It also means
-  // the fixture exercises the name echo (#status-name and the hamburger
-  // panel's title) out of the box.
+  // the fixture exercises the personal status line (ui-spec §7.4 —
+  // "Pixel is …") and the Settings CURRENTLY line out of the box.
   //
   // To see the modal itself without a backend:
   //   window.devApply({ onboarding: true, config: { name: '' } })

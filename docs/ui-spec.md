@@ -344,7 +344,7 @@ verification harness and the spec both address elements by id.
       <button id="menu-open" aria-haspopup="true" aria-expanded="false"
               aria-label="Menu"><!-- three .bar divs, never a glyph --></button>
       <div id="menu-panel">           <!-- dropdown, hidden until .visible -->
-        <div id="menu-panel-title">MENU</div>  <!-- becomes the name, §7.4 -->
+        <div id="menu-panel-title">MENU</div>  <!-- always "MENU" (§7.4) -->
         <button id="store-open"    class="nes-btn menu-item">[S] STORE</button>
         <button id="activity-open" class="nes-btn menu-item">[A] ACTIVITY</button>
         <button id="history-open"  class="nes-btn menu-item">[H] HISTORY</button>
@@ -370,7 +370,6 @@ verification harness and the spec both address elements by id.
            <span id="status-line">Working...</span></div>
       <hr id="status-rule">
       <ul id="ticker"><li></li><li></li><li></li></ul>
-      <div id="status-name"></div>    <!-- §7.4 the dexel's name; empty until named -->
     </div>
 
     <div id="scrim"></div>            <!-- shown while a modal is open -->
@@ -456,7 +455,7 @@ moves.
 the window's drag handle in shell mode, and the injected handler excludes
 `BUTTON`/`INPUT`/`A`/`LABEL` by itself, so all three buttons above stay
 clickable with no extra markup. The attribute is inert in a browser.
-| `#menu-panel-title` | inside `#menu-panel`, 128 x 16 | static `MENU`, replaced by the Dexel's name once set (§7.4), 8px `var(--screen-dim)`, bottom rule separating it from the items |
+| `#menu-panel-title` | inside `#menu-panel`, 128 x 16 | static `MENU`, always (a menu is a menu — the name lives in the status line now, §7.4), 8px `var(--screen-dim)`, bottom rule separating it from the items |
 | `.menu-item` (×N) | inside `#menu-panel`, 128 x 20 each, 4px gap | one `nes-btn` per launcher, in menu order: `#store-open` (`[S] STORE`), `#activity-open` (`[A] ACTIVITY`), `#history-open` (`[H] HISTORY`), `#sessions-open` (`[W] SESSIONS`, P2, §9.1), `#settings-open` (`[G] SETTINGS`, SET-1, §11.1), and (PR-5, §2.4) `#pause-toggle` — label and action both flip live between `[P] PAUSE` (sends `PAUSE`) and `[P] RESUME` (sends `RESUME`), decided by `state.paused` read fresh from the store at click time, never assumed from the label |
 | `#paused-badge` | 380, 8, 96, 8 | (PR-5, §2.4) the always-visible paused indicator — an 8px dim solid square (`#paused-badge-dot`) + `PAUSED`, 8px `var(--screen-dim)`. Empty/hidden (`display:none` / `.visible`, same idiom as `#session-pill`) unless `state.paused` is true. Sits clear of both `#hud-level` (ends 120) and `#session-pill`'s box (132..372, §9.5) — a session can be active *and* paused at the same time, so both must stay visible together |
 
@@ -517,6 +516,17 @@ not decoration.
   this row is enforced SERVER-side now: a candidate that would clip is not
   offered, and if nothing fits, the shortest true rendering wins rather than a
   shorter, less true claim.
+* **When the dexel is NAMED, the line becomes a personal sentence** composed
+  on the server: `"Pixel is coding in VS Code"`, `"Pixel is in the zone"`,
+  `"Pixel is thinking…"`, `"Pixel is on break"` (§7.4). The privacy rule is
+  unchanged — the work verb ("coding in {app}") is still reachable only for a
+  coding-class app in Coding mood; every other named case is cozy, mood-only
+  phrasing that names no app. The name eats into the same 34-char budget, so a
+  long name degrades the app-naming form to a short app-less anchor (`"{name}
+  is coding"` / `"is here"` / `"is away"`) rather than clipping. An UNNAMED
+  dexel keeps exactly the impersonal phrasing above. This is the ONLY place
+  the name now appears in the chrome (the old bare `#status-name` strip and
+  the name-swapped menu title were removed, §7.4).
 * The three rows below it are the character's own chatter. They are dimmer, are
   prefixed `>`, and are separated by the rule. **Never merge the two zones,
   never let a ticker line borrow a word from the real one.**
@@ -1634,28 +1644,35 @@ one-shot flag — the same class of loop guard as `ws-client.ts`'s
 
 ### 7.4 Where the name is echoed
 
-Two places, both rendered by `render/chrome.ts` (which already owns the
-titlebar and the status panel) from `state.config.name`, as typed — never
-upper-cased to match the surrounding labels, and never assembled into a
-sentence (§3's zero-client-side-assembly rule; the one composed string, the
-welcome toast, is composed by the server).
+The name's primary home is the **personal status line** (§2.3): once the dexel
+is named, the server composes `#status-line` as `"Pixel is coding in VS Code"`,
+`"Pixel is in the zone"`, `"Pixel is thinking…"`, `"Pixel is on break"`. This
+is a SERVER-composed string carried on `state.activityLine` and rendered
+verbatim by `render/chrome.ts` — the frontend never concatenates the name
+(§3's zero-client-side-assembly rule). Seeing your named dexel in a *sentence*
+that describes what it is doing is the point; a floating bare label is not.
+
+The name also appears, unchanged, in:
 
 | Where | id | Behaviour |
 |---|---|---|
-| Status panel, bottom-right | `#status-name` | `left:6 top:55 288x10`, `var(--gold)`, right-aligned, truncated to 24. Sits in the 12px of previously-**empty** space below `#ticker` (the panel's padding box is 66px tall; the ticker ends at 54). Empty — and therefore invisible — until named. |
-| Hamburger panel heading | `#menu-panel-title` | The static text `MENU` becomes the Dexel's name once set, truncated to 16, falling back to `MENU` when unset. |
+| Settings modal, `CURRENTLY` line | `#settings-name-current` | The server's current name, as typed, truncated to `MaxNameLen` — rendered separately from the draft input so nothing claims a name the server did not send (§11). |
+| Titlebar session pill | `#session-pill-text` | The active session's name (a session name, not the dexel's), truncated to 16 with `…` (§9.5). |
 
-> **[DESIGN CALL] / FLAGGED FOR THE OWNER: not the titlebar cluster.**
-> P1's exit criterion says the name is "echoed in the HUD/titlebar", but the
-> standing owner directive is that the top-left titlebar cluster is
-> **coin-then-level only** — nothing added to it, and nothing left of or
-> before the coin (§2.1, BUG-2). Both echoes above therefore stay out of
-> that cluster: one takes dead space in the status panel (always visible,
-> no layout moved), the other replaces a static label. If the owner wants
-> the name in the titlebar proper, `#hud-level` ends at x120 and
-> `#menu-open` starts at x600, so there is room for a name box at roughly
-> `left:128 top:8 w:340 h:8` — one CSS rect plus one line in
-> `renderChrome`, and it would *not* disturb the coin/level cluster itself.
+**Removed** (this was redundant once the name became meaningful inside the
+status-line sentence):
+
+* the always-on bare **`#status-name`** strip at the bottom of the status
+  panel — element, its render, and its CSS are gone;
+* the name-swapped **`#menu-panel-title`** — the hamburger heading is static
+  `MENU` again, because a menu is a menu.
+
+> **[DESIGN CALL] the name is a sentence, not a label.** P1's exit criterion
+> said the name is "echoed in the HUD/titlebar" and shipped it as two bare
+> labels; the owner found both odd ("name is like name"). The name now earns
+> its place by being *part of the true status sentence* instead. The top-left
+> titlebar cluster stays **coin-then-level only** (§2.1, BUG-2), untouched by
+> this.
 
 ### 7.5 Verified in the real running game
 
@@ -1664,7 +1681,8 @@ provider and temp `$HOME`s: the modal appears on a fresh install; typing
 `sasha mh` into the name field opens **no** modal (§5.2's guard) while `[S]`
 still opens the store the moment nothing is focused; a locked swatch cannot
 be selected; confirming closes the modal, shows the `welcome` flash and
-echoes the name in both places; `config.json` holds the name and `state.db`
+echoes the name in the personal status line and the Settings `CURRENTLY`
+line; `config.json` holds the name and `state.db`
 does not contain it anywhere; restarting the same `$HOME` shows no
 onboarding; a fresh `$HOME` whose `config.json` was named *before* first run
 shows no onboarding; an existing `state.db` with an unnamed `config.json`
@@ -1804,8 +1822,8 @@ height:8`, 8px font — the titlebar is empty between `#hud-level` (ends 120)
 and `#menu-open` (starts 600, §2.1), so nothing else moves. Content: an 8px
 solid gold square (`border-radius: 0` — the `#mood-dot` lesson) followed by
 the name truncated to 16 chars with `…`, then `H:MM:SS`. **Empty, and
-therefore invisible, when no session is active** — the same idiom
-`#status-name` already uses. Owned by `render/chrome.ts` (a render-layer
+therefore invisible, when no session is active** — an "empty text"
+idiom. Owned by `render/chrome.ts` (a render-layer
 module: reads state, sends nothing).
 
 ### 9.6 Actions and messages
@@ -2331,7 +2349,7 @@ real clicks and real per-character keystrokes, and judged from the pixels
   (SOUND-1 re-measured this after adding the fourth section: 276px of the
   292px the taller box provides, still no overflow, at 1x and 2x. §13.6.)
 * **Rename round-trips.** Typing a new name and pressing `SAVE NAME`
-  changed `#menu-panel-title`, `#status-name` and the modal's own
+  changed the personal status line (§2.3, §7.4) and the modal's own
   `CURRENTLY` line together, and `config.json` on disk carried the new
   `name` alongside both preferences.
 * **The focus guard holds.** `Washgmps` — every bare global shortcut letter

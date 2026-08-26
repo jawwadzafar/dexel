@@ -453,8 +453,8 @@ img {
    Hidden by default (the same display:none/.visible idiom as
    #assets-error-overlay/#menu-panel above) rather than relying on empty
    text alone, because the gold dot must disappear along with the text
-   when no session is active — the #status-name idiom of "empty text" is
-   not enough here since the dot is a separate always-present element. */
+   when no session is active — an "empty text" idiom is not enough here
+   since the dot is a separate always-present element. */
 #session-pill {
   display: none;
   position: absolute;
@@ -2233,27 +2233,6 @@ body.shell #titlebar { cursor: default; }
   font-size: 8px;
   color: var(--screen-dim);
   text-align: right;
-}
-
-/* ================= name echo (Phase P1) ================= */
-/* The always-visible half of "the name is echoed in the UI". It sits in
-   the 12px of previously-EMPTY space at the bottom of #panel-status
-   (padding-box 66px tall; #ticker ends at 54), specifically so the
-   titlebar's top-left cluster stays coin-then-level and nothing else.
-   Empty text until the Dexel is named, so a fresh install shows nothing
-   at all rather than a placeholder. */
-#status-name {
-  position: absolute;
-  left: 6px;
-  top: 55px;
-  width: 288px;
-  height: 10px;
-  line-height: 10px;
-  font-size: 8px;
-  color: var(--gold);
-  text-align: right;
-  white-space: nowrap;
-  overflow: hidden;
 }
 
 /* ============ NES.CSS OVERRIDES (single block, ui-spec.md §1) ============ */

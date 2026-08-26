@@ -75,8 +75,9 @@
       <button id="win-minimize" class="nes-btn" aria-label="Minimize window">-</button>
       <button id="win-close" class="nes-btn" aria-label="Close window">X</button>
       <div id="menu-panel">
-        <!-- Phase P1: render/chrome.ts replaces this text with the Dexel's
-             name once one is set, falling back to "MENU" when it is not. -->
+        <!-- A menu is a menu: this heading is always "MENU". The dexel's
+             name now lives in the personal status line (ui-spec §7.4), not
+             here. -->
         <div id="menu-panel-title">MENU</div>
         <button id="store-open" class="nes-btn menu-item">[S] STORE</button>
         <button id="activity-open" class="nes-btn menu-item">[A] ACTIVITY</button>
@@ -109,10 +110,6 @@
       </div>
       <hr id="status-rule">
       <ul id="ticker"><li></li><li></li><li></li></ul>
-      <!-- Phase P1 name echo: the always-visible one. Sits in the 12px of
-           previously-empty space below the ticker; empty (and therefore
-           invisible) until the Dexel is named. -->
-      <div id="status-name"></div>
     </div>
 
     <div id="flash"></div>

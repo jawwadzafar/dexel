@@ -1079,7 +1079,7 @@ func (g *Game) State() StateMessage {
 		Type:         "state",
 		V:            1,
 		ActiveState:  string(mood),
-		ActivityLine: ActivityLine(mood, g.ActiveApp, g.ActiveAppDisplay),
+		ActivityLine: ActivityLine(mood, g.ActiveApp, g.ActiveAppDisplay, g.configName),
 		DevCash:      g.DevCash,
 		Level:        levelForXP(g.XP),
 		XP:           g.XP,

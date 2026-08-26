@@ -13,16 +13,13 @@ const sprintUnits = byId('sprint-units');
 const statusDot = byId('status-dot');
 const statusLine = byId('status-line');
 const ticker = byId<HTMLUListElement>('ticker');
-// Phase P1 name echo (docs/ui-spec.md §7.4). Two places, both here
-// because this module owns the titlebar and the status panel:
-//   - #status-name, the always-visible one, in the empty strip below the
-//     ticker;
-//   - #menu-panel-title, the hamburger panel's heading, which reads
-//     "MENU" until the Dexel has a name and the Dexel's name after that.
-// Deliberately NOT the titlebar's top-left cluster: that stays
-// coin-then-level and nothing else, by owner directive.
-const statusName = byId('status-name');
-const menuPanelTitle = byId('menu-panel-title');
+// The dexel's name is no longer echoed as a bare label here. It now lives
+// INSIDE the status line as a personal sentence ("Pixel is coding in VS
+// Code"), composed on the SERVER and rendered verbatim below as
+// state.activityLine (docs/ui-spec.md §7.4). The old always-on
+// #status-name strip and the name-swapped #menu-panel-title were redundant
+// once the name became meaningful in that sentence, so both were removed:
+// #menu-panel-title is static "MENU" again, and #status-name is gone.
 // Phase P2 (docs/ui-spec.md §9.5) — the always-visible session indicator.
 const sessionPill = byId('session-pill');
 const sessionPillText = byId('session-pill-text');
@@ -65,15 +62,6 @@ export function renderChrome(): void {
   // string itself carries no observed content.
   statusLine.textContent = state.paused ? 'PAUSED — tracking is off' : truncate(state.activityLine, 34);
 
-  // The name is USER text, so it is rendered as typed — never upper-cased
-  // to match the surrounding labels, and never assembled into a sentence
-  // (ui-spec.md §3's "zero client-side assembly" rule; the one composed
-  // string, the welcome toast, is composed by the SERVER). Empty until
-  // named, which renders as nothing at all rather than a placeholder.
-  const dexelName = (state.config && state.config.name) || '';
-  statusName.textContent = truncate(dexelName, 24);
-  menuPanelTitle.textContent = dexelName ? truncate(dexelName, 16) : 'MENU';
-
   const lis = ticker.querySelectorAll('li');
   for (let i = 0; i < lis.length; i++) {
     const raw = (state.tickerLines || [])[i] || '';
@@ -84,7 +72,7 @@ export function renderChrome(): void {
   // invisible, whenever no session is active — a pre-P2 server that
   // omits `sessions` entirely degrades the same way (state.sessions is
   // optional on the wire). The name is truncated to 16 chars with '…'
-  // (the pill's own budget, independent of #status-name's 24); the clock
+  // (the pill's own 16-char budget); the clock
   // is server-computed elapsedSeconds, never derived client-side.
   const active = state.sessions && state.sessions.active;
   if (active) {
