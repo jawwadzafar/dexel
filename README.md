@@ -6,6 +6,8 @@
 
 [![Release](https://img.shields.io/github/v/release/jawwadzafar/dexel?sort=semver&label=release)](https://github.com/jawwadzafar/dexel/releases/latest)
 [![Platform](https://img.shields.io/badge/platform-linux%20%7C%20macOS%20%7C%20windows-8a7fd4)](#platform-support-for-activity-capture)
+[![Go](https://img.shields.io/badge/Go-1.27-00ADD8?logo=go&logoColor=white)](https://go.dev/dl/)
+[![TypeScript](https://img.shields.io/badge/TypeScript-strict-3178C6?logo=typescript&logoColor=white)](app/frontend/README.md)
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
 
 ![Dexel running with a live sprint, terminal, and status line](docs/images/hero.png)
@@ -700,7 +702,9 @@ Tracked in [`docs/plan/ROADMAP.md`](docs/plan/ROADMAP.md). Where things stand:
 ## Contributing
 
 Pull requests are welcome once this repository is public. Until then, issues
-and ideas are the useful contribution.
+and ideas are the useful contribution. [`CONTRIBUTING.md`](CONTRIBUTING.md) is
+the full guide — how to build, run locally with the fake provider, and the
+boundaries a change is judged against; the short version follows.
 
 **Run the gates before you open a PR.** All of them, locally — Actions is blocked
 at the account level, so a green pipeline is not available to lean on:
@@ -729,6 +733,10 @@ Three things a PR is judged on beyond that:
 Behaviour changes update [`docs/game/`](docs/game/README.md) in the same
 commit, and a decision with lasting consequences gets an ADR in
 [`docs/adr/`](docs/adr/README.md).
+
+By participating you agree to the
+[Code of Conduct](CODE_OF_CONDUCT.md). Found a security issue? Please **do not**
+open a public issue — see [`SECURITY.md`](SECURITY.md) for private disclosure.
 
 ## License
 

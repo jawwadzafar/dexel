@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Documentation
+    url: https://github.com/jawwadzafar/dexel/blob/main/docs/README.md
+    about: The four documentation layers — how the game works, why, and what's next. Check here before filing.
+  - name: Report a security vulnerability
+    url: https://github.com/jawwadzafar/dexel/security/advisories/new
+    about: Please report security issues privately, not as a public issue. See SECURITY.md.
