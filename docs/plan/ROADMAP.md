@@ -381,3 +381,30 @@ list+preview split is too many clicks.
 - Sequence: AFTER level-gating lands (backend: catalog MinLevel + purchase
   validation stays; this replaces the store-modal UI). Folds in coin wiring +
   Cash rename so the store panel is rewritten once, not thrice.
+
+### STORE-2.0 (2026-08-26, owner) — colours become items, tabs per slot
+Supersedes STORE-REDESIGN's TINT/swatch mechanic (the card grid + one-click +
+padlock + level-gating all STAY). Big change: it removes the runtime tint
+SYSTEM and turns colours into ordinary purchasable items.
+- **No colour-change option. Colours are ITEMS.** Delete the tint system
+  entirely — BuyTint, OwnedTints, per-item tint ownership, EquipItem's tint
+  requirement, the card swatches, the BUY_AND_EQUIP tint path, wire tint fields.
+  Instead each colour is its own catalog item to BUY (e.g. "White Hoodie",
+  "Indigo Hoodie"). Chairs the same — fixed-colour items, no tint.
+- **Art**: gen_assets still uses the tint mechanism INTERNALLY to render each
+  colour, but emits a FIXED sprite + thumbnail per colour-item (hoodie_<style>_
+  <colour>, chair_<...>). Curate a tasteful colour set per style (don't explode
+  the catalog — a sensible handful, tabs make the count fine). Deterministic,
+  self-checked, palette-pure.
+- **Monitor**: model/geometry stays fixed (the screen rect is load-bearing), but
+  offer MONITOR COLOUR variants as items (bezel colour only, screen rect
+  untouched) — a new "monitor" slot of colour-item skins.
+- **Tabs per slot, not one big scroll.** The store gets a TAB per item type
+  (Hoodie / Chair / Keyboard / Mouse / Beverage / Plant / Wall / Buddy /
+  Monitor); each tab shows that slot's cards. Replaces the single long scroll.
+- Keep: card grid, price top-right, one-click BUY_AND_EQUIP (now item-only, no
+  tint), level-gating + padlock, "Cash". Content-free/privacy intact.
+- Sequence: AFTER the running coin/menu pass frees store-modal.ts/game.css.
+  Likely staged — (A) catalog+game: drop tints, add colour-items + monitor-
+  colour slot; (B) gen_assets: the colour-item sprites+thumbs; (C) store UI:
+  per-slot tabs, remove swatches. Screenshot-gated.
