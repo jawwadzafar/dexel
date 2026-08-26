@@ -138,7 +138,7 @@
          features/store-modal.ts builds the tabs and #store-grid; #store-scroll
          is its custom scroll thumb. -->
     <dialog id="store" class="nes-dialog is-dark">
-      <div id="store-title">DEV STORE &amp; CUSTOMIZATION</div>
+      <div id="store-title">STORE</div>
       <button id="store-close" class="nes-btn">X</button>
       <!-- COIN-ICON: same coin.png sprite as the HUD, for one currency glyph
            across the app. Not clickable here (no #hud-coin id) — the store's
@@ -153,6 +153,22 @@
       <div id="store-grid"></div>
 
       <div id="store-scroll"><div class="thumb-bar"></div></div>
+
+      <!-- STORE-PREVIEW (owner refinement 2026-08-27): clicking an unlocked
+           card opens this detail overlay INSIDE the same dialog — a larger
+           view of the item art, its name, flavor text and price, and THE one
+           action (BUY / EQUIP / ✓ EQUIPPED). features/store-modal.ts toggles
+           [hidden] on #store-preview vs the tabs+grid+scroll above; a locked
+           card ("?") never opens it. Esc backs out of the preview first
+           (a 'cancel' listener), then a second Esc closes the store. -->
+      <div id="store-preview" hidden>
+        <button id="store-back" class="nes-btn">&lt; BACK</button>
+        <div id="store-preview-art"></div>
+        <div id="store-preview-name"></div>
+        <div id="store-preview-flavor"></div>
+        <div id="store-preview-price"></div>
+        <button id="store-preview-action" class="nes-btn"></button>
+      </div>
     </dialog>
 
     <dialog id="activity" class="nes-dialog is-dark">

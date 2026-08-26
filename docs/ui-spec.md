@@ -658,6 +658,81 @@ Opened via the `[S] STORE` button, the `S` key, or `Tab`. Implemented as a
 native `<dialog>` opened with `showModal()`, which buys focus trapping and
 `Esc`-to-close for free.
 
+> **⚠ §4.0 supersedes §4.1–§4.4 below (STORE-2.0 + click-to-preview,
+> 2026-08-27).** The ASCII mock and the geometry/precedence tables further
+> down describe the *original* store — a category list + live preview pane +
+> per-(item,tint) `BUY_ITEM`/`BUY_TINT` economy. That design is gone: the
+> runtime tint system was removed (colours are ordinary items now, ADR 0011 /
+> STORE-2.0), the store became a **tab per slot** with a **card grid**, and
+> the one action is a single atomic `BUY_AND_EQUIP`. §4.0 is the current
+> truth; the rest is kept only as design history. `features/store-modal.ts`
+> and the `#store*` rules in `game.css` are authoritative.
+
+### 4.0 The store today (STORE-2.0 + click-to-preview)
+
+**Title.** `#store-title` reads exactly **`STORE`** (owner refinement
+2026-08-27 — the old "DEV STORE & CUSTOMIZATION" is retired).
+
+**Geometry.** `#store` is `position: fixed; width: 600px; height: 352px;
+padding: 12px; border: 4px solid var(--wall-light); background: var(--metal)`,
+authored at `--dlg-x: 20px; --dlg-y: 24px` inside the 640×400 layout and
+placed by the shared window-fit transform (§0.1). **600px is deliberate: a
+modal `<dialog>`'s UA `max-width` caps at ~602px in this viewport**
+(`calc(100% - 6px - 2em)`, the width sibling of the ~362px height cap) — a
+wider box is silently clamped *and* its absolutely-positioned children shift,
+so 600 is the widest that renders honestly, centred with a 20px margin each
+side.
+
+**Tabs (one line).** `#store-tabs` (top 34, width 572, `flex-wrap: nowrap`)
+holds one `.store-tab` per slot — Hoodie / Chair / Keyboard / Mouse /
+Beverage / Plant / Wall / Buddy / Monitor. All **nine fit on a single row**
+at 1× and 2× (tight `padding: 0 4px`, `gap: 3px`); the active tab is
+gold-outlined. Clicking a tab swaps `#store-grid` to that slot's cards; `[` /
+`]` cycle tabs by keyboard.
+
+**Card grid.** `#store-grid` (left 8, top 74, width 576, height 264,
+`overflow-y: auto`, `box-sizing: border-box`) has **`padding: 6px`** so a
+card's 2px `outline` (selection / EQUIPPED ring) is never shaved by the
+scrollport's clip — the full ring shows on the top-left and right-column
+cards. Three `182×108` cards per row (`3*182 + 2*8 = 562 ≤ 564` content
+width). Each **unlocked** card is a clickable **thumbnail**: art centred at
+top, name centred below, price top-right (`N ◆`, or `OWNED`). No inline
+buy/equip button. The **equipped** card carries a **gold** outline; keyboard
+selection carries the `--lamp` outline. `#store-scroll` is the hidden-native
+custom scroll thumb (left 586).
+
+**Locked = "?" mystery.** A level-gated, unowned item (catalog `minLevel` >
+player level) renders as a **`.card.locked`**: its real art/name/price are
+`display:none`, replaced by a big gold pixel **`?`** and a small `LV n` hint
+(`.mystery`). It is **not** buyable and clicking it opens **no preview**
+(no-op). It reveals its real content only once the level is reached. (Replaces
+the old padlock — owner wants "a question mark for them to come back".)
+
+**Click-to-preview.** Clicking an unlocked card opens `#store-preview`, a
+detail overlay shown *in place of* the tabs+grid+scroll (they get `hidden`;
+`#store-preview` is un-hidden). It shows a larger view of the art, the item
+name, its `flavor` text, the price, and **one action button**:
+
+| Condition | Button | Click does |
+|---|---|---|
+| not owned, affordable | `BUY` | `BUY_AND_EQUIP` (server buys **and** equips atomically) |
+| owned, not equipped | `EQUIP` | `BUY_AND_EQUIP` (equips the already-owned item) |
+| equipped | `✓ EQUIPPED` (gold) | nothing |
+| not owned, `devCash < price` | `NEED n` (`--pot`) | insufficient-funds flash (§4.4) |
+
+Buying deducts cash **once** and equips; the preview button and the underlying
+grid card both flip to `✓ EQUIPPED` on the confirming 1 Hz broadcast (state is
+rendered from the server, never asserted by the client). `#store-back` (top
+left) returns to the grid; `Enter` runs the action.
+
+**Esc / dismissal.** The preview backs out **first**: while it is open a
+native `cancel` (Esc) is `preventDefault`-ed and just returns to the grid; a
+second Esc then closes the store. `X`, `S`, `Tab`, and a click in the empty
+backdrop (§5.4) close the whole store from either view; opening or closing the
+store always resets to the grid. Preserved throughout: level-gating,
+humanized/exact prices, the `CASH:` label, the `coin.png` glyph, and the
+content-free contract (counts and prices only).
+
 ```
   x=40                                                          x=600
    +----------------------------------------------------------------+ y=28

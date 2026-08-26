@@ -929,10 +929,16 @@ body.shell #titlebar { cursor: default; }
 #store {
   position: fixed;
   /* Authored position inside the 640x400 layout. Consumed by the
-     shared window-fit transform above, NOT by left/top. */
-  --dlg-x: 40px;
+     shared window-fit transform above, NOT by left/top.
+     WIDENED (owner refinement 2026-08-27): pushed out to the widest a modal
+     <dialog> can be here. A modal dialog's UA max-width caps at ~602px in
+     this 640 viewport (calc(100% - 6px - 2em), the width sibling of BUG-8's
+     ~362px height cap), so 600px is the widest that is NOT silently clamped;
+     it still leaves room for the nine slot tabs on ONE line, and is centred
+     with a 20px margin each side. */
+  --dlg-x: 20px;
   --dlg-y: 24px;
-  width: 560px;
+  width: 600px;
   height: 352px; /* BUG-8: under the ~362px dialog:modal cap, with room */
   margin: 0;
   padding: 12px;
@@ -957,7 +963,7 @@ body.shell #titlebar { cursor: default; }
 
 #store-close {
   position: absolute;
-  left: 524px;
+  left: 576px;
   top: 12px;
   width: 16px;
   height: 16px;
@@ -970,9 +976,9 @@ body.shell #titlebar { cursor: default; }
   /* "Cash" naming (STORE-REDESIGN): the store-local label reads CASH.
      Right-aligned in the header, clear of #store-close. */
   position: absolute;
-  left: 320px;
+  left: 340px;
   top: 14px;
-  width: 192px;
+  width: 228px;
   height: 12px;
   line-height: 12px;
   font-size: 8px;
@@ -989,23 +995,26 @@ body.shell #titlebar { cursor: default; }
   margin: 0 2px;
 }
 
-/* STORE-2.0 tab row (one per slot), just below the header. Wraps to a second
-   row if the nine labels don't fit; the active tab is gold-outlined. */
+/* STORE-2.0 tab row (one per slot), just below the header. All nine labels
+   sit on ONE line (owner refinement 2026-08-27): the modal was widened to
+   ~624px and the tab bar spans the full inner width, so nowrap + tight
+   padding fits Hoodie/Chair/Keyboard/Mouse/Beverage/Plant/Wall/Buddy/
+   Monitor across a single row at 1x. The active tab is gold-outlined. */
 #store-tabs {
   position: absolute;
   left: 12px;
   top: 34px;
-  width: 520px;
-  height: 34px;
+  width: 572px;
+  height: 16px;
   display: flex;
-  flex-wrap: wrap;
-  align-content: flex-start;
+  flex-wrap: nowrap;
+  align-items: center;
   gap: 3px;
 }
 .store-tab {
   height: 15px;
   line-height: 15px;
-  padding: 0 5px;
+  padding: 0 4px;
   font-size: 8px;
   color: var(--cream);
   background: var(--wall-dark);
@@ -1022,10 +1031,18 @@ body.shell #titlebar { cursor: default; }
 
 #store-grid {
   position: absolute;
-  left: 12px;
+  left: 8px;
   top: 74px;
-  width: 520px;
+  width: 576px;
   height: 264px;
+  box-sizing: border-box;
+  /* 6px inner padding (owner refinement 2026-08-27): the scrollport clips
+     at its padding box, and a card's 2px selection/EQUIPPED outline sits
+     OUTSIDE the card's border box — so a card flush against the container
+     had its gold ring shaved on the top, left and right edges. The padding
+     insets every card clear of the clip, and the full ring shows on the
+     top-left and right-column cards too. */
+  padding: 6px;
   overflow-y: auto;
   scrollbar-width: none;
   display: flex;
@@ -1049,26 +1066,34 @@ body.shell #titlebar { cursor: default; }
 }
 .slot-head:not(:first-child) { margin-top: 4px; }
 
-/* Three cards per row: 3*168 + 2*8 gap = 520 = grid width. */
+/* Three cards per row: 3*182 + 2*8 gap = 562, inside the grid's 564px
+   padded content width (576 - 2*6 padding). */
 .card {
   position: relative;
-  flex: 0 0 168px;
-  width: 168px;
-  height: 112px;
+  flex: 0 0 182px;
+  width: 182px;
+  height: 108px;
   background: var(--wall-dark);
   outline: 2px solid transparent;
   cursor: pointer;
 }
 .card.hovered { outline: 2px solid var(--gold); }
-.card.equipped { outline: 2px solid var(--screen); }
+/* The EQUIPPED ring is GOLD (the owner's own word for it) so the worn item
+   reads at a glance in the grid; keyboard selection stays the lamp colour.
+   The grid now has 6px inner padding so this 2px ring is never clipped, even
+   on the top-left and right-column cards (owner refinement 2026-08-27). */
+.card.equipped { outline: 2px solid var(--gold); }
 .card.selected { outline: 2px solid var(--lamp); } /* keyboard selection */
 
+/* Each unlocked card is a clickable THUMBNAIL: art centred at the top, name
+   centred below, price in the top-right corner, NO inline buy/equip button
+   (owner refinement 2026-08-27 — the action moved into the preview). */
 .card .thumb {
   position: absolute;
-  left: 8px;
-  top: 8px;
-  width: 52px;
-  height: 52px;
+  left: 59px;   /* (182-64)/2 */
+  top: 10px;
+  width: 64px;
+  height: 64px;
   background: var(--shadow);
   overflow: hidden;
 }
@@ -1094,26 +1119,22 @@ body.shell #titlebar { cursor: default; }
 
 .card .name {
   position: absolute;
-  left: 68px;
-  top: 24px;
-  width: 92px;
+  left: 6px;
+  right: 6px;
+  top: 80px;
   height: 22px;
   line-height: 11px;
   font-size: 8px;
   color: var(--cream);
+  text-align: center;
   overflow: hidden;
   word-break: break-word;
 }
+.card.equipped .name { color: var(--gold); }
 
-.card .swatches {
-  position: absolute;
-  left: 68px;
-  top: 50px;
-  width: 92px;
-  height: 12px;
-  display: flex;
-  gap: 2px;
-}
+/* .swatch is kept because ANOTHER feature reuses this chip (see the
+   comment further down in this file); the store card itself no longer
+   renders swatches. */
 .swatch {
   width: 12px;
   height: 12px;
@@ -1128,91 +1149,139 @@ body.shell #titlebar { cursor: default; }
   background: linear-gradient(to top right, transparent calc(50% - 1px), var(--shadow) 50%, transparent calc(50% + 1px));
 }
 
-/* The state band along the card's bottom edge — the card itself is the
-   button, so this is a label, not a <button>. Its text/colour is set per
-   state by store-modal.ts (BUY + EQUIP / EQUIP / ✓ EQUIPPED / NEED n /
-   LV n). */
-.card .state {
+/* LOCKED CARD — a "?" MYSTERY (owner refinement 2026-08-27). A level-gated,
+   unowned item hides its real art/name/price behind a big pixel "?" so the
+   player has "something to come back for"; it reveals its real content only
+   once the level is reached. A locked card does NOT open a preview on click
+   (store-modal.ts makes it a no-op), so its cursor is the default arrow. The
+   small "LV n" hint under the ? tells the player when to come back. */
+.card.locked { cursor: default; }
+/* A locked card shows ONLY the "?" — its real art/name/price stay hidden
+   until the level is reached. */
+.card.locked .thumb,
+.card.locked .price,
+.card.locked .name { display: none; }
+.card .mystery {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+}
+.card .mystery .q {
+  font-size: 32px;
+  line-height: 32px;
+  color: var(--gold);
+}
+.card .mystery .lv {
+  font-size: 8px;
+  line-height: 8px;
+  color: var(--cream);
+  opacity: 0.7;
+}
+
+/* STORE PREVIEW (owner refinement 2026-08-27) — the item detail overlay,
+   shown IN PLACE of the tabs+grid+scroll when an unlocked card is clicked.
+   A larger view of the art, the name, the flavor text and the price, plus
+   THE one action (BUY / EQUIP / ✓ EQUIPPED). #store-back returns to the
+   grid; Esc backs out of the preview before it closes the store. */
+#store-preview {
   position: absolute;
   left: 8px;
-  top: 86px;
-  width: 152px;
+  top: 34px;
+  width: 576px;
+  height: 306px;
+}
+#store-preview[hidden] { display: none; }
+
+#store-back {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 108px;
   height: 18px;
-  line-height: 18px;
+  padding: 0;
   font-size: 8px;
+  line-height: 6px;
+}
+
+#store-preview-art {
+  position: absolute;
+  left: 224px;   /* (576-128)/2 */
+  top: 30px;
+  width: 128px;
+  height: 128px;
+  background: var(--shadow);
+  overflow: hidden;
+}
+#store-preview-art img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  image-rendering: pixelated;
+}
+
+#store-preview-name {
+  position: absolute;
+  left: 0;
+  top: 170px;
+  width: 576px;
+  height: 16px;
+  line-height: 16px;
+  font-size: 12px;
+  color: var(--cream);
   text-align: center;
-  background: var(--wall-light);
-  color: var(--screen);
   white-space: nowrap;
   overflow: hidden;
 }
-.card.equipped .state { color: var(--gold); }
-.card.cant-afford .state { color: var(--pot); }
-.card.cant-afford .thumb,
-.card.cant-afford .name { opacity: 0.5; }
-
-/* Level-gated card (catalog MinLevel > player level). Reads unmistakably
-   as LOCKED: a chunky pixel padlock overlaid on the (dimmed) thumb, and a
-   gold "LV n" badge in the state band — icon and level number together
-   (owner refinement, 2026-08-26). Thumb/name/price dim back so the lock
-   and the target level are what the eye lands on. */
-.card.locked .thumb,
-.card.locked .name,
-.card.locked .price { opacity: 0.4; }
-.card.locked .state {
-  color: var(--gold);
-  background: var(--wall-dark);
-}
-
-/* The padlock, drawn in pure CSS blocks (no sprite, no emoji): a squared
-   shackle arch, a solid body, and a punched keyhole — matching the game's
-   chunky pixel aesthetic. Sits above the thumb (a sibling, so the thumb's
-   dim does not touch it) and centred over the 52x52 thumb. */
-.card .lock {
+#store-preview-flavor {
   position: absolute;
-  left: 22px;   /* thumb centre is card-local (34,34); lock is ~20x24 */
-  top: 18px;
-  width: 20px;
-  height: 26px;
-  z-index: 3;
-  pointer-events: none;
+  left: 48px;
+  top: 196px;
+  width: 480px;
+  height: 40px;
+  line-height: 13px;
+  font-size: 8px;
+  color: var(--cream);
+  opacity: 0.75;
+  text-align: center;
+  overflow: hidden;
 }
-.card .lock .shackle {
-  position: absolute;
-  left: 4px;
-  top: 0;
-  width: 12px;
-  height: 10px;
-  border: 3px solid var(--gold);
-  border-bottom: none;
-  box-sizing: border-box;
-}
-.card .lock .body {
+#store-preview-price {
   position: absolute;
   left: 0;
-  top: 9px;
-  width: 20px;
-  height: 17px;
-  background: var(--gold);
-  box-shadow: 0 0 0 1px var(--shadow);
+  top: 244px;
+  width: 576px;
+  height: 12px;
+  line-height: 12px;
+  font-size: 10px;
+  color: var(--gold);
+  text-align: center;
+  white-space: nowrap;
 }
-.card .lock .body::after { /* keyhole */
-  content: "";
+#store-preview-action {
   position: absolute;
-  left: 8px;
-  top: 5px;
-  width: 4px;
-  height: 8px;
-  background: var(--shadow);
+  left: 178px;   /* (576-220)/2 */
+  top: 270px;
+  width: 220px;
+  height: 24px;
+  padding: 0;
+  font-size: 8px;
+  line-height: 8px;
 }
+#store-preview-action.is-equipped { color: var(--gold); }
+#store-preview-action.is-cant-afford { color: var(--pot); }
 
 #store-scroll {
   position: absolute;
-  left: 538px;
+  left: 586px;
   top: 74px;
   width: 6px;
   height: 264px;
 }
+#store-scroll[hidden] { display: none; }
 #store-scroll .thumb-bar {
   position: absolute;
   left: 0;

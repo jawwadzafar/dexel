@@ -12,14 +12,20 @@
 // otherwise), shows the item name and the PRICE in the top-right corner. There
 // are NO swatches: each colour is its own card.
 //
-// ONE CLICK = BUY + EQUIP. Clicking a card sends a single item-only
-// BUY_AND_EQUIP action; the server buys the item if not yet owned and equips
-// it atomically (app/actions.go -> game.BuyAndEquip), so the client never
-// chains BUY then EQUIP across the 1Hz broadcast and can never leave a
-// half-applied purchase. The client renders state FROM the server broadcast
+// CLICK-TO-PREVIEW (owner refinement 2026-08-27). A card is a clickable
+// THUMBNAIL (art + name + price, no inline button). Clicking an unlocked
+// card opens the PREVIEW overlay (#store-preview) — a larger view of the art
+// + name + flavor + price — and THERE lives the one action: BUY (spends
+// cash, then equips), EQUIP (re-wear an owned item), or ✓ EQUIPPED (the
+// already-worn no-op). BUY/EQUIP send a single item-only BUY_AND_EQUIP
+// action; the server buys the item if not yet owned and equips it atomically
+// (app/actions.go -> game.BuyAndEquip), so the client never chains BUY then
+// EQUIP across the 1Hz broadcast and can never leave a half-applied
+// purchase. The client renders state FROM the server broadcast
 // (render-from-server-state); it never asserts ownership the server did not
 // send. LEVEL-GATING is preserved: an unowned item whose catalog minLevel
-// exceeds the player's level is padlocked ("LV n"), not buyable at any price.
+// exceeds the player's level is shown as a "?" MYSTERY (with a "LV n" hint),
+// not buyable at any price, and clicking it opens no preview.
 import { byId, spriteImg } from '../dom';
 import * as store from '../state/store';
 import { sendAction, setStoreOpenHoldDesired } from '../state/ws-client';
@@ -45,19 +51,29 @@ const el = {
   tabs: byId<HTMLDivElement>('store-tabs'),
   grid: byId<HTMLDivElement>('store-grid'),
   scrollTrack: byId<HTMLDivElement>('store-scroll'),
-  scrollThumb: document.querySelector('#store-scroll .thumb-bar') as HTMLElement
+  scrollThumb: document.querySelector('#store-scroll .thumb-bar') as HTMLElement,
+  // Preview (owner refinement 2026-08-27): the item detail overlay.
+  preview: byId<HTMLDivElement>('store-preview'),
+  back: byId<HTMLButtonElement>('store-back'),
+  previewArt: byId<HTMLDivElement>('store-preview-art'),
+  previewName: byId<HTMLDivElement>('store-preview-name'),
+  previewFlavor: byId<HTMLDivElement>('store-preview-flavor'),
+  previewPrice: byId<HTMLDivElement>('store-preview-price'),
+  previewAction: byId<HTMLButtonElement>('store-preview-action')
 };
 
 interface StoreUI {
   initialized: boolean;
   activeSlot: string;   // which tab is showing
   cardIndex: number;    // keyboard selection over the active tab's card list
+  previewItem: CatalogItem | null; // the item the preview overlay is showing, or null (grid)
 }
 
 const storeUI: StoreUI = {
   initialized: false,
   activeSlot: '',
-  cardIndex: 0
+  cardIndex: 0,
+  previewItem: null
 };
 
 // The active tab's flat card list, in grid order, rebuilt by buildGrid().
@@ -188,12 +204,9 @@ function buildCard(slot: CatalogSlot, item: CatalogItem): HTMLDivElement {
   name.textContent = item.name;
   card.appendChild(name);
 
-  const band = document.createElement('div');
-  band.className = 'state';
-  card.appendChild(band);
-
-  // The whole card is the buy/equip button (one click = buy AND equip).
-  card.addEventListener('click', function () { runCardAction(item); });
+  // Clicking an UNLOCKED card opens the preview overlay; a locked ("?")
+  // card is a no-op (guarded inside openPreview via computeCardState).
+  card.addEventListener('click', function () { onCardClick(item); });
   card.addEventListener('mouseenter', function () { card.classList.add('hovered'); });
   card.addEventListener('mouseleave', function () { card.classList.remove('hovered'); });
   return card;
@@ -257,52 +270,138 @@ export function refreshCardStates(): void {
 
     const price = card.querySelector('.price');
     if (price) price.textContent = cs.priceText;
-    const band = card.querySelector('.state');
-    if (band) band.textContent = cs.stateText;
 
-    // Padlock overlay: present only while locked (owner refinement — the
-    // lock is a sibling of .thumb so the thumb's dim never touches it).
-    const hasLock = !!card.querySelector('.lock');
-    if (cs.kind === 'locked' && !hasLock) card.appendChild(buildLock());
-    if (cs.kind !== 'locked' && hasLock) card.querySelector('.lock')!.remove();
+    // "?" mystery overlay: present only while locked (owner refinement
+    // 2026-08-27 — a locked item hides its real art/name/price behind a big
+    // "?" so the player has something to come back for). CSS hides the
+    // thumb/name/price of a .locked card, so the "?" is all that shows.
+    const hasMystery = !!card.querySelector('.mystery');
+    if (cs.kind === 'locked' && !hasMystery) card.appendChild(buildMystery(cs.minLevel));
+    if (cs.kind !== 'locked' && hasMystery) card.querySelector('.mystery')!.remove();
+    const lv = card.querySelector('.mystery .lv');
+    if (cs.kind === 'locked' && lv) lv.textContent = 'LV ' + cs.minLevel;
   });
 }
 
-// The chunky pixel padlock (CSS in game.css draws the blocks): a squared
-// shackle arch + a solid body with a punched keyhole. No sprite, no emoji.
-function buildLock(): HTMLDivElement {
-  const lock = document.createElement('div');
-  lock.className = 'lock';
-  const shackle = document.createElement('span');
-  shackle.className = 'shackle';
-  const body = document.createElement('span');
-  body.className = 'body';
-  lock.appendChild(shackle);
-  lock.appendChild(body);
-  return lock;
+// The "?" mystery placeholder for a level-locked card: a big pixel question
+// mark and a small "LV n" hint telling the player when to come back. No
+// sprite, no emoji — a plain glyph in the game's pixel font (CSS in game.css).
+function buildMystery(minLevel: number): HTMLDivElement {
+  const wrap = document.createElement('div');
+  wrap.className = 'mystery';
+  const q = document.createElement('span');
+  q.className = 'q';
+  q.textContent = '?';
+  const lv = document.createElement('span');
+  lv.className = 'lv';
+  lv.textContent = 'LV ' + minLevel;
+  wrap.appendChild(q);
+  wrap.appendChild(lv);
+  return wrap;
 }
 
 // ---------------------------------------------------------------------
-// The one action: buy AND equip (or just equip) in one click. Item-only.
+// Card click -> PREVIEW. A locked ("?") card opens nothing; an unlocked
+// card opens the detail overlay where the one action (BUY / EQUIP /
+// ✓ EQUIPPED) lives (owner refinement 2026-08-27).
 // ---------------------------------------------------------------------
-function runCardAction(item: CatalogItem): void {
+function onCardClick(item: CatalogItem): void {
+  const cs = computeCardState(item);
+  if (cs.kind === 'locked') return; // "?" — no preview, no-op
+  openPreview(item);
+}
+
+// ---------------------------------------------------------------------
+// Preview overlay: a larger view of the item (art + name + flavor + price)
+// and THE one action. BUY spends cash then equips (BUY_AND_EQUIP, atomic on
+// the server); EQUIP re-wears an owned item; ✓ EQUIPPED is the already-worn
+// no-op. Back / Esc returns to the grid.
+// ---------------------------------------------------------------------
+function openPreview(item: CatalogItem): void {
+  storeUI.previewItem = item;
+  // Fill the (state-independent) art, name and flavor once; the price and
+  // action button track state via refreshPreview().
+  el.previewArt.replaceChildren(buildThumb(itemSlot(item), item));
+  el.previewName.textContent = item.name;
+  el.previewFlavor.textContent = item.flavor || '';
+  showPreview(true);
+  refreshPreview();
+}
+
+function closePreview(): void {
+  storeUI.previewItem = null;
+  showPreview(false);
+}
+
+// Toggle the tabs+grid+scroll vs the preview overlay.
+function showPreview(on: boolean): void {
+  el.preview.hidden = !on;
+  el.tabs.hidden = on;
+  el.grid.hidden = on;
+  el.scrollTrack.hidden = on;
+}
+
+// The active tab's CatalogSlot for an item — the preview needs it to render
+// the (possibly tinted) art the same way the grid card does.
+function itemSlot(item: CatalogItem): CatalogSlot {
+  const catalog = store.getCatalog();
+  const slot = catalog && catalog.slots.filter(function (s) { return s.id === item.slot; })[0];
+  return slot || { id: item.slot, name: item.slot };
+}
+
+// Keep the preview's price + action button truthful to the live server
+// state (called on open, after any local action, and on the 1Hz refresh).
+function refreshPreview(): void {
+  const item = storeUI.previewItem;
+  if (!item) return;
+  const cs = computeCardState(item);
+  el.previewPrice.textContent = cs.priceText;
+  const btn = el.previewAction;
+  btn.classList.remove('is-equipped', 'is-cant-afford');
+  switch (cs.kind) {
+    case 'equipped':
+      btn.textContent = '✓ EQUIPPED';
+      btn.classList.add('is-equipped');
+      break;
+    case 'equip':
+      btn.textContent = 'EQUIP';
+      break;
+    case 'buy':
+      btn.textContent = 'BUY';
+      break;
+    case 'cant-afford':
+      btn.textContent = 'NEED ' + fmtInt(item.price);
+      btn.classList.add('is-cant-afford');
+      break;
+    default:
+      btn.textContent = '';
+      break;
+  }
+}
+
+function runPreviewAction(): void {
+  const item = storeUI.previewItem;
+  if (!item) return;
   const cs = computeCardState(item);
   switch (cs.kind) {
     case 'buy':
     case 'equip':
       // ONE action. The server buys the item if needed and equips it
-      // atomically — no client-side BUY-then-EQUIP chaining, no tint.
+      // atomically — no client-side BUY-then-EQUIP chaining. The preview
+      // and the underlying grid card both flip to ✓ EQUIPPED on the
+      // confirming broadcast (refreshIfOpen).
       sendAction({ action: 'BUY_AND_EQUIP', slot: item.slot, itemId: item.id });
       break;
     case 'cant-afford':
       flashInsufficientFunds();
       break;
-    case 'locked':   // not buyable at any price — no-op (badge tells why)
-    case 'equipped': // already worn — clicking is a harmless no-op
+    case 'equipped': // already worn — harmless no-op
     default:
       break;
   }
 }
+el.back.addEventListener('click', closePreview);
+el.previewAction.addEventListener('click', runPreviewAction);
 
 // ---------------------------------------------------------------------
 // Scroll thumb (native scroll, custom pixel thumb — scrollbar is hidden)
@@ -336,6 +435,7 @@ function ensureStoreDefaults(): void {
 export function open(): void {
   if (el.store.open) return;
   ensureStoreDefaults();
+  closePreview(); // always open on the grid, never a stale preview
   buildTabs();
   buildGrid();
   updateStoreCash();
@@ -352,8 +452,18 @@ export function close(): void {
 }
 el.store.addEventListener('close', function () {
   el.scrim.classList.remove('visible');
+  closePreview(); // reset so the next open starts on the grid
   sendAction({ action: 'STORE_CLOSE' });
   setStoreOpenHoldDesired(false); // next open starts the B2 reassert guard fresh
+});
+// Esc backs out of the preview FIRST, then (a second Esc) closes the store.
+// The native <dialog> fires 'cancel' before it would close on Esc; when the
+// preview is open we swallow that first Esc and just return to the grid.
+el.store.addEventListener('cancel', function (e: Event) {
+  if (storeUI.previewItem) {
+    e.preventDefault();
+    closePreview();
+  }
 });
 el.storeOpenBtn.addEventListener('click', open);
 el.storeClose.addEventListener('click', close);
@@ -373,6 +483,7 @@ export function refreshIfOpen(): void {
   if (!el.store.open) return;
   updateStoreCash();
   refreshCardStates();
+  refreshPreview();
   updateScrollThumb();
 }
 export function onCatalogChanged(): void {
@@ -400,12 +511,23 @@ function cycleTab(delta: number): void {
   const next = clamp((cur < 0 ? 0 : cur) + delta, 0, ids.length - 1);
   setActiveSlot(ids[next]);
 }
-function runSelectedCardAction(): void {
+function openSelectedCardPreview(): void {
   const sel = cards[storeUI.cardIndex];
-  if (sel) runCardAction(sel.item);
+  if (sel) onCardClick(sel.item);
 }
 
 export function handleKeydown(e: KeyboardEvent): void {
+  // In the preview: Enter runs the action; Esc backs out (native 'cancel',
+  // handled above); S / Tab still close the whole store.
+  if (storeUI.previewItem) {
+    switch (e.key) {
+      case 'Enter': runPreviewAction(); break;
+      case 's': case 'S': close(); break;
+      case 'Tab': close(); break;
+      default: break; // Esc: native <dialog> 'cancel' backs out to the grid
+    }
+    return;
+  }
   switch (e.key) {
     case 'ArrowUp': e.preventDefault(); moveSelection(-CARDS_PER_ROW); break;
     case 'ArrowDown': e.preventDefault(); moveSelection(CARDS_PER_ROW); break;
@@ -413,7 +535,7 @@ export function handleKeydown(e: KeyboardEvent): void {
     case 'ArrowRight': e.preventDefault(); moveSelection(1); break;
     case '[': e.preventDefault(); cycleTab(-1); break; // previous tab
     case ']': e.preventDefault(); cycleTab(1); break;  // next tab
-    case 'Enter': runSelectedCardAction(); break;
+    case 'Enter': openSelectedCardPreview(); break;    // open the preview
     case 's': case 'S': close(); break;
     case 'Tab': close(); break; // do not preventDefault: leave native focus cycling alone
     default: break; // Esc: native <dialog> behaviour, not intercepted
