@@ -164,3 +164,13 @@ geometry), gated by real in-game renders judged by eye until it clearly reads as
   right column. Frontend: features/menu.ts + the menu DOM in index.html +
   game.css menu section. Small. Sequence with the other game.css/index.html work
   (coin/store/store-size) to avoid file collisions.
+
+- **BUG-12 — right-click context menu is allowed in the app.** The webview
+  shows the browser context menu (Linux: back/forward/stop/reload; macOS:
+  reload) — lets anyone navigate/reload the app. Fix: suppress `contextmenu`
+  (preventDefault) globally, alongside the existing dragstart/selectstart
+  hardening in `render/interaction.ts`. Keep it on real text inputs
+  (name/session fields) so right-click paste still works there — same
+  input-exception pattern as the drag/select hardening. Tiny (one capturing
+  listener). Sequence with the next frontend pass (rebuilds the same bundle as
+  the running store redesign — can't parallelize on dexel.js).
