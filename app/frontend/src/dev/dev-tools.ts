@@ -29,14 +29,13 @@ export function installDevTools(renderAll: () => void): void {
   hideConnOverlay();
   renderAll();
 
-  // Validates partialState.equipped.*.itemId/tintId against the loaded
-  // catalog before merging: an unknown item id gets dropped (console.warn
-  // says which one and for which slot) so it can't overwrite a
-  // previously-valid slot with a dangling reference, and an unknown tint
-  // id is cleared to null rather than left pointing at nothing. Render
-  // time (equippedItemFor / tintHexFor in state/store.ts) already
-  // degrades gracefully either way — this is defense in depth plus a
-  // paper trail for whoever is driving the harness.
+  // Validates partialState.equipped.*.itemId against the loaded catalog
+  // before merging: an unknown item id gets dropped (console.warn says which
+  // one and for which slot) so it can't overwrite a previously-valid slot
+  // with a dangling reference. Render time (equippedItemFor in
+  // state/store.ts) already degrades gracefully either way — this is defense
+  // in depth plus a paper trail for whoever is driving the harness. STORE-2.0:
+  // there is no tint id to validate any more; colour lives in the item id.
   window.devApply = function (partialState) {
     const incoming = partialState || {};
     if (incoming.equipped) {
@@ -46,11 +45,6 @@ export function installDevTools(renderAll: () => void): void {
         if (eq.itemId && !store.getItemById(eq.itemId)) {
           console.warn('[devApply] dropping unknown item id "' + eq.itemId + '" for slot "' + slotId + '" (not in loaded catalog)');
           delete incoming.equipped![slotId];
-          return;
-        }
-        if (eq.tintId && !store.getTintById(eq.tintId)) {
-          console.warn('[devApply] clearing unknown tint id "' + eq.tintId + '" for slot "' + slotId + '" (not in loaded catalog)');
-          eq.tintId = null;
         }
       });
     }

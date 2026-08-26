@@ -26,6 +26,7 @@
 // turned into a second, competing diagnostic.
 import { assetUrl } from '../assets';
 import { SCENERY } from '../geometry';
+import { MONITOR_FRAME_FILE, chairDetailFile, chairFormFile, hoodieOverlayFile, isColourSlot } from '../colours';
 import type { CatalogMessage } from '../wire';
 
 const warmed: Record<string, true> = {};
@@ -78,9 +79,17 @@ export function warmSprites(files: string[]): void {
 // equipping is a click away and the newly equipped sprite would otherwise be
 // the one cold image left in the scene. Thumbnails are deliberately not
 // warmed here: they are the store grid's business, not the scene's.
+//
+// STORE-2.0: a colour-slot item (hoodie/chair/monitor) is drawn by tinting a
+// shared grayscale form derived from its id — not by loading item.sprite (the
+// deferred per-colour file), so warm the derived scene sprites instead. The
+// hoodie's form is dev_form_* (warmed by warmStaticSprites) plus its style
+// overlay; the monitor bezel is one shared file.
 export function warmCatalogSprites(catalog: CatalogMessage): void {
   catalog.items.forEach(function (item) {
-    warm(item.sprite);
-    warm(item.detail);
+    if (!isColourSlot(item.slot)) { warm(item.sprite); return; }
+    if (item.slot === 'chair') { warm(chairFormFile(item.id)); warm(chairDetailFile(item.id)); }
+    else if (item.slot === 'hoodie') { warm(hoodieOverlayFile(item.id)); }
+    else if (item.slot === 'monitor') { warm(MONITOR_FRAME_FILE); }
   });
 }

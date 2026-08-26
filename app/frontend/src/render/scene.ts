@@ -58,6 +58,10 @@ import {
   FRAME_FOR_STATE, HIT_RECT, HIT_Z, SCENERY, SLOT_RECT, SLOT_Z
 } from '../geometry';
 import { buildTintLayer, plainImg, positionEl, setSrc, updateTintLayer } from './tint';
+import {
+  MONITOR_FRAME_FILE, chairDetailFile, chairFormFile, colourHexForItem,
+  hoodieOverlayFile, styleToken
+} from '../colours';
 import { warmCatalogSprites, warmSprites, warmStaticSprites } from './preload';
 import { handleSpriteSentinelError } from './overlays';
 // SOUND-1 (docs/ui-spec.md §13): this module owns both moments that make a
@@ -84,6 +88,7 @@ const devFormLayers: Record<string, HTMLDivElement> = {}; // frame -> its tinted
 const devBaseImgs: Record<string, HTMLImageElement> = {}; // frame -> its base <img>
 let devStyleImg: HTMLImageElement;                        // the one hoodie overlay
 let monitorImg: HTMLImageElement;                         // SCENERY's monitor, whose src the shake swaps
+let monitorFrame: HTMLDivElement;                         // STORE-2.0 tinted bezel overlay (screen rect untouched)
 const hitRegions: Record<string, HTMLDivElement> = {};    // SCENE-REACTIONS click targets
 let devFrameIndex = 0; // toggles 0/1 for type_a/type_b while coding
 // The `mouse` dev pose (right hand off the keyboard and onto the mouse) is
@@ -602,6 +607,20 @@ function buildSceneSkeleton(): void {
     if (s.file === 'monitor.png') monitorImg = img;
     scene.appendChild(img);
   });
+
+  // STORE-2.0 monitor slot: a tinted grayscale BEZEL overlay sitting exactly
+  // on monitor.png (same rect), recoloured per equipped monitor colour by
+  // renderMonitor(). Its screen area is transparent, so the fixed screen rect
+  // (and the DOM terminal text over it) is untouched — only the frame is dyed.
+  // z one above monitor.png so the bezel paints over it; appended before the
+  // slot/dev/chair layers keeps it behind the seated figure like the monitor.
+  const monRect = SCENERY.filter(function (s) { return s.file === 'monitor.png'; })[0];
+  monitorFrame = buildTintLayer(MONITOR_FRAME_FILE, '#ffffff');
+  positionEl(monitorFrame, { left: monRect.left, top: monRect.top, w: monRect.w, h: monRect.h });
+  monitorFrame.style.zIndex = String(monRect.z + 1);
+  scene.appendChild(monitorFrame);
+  warmSprites([MONITOR_FRAME_FILE]);
+
   SLOT_IDS.forEach(function (slot) {
     const holder = buildHolder();
     holder.style.zIndex = String(SLOT_Z[slot]);
@@ -780,30 +799,29 @@ function renderSlotSprite(slotId: string): void {
 }
 
 function renderChair(): void {
-  const state = store.getState()!;
-  const eq = state.equipped.chair;
   const item = store.equippedItemFor('chair');
   // No chair item at all, not even a free default — nothing to draw. Same
   // note as the slots above: the emptied holder used to express this.
   if (!item) { setShown(chairHolder, false); return; }
   setShown(chairHolder, true);
+  // STORE-2.0: the chair id is chair_<style>_<colour>. The geometry keys off
+  // the STYLE (chair_basic/racer/exec/antigrav — matching gen_assets' form
+  // canvases), and the COLOUR drives the CSS tint. The grayscale form/detail
+  // scene sprites are shared per style; the equipped colour recolours them.
+  const styleKey = 'chair_' + styleToken(item.id);
+  const rect = CHAIR_RECT[styleKey] || CHAIR_RECT.chair_basic;
   // The geometry writes below are unguarded on purpose: a chair change is a
   // cold path, and re-writing an identical `left: 92px` is compared and
   // dropped by the style engine — it invalidates nothing. Only the image and
   // mask assignments need the explicit guards (setSrc / updateTintLayer),
   // because those are the ones that would cost a decode.
-  const rect = CHAIR_RECT[item.id] || CHAIR_RECT.chair_basic;
   positionEl(chairHolder, rect);
   positionEl(chairForm, { left: 0, top: 0, w: rect.w, h: rect.h });
   chairDetail.style.width = rect.w + 'px';
   chairDetail.style.height = rect.h + 'px';
-  updateTintLayer(chairForm, item.sprite, store.tintHexFor((eq && eq.tintId) || item.defaultTint));
-  if (item.detail) {
-    setSrc(chairDetail, item.detail);
-    setShown(chairDetail, true);
-  } else {
-    setShown(chairDetail, false);
-  }
+  updateTintLayer(chairForm, chairFormFile(item.id), colourHexForItem(item.id));
+  setSrc(chairDetail, chairDetailFile(item.id));
+  setShown(chairDetail, true);
 }
 
 // The tint currently written onto the nine stacked form layers. Tracked so a
@@ -819,10 +837,9 @@ let devTintHex = '';
 // (frame-driven, always present).
 function renderDev(): void {
   const frame = sceneDevFrame();
-  const state = store.getState()!;
-  const eq = state.equipped.hoodie;
   const item = store.equippedItemFor('hoodie');
-  const tintHex = store.tintHexFor((eq && eq.tintId) || (item && item.defaultTint));
+  // STORE-2.0: colour comes from the equipped hoodie's id, not a wire tint.
+  const tintHex = colourHexForItem(item && item.id);
 
   // The hoodie's tint belongs to the FIGURE, not to one pose, so every
   // stacked form layer carries it — including the eight currently hidden
@@ -835,8 +852,11 @@ function renderDev(): void {
   // The garment overlay is ONE file for every pose (see FRAME_OVERLAY_DY),
   // so it is one element whose src changes only when a different hoodie is
   // equipped.
-  if (item && item.sprite) {
-    setSrc(devStyleImg, item.sprite);
+  if (item) {
+    // The hoodie STYLE overlay is a palette-pure per-style file derived from
+    // the id (hoodie_classic_indigo -> hoodie_classic.png); colour lives in
+    // the tinted form beneath it, above.
+    setSrc(devStyleImg, hoodieOverlayFile(item.id));
     setShown(devStyleImg, true);
   } else {
     setShown(devStyleImg, false);
@@ -865,6 +885,14 @@ function renderDev(): void {
   renderedDevFrame = frame;
 }
 
+// STORE-2.0 monitor slot: recolour the bezel overlay by the equipped monitor
+// colour, leaving monitor.png's screen rect untouched. A cold path (a store
+// click), so the guarded updateTintLayer is all it needs.
+function renderMonitor(): void {
+  const item = store.equippedItemFor('monitor');
+  updateTintLayer(monitorFrame, MONITOR_FRAME_FILE, colourHexForItem(item && item.id));
+}
+
 // The catalog this module has already pre-warmed. The catalog arrives once
 // per connection and is static thereafter (ui-spec.md §6), so this is
 // identity-compared rather than diffed.
@@ -884,6 +912,7 @@ export function renderScene(): void {
   SLOT_IDS.forEach(renderSlotSprite);
   renderChair();
   renderDev();
+  renderMonitor();
   renderHitRegions();
   monitorImg.classList.toggle('monitor-onbreak', state.activeState === 'onBreak');
 }
