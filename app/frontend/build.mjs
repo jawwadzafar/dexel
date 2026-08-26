@@ -24,6 +24,38 @@
 // emitting it, keep committing it, do not embed it. embed_test.go fails
 // if either half of that drifts.
 import { build } from 'esbuild';
+import { execSync } from 'node:child_process';
+
+// ABOUT — the repo URL and version the About modal shows are injected here,
+// NOT hard-coded in the .ts sources (src/config.ts is the typed reader of
+// these two defines, and its only consumer is features/about-modal.ts).
+//
+// DEXEL_REPO_URL: an env override, else the canonical repository.
+//
+// DEXEL_VERSION: an env override, else the NEAREST git tag
+// (`git describe --tags --abbrev=0`), else "v0.1.0". `--abbrev=0` — the tag
+// itself, not `<tag>-<n>-g<sha>` — is deliberate: it keeps the committed
+// bundle DETERMINISTIC and pinned to the frozen v0.1.0 release as ordinary
+// commits accumulate past the tag (a plain `--always` describe would drift
+// the version into a commit SHA on the next commit and churn the bundle).
+// It mirrors the Go side's version stamp, which is v0.1.0 during the freeze
+// (app/version.go). If the tag is ever gone entirely, describe errors and
+// the catch falls back to the same "v0.1.0" default.
+function resolveVersion() {
+  if (process.env.DEXEL_VERSION) return process.env.DEXEL_VERSION;
+  try {
+    const tag = execSync('git describe --tags --abbrev=0', {
+      stdio: ['ignore', 'pipe', 'ignore']
+    }).toString().trim();
+    if (tag) return tag;
+  } catch {
+    // no tags / not a git checkout — fall through to the default
+  }
+  return 'v0.1.0';
+}
+
+const REPO_URL = process.env.DEXEL_REPO_URL || 'https://github.com/jawwadzafar/dexel';
+const VERSION = resolveVersion();
 
 await build({
   entryPoints: ['src/main.ts'],
@@ -33,5 +65,11 @@ await build({
   sourcemap: true,
   format: 'iife',
   target: ['es2020'],
+  // Substituted verbatim into the bundle; src/config.ts reads them. JSON is
+  // esbuild's required form for a string define.
+  define: {
+    __DEXEL_REPO_URL__: JSON.stringify(REPO_URL),
+    __DEXEL_VERSION__: JSON.stringify(VERSION)
+  },
   logLevel: 'info'
 });

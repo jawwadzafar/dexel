@@ -103,6 +103,12 @@
              by features/settings-modal.ts (click -> open()), like every
              other launcher in this panel. -->
         <button id="settings-open" class="nes-btn menu-item"><span class="mi-label">SETTINGS</span><span class="mi-key">[G]</span></button>
+        <!-- ABOUT (docs/ui-spec.md §15): [I] for Info. S/A/H/W/G/M/P and Tab
+             were all taken; I is free and reads as "info". App name, tagline,
+             the build's version and a link to the repo. Owned by
+             features/about-modal.ts (click -> open()), like every other
+             launcher in this panel. -->
+        <button id="about-open" class="nes-btn menu-item"><span class="mi-label">ABOUT</span><span class="mi-key">[I]</span></button>
         <!-- PR-5 (docs/production-runtime/MIGRATION_PLAN.md §PR-5):
              label toggles PAUSE/RESUME and the click action flips with
              it — both driven by live state.paused, read fresh from the
@@ -385,6 +391,47 @@
       </div>
 
       <div id="settings-help">G / ESC CLOSE</div>
+    </dialog>
+
+    <!-- ABOUT (docs/ui-spec.md §15). Same mechanics as every modal above
+         (native <dialog> + showModal(), the shared #scrim, one 'close' event
+         every dismissal path funnels through). Reads NO server state.
+         #about-version and #about-repo are left EMPTY here on purpose:
+         features/about-modal.ts fills them from src/config.ts's build-time
+         injected values (build.mjs), so the version and repo URL are never a
+         literal in the shipped markup or the .ts sources. The repo link's
+         click is intercepted by about-modal.ts to open EXTERNALLY (new tab /
+         OS browser) or, if that is blocked, to copy the URL — it never
+         navigates the game away. -->
+    <dialog id="about" class="nes-dialog is-dark">
+      <div id="about-title">ABOUT</div>
+      <button id="about-close" class="nes-btn">X</button>
+
+      <div id="about-body">
+        <div id="about-name">dexel</div>
+        <!-- The tagline, split across two lines to sit comfortably at the
+             modal's inner width (8px/char, Press Start 2P). -->
+        <div class="about-tagline">a cozy pixel-art companion</div>
+        <div class="about-tagline">that runs on your real typing</div>
+
+        <div class="about-row">
+          <span class="label">VERSION</span>
+          <!-- Filled by about-modal.ts from config.VERSION. -->
+          <span id="about-version" class="value"></span>
+        </div>
+
+        <div class="about-section-title">REPOSITORY</div>
+        <!-- href + text filled by about-modal.ts from config.REPO_URL. The
+             href is here for a real browser's middle/cmd-click new-tab and
+             for accessibility; the ordinary left-click is intercepted and
+             routed to an EXTERNAL open (never an in-page navigation). -->
+        <a id="about-repo" href="#" target="_blank" rel="noopener noreferrer"></a>
+        <!-- Hidden until a fallback path (copy / manual-copy) has something
+             to say — see about-modal.ts. -->
+        <div id="about-repo-status"></div>
+      </div>
+
+      <div id="about-help">I / ESC CLOSE</div>
     </dialog>
 
     <!-- Phase P1 — Identity & first minutes (docs/ui-spec.md §7). Opened

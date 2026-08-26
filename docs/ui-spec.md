@@ -954,6 +954,7 @@ Main screen:
 | `H` | open the history modal |
 | `W` | open the Sessions modal (P2, §9.1 — "work session"; `S`/`Tab`/`A`/`H`/`M` are taken) |
 | `G` | open the Settings modal (SET-1, §11.1 — `G` for the *gear*; `S`/`A`/`H`/`W`/`M`/`P` and `Tab` were all taken) |
+| `I` | open the About modal (§15 — `I` for *Info*; `S`/`A`/`H`/`W`/`G`/`M`/`P` and `Tab` were all taken) |
 | `M` | toggle the hamburger menu |
 | `P` | pause / resume tracking (PR-5, §2.4) |
 
@@ -3141,3 +3142,78 @@ parenthetical is a DURATION (`fmtDuration`). The Sessions card's **"BEST"**
 focus line keeps a cozy minute-resolution local formatter (no seconds on that
 one line), but now rolls up past an hour so a long block reads "1h 20m", never
 a bare "80m".
+
+## 15. The About modal
+
+A small, read-only card reachable from the hamburger menu's **ABOUT** item or
+the `[I]` shortcut (`I` for *Info* — every other launcher letter was taken).
+It shows four things and gates nothing:
+
+* the product name, **dexel**, in gold;
+* the one-line tagline, "a cozy pixel-art companion that runs on your real
+  typing", across two lines;
+* the build's **VERSION**; and
+* a link to the **REPOSITORY**.
+
+Same mechanics as every modal above (native `<dialog>` + `showModal()`, the
+shared `#scrim`, one `close` event every dismissal path — X, `[I]`, `Esc`,
+click-away (§5.4) — funnels through). It reads **no** server state, so it has
+no `renderAll()` refresh hook.
+
+### 15.1 The version and repo URL are build-injected, never hard-coded
+
+Neither value is a string literal in the TypeScript sources. `build.mjs`
+injects two esbuild `define`s and `src/config.ts` is their only typed reader
+(consumed only by `features/about-modal.ts`, which writes them into the DOM
+once on load — the markup ships with `#about-version` and `#about-repo`
+empty):
+
+* `__DEXEL_REPO_URL__` — `process.env.DEXEL_REPO_URL`, else
+  `https://github.com/jawwadzafar/dexel`.
+* `__DEXEL_VERSION__` — `process.env.DEXEL_VERSION`, else the nearest git tag
+  (`git describe --tags --abbrev=0`), else `v0.1.0`. `--abbrev=0` (the tag
+  itself, not `<tag>-<n>-g<sha>`) is deliberate: it keeps the committed
+  bundle **deterministic** and pinned to the frozen `v0.1.0` release as
+  commits accumulate past the tag, mirroring the Go side's stamp
+  (`app/version.go`). A plain `--always` describe would drift the version
+  into a commit SHA on the next commit and churn the bundle.
+
+There is **no version on the WebSocket wire** (`StateMessage`/`ConfigView`
+carry none), so the About modal shows the injected `VERSION`. If a future
+server starts sending one, prefer that and keep the injected value as the
+fallback.
+
+Proof it is not hard-coded: `grep` the `.ts` sources finds no `github.com`
+URL and no version literal outside `build.mjs`'s env-define and `config.ts`'s
+`declare`s; and a
+`DEXEL_REPO_URL=https://example.com/x DEXEL_VERSION=v9.9.9 npm run build`
+produces a bundle whose About modal shows exactly those, while a normal
+rebuild reverts to the defaults byte-for-byte.
+
+### 15.2 The repo link opens externally, never in the game
+
+The app deliberately disables in-webview navigation (§0.2 — the context menu
+and drag-to-navigate escape are both killed, and the frameless shell has no
+chrome to get back with). So the repo link's ordinary left-click is
+**intercepted**: `about-modal.ts` `preventDefault()`s the in-page navigation
+and opens the URL on a separate surface instead —
+
+* a plain browser: `window.open(url, '_blank')` opens a new tab, and the
+  Tauri shell routes that same call out to the OS default browser;
+* if `window.open` is blocked / returns `null` (a locked-down webview), fall
+  back to copying the URL to the clipboard, and failing that, programmatically
+  select the URL text (`#about-repo` carries `user-select: text`) and show a
+  "COPY THE LINK ABOVE" hint so the user is one `Ctrl`/`Cmd`+`C` away.
+
+The `href` and `target="_blank" rel="noopener noreferrer"` remain on the
+`<a>` for accessibility and a real browser's middle/cmd-click new-tab, but the
+game surface is **never** navigated in any path.
+
+### 15.3 Verified in the real running game
+
+Built the Go binary, ran it with the fake provider, and screenshotted the
+real page (`about_modal.png`). At 1x and 2x the modal shows the name, tagline,
+`v0.1.0`, and the repo URL; the menu item aligns with the others (label left,
+`[I]` in the right-hand key column); clicking the repo link opens a new
+tab/OS browser while the game URL is unchanged and the modal stays open; `Esc`
+and click-away both close it.

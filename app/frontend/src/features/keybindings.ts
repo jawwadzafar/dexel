@@ -4,7 +4,9 @@
 // TS-1), [W] opens the Sessions modal (Phase P2, docs/plan/P2-design.md
 // §6.3 — "work session"; S/Tab/A/H/M are taken, W is free), [G] opens the
 // Settings modal (SET-1, docs/ui-spec.md §11 — G for the gear; S/A/H/W/M/P
-// and Tab were all taken by then), and while any one modal is open its own
+// and Tab were all taken by then), [I] opens the About modal
+// (docs/ui-spec.md §15 — I for Info; S/A/H/W/G/M/P and Tab were all taken),
+// and while any one modal is open its own
 // keydown handler owns the keyboard (Esc always falls through to native
 // <dialog> behaviour, never intercepted here).
 // This module knows the modal features' public
@@ -14,7 +16,7 @@
 // The hamburger menu (./menu.ts) is deliberately NOT given the same
 // keyboard-ownership tier as a modal: it never captures keys the way a
 // <dialog> with real content does, it just closes on Esc, and it steps
-// aside for [S]/[A]/[H]/[W]/[G]/Tab so those shortcuts keep working
+// aside for [S]/[A]/[H]/[W]/[G]/[I]/Tab so those shortcuts keep working
 // identically whether or not the menu happens to be open. [M] toggles the
 // menu itself.
 import * as storeModal from './store-modal';
@@ -23,6 +25,7 @@ import * as historyModal from './history-modal';
 import * as onboardingModal from './onboarding-modal';
 import * as sessionsModal from './sessions-modal';
 import * as settingsModal from './settings-modal';
+import * as aboutModal from './about-modal';
 import * as menu from './menu';
 
 // Phase P1 hazard guard. Every shortcut this module owns is a BARE letter
@@ -106,6 +109,14 @@ export function init(): void {
       settingsModal.handleKeydown(e);
       return;
     }
+    // About (docs/ui-spec.md §15) claims the keyboard-ownership tier while
+    // open like every modal above — it owns no input, so its handleKeydown
+    // only closes on [I], but "presence is the point": a bare letter must
+    // not reach a launcher even when focus sits on its close button.
+    if (aboutModal.isOpen()) {
+      aboutModal.handleKeydown(e);
+      return;
+    }
     if (menu.isOpen() && e.key === 'Escape') {
       e.preventDefault();
       menu.close();
@@ -117,6 +128,7 @@ export function init(): void {
     else if (e.key === 'h' || e.key === 'H') { e.preventDefault(); menu.close(); historyModal.open(); }
     else if (e.key === 'w' || e.key === 'W') { e.preventDefault(); menu.close(); sessionsModal.open(); }
     else if (e.key === 'g' || e.key === 'G') { e.preventDefault(); menu.close(); settingsModal.open(); }
+    else if (e.key === 'i' || e.key === 'I') { e.preventDefault(); menu.close(); aboutModal.open(); }
     else if (e.key === 'm' || e.key === 'M') { e.preventDefault(); menu.toggle(); }
   });
 }

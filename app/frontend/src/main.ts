@@ -53,6 +53,10 @@ import { initShellWindow } from './features/shell-window';
 // of store-derived state to render — the pause/resume label — via the
 // named renderPauseLabel() export called from renderAll() below.
 import * as menu from './features/menu';
+// ABOUT (docs/ui-spec.md §15) — wires #about-open and the #about dialog as a
+// side effect on import, and fills the version/repo from build-time config.
+// It reads no store state, so it has no renderAll() hook (nothing to refresh).
+import './features/about-modal';
 import * as keybindings from './features/keybindings';
 import { installDevTools } from './dev/dev-tools';
 import { DEV_SESSION_COMPLETE_SAMPLE, DEV_STATE_NO_SESSION } from './dev/dev-fixtures';
