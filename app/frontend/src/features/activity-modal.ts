@@ -24,7 +24,7 @@
 // anything this module decided on its own. ADR 0010/0013 are untouched.
 import { byId } from '../dom';
 import * as store from '../state/store';
-import { fmtDuration, fmtInt } from '../format';
+import { fmtCount, fmtDuration, fmtInt } from '../format';
 import type { CoinBreakdown, StatBlock, Stats } from '../wire';
 
 const el = {
@@ -81,7 +81,11 @@ const el = {
 // element with a `coin-amt` class the CSS colors gold, instead of one flat
 // string — hence these return a Node to append, not a string to assign.
 function countToCoinsNode(count: number | undefined, coins: number | undefined): DocumentFragment {
-  return buildValue(fmtInt(count) + ' -> ', coins);
+  // Left side is a COUNT (keystrokes / focus sessions) -> compact via
+  // fmtCount; the coin delta on the right stays EXACT (fmtInt in
+  // buildValue), because that is the small number the user reasons about
+  // precisely — you don't earn "1.2k" coins, you earn 1240 (§14).
+  return buildValue(fmtCount(count) + ' -> ', coins);
 }
 // Coin-only variant for signals whose raw count is already shown in the
 // today/lifetime sections above (mouse is a duration, not a count; app
@@ -117,20 +121,22 @@ export function renderActivity(): void {
   // Optional on the wire (A2-design.md §6) — absent on a stale server, so
   // default to {} and let fmtInt's own undefined-handling render 0s.
   const coins: Partial<CoinBreakdown> = stats.coinsToday || {};
-  el.statTodayKeystrokes.textContent = fmtInt(today?.keystrokes);
+  // COUNTS compact via fmtCount ("1.2M"); DURATIONS humanize via
+  // fmtDuration ("3d 4h"). See docs/ui-spec.md §14 for the classification.
+  el.statTodayKeystrokes.textContent = fmtCount(today?.keystrokes);
   el.statTodayMouse.textContent = fmtDuration(today?.mouseActiveSeconds);
   el.statTodayActive.textContent = fmtDuration(today?.activeSeconds);
   el.statTodayAway.textContent = fmtDuration(today?.idleSeconds);
-  el.statTodaySprints.textContent = fmtInt(today?.sprintsCompleted);
-  el.statTodayFocusSessions.textContent = fmtInt(today?.focusSessions);
-  el.statTodayAppSwitches.textContent = fmtInt(today?.appSwitches);
-  el.statLifeKeystrokes.textContent = fmtInt(life?.keystrokes);
+  el.statTodaySprints.textContent = fmtCount(today?.sprintsCompleted);
+  el.statTodayFocusSessions.textContent = fmtCount(today?.focusSessions);
+  el.statTodayAppSwitches.textContent = fmtCount(today?.appSwitches);
+  el.statLifeKeystrokes.textContent = fmtCount(life?.keystrokes);
   el.statLifeMouse.textContent = fmtDuration(life?.mouseActiveSeconds);
   el.statLifeActive.textContent = fmtDuration(life?.activeSeconds);
   el.statLifeAway.textContent = fmtDuration(life?.idleSeconds);
-  el.statLifeSprints.textContent = fmtInt(life?.sprintsCompleted);
-  el.statLifeFocusSessions.textContent = fmtInt(life?.focusSessions);
-  el.statLifeAppSwitches.textContent = fmtInt(life?.appSwitches);
+  el.statLifeSprints.textContent = fmtCount(life?.sprintsCompleted);
+  el.statLifeFocusSessions.textContent = fmtCount(life?.focusSessions);
+  el.statLifeAppSwitches.textContent = fmtCount(life?.appSwitches);
   setValue(el.coinsTodayKeystrokes, countToCoinsNode(today?.keystrokes, coins?.keystrokes));
   setValue(el.coinsTodayMouse, coinsOnlyNode(coins?.mouse));
   setValue(el.coinsTodayFocusSessions, countToCoinsNode(today?.focusSessions, coins?.focusSessions));

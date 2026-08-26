@@ -31,7 +31,7 @@
 // plain divs with an integer-px inline height set here.
 import { byId } from '../dom';
 import * as store from '../state/store';
-import { fmtDuration, fmtInt } from '../format';
+import { fmtCount, fmtDayCount, fmtDuration, rollsToYears } from '../format';
 import type { DayStat, Stats } from '../wire';
 
 // Keep in sync with A3-design.md §3.1 (game.HistoryRetentionDays) — used
@@ -51,6 +51,12 @@ const el = {
   scrim: byId<HTMLDivElement>('scrim'),
   streakCurrent: byId('history-streak-current'),
   streakLongest: byId('history-streak-longest'),
+  // The static " DAYS" unit that follows #history-streak-current in
+  // index.html. Grabbed as a sibling (no id on it) so this module can
+  // blank it when the streak rolls up to a self-describing "1y 35d" form
+  // (§14) — "1y 35d DAYS" would read wrong. Restored on every render for
+  // the common sub-year case.
+  streakCurrentUnit: byId('history-streak-current').nextElementSibling as HTMLElement | null,
   bars: byId<HTMLDivElement>('history-bars'),
   barLabels: byId<HTMLDivElement>('history-bar-labels'),
   strip: byId<HTMLDivElement>('history-strip'),
@@ -165,7 +171,7 @@ function renderInsights(history: DayStat[]): void {
       return d.focusSessions > acc.focusSessions ? d : acc;
     }, history[0]);
     el.insightFocus.textContent = 'BEST FOCUS DAY: ' + shortDate(best.date) +
-      ' (' + fmtInt(best.focusSessions) + ')';
+      ' (' + fmtCount(best.focusSessions) + ')';
   }
 }
 
@@ -176,8 +182,17 @@ export function renderHistory(): void {
   const history: DayStat[] = stats.history || [];
   const streak = stats.streak || { current: 0, longest: 0 };
 
-  el.streakCurrent.textContent = fmtInt(streak.current);
-  el.streakLongest.textContent = fmtInt(streak.longest);
+  // Streak days are a DAY-COUNT: a small run stays a bare integer beside
+  // the static " DAYS" label ("8 DAYS"); a run that reaches a year rolls up
+  // to "1y 35d" and the " DAYS" suffix is blanked because that form already
+  // carries its unit (§14). longest >= current always (server invariant),
+  // so if current rolled to years longest has too — the unitless small
+  // "LONGEST: 12" case only ever occurs while " DAYS" is still shown.
+  el.streakCurrent.textContent = fmtDayCount(streak.current);
+  if (el.streakCurrentUnit) {
+    el.streakCurrentUnit.textContent = rollsToYears(streak.current) ? '' : ' DAYS';
+  }
+  el.streakLongest.textContent = fmtDayCount(streak.longest);
 
   renderBars(history);
   renderStrip(history);

@@ -2,7 +2,7 @@
 // the current state, updates the DOM it owns; no business logic.
 import { byId } from '../dom';
 import * as store from '../state/store';
-import { fmtInt, truncate } from '../format';
+import { fmtCount, fmtInt, truncate } from '../format';
 import { MOOD_COLOR } from '../geometry';
 
 const hudLevel = byId('hud-level');
@@ -43,7 +43,11 @@ export function renderChrome(): void {
   const moodColor = state.paused ? 'var(--screen-dim)' : (MOOD_COLOR[state.activeState] || MOOD_COLOR.idle);
   statusDot.style.background = moodColor;
   hudLevel.textContent = 'LV ' + fmtInt(state.level);
-  hudCash.textContent = fmtInt(state.devCash);
+  // DEV CASH is the one HUD balance the owner said "could go to a million"
+  // (§14): compact it with fmtCount ("1.2M") so a large balance never
+  // overflows the fixed HUD box. Store PRICES and coin deltas elsewhere
+  // stay EXACT (fmtInt) — you spend an exact number, so those never compact.
+  hudCash.textContent = fmtCount(state.devCash);
 
   sprintName.textContent = truncate(state.sprint.name, 28);
   sprintBar.max = state.sprint.target;

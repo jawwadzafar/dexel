@@ -2885,3 +2885,81 @@ sound played, not merely that one did.
   only console noise in this app is a `/favicon.ico` 404 that predates this
   work (the page declares no icon and the binary embeds none), which the gate
   answers with a 204 so it cannot mask a real error.
+
+## 14. Number & duration formatting — humanized, honest, floored
+
+Every on-screen number in the analytics UI is formatted **client-side** (the
+wire sends raw integers and raw whole-seconds durations, never a pre-formatted
+string — §6.1). `app/frontend/src/format.ts` owns the rules; each display
+site picks a formatter by **classifying the field**, and the classification —
+not the widget — decides the formatter:
+
+* **COUNT** — a magnitude that can grow large: keystrokes, mouse clicks, app
+  switches, sprints, focus sessions, completed/this-week session tallies, and
+  the HUD **DEV CASH** balance. Rendered with **`fmtCount`**.
+* **DURATION** — a span of whole seconds: active time, away time, mouse-active
+  time, longest-focus block, session/elapsed durations. Rendered with
+  **`fmtDuration`**.
+* **DAY-COUNT** — a count *of days* that can cross a year: the streak
+  (current/longest). Rendered with **`fmtDayCount`**.
+* **MONEY (exact)** and **IDENTIFIERS** — store prices, the per-signal **coin
+  deltas** a user reasons about exactly ("+14 earned"), and the **"SESSION N"
+  ordinal** — stay EXACT via `fmtInt`. You spend an exact number and you refer
+  to an exact session, so these never compact. The one money value that *does*
+  compact is the HUD DEV CASH balance, which the owner said "could go to a
+  million": it is a magnitude to glance at, not a price to match, so a large
+  balance compacts rather than overflowing the fixed HUD box.
+
+### `fmtCount(n)` — SI-style compact integers
+
+* `n < 1000` → the exact integer ("0", "88", "842", "999").
+* `n >= 1000` → three significant figures with a `k` / `M` / `B` / `T` suffix,
+  any trailing `.0`/`.00` trimmed: `1000` → "1k", `1234` → "1.23k", `88426` →
+  "88.4k", `120000` → "120k", `1234567` → "1.23M", `12000000` → "12M",
+  `1.2e9` → "1.2B".
+* The fraction is **floored, never rounded up**, so a value that has not
+  actually reached the next unit never claims it: `999999` → "999k" (never
+  "1M"), `999999999` → "999M", `1999` → "1.99k". A compact count can
+  under-state by less than one displayed step; it can never over-state.
+* Negatives keep a leading `-` over the same rule; non-finite/undefined → "0".
+* This is why a small count never turns into an ugly "0.8k" — anything below
+  1000 is shown exactly.
+
+### `fmtDuration(seconds)` — rolled-up prose, at most two units
+
+Rolls seconds up through **s → m → h → d → y**, with **no months** (a month's
+length is variable — deliberately skipped), showing **at most the two
+most-significant units** and flooring everything below them:
+
+* `< 60s` → "45s"
+* `< 60m` → "3m 30s" (trailing " 0s" dropped → "3m")
+* `< 24h` → "2h 15m" (trailing " 0m" dropped → "2h")
+* `< 365d` → "3d 4h" (trailing " 0h" dropped → "3d")
+* `>= 365d` → "1y 35d" (`1 year = 365 days`; trailing " 0d" dropped → "2y")
+
+The two-unit floor is what turns the raw "1020m 1s" a naïve minutes render
+produced into an honest **"17h"**, and "263m 30s" into "4h 23m". Negatives /
+undefined clamp to "0s".
+
+**The live session pill keeps its own `fmtClock` (H:MM:SS / M:SS),
+deliberately NOT `fmtDuration`** (chrome.ts): a running titlebar clock reads
+better as a ticking clock face than as humanized prose, and a ticking value
+should not be re-humanized every second. The Sessions modal's live-elapsed
+cell *does* use `fmtDuration` — it already displays at minute resolution, so
+it visibly changes only once a minute, not every tick.
+
+### `fmtDayCount(days)` / `rollsToYears(days)` — day counts that cross a year
+
+A small day count stays a **bare integer** so the DOM's own " DAYS" unit reads
+naturally ("8 DAYS"); once it reaches a year it rolls up to "1y 35d" via the
+same 365-day math `fmtDuration` uses, and the caller **drops the " DAYS"
+suffix** (`rollsToYears` reports when) because the rolled-up form already
+carries its unit — "1y 35d DAYS" would read wrong. Since `longest >= current`
+always holds, the unitless small "LONGEST: 12" case only ever appears while
+the " DAYS" label is still shown, so nothing is ever left unlabelled.
+
+The **"BUSIEST DAY"** insight is a **date** (`MM/DD`), not a count — its
+parenthetical is a DURATION (`fmtDuration`). The Sessions card's **"BEST"**
+focus line keeps a cozy minute-resolution local formatter (no seconds on that
+one line), but now rolls up past an hour so a long block reads "1h 20m", never
+a bare "80m".

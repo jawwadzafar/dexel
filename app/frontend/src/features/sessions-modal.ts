@@ -32,7 +32,7 @@
 import { byId } from '../dom';
 import * as store from '../state/store';
 import { sendAction } from '../state/ws-client';
-import { fmtDuration, fmtInt, truncate } from '../format';
+import { fmtCount, fmtDuration, fmtInt, truncate } from '../format';
 import type { ActiveSessionView, SessionsView, SessionView } from '../wire';
 
 const el = {
@@ -88,24 +88,25 @@ function showView(name: 'idle' | 'live' | 'summary'): void {
 }
 
 // ---------------------------------------------------------------------
-// formatting (local — format.ts's fmtDuration has no hours; the card's
-// "duration, large" cell wants "1h 24m" once a session crosses an hour)
+// formatting — durations go through format.ts's shared fmtDuration (which
+// now rolls up hours/days/years, §14), so a session's "1h 24m" and the
+// recent list's durations humanize the same way the Activity/History
+// modals do. The one local formatter left is fmtBestFocus, which keeps
+// this card's deliberate minute-resolution phrasing (§14 / P2 §3.2).
 // ---------------------------------------------------------------------
-function fmtSessionDuration(totalSeconds: number | undefined): string {
-  const s = Math.max(0, Math.floor(Number(totalSeconds) || 0));
-  const h = Math.floor(s / 3600);
-  if (h <= 0) return fmtDuration(s);
-  const m = Math.floor((s % 3600) / 60);
-  return h + 'h ' + m + 'm';
-}
-// "BEST 14m" — the personal-best focus block, rounded to the minute
-// (the card's cozy phrasing has no room for seconds on this one line).
+// "BEST 14m" — the personal-best focus block at MINUTE resolution (the
+// card's cozy one-line phrasing has no room for seconds), but rolling up
+// to "1h 20m" past an hour so a long block never reads as a bare "80m".
+// Floors the minute (never rounds up), matching fmtDuration's honesty rule.
 function fmtBestFocus(totalSeconds: number | undefined): string {
   const s = Math.max(0, Math.floor(Number(totalSeconds) || 0));
-  return Math.round(s / 60) + 'm';
+  if (s < 3600) return Math.floor(s / 60) + 'm';
+  const h = Math.floor(s / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  return m > 0 ? h + 'h ' + m + 'm' : h + 'h';
 }
 function focusLine(focusSessions: number, longestFocusBlockSeconds: number): string {
-  return fmtInt(focusSessions) + ' blocks   BEST ' + fmtBestFocus(longestFocusBlockSeconds);
+  return fmtCount(focusSessions) + ' blocks   BEST ' + fmtBestFocus(longestFocusBlockSeconds);
 }
 // RFC3339 -> "MM/DD", ASCII-only (the A2/history-modal lesson on glyphs
 // this pixel font doesn't have). A real timestamp (unlike history's
@@ -131,8 +132,8 @@ function buildRecentList(recent: SessionView[]): void {
     row.className = 'sessions-recent-row';
     const name = s.name ? truncate(s.name, 20) : 'unnamed';
     row.textContent = shortDateFromIso(s.endedAt) + '  ' + name + '  ' +
-      fmtSessionDuration(s.durationSeconds) + '  ' + fmtInt(s.keystrokes) + ' keys  ' +
-      fmtInt(s.focusSessions) + ' blocks';
+      fmtDuration(s.durationSeconds) + '  ' + fmtCount(s.keystrokes) + ' keys  ' +
+      fmtCount(s.focusSessions) + ' blocks';
     row.title = 'Click to re-open this session\'s summary';
     row.addEventListener('click', function () { showSummary(s); });
     el.recentList.appendChild(row);
@@ -141,8 +142,8 @@ function buildRecentList(recent: SessionView[]): void {
 
 function renderIdleView(sessions: SessionsView | null): void {
   const summary = sessions ? sessions.summary : { completed: 0, thisWeek: 0, longestSessionSeconds: 0 };
-  el.summaryLine.textContent = fmtInt(summary.completed) + ' completed  ·  ' +
-    fmtInt(summary.thisWeek) + ' this week  ·  longest ' + fmtSessionDuration(summary.longestSessionSeconds);
+  el.summaryLine.textContent = fmtCount(summary.completed) + ' completed  ·  ' +
+    fmtCount(summary.thisWeek) + ' this week  ·  longest ' + fmtDuration(summary.longestSessionSeconds);
   buildRecentList(sessions ? sessions.recent : []);
 }
 
@@ -151,10 +152,12 @@ function renderIdleView(sessions: SessionsView | null): void {
 // ---------------------------------------------------------------------
 function renderLiveView(a: ActiveSessionView): void {
   el.liveName.textContent = a.name ? truncate(a.name, 40) : 'Unnamed session';
-  el.liveElapsed.textContent = fmtSessionDuration(a.elapsedSeconds);
-  el.liveKeys.textContent = fmtInt(a.keystrokes);
+  el.liveElapsed.textContent = fmtDuration(a.elapsedSeconds);
+  el.liveKeys.textContent = fmtCount(a.keystrokes);
   el.liveFocus.textContent = focusLine(a.focusSessions, a.longestFocusBlockSeconds);
-  el.liveSprints.textContent = fmtInt(a.sprintsCompleted);
+  el.liveSprints.textContent = fmtCount(a.sprintsCompleted);
+  // Coins EARNED stays EXACT (fmtInt): it is a small delta the user reasons
+  // about precisely, not a magnitude to compact (§14).
   el.liveCoins.textContent = '+' + fmtInt(a.coinsEarned);
   el.endBtn.textContent = a.elapsedSeconds < SESSION_MIN_DURATION_SECONDS ? 'CANCEL SESSION' : 'END SESSION';
 }
@@ -174,17 +177,22 @@ function renderCard(s: SessionView): void {
     el.cardName.textContent = '';
     el.cardName.classList.add('hidden');
   }
-  el.cardDuration.textContent = fmtSessionDuration(s.durationSeconds);
-  el.cardKeys.textContent = fmtInt(s.keystrokes);
+  el.cardDuration.textContent = fmtDuration(s.durationSeconds);
+  el.cardKeys.textContent = fmtCount(s.keystrokes);
   el.cardFocus.textContent = focusLine(s.focusSessions, s.longestFocusBlockSeconds);
-  el.cardSprints.textContent = fmtInt(s.sprintsCompleted);
+  el.cardSprints.textContent = fmtCount(s.sprintsCompleted);
+  // Coins EARNED stays EXACT — see renderLiveView (§14).
   el.cardCoins.textContent = '+' + fmtInt(s.coinsEarned) + ' earned during it';
 
   const state = store.getState();
   const summary = state && state.sessions ? state.sessions.summary : null;
   const completed = summary ? summary.completed : s.id;
   const thisWeek = summary ? summary.thisWeek : 0;
-  el.cardMeta.textContent = 'SESSION ' + fmtInt(completed) + '  ·  ' + fmtInt(thisWeek) + ' THIS WEEK';
+  // "SESSION N" is an ORDINAL identifying THIS session — kept EXACT
+  // (fmtInt) so the user can tell exactly which session it was, the
+  // count-vs-identifier distinction §14 draws (parallel to money's
+  // count-vs-price split). "THIS WEEK" is a small stat -> fmtCount.
+  el.cardMeta.textContent = 'SESSION ' + fmtInt(completed) + '  ·  ' + fmtCount(thisWeek) + ' THIS WEEK';
 }
 
 // showSummary is also the entry point for clicking a recent-list row —
