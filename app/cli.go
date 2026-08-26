@@ -101,6 +101,7 @@ var subcommands = map[string]subcommand{
 	"open":      {"start if needed, then open the UI (desktop app, else browser)", cmdOpen},
 	"logs":      {"the runtime log [-n N] [-f] [--path] [--truncate]", cmdLogs},
 	"uninstall": {"remove dexel from this machine [--purge to delete your save too] [--yes]", cmdUninstall},
+	"update":    {"update to the latest release, in place [--check] [-y] [--force]; your save is preserved", cmdUpdate},
 	"serve":     {"run the server in the FOREGROUND (the developer path; all of today's flags)", func(args []string) int { runServe(modeServe, args); return 0 }},
 	"runtime":   {"the detached runtime's own entry point — `start` execs this", func(args []string) int { runServe(modeRuntime, args); return 0 }},
 	"version":   {"print version, commit and os/arch", func([]string) int { fmt.Println(versionLine()); return 0 }},
@@ -142,6 +143,15 @@ func classify(args []string) decision {
 	switch first {
 	case "-h", "-help", "--help":
 		return decision{Kind: dispatchSubcommand, Name: "help", Args: args[1:]}
+	// `--version`/`-V` is the conventional version flag every tool answers,
+	// handled here for the SAME reason -h/--help is: it is a question about
+	// the CLI, not a flag for the legacy foreground server, and routing it
+	// to the `version` subcommand means there is one implementation of
+	// "print the version" rather than two that could drift. `dexel version`
+	// stays too. Like help, ONLY as the FIRST word: `dexel -addr ... -V` is
+	// still the legacy shape asking its own (nonexistent) flag.
+	case "-V", "--version", "-version":
+		return decision{Kind: dispatchSubcommand, Name: "version", Args: args[1:]}
 	}
 	// SHAPE, not membership: anything else beginning with "-" is the
 	// legacy foreground runtime.

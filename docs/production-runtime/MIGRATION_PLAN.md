@@ -286,8 +286,44 @@ confirmation and never touches the legacy Rust save.
   Windows self-delete (a detached `powershell -Command Wait-Process; Remove-Item`
   keyed to this pid, since a running `.exe` cannot unlink itself) is
   **FIELD-TEST-NEEDED**.
-- `dexel update` is the remaining half of this PR and is still outstanding —
-  `update` is deliberately absent from `cli.go`'s table until it does something.
+- ~~`dexel update` is the remaining half of this PR and is still outstanding —
+  `update` is deliberately absent from `cli.go`'s table until it does something.~~
+  **SHIPPED** — `app/cmd_update.go` + `app/cmd_update_test.go`, wired into
+  `cli.go`'s table (and into `cli_test.go`'s wired-and-documented +
+  classify assertions). Because R2 is not provisioned yet, it mirrors
+  `install.sh`'s trust model rather than the R2/`manifest.json` shape above:
+  it resolves the **GitHub "latest release"** for `jawwadzafar/dexel`,
+  compares the tag to `main.version`, and — when newer — downloads this
+  os/arch's `dexel-<tag>-<os>-<arch>.tar.gz` (`.zip` on Windows), verifies
+  it against **two witnesses** (the release's `sha256sums.txt` AND GitHub's
+  per-asset `digest`, refusing on either mismatch before anything on disk is
+  touched), unpacks the binary, runs it once to prove it works, then does the
+  **replace-and-restart dance**: the new bytes are written to a temp file on
+  the target's own filesystem, `rename(target → target.old)` then
+  `rename(new → target)` (atomic on one fs, mode preserved, rolled back on
+  failure), and if a runtime was running it is stopped and restarted on the
+  new binary via the same stop→start path `restart` uses. The state dir is
+  **never** touched — the save and config survive every upgrade. Flags:
+  `--check` (report only), `-y`/`--yes` (non-interactive, mirroring
+  `uninstall`'s consent idiom), `--force` (reinstall/downgrade, or update a
+  `dev` build). Token via `GH_TOKEN`/`GITHUB_TOKEN` for the private-repo
+  path. Exit codes align with `install.sh`'s scheme (0 ok/up-to-date, 5 no
+  build for this os/arch, 6 checksum mismatch, 7 feed unreachable, 8 the
+  downloaded binary failed its own check). GRACEFUL DEGRADATION is most of
+  what runs today and is deliberate: latest == current (the **freeze**:
+  v0.1.0) prints "already up to date" and exits 0; a private repo with no
+  token / a 404 prints "couldn't reach the release feed (is the repo public
+  yet / set GH_TOKEN?)" and exits 7; offline is a clean network error — none
+  crash, and a checksum-mismatch injection leaves the binary byte-for-byte
+  unchanged (unit-tested). Verified against the **live v0.1.0 release**:
+  `dexel update --check` with a token prints "already up to date (v0.1.0)".
+  Also added: the conventional `--version`/`-V` alias in `cli.go`'s
+  `classify` (routed to the `version` subcommand the same way `-h`/`--help`
+  routes to `help`), with `dexel version` kept. The Windows rename-dance and
+  self-restart branch is unit-tested through the same OS-injected path
+  arithmetic the rest of the CLI uses; the `.old` cleanup on Windows (a
+  running `.exe` cannot unlink its own moved-aside image) is best-effort and
+  **FIELD-TEST-NEEDED**.
 
 **Recommendation attached to this step:** resolve **FORK C** here. An updater
 implies a downgrade path, and today a downgrade quarantines the save and starts

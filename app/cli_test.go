@@ -88,8 +88,18 @@ func TestClassifyImplementsForkADispatchTable(t *testing.T) {
 		{"uninstall", []string{"uninstall"}, dispatchSubcommand, "uninstall", []string{}},
 		{"uninstall with flags", []string{"uninstall", "--purge", "--yes"},
 			dispatchSubcommand, "uninstall", []string{"--purge", "--yes"}},
-		{"a future command not yet built", []string{"update"}, dispatchUnknown, "update", []string{}},
+		{"update", []string{"update"}, dispatchSubcommand, "update", []string{}},
+		{"update with flags", []string{"update", "--check"}, dispatchSubcommand, "update", []string{"--check"}},
 		{"a bare path", []string{"state.db"}, dispatchUnknown, "state.db", []string{}},
+
+		// --version/-V is the conventional version flag, routed to the
+		// `version` subcommand the same way -h/--help routes to `help`, and
+		// like help ONLY as the first word.
+		{"dash big v", []string{"-V"}, dispatchSubcommand, "version", []string{}},
+		{"dash dash version", []string{"--version"}, dispatchSubcommand, "version", []string{}},
+		{"dash version", []string{"-version"}, dispatchSubcommand, "version", []string{}},
+		{"version flag after another flag stays legacy", []string{"-public", "./public", "--version"},
+			dispatchLegacy, "", []string{"-public", "./public", "--version"}},
 	}
 
 	for _, tc := range cases {
@@ -158,12 +168,13 @@ func TestEverySubcommandIsWiredAndDocumented(t *testing.T) {
 			t.Errorf("§PR-7 requires a %q subcommand and there is none", name)
 		}
 	}
-	// ...and the words later PRs own must NOT be, because a word that is
-	// listed but does nothing is worse than an honest "unknown command"
-	// (PR-7's update half is still outstanding).
+	// ...and PR-7's update half, now that cmd_update.go resolves a release,
+	// verifies it with two witnesses, and performs the replace-and-restart
+	// dance (MIGRATION_PLAN.md §PR-7). It was deliberately ABSENT until it
+	// did something real; that condition is now met.
 	for _, name := range []string{"update"} {
-		if _, ok := subcommands[name]; ok {
-			t.Errorf("%q is registered but its PR has not landed — it would do nothing", name)
+		if _, ok := subcommands[name]; !ok {
+			t.Errorf("§PR-7 requires an %q subcommand and there is none", name)
 		}
 	}
 }
