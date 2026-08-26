@@ -432,14 +432,38 @@ img {
   white-space: nowrap;
   line-height: 16px;
 }
-#hud-cash .nes-icon { vertical-align: middle; margin-right: 2px; }
+/* TITLE-BAR ALIGNMENT. The bar is 24px with a 2px bottom rule, so its content
+   band is 0..21 and an 8px glyph centres on ink rows 8..14. #hud-cash's text
+   already landed there; the coin and the level did not, and the three were on
+   three different centres (measured off the rendered page, not guessed:
+   coin 12.5, cash digits 11.0, level 13.0 — up to 2px apart, which is 4
+   device pixels at 2x and plainly visible).
 
+   The coin is a 16x16 `.nes-icon`, twice the height of the text beside it.
+   `vertical-align: middle` aligns it to the text's own middle (baseline plus
+   half the x-height), which for a pixel font this small is not the line box's
+   centre — it hung the coin low enough to crowd the bar's bottom rule. `top`
+   plus a 1px lift puts its 16px box on the same centre the glyphs use. */
+#hud-cash .nes-icon {
+  vertical-align: top;
+  position: relative;
+  top: -1px;
+  margin-right: 2px;
+}
+
+/* Was top:8, height:8 and NO line-height. Press Start 2P's `normal`
+   line-height is well over 8px, so the line box overflowed its 8px container
+   and the glyphs settled 2px below #hud-cash's — the same class of bug
+   #sprint-name records (BUG-3). Matching #hud-cash's box exactly (top 4,
+   height 16, line-height 16) is what puts "LV n" on the coin's line rather
+   than near it. */
 #hud-level {
   position: absolute;
   left: 80px;
-  top: 8px;
+  top: 4px;
   width: 40px;
-  height: 8px;
+  height: 16px;
+  line-height: 16px;
   font-size: 8px;
   color: var(--cream);
   text-align: left;
@@ -2276,7 +2300,73 @@ body.shell #titlebar { cursor: default; }
   align-items: center;
   justify-content: center;
 }
-.nes-btn:hover, .nes-btn:focus { background-color: var(--wall-light); }
+/* `color` is as load-bearing as `background-color` here, and leaving it out
+   was a real bug. NES.css's hover rule is
+   `{ color:#212529; background-color:#e7e7e7 }` — near-BLACK text, correct
+   only because NES.css is simultaneously turning the face nearly white. We
+   replaced the face with `--wall-light` (a dark purple) and inherited the
+   near-black text with it, so hovering any button — every #menu-panel item,
+   every store action — dropped its label to #212529 on a dark ground and the
+   text all but vanished. Restating the colour is the whole fix. */
+.nes-btn:hover,
+.nes-btn:focus {
+  background-color: var(--wall-light);
+  color: var(--cream);
+}
+
+/* The raised-button shadow: NES.css's, kept, at half weight.
+
+   NES.css draws its 3D effect with a pseudo-element rather than a border:
+
+     .nes-btn::after { position:absolute; top:-4px; right:-4px;
+                       bottom:-4px; left:-4px;
+                       box-shadow: inset -4px -4px #adafbc }
+
+   That is THE look — a lit shelf along the bottom and right edges is what
+   makes a NES.css button read as raised — so it stays. What was wrong was its
+   weight and its placement, both of which showed up in the shipped window:
+
+   1. FOUR PIXELS IS TOO MANY HERE. On a 640x400 layout 4px is four ART
+      pixels: as thick as the button's entire border, on a button only 16px
+      tall. NES.css is tuned for a full-size page where 4px is a hairline.
+      Halved to 2px, which reads as a raised edge instead of a second border.
+   2. IT SAT OUTSIDE THE BUTTON. The pseudo is inset -4px on every side, so
+      the band painted BEYOND the border box — the three 32x16 window buttons
+      hung a shelf past the title bar's own 2px bottom rule, and in
+      #menu-panel each item's shelf ate the panel's 6px right padding. Pulled
+      to inset 0 so it lights the button's own bottom/right border and
+      nothing else.
+   3. IT GREW ON HOVER (4px -> 6px), so the button visibly changed size under
+      the cursor. Hover now changes only the face colour (the rule above).
+
+   `:active` still flips the shelf to the top/left, which is NES.css's own
+   pressed-button idea and costs nothing once the size is fixed.
+
+   #adafbc is deliberately NOT swapped for a palette colour: it is NES.css's
+   raised-edge grey, it is what makes these read as NES buttons, and it is
+   what the layout has always shipped. `#menu-panel .menu-item` leaves
+   `position: relative` alone specifically so this pseudo stays each button's
+   own containing block — see that rule before touching either. */
+.nes-btn::after,
+.nes-btn:hover::after,
+.nes-btn:focus::after {
+  top: 0;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  box-shadow: inset -2px -2px #adafbc;
+}
+.nes-btn:active:not(.is-disabled)::after {
+  box-shadow: inset 2px 2px #adafbc;
+}
+/* A disabled button is not raised — it is flat and out of the way. The rule
+   below already flattens the BUTTON's own box-shadow; without this the
+   pseudo-element would keep lighting its edges. */
+.nes-btn.is-disabled::after,
+.nes-btn.is-disabled:hover::after,
+.nes-btn.is-disabled:focus::after {
+  box-shadow: none;
+}
 .nes-btn.is-disabled, .nes-btn.is-disabled:hover, .nes-btn.is-disabled:focus {
   background-color: var(--shadow);
   color: var(--screen-dim);
