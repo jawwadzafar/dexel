@@ -415,7 +415,7 @@ img {
 }
 
 /* Title-bar redesign (BUG-2): the wordmark and mood dot are gone — the
-   title bar shows ONLY the coin/Dev Cash display, then the level,
+   title bar shows ONLY the coin/Cash display, then the level,
    clustered top-left, coin first. (Mood is still shown via #status-dot
    in the bottom status panel.) The three separate [A]/[H]/[S] launcher
    buttons are replaced by a single hamburger (#menu-open, top-right)
@@ -439,17 +439,35 @@ img {
    coin 12.5, cash digits 11.0, level 13.0 — up to 2px apart, which is 4
    device pixels at 2x and plainly visible).
 
-   The coin is a 16x16 `.nes-icon`, twice the height of the text beside it.
+   The coin is a 16x16 sprite, twice the height of the text beside it.
    `vertical-align: middle` aligns it to the text's own middle (baseline plus
    half the x-height), which for a pixel font this small is not the line box's
    centre — it hung the coin low enough to crowd the bar's bottom rule. `top`
    plus a 1px lift puts its 16px box on the same centre the glyphs use. */
-#hud-cash .nes-icon {
+
+/* COIN-ICON (docs/ui-spec.md §9.2): the shared 16x16 gold coin sprite
+   (app/assets/coin.png) used by the HUD and the store header, replacing
+   NES.css's `.nes-icon.coin` cash glyph so the currency matches the game's
+   own pixel art. `image-rendering: pixelated` is inherited from #root but is
+   restated here so the coin stays crisp at 2x even if that ever narrows;
+   `-webkit-user-drag: none` mirrors dom.ts's spriteImg() rule for an <img>
+   the frontend authored. */
+.coin-img {
+  width: 16px;
+  height: 16px;
+  image-rendering: pixelated;
+  -webkit-user-drag: none;
+}
+#hud-cash .coin-img {
   vertical-align: top;
   position: relative;
   top: -1px;
   margin-right: 2px;
 }
+/* COIN-CLICK: the HUD coin is a clickable toy (render/chrome.ts) — a pointer
+   cursor invites the click that flips + sparkles + plays coin.wav. The store
+   coin is a plain label, so only #hud-coin gets the cursor. */
+#hud-coin { cursor: pointer; }
 
 /* Was top:8, height:8 and NO line-height. Press Start 2P's `normal`
    line-height is well over 8px, so the line box overflowed its 8px container
@@ -693,9 +711,35 @@ body.shell #titlebar { cursor: default; }
      each button its own containing block. */
   width: 100%;
   height: 20px;
-  padding: 0 4px;
+  padding: 0 8px;
   font-size: 8px;
   white-space: nowrap;
+
+  /* BUG-11 — command-palette alignment. Each item is <span.mi-label> +
+     <span.mi-key>; laying the button out as a flex row with
+     space-between pins the LABEL to the left edge and the [KEY] hint to the
+     right edge. Because every item is the same full width with the same
+     padding, all six [S][A][H][W][G][P] hints fall into one clean right
+     column. NES.css centres .nes-btn text by default; this overrides that
+     for the panel items only. */
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  text-align: left;
+}
+
+/* BUG-11: the label reads left, the key hint reads right and dim so the two
+   are distinguishable and the hint column reads as secondary. --screen-dim is
+   the same muted ink #menu-panel-title and other secondary labels already
+   use. The hint never shrinks or wraps, so the right column stays exact. */
+#menu-panel .menu-item .mi-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+#menu-panel .menu-item .mi-key {
+  color: var(--screen-dim);
+  margin-left: 8px;
+  flex: none;
 }
 
 /* ================= pixel-panel (NOT nes-container) ================= */
@@ -923,8 +967,8 @@ body.shell #titlebar { cursor: default; }
 }
 
 #store-cash {
-  /* "Cash" naming (STORE-REDESIGN): the store-local label reads CASH, not
-     "Dev Cash". Right-aligned in the header, clear of #store-close. */
+  /* "Cash" naming (STORE-REDESIGN): the store-local label reads CASH.
+     Right-aligned in the header, clear of #store-close. */
   position: absolute;
   left: 320px;
   top: 14px;
@@ -937,6 +981,13 @@ body.shell #titlebar { cursor: default; }
   white-space: nowrap;
 }
 #store-cash.flash-insufficient { color: var(--pot); }
+/* COIN-ICON: the store's coin sits in a 12px right-aligned line box next to
+   the CASH label and value — middle-aligned to the text so it centres in the
+   header row rather than hanging below it. */
+#store-cash .coin-img {
+  vertical-align: middle;
+  margin: 0 2px;
+}
 
 #store-grid {
   position: absolute;
@@ -1212,7 +1263,7 @@ body.shell #titlebar { cursor: default; }
   gap: 6px;
 }
 /* One clickable tab header each. Same pixel idiom as the store's category
-   rows (.cat-row: --wall-light selected fill) and the gold DevCash accent
+   rows (.cat-row: --wall-light selected fill) and the gold Cash accent
    used everywhere for emphasis, since Press Start 2P is a single 400-weight
    face and colour is the only safe emphasis lever (see .coins-row comment).
    The selected state is driven by aria-selected so accessibility and the
@@ -1322,7 +1373,7 @@ body.shell #titlebar { cursor: default; }
   text-align: right;
 }
 /* The coin amount is the point of this section (A2-design.md §6) — call
-   it out in the same gold used for DevCash elsewhere (hud-cash,
+   it out in the same gold used for Cash elsewhere (hud-cash,
    store-cash, .kind-purchase/.kind-sprint flashes) rather than a bold
    weight: Press Start 2P is a single 400-weight face and synthetic bold
    at 8px reads muddy, so color is the only safe emphasis lever here. */
@@ -2000,7 +2051,7 @@ body.shell #titlebar { cursor: default; }
   padding: 0;
   font-size: 8px;
 }
-/* ON is called out in the same gold DevCash and the session pill use.
+/* ON is called out in the same gold Cash and the session pill use.
    Colour is the only safe emphasis lever here: Press Start 2P is a single
    400-weight face and synthetic bold at 8px reads muddy (the A2 lesson
    .coins-row .coin-amt already records). */

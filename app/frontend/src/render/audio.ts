@@ -15,6 +15,9 @@
 //   session_complete  a kept session's `sessionComplete` — the card moment
 //   react_*           the four SCENE-REACTIONS clicks (dev/monitor/
 //                     beverage/buddy), one voice each
+//   coin              the HUD coin click (render/chrome.ts) — dexel's own
+//                     currency answering a deliberate click, same "a click
+//                     is a gesture" category as the four reactions below
 //
 // There is no typing sound, no ambient loop and no UI click. That is a
 // design decision, not an omission: dexel sits on a working developer's
@@ -75,7 +78,8 @@ const SOUND_FILES = {
   reactDev: 'react_dexel.wav',
   reactMonitor: 'react_monitor.wav',
   reactBeverage: 'react_beverage.wav',
-  reactBuddy: 'react_buddy.wav'
+  reactBuddy: 'react_buddy.wav',
+  coin: 'coin.wav'
 } as const;
 
 export type SoundName = keyof typeof SOUND_FILES;

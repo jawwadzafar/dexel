@@ -25,7 +25,19 @@
 //    Dragging selected text out of the name field is ordinary text editing
 //    and this frontend has no business breaking it.
 //
-// 2. THE MIDDLE-CLICK / IMAGE-CONTEXT ESCAPE. A middle click on an <img>
+// 3. THE CONTEXT MENU (BUG-12). In a desktop webview a right-click pops the
+//    engine's own context menu — Back / Forward / Reload / "Open image in
+//    new tab" — and every one of those is a way to leave or reset a
+//    single-page app with a live WebSocket and unsaved modal state (Reload
+//    is the drop, Back/Forward navigate a history dexel never wanted, and the
+//    image entry is the same /assets/<file>.png escape the dragstart backstop
+//    above closes). dexel is a companion, not a web page, so it has no use
+//    for that menu. One capturing listener cancels `contextmenu` on the whole
+//    document — EXCEPT inside a real text input, where the menu carries Cut /
+//    Copy / Paste that right-click-to-paste in the name/session fields relies
+//    on. Same isTextEntry exception the two backstops below already use.
+//
+// 4. THE MIDDLE-CLICK / IMAGE-CONTEXT ESCAPE. A middle click on an <img>
 //    inside a link, and the browser's own "open image in new tab", both end
 //    at a navigation away from a single-page app that has a live WebSocket
 //    and unsaved modal state. There are no <a> elements in this layout today
@@ -76,6 +88,21 @@ export function initInteractionGuards(): void {
   document.addEventListener(
     'dragstart',
     function (e: DragEvent) {
+      if (isTextEntry(e.target)) return;
+      e.preventDefault();
+    },
+    true
+  );
+
+  // BUG-12 — suppress the webview's native context menu everywhere except
+  // real text inputs, so its Back/Forward/Reload/"open image" entries can
+  // never leave or reset the app, while right-click paste in the name and
+  // session fields keeps working. Capturing + on `document` for the same
+  // top-layer reason as the dragstart guard above (an open <dialog> — the
+  // Sessions/Settings name inputs live inside one).
+  document.addEventListener(
+    'contextmenu',
+    function (e: Event) {
       if (isTextEntry(e.target)) return;
       e.preventDefault();
     },

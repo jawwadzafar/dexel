@@ -38,7 +38,13 @@
          with no reader — so it is written unconditionally and the browser
          page stays byte-identical. -->
     <div id="titlebar" data-tauri-drag-region="deep">
-      <span id="hud-cash"><i class="nes-icon coin is-small"></i><span class="value">0</span></span>
+      <!-- COIN-ICON / COIN-CLICK (docs/ui-spec.md §9.2): the real pixel-art
+           coin sprite (app/assets/coin.png), not NES.css's cash glyph, so it
+           matches the game's own art. It is also a clickable toy — a click
+           flips it to a sparkle and plays coin.wav (render/chrome.ts swaps
+           #hud-coin's src through coin_react_a/b and back). draggable=false is
+           the spriteImg() rule for a static <img> the frontend authored. -->
+      <span id="hud-cash"><img id="hud-coin" class="coin-img" src="/assets/coin.png" alt="" draggable="false"><span class="value">0</span></span>
       <span id="hud-level">LV 1</span>
       <!-- Phase P2 (docs/ui-spec.md §9.5): the always-visible session
            indicator. Owned by render/chrome.ts, which fills
@@ -79,21 +85,29 @@
              name now lives in the personal status line (ui-spec §7.4), not
              here. -->
         <div id="menu-panel-title">MENU</div>
-        <button id="store-open" class="nes-btn menu-item">[S] STORE</button>
-        <button id="activity-open" class="nes-btn menu-item">[A] ACTIVITY</button>
-        <button id="history-open" class="nes-btn menu-item">[H] HISTORY</button>
-        <button id="sessions-open" class="nes-btn menu-item">[W] SESSIONS</button>
+        <!-- BUG-11 — command-palette alignment. Each item is a two-span
+             button: the LABEL on the left, the [KEY] hint on the right. The
+             CSS lays each row out with flex justify-content:space-between and
+             full width, so every [S][A][H][W][G][P] hint lands in one clean
+             right column. menu.ts's close-on-pick still works — its
+             .menu-item closest() match is unaffected by the inner spans — and
+             renderPauseLabel() now writes into #pause-toggle's .mi-label only,
+             leaving its [P] key span in place. -->
+        <button id="store-open" class="nes-btn menu-item"><span class="mi-label">STORE</span><span class="mi-key">[S]</span></button>
+        <button id="activity-open" class="nes-btn menu-item"><span class="mi-label">ACTIVITY</span><span class="mi-key">[A]</span></button>
+        <button id="history-open" class="nes-btn menu-item"><span class="mi-label">HISTORY</span><span class="mi-key">[H]</span></button>
+        <button id="sessions-open" class="nes-btn menu-item"><span class="mi-label">SESSIONS</span><span class="mi-key">[W]</span></button>
         <!-- SET-1 (docs/ui-spec.md §11): [G] for the gear. S/A/H/W/M/P and
              Tab were already taken; G is free and is the one letter this
              app's audience already associates with a settings gear. Owned
              by features/settings-modal.ts (click -> open()), like every
              other launcher in this panel. -->
-        <button id="settings-open" class="nes-btn menu-item">[G] SETTINGS</button>
+        <button id="settings-open" class="nes-btn menu-item"><span class="mi-label">SETTINGS</span><span class="mi-key">[G]</span></button>
         <!-- PR-5 (docs/production-runtime/MIGRATION_PLAN.md §PR-5):
              label toggles PAUSE/RESUME and the click action flips with
              it — both driven by live state.paused, read fresh from the
              store at click time (features/menu.ts). -->
-        <button id="pause-toggle" class="nes-btn menu-item">[P] PAUSE</button>
+        <button id="pause-toggle" class="nes-btn menu-item"><span class="mi-label">PAUSE</span><span class="mi-key">[P]</span></button>
       </div>
     </div>
 
@@ -126,7 +140,10 @@
     <dialog id="store" class="nes-dialog is-dark">
       <div id="store-title">DEV STORE &amp; CUSTOMIZATION</div>
       <button id="store-close" class="nes-btn">X</button>
-      <div id="store-cash"><span class="label">CASH: </span><i class="nes-icon coin is-small"></i><span class="value">0</span></div>
+      <!-- COIN-ICON: same coin.png sprite as the HUD, for one currency glyph
+           across the app. Not clickable here (no #hud-coin id) — the store's
+           coin is a label, not a toy. -->
+      <div id="store-cash"><span class="label">CASH: </span><img class="coin-img" src="/assets/coin.png" alt="" draggable="false"><span class="value">0</span></div>
 
       <div id="store-grid"></div>
 

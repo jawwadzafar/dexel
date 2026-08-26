@@ -67,7 +67,13 @@ export function toggle(): void {
 export function renderPauseLabel(): void {
   const state = getState();
   const paused = !!(state && state.paused);
-  el.pauseToggleBtn.textContent = paused ? '[P] RESUME' : '[P] PAUSE';
+  // BUG-11: the button is now <span.mi-label> + <span.mi-key>[P]</span>, so
+  // only the LABEL text flips — writing textContent on the whole button would
+  // wipe the [P] key span the CSS aligns into the right-hand column. The span
+  // is authored in index.html; fall back to the button itself if it is ever
+  // missing so this can never throw.
+  const label = el.pauseToggleBtn.querySelector('.mi-label') || el.pauseToggleBtn;
+  label.textContent = paused ? 'RESUME' : 'PAUSE';
 }
 
 // The click always reads LIVE state at the moment of the click (never an

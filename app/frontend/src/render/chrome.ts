@@ -4,9 +4,11 @@ import { byId } from '../dom';
 import * as store from '../state/store';
 import { fmtCount, fmtInt, truncate } from '../format';
 import { MOOD_COLOR } from '../geometry';
+import { play as playSound } from './audio';
 
 const hudLevel = byId('hud-level');
 const hudCash = byId('hud-cash').querySelector('.value') as HTMLElement;
+const hudCoin = byId<HTMLImageElement>('hud-coin');
 const sprintName = byId('sprint-name').querySelector('.value') as HTMLElement;
 const sprintBar = byId<HTMLProgressElement>('sprint-bar');
 const sprintUnits = byId('sprint-units');
@@ -43,7 +45,7 @@ export function renderChrome(): void {
   const moodColor = state.paused ? 'var(--screen-dim)' : (MOOD_COLOR[state.activeState] || MOOD_COLOR.idle);
   statusDot.style.background = moodColor;
   hudLevel.textContent = 'LV ' + fmtInt(state.level);
-  // DEV CASH is the one HUD balance the owner said "could go to a million"
+  // CASH is the one HUD balance the owner said "could go to a million"
   // (§14): compact it with fmtCount ("1.2M") so a large balance never
   // overflows the fixed HUD box. Store PRICES and coin deltas elsewhere
   // stay EXACT (fmtInt) — you spend an exact number, so those never compact.
@@ -94,6 +96,51 @@ export function renderChrome(): void {
   // pausedSeconds accrues instead), so this never suppresses the pill.
   pausedBadge.classList.toggle('visible', !!state.paused);
 }
+
+// =========================================================================
+// COIN-CLICK (docs/ui-spec.md §9.2) — the HUD coin is a small toy
+// =========================================================================
+//
+// A click on #hud-coin flips the sprite to a sparkle over ~0.6s and plays
+// coin.wav once. This is a SELF-CONTAINED handler, not the scene's reaction
+// scheduler (render/scene.ts): that scheduler is built around #scene-sprites
+// — geometry rects, tint layers, the sprite compositor's frame state — and
+// the coin lives in the titlebar and rides none of it, so reusing it would
+// mean teaching the scene module about a HUD element for no gain. The two
+// share the one thing that matters (audio.ts's play(), which honours the
+// soundEnabled preference on every call), and nothing else.
+//
+// ANTI-MASH. A per-click cooldown equal to the flip's own length means a
+// mashed coin can neither strobe the sprite (a second flip can't start until
+// the first has settled back to coin.png) nor machine-gun the sound. This is
+// the HUD-local echo of the scene reactions' anti-mash posture (ADR 0005 in
+// spirit): a click during the cooldown is simply ignored, no error.
+const COIN_BASE = '/assets/coin.png';
+// coin.png -> react_a -> react_b -> coin.png. The base frame is already on
+// screen, so the sequence is the three FOLLOWING frames, one per step.
+const COIN_FRAMES = ['/assets/coin_react_a.png', '/assets/coin_react_b.png', COIN_BASE];
+const COIN_STEP_MS = 200;      // 3 steps -> a ~600ms flip -> sparkle -> settle
+const COIN_COOLDOWN_MS = 600;  // == the flip length: no re-trigger mid-flip
+let coinTimers: number[] = [];
+let coinReadyAt = 0;
+
+function playCoinReaction(): void {
+  const now = Date.now();
+  if (now < coinReadyAt) return;           // still mid-flip — ignore the mash
+  coinReadyAt = now + COIN_COOLDOWN_MS;
+  coinTimers.forEach(clearTimeout);
+  coinTimers = [];
+  COIN_FRAMES.forEach(function (src, i) {
+    coinTimers.push(window.setTimeout(function () { hudCoin.src = src; }, (i + 1) * COIN_STEP_MS));
+  });
+  playSound('coin');
+}
+// Mouse-click only: no tabindex is added, so the coin never enters the
+// keyboard tab order and the app's single-key launchers / input-focus guard
+// (keybindings.ts) are untouched — the brief's "keyboard-focus guard
+// unaffected". A guard against a null #hud-coin keeps a future markup change
+// from throwing at module-eval.
+if (hudCoin) hudCoin.addEventListener('click', playCoinReaction);
 
 // fmtClock renders a whole-seconds duration as "H:MM:SS" for the
 // titlebar pill (docs/ui-spec.md §9.5) — deliberately NOT format.ts's

@@ -184,8 +184,9 @@ hit the element they are drawn on.
 
 INTERACTION-HARDENING (`docs/plan/ROADMAP.md`). The game surface must behave
 like a game surface: **sprites are not draggable, scene text is not selectable,
-and clicks are deliberate.** Real text inputs are the one exception and stay
-fully editable.
+clicks are deliberate, and the webview's own right-click menu never appears.**
+Real text inputs are the one exception and stay fully editable — including
+right-click, so paste in the name/session fields still works.
 
 **What was actually wrong.** Every sprite in the scene is an `<img>`, and an
 `<img>` is a native drag source *by default*. Dragging one and dropping it back
@@ -196,7 +197,7 @@ the terminal and status lines, which in a pixel-art window reads as a rendering
 fault. And `Ctrl/Cmd+A` — the chord a user presses *to select text* — fired the
 bare-letter `[A]` shortcut and opened the Activity modal.
 
-**Four mechanisms, because no single one covers it.**
+**Five mechanisms, because no single one covers it.**
 
 | mechanism | where | what it stops |
 | --- | --- | --- |
@@ -204,6 +205,7 @@ bare-letter `[A]` shortcut and opened the Activity modal.
 | `-webkit-user-drag: none` on `img` | `game.css` "Interaction hardening" | the drag gesture in Blink/WebKit (every engine dexel ships to) |
 | `user-select: none` on `html, body, #root`, restored to `text` on `input, textarea, [contenteditable="true"]` | `game.css` | selection over the scene; the exception is element-selector-based so a modal added later inherits it |
 | capturing `dragstart` / `selectstart` cancel, skipped inside text entry | `render/interaction.ts` | anything the three above do not reach (a link a future feature adds, an `<img>` built without `spriteImg`) |
+| capturing `contextmenu` cancel, skipped inside text entry (BUG-12) | `render/interaction.ts` | the webview's native right-click menu — Back / Forward / Reload / "open image in new tab", each a way to leave or reset a single-page app with a live WebSocket. The text-entry exception is the same `isTextEntry` predicate the two guards above use, so right-click Cut/Copy/Paste in the name/session inputs is untouched |
 
 Plus one keyboard rule: `features/keybindings.ts` returns early when
 `ctrlKey`/`metaKey`/`altKey` is held. Its own comment already claimed every
@@ -339,15 +341,20 @@ verification harness and the spec both address elements by id.
     </div>
 
     <div id="titlebar">
-      <span id="hud-cash"><i class="nes-icon coin is-small"></i> 0</span>
+      <!-- COIN-ICON: the real coin.png sprite, not NES.css's cash glyph;
+           also a clickable toy (COIN-CLICK, §2.1). -->
+      <span id="hud-cash"><img id="hud-coin" class="coin-img" src="/assets/coin.png" alt="" draggable="false"> 0</span>
       <span id="hud-level">LV 1</span>
       <button id="menu-open" aria-haspopup="true" aria-expanded="false"
               aria-label="Menu"><!-- three .bar divs, never a glyph --></button>
       <div id="menu-panel">           <!-- dropdown, hidden until .visible -->
         <div id="menu-panel-title">MENU</div>  <!-- always "MENU" (§7.4) -->
-        <button id="store-open"    class="nes-btn menu-item">[S] STORE</button>
-        <button id="activity-open" class="nes-btn menu-item">[A] ACTIVITY</button>
-        <button id="history-open"  class="nes-btn menu-item">[H] HISTORY</button>
+        <!-- BUG-11: each item is <span.mi-label> + <span.mi-key>, laid out
+             flex space-between so labels read left and [KEY] hints align in
+             one right column (command-palette style). -->
+        <button id="store-open"    class="nes-btn menu-item"><span class="mi-label">STORE</span><span class="mi-key">[S]</span></button>
+        <button id="activity-open" class="nes-btn menu-item"><span class="mi-label">ACTIVITY</span><span class="mi-key">[A]</span></button>
+        <button id="history-open"  class="nes-btn menu-item"><span class="mi-label">HISTORY</span><span class="mi-key">[H]</span></button>
         <!-- P2: #sessions-open joins here, §9.1 -->
         <!-- SET-1: #settings-open ([G] SETTINGS) joins here, §11.1 -->
         <!-- PR-5: #pause-toggle joins here, §2.4 -->
@@ -438,7 +445,7 @@ after) is zero titlebar layout work.
 | Element | Rect (x, y, w, h) | Content |
 |---|---|---|
 | `#titlebar` | 0, 0, 640, 24 | `background: var(--metal)`; 2px bottom border `var(--wall-light)` |
-| `#hud-cash` | 8, 4, 64, 16 | coin icon + `2150`, 8px, `var(--gold)`, left-aligned |
+| `#hud-cash` | 8, 4, 64, 16 | `#hud-coin` (the 16x16 `coin.png` sprite, `.coin-img`, `image-rendering:pixelated`) + `2150`, 8px, `var(--gold)`, left-aligned. COIN-ICON replaced NES.css's `.nes-icon.coin` cash glyph with the game's own coin art; the same sprite is reused in the store header's `CASH:` label. COIN-CLICK makes `#hud-coin` a clickable toy — see below |
 | `#hud-level` | 80, 8, 40, 8 | `LV 5`, 8px, `var(--cream)` |
 | `#menu-open` | 600, 4, 32, 16 | hamburger button, `padding: 0`. Icon is three plain 1px-tall `.bar` divs inside `.menu-icon` (16x7), **not** a `☰` glyph — a fancy character renders blurry/inconsistent at this app's 1x DPI in the pixel font, the same lesson A2 already recorded for `→` |
 | `#menu-panel` | 496, 26, 136, auto | dropdown opened by `#menu-open`, closed by default (`display:none`, shown via `.visible`); right edge (632) lines up with `#menu-open`'s right edge (632) so it never overflows the 640px titlebar |
@@ -456,22 +463,36 @@ the window's drag handle in shell mode, and the injected handler excludes
 `BUTTON`/`INPUT`/`A`/`LABEL` by itself, so all three buttons above stay
 clickable with no extra markup. The attribute is inert in a browser.
 | `#menu-panel-title` | inside `#menu-panel`, 128 x 16 | static `MENU`, always (a menu is a menu — the name lives in the status line now, §7.4), 8px `var(--screen-dim)`, bottom rule separating it from the items |
-| `.menu-item` (×N) | inside `#menu-panel`, 128 x 20 each, 4px gap | one `nes-btn` per launcher, in menu order: `#store-open` (`[S] STORE`), `#activity-open` (`[A] ACTIVITY`), `#history-open` (`[H] HISTORY`), `#sessions-open` (`[W] SESSIONS`, P2, §9.1), `#settings-open` (`[G] SETTINGS`, SET-1, §11.1), and (PR-5, §2.4) `#pause-toggle` — label and action both flip live between `[P] PAUSE` (sends `PAUSE`) and `[P] RESUME` (sends `RESUME`), decided by `state.paused` read fresh from the store at click time, never assumed from the label |
+| `.menu-item` (×N) | inside `#menu-panel`, full-width x 20 each, 4px gap | one `nes-btn` per launcher, in menu order: `#store-open` (`STORE [S]`), `#activity-open` (`ACTIVITY [A]`), `#history-open` (`HISTORY [H]`), `#sessions-open` (`SESSIONS [W]`, P2, §9.1), `#settings-open` (`SETTINGS [G]`, SET-1, §11.1), and (PR-5, §2.4) `#pause-toggle`. **BUG-11 alignment:** each item is `<span class="mi-label">` + `<span class="mi-key">[X]</span>`, laid out `display:flex; justify-content:space-between`, so labels read left-aligned and every `[S][A][H][W][G][P]` hint falls in one clean right column (command-palette style); the key span is dim (`var(--screen-dim)`). `#pause-toggle` label and action both flip live between `PAUSE` (sends `PAUSE`) and `RESUME` (sends `RESUME`) with a fixed `[P]` key span — `renderPauseLabel()` writes only `.mi-label`, decided by `state.paused` read fresh from the store at click time, never assumed from the label |
 | `#paused-badge` | 380, 8, 96, 8 | (PR-5, §2.4) the always-visible paused indicator — an 8px dim solid square (`#paused-badge-dot`) + `PAUSED`, 8px `var(--screen-dim)`. Empty/hidden (`display:none` / `.visible`, same idiom as `#session-pill`) unless `state.paused` is true. Sits clear of both `#hud-level` (ends 120) and `#session-pill`'s box (132..372, §9.5) — a session can be active *and* paused at the same time, so both must stay visible together |
 
-Dev Cash lives in the titlebar, next to Level. **[DESIGN CALL]** the mockups
+Cash lives in the titlebar, next to Level. **[DESIGN CALL]** the mockups
 only show the balance *inside* the store modal, but a currency you cannot see
 is a currency you forget you have; the decluttering the user asked for removed
 three header *panels*, not the score. This reasoning outlived BUG-2's move of
 the store *button* into the menu — the balance itself never left the titlebar.
+(The user-facing name is **Cash** everywhere; `devCash` remains the wire/save
+field name, unchanged.)
 
-**[DESIGN CALL]** every menu item keeps its bracketed shortcut in its label,
-e.g. `[S] STORE`, `[A] ACTIVITY`, `[H] HISTORY`, `[W] SESSIONS`. ADR 0010
-requires the store (and, by the same reasoning, every section) be permanently
-discoverable *and* its shortcut be discoverable; the bracketed key does both
-jobs in one element, which is how the shipped Bevy build already presented
-it. BUG-2 moved these buttons off the titlebar and into `#menu-panel`; it did
-not change this convention.
+**COIN-CLICK — the HUD coin is a small toy.** `#hud-coin` is clickable: a
+click flips it to a sparkle over ~0.6s (`coin.png` → `coin_react_a` →
+`coin_react_b` → `coin.png`, one swap per 200ms) and plays `coin.wav` once
+(§13). It is a **self-contained handler in `render/chrome.ts`**, not the
+scene's reaction scheduler (§12) — the coin lives in the titlebar, rides none
+of the scene geometry/tint machinery, and shares only `audio.ts`'s `play()`.
+A per-click cooldown equal to the flip length means a mashed coin can neither
+strobe the sprite nor machine-gun the sound; `play()` honours `soundEnabled`
+like every other voice. Mouse-click only — no `tabindex`, so the keyboard tab
+order and the single-key launchers / input-focus guard are untouched.
+
+**[DESIGN CALL]** every menu item keeps its bracketed shortcut, now as its own
+right-aligned `.mi-key` span (`STORE … [S]`, BUG-11), not baked into the label
+string. ADR 0010 requires the store (and, by the same reasoning, every section)
+be permanently discoverable *and* its shortcut be discoverable; the bracketed
+key does both jobs, which is how the shipped Bevy build already presented it.
+BUG-2 moved these buttons off the titlebar and into `#menu-panel`; BUG-11
+re-laid them out as a command-palette column but did not change this
+convention.
 
 ### 2.2 Sprint panel — `#panel-sprint`
 
@@ -937,7 +958,7 @@ Therefore:
 
 * On open, the frontend sends `{"action":"STORE_OPEN"}`; on close,
   `{"action":"STORE_CLOSE"}`.
-* While `storeOpen`, the engine **accrues no work and no Dev Cash**, and
+* While `storeOpen`, the engine **accrues no work and no Cash**, and
   **freezes the idle/AFK clock** — it must not flip to `onBreak` either. It
   holds the last `activeState`. The same reasoning as ADR 0010's
   "an unfocused window freezes the idle clock": the game cannot know, so it
@@ -1650,7 +1671,7 @@ Two things make it unlike every other modal here:
 It **gates nothing** (no `*_OPEN`/`*_CLOSE` action, unlike §5.3's store
 gate). The store's gate exists to stop keyboard-driven shopping minting Dev
 Cash; this modal can only ever be on screen *before any work has been
-accrued at all* — a fresh install at 0 Dev Cash and 0 sprint progress — so
+accrued at all* — a fresh install at 0 Cash and 0 sprint progress — so
 there is nothing to freeze. It also cannot spend: the starter colour is
 applied with the existing `EQUIP_ITEM` against a tint the player already
 owns, never `BUY_TINT`. No new economy path, no free cash.
@@ -2684,20 +2705,22 @@ pixels (the `feature-build-and-verify` gate):
 
 ---
 
-## 13. Sound — six tiny chiptune moments
+## 13. Sound — seven tiny chiptune moments
 
-SOUND-1. dexel makes a noise at six moments and at no others. The moments
-are the two completions and the four scene reactions (§12); everything else
-— typing, mouse movement, menus, modals, connection changes, purchases — is
-**deliberately silent**.
+SOUND-1. dexel makes a noise at seven moments and at no others. The moments
+are the two completions, the four scene reactions (§12), and the HUD coin
+click (COIN-CLICK, §2.1); everything else — typing, mouse movement, menus,
+modals, connection changes, purchases — is **deliberately silent**.
 
 The whole feature is **client-side and additive**: `render/audio.ts` owns
-playback, `render/scene.ts` is the only module that calls it, the server
-gained exactly one bool (`config.soundEnabled`, §6.1) and nothing else. No
-sound is ever *composed* on the client from server text, no sound is queued,
-and no sound is played for anything the server did not report.
+playback; `render/scene.ts` calls it for the six scene/completion voices and
+`render/chrome.ts` calls it for the coin; the server gained exactly one bool
+(`config.soundEnabled`, §6.1) and nothing else. No sound is ever *composed* on
+the client from server text, no sound is queued, and no sound is played for
+anything the server did not report. (The coin click is a real user gesture,
+the same category as the four reactions — it both unlocks audio and plays.)
 
-### 13.1 The six sounds
+### 13.1 The seven sounds
 
 Generated by `tools/gen_sounds.py` into `app/public/sounds/`, embedded into
 the binary by `app/embed.go` and fetched by the page at `/sounds/<file>.wav`.
@@ -2711,6 +2734,7 @@ All mono, 22050 Hz, 16-bit PCM; the whole set is ~106 KB.
 | `react_monitor.wav` | click the monitor | A soft rattle: a low 190 Hz triangle with ±18% vibrato and matching tremolo at 30 Hz — a wobble, not a hit | 0.30s | -18 dBFS |
 | `react_beverage.wav` | click the beverage | A bloop (520 → 300 → 470 Hz triangle: liquid moving) plus four discrete 6ms ticks of fizz | 0.23s | -16 dBFS |
 | `react_buddy.wav` | click the buddy | Two quick rising square blips (700→1100, then 950→1400 Hz) — a bird's answer, in the buddy's own two-beat shape | 0.24s | -15 dBFS |
+| `coin.wav` | click the HUD coin (COIN-CLICK, §2.1) | A bright two-note "ching" (C6 then a ringing E6, both square for the coin-bright timbre) — a satisfying "you got a coin" blip, not an arcade payout | 0.22s | -14 dBFS |
 
 **The two completions are distinguishable in a blind listen**, which is why
 they differ on all three axes at once — waveshape, contour and length —
@@ -2735,7 +2759,7 @@ self-check asserts per file — duration bounds, the declared peak, no DC
 offset, a zero first and last sample (no click at either edge), a size
 budget, and **byte-identical output across two independent synthesis
 passes**, which is what proves there is no RNG, clock or dict-ordering
-dependence anywhere in it. A manifest names the exact six files and deletes
+dependence anywhere in it. A manifest names the exact seven files and deletes
 anything else in the directory, so no orphan WAV can be embedded into every
 binary while no code plays it.
 
@@ -2743,7 +2767,7 @@ binary while no code plays it.
 
 * **Typing.** The single most-repeated event in this app. A companion that
   chirps per keystroke is a companion that gets muted on day one — at which
-  point the six moments that *were* worth hearing are gone too.
+  point the moments that *were* worth hearing are gone too.
 * **Ambient anything.** No loop, no room tone, no music. dexel sits on a
   working developer's desk for eight hours.
 * **A UI click on menu/modal opens.** Considered and dropped. Six launchers
@@ -2762,7 +2786,7 @@ Browsers refuse to let a page make noise before the user has interacted with
 it: an `AudioContext` constructed before any gesture starts **suspended**,
 and `resume()` on it rejects until a gesture has happened.
 
-dexel's six moments split across that line, and **not symmetrically**:
+dexel's seven moments split across that line, and **not symmetrically**:
 
 * **The four reactions ARE gestures.** They arrive inside a `click` handler
   — precisely when a context may be created and resumed. So the first click
@@ -2787,7 +2811,7 @@ rejection, and returns.
   started at all). Without a window the **first** sound after a page load is
   silent: click the mug, watch it hop, hear nothing, click again and it
   works. That was measured in the gate, not theorised — a headless click
-  lands ~15ms after its own `pointerdown`, nowhere near enough for six WAVs
+  lands ~15ms after its own `pointerdown`, nowhere near enough for seven WAVs
   to decode.
 
   So an un-ready sound is re-attempted every 30ms for at most **250ms** and
@@ -2805,7 +2829,7 @@ rejection, and returns.
   app is fully keyboard-driven; a user who never touches the mouse must
   still be able to unlock audio. Both listeners are removed the moment
   either fires.
-* **Decoding is deferred to that same gesture, then warms all six.**
+* **Decoding is deferred to that same gesture, then warms all seven.**
   `decodeAudioData` needs a context, so nothing can be decoded before one
   exists; warming the whole set at unlock means the two completion
   sounds — which fire on a server event that will not wait for a fetch —
@@ -2897,7 +2921,7 @@ shipped bundle and what is asserted is the real API call. Because
 sound played, not merely that one did.
 
 * **The binary really carries the sounds.** From an empty directory,
-  `/api/health` reported `"publicSource":"embedded"` and all six
+  `/api/health` reported `"publicSource":"embedded"` and all seven
   `/sounds/*.wav` returned **200 `audio/wav`** at their exact generated byte
   lengths; `/sounds/` (the directory) returned **404**, keeping
   INTERACTION-HARDENING's no-listings rule.
