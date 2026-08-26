@@ -19,18 +19,33 @@ var tickerPools = map[engine.Mood][]string{
 		"Linting the linter...",
 		"Type-checking module 7...",
 		"Rebuilding index...",
+		"Optimizing hot loop...",
+		"Warming the cache...",
+		"Wiring up the sockets...",
+		"Reticulating splines...",
+		"Untangling a callback...",
+		"Garbage-collecting...",
+		"Vendoring modules...",
 	},
 	engine.MoodIdle: {
 		"Waiting on input...",
 		"Cursor blinking...",
 		"Reading the docs...",
 		"Watching for changes...",
+		"Polling the queue...",
+		"Tailing the logs...",
+		"Standing by...",
+		"Hovering over undo...",
 	},
 	engine.MoodOnBreak: {
 		"Idle timer running...",
 		"Screen saver engaged...",
 		"Sipping something warm...",
 		"Nothing to compile.",
+		"Stretching a little...",
+		"Refilling the mug...",
+		"Watering the plant...",
+		"Staring out a window...",
 	},
 }
 
@@ -51,7 +66,7 @@ func tickerLine(mood engine.Mood, sprintIndex int, tickCount uint64) string {
 // terminalPool is the seed pool for #terminal (docs/ui-spec.md §3.2). Every
 // line is <= 30 chars (the font's per-line cap).
 var terminalPool = []string{
-	"func handleRequest(ctx) error {",
+	"func handle(ctx) error {",
 	"  if err != nil { return err }",
 	"-> ok  parser        1.4s",
 	"warning: unused import 'fmt'",
@@ -59,6 +74,16 @@ var terminalPool = []string{
 	"test result: ok. 41 passed",
 	"resolved 118 deps in 0.9s",
 	"   Compiling companion v0.2",
+	"  return append(out, x)",
+	"-> ok  linker         0.3s",
+	"[ 88%] linking target...",
+	"test result: ok. 12 passed",
+	"$ git commit -m \"tidy up\"",
+	"3 files changed, 47 ins(+)",
+	"note: cache hit, reusing 0.0s",
+	"   Finished in 2.31s",
+	"info: fmt made no changes",
+	"const cap = 1 << 10",
 }
 
 // terminalIdleSentinel is the fixed last line shown while onBreak

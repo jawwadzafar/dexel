@@ -33,9 +33,9 @@ What each mood drives:
 
 | Mood | Character pose | Status dot | Ticker pool | Terminal |
 | --- | --- | --- | --- | --- |
-| `coding` | `type_a`/`type_b` at 5 fps | `var(--plant)` | "Compiling…", 7 lines | pushes a new line every 350 ms |
-| `idle` | `idle`, plus ambient breath/stretch | `var(--screen)` | "Waiting on input…", 4 lines | frozen; last line has a blinking cursor |
-| `onBreak` | `sleep` — hands off the keys, hood tipped, floating `z` | `var(--pot)` | "Idle timer running…", 4 lines | last line reads `-- idle --` |
+| `coding` | `type_a`/`type_b` at 5 fps | `var(--plant)` | "Compiling…", 14 lines | pushes a new line every 350 ms |
+| `idle` | `idle`, plus ambient breath/stretch | `var(--screen)` | "Waiting on input…", 8 lines | frozen; last line has a blinking cursor |
+| `onBreak` | `sleep` — hands off the keys, hood tipped, floating `z` | `var(--pot)` | "Idle timer running…", 8 lines | last line reads `-- idle --` |
 
 ---
 

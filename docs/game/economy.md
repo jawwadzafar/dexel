@@ -226,8 +226,8 @@ progress, and **completing a sprint is the only event that pays**
 ([ADR 0008](../adr/0008-upgrade-tracks.md)). Full details on
 [`progression.md`](progression.md); the economically relevant summary:
 
-- The six-sprint rotation totals **530 work units → 305 Dev Cash + 460 XP**.
-- That is an average of **0.5755 Dev Cash and 0.8679 XP per work unit**.
+- The sixteen-sprint rotation totals **1,310 work units → 735 Dev Cash + 1,110 XP**.
+- That is an average of **0.5611 Dev Cash and 0.8473 XP per work unit**.
 - Overshoot carries into the next sprint, so no work is lost at a boundary.
 - Level *n* is reached at `50·(n−1)·n` XP.
 

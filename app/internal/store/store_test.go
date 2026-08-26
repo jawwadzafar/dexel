@@ -229,8 +229,8 @@ func TestApplyFallsBackToTierZeroForUnknownOrUnownedOrWrongSlotItems(t *testing.
 func TestApplyClampsUnitsDoneAndSprintIndex(t *testing.T) {
 	g := game.New()
 	Apply(g, SaveData{Sprint: SprintSave{Index: 999, UnitsDone: -5}})
-	if g.SprintIndex() < 0 || g.SprintIndex() >= 6 {
-		t.Errorf("SprintIndex = %d, want clamped into [0,6)", g.SprintIndex())
+	if n := game.SprintPoolLen(); g.SprintIndex() < 0 || g.SprintIndex() >= n {
+		t.Errorf("SprintIndex = %d, want clamped into [0,%d)", g.SprintIndex(), n)
 	}
 	if g.Progress != 0 {
 		t.Errorf("Progress = %v, want 0 (negative clamped up)", g.Progress)

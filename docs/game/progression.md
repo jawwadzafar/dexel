@@ -12,29 +12,52 @@ Sources: `app/internal/game/sprint.go`, `app/internal/game/catalog.go`,
 
 A **sprint** is a named progress bar. It has a work-unit target, a Dev Cash
 payout and an XP payout, and when you fill it the game rolls to the next one
-in a fixed six-entry rotation. That is the whole mechanic — there is no sprint
-selection, no difficulty, no deadline, no failure state, and nothing about a
-sprint reacts to what you were actually doing.
+in a fixed, sixteen-entry rotation. That is the whole mechanic — there is no
+difficulty, no deadline, no failure state, and nothing about a sprint reacts
+to what you were actually doing. The *order* the pool is walked in is varied
+(see below), but it is authored and deterministic, never chosen from your
+activity.
 
-The rotation, verbatim from `game/sprint.go`:
+The pool, verbatim from `game/sprint.go`:
 
 | # | Name | Target (units) | Dev Cash | XP |
 | --- | --- | --- | --- | --- |
 | 0 | Fix Bug #404 | 50 | 25 | 40 |
 | 1 | Refactor Auth Engine | 75 | 40 | 60 |
-| 2 | Add CI Cache | 100 | 60 | 90 |
-| 3 | Write the API Docs | 130 | 80 | 120 |
-| 4 | Build a Robot | 100 | 60 | 90 |
-| 5 | Tame the Flaky Test | 75 | 40 | 60 |
-| | **rotation total** | **530** | **305** | **460** |
+| 2 | Squash the Heisenbug | 100 | 60 | 90 |
+| 3 | Ship the Hotfix | 60 | 30 | 45 |
+| 4 | Green the Build | 75 | 40 | 60 |
+| 5 | Untangle the Merge | 90 | 50 | 75 |
+| 6 | Migrate the Schema | 110 | 70 | 105 |
+| 7 | Golf the Regex | 50 | 25 | 40 |
+| 8 | Rotate the Secrets | 90 | 50 | 75 |
+| 9 | Deflake the Suite | 75 | 40 | 60 |
+| 10 | Bump the Deps | 60 | 30 | 45 |
+| 11 | Draft the RFC | 70 | 35 | 55 |
+| 12 | Write the API Docs | 130 | 80 | 120 |
+| 13 | Add CI Cache | 100 | 60 | 90 |
+| 14 | Build a Robot | 100 | 60 | 90 |
+| 15 | Tame the Flaky Test | 75 | 40 | 60 |
+| | **rotation total** | **1,310** | **735** | **1,110** |
 
-- Completion rolls to `(index + 1) % 6` and **carries the overshoot forward**,
-  so no work is lost at a boundary (`TestTickCarriesOvershootIntoTheNextSprint`).
-- The rotation loops forever. There is no end and no prestige.
+- Completion does **not** step `+1`. It jumps to the next slot of
+  `sprintOrder` — a fixed, hand-authored *permutation* of the pool indices —
+  so consecutive sprints feel varied (0 → 1 → 9 → 4 → 13 → …) rather than
+  marching in list order. The pick is seeded purely off the lifetime
+  completion count, so it is fully deterministic and screenshot-reproducible
+  (`TestNextSprintIndexIsDeterministicAndCoversPool`,
+  `TestSprintSequenceIsReproducibleAcrossGames`). Slots 0 and 1 stay put, so a
+  fresh game still opens on *Fix Bug #404* then *Refactor Auth Engine*.
+- Completion **carries the overshoot forward**, so no work is lost at a
+  boundary (`TestTickCarriesOvershootIntoTheNextSprint`).
+- Because `sprintOrder` is a permutation, one full walk visits every sprint
+  exactly once and wraps cleanly after 16 completions
+  (`TestTickWrapsSprintRotation`). The rotation loops forever; there is no end
+  and no prestige.
 - Completing a sprint increments `stats.today.sprintsCompleted` and
   `stats.lifetime.sprintsCompleted`, triggers a `flash{kind:"sprint"}`
   broadcast, and is the one and only moment `awardCoins` runs.
-- A loaded save's sprint index is clamped into `[0, 6)` and its progress
+- A loaded save's sprint index is clamped into `[0, len(sprints))` and its progress
   clamped into `[0, target]`, so a corrupted or stale save can never overshoot
   or panic (`RestoreSprint`).
 
@@ -115,9 +138,9 @@ levelForXP(xp)       = the largest n whose threshold ≤ xp
 Pinned exactly by `TestLevelForXPMatchesTheCurve`, including the boundaries
 (99 → level 1, 100 → level 2, 299 → level 2, 300 → level 3, …).
 
-One full sprint rotation is 460 XP, so a player who completes all six sprints
-once ends at **level 3**. Levels arrive quickly early and stretch out
-quadratically.
+One full sprint rotation is 1,110 XP, so a player who completes all sixteen
+sprints once ends at **level 5** (level 5 is reached at 1,000 XP). Levels
+arrive quickly early and stretch out quadratically.
 
 **A level does nothing.** It unlocks nothing, gates nothing, and grants no Dev
 Cash. `Level` is a computed field on the wire (`levelForXP(g.XP)`, never

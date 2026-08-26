@@ -796,7 +796,7 @@ func (g *Game) Tick(r engine.TickResult) (completed bool) {
 		overshoot := g.Progress - def.Target
 		g.DevCash += def.DevCash
 		g.XP += def.XP
-		g.sprintIndex = (g.sprintIndex + 1) % len(sprints)
+		g.sprintIndex = nextSprintIndex(g.statsLifetime.SprintsCompleted)
 		g.Progress = overshoot
 		completed = true
 		g.statsToday.SprintsCompleted++

@@ -142,7 +142,7 @@ Full derivations, and the exact source location of every constant, are on
 | One mouse-active second | 0.020 work units | `engine.MouseSustainedRate` × `engine.MouseWeight` × `engine.WorkPerUnitRate` |
 | Anti-mash coalescing | ≤ 1 keystroke / 100 ms | `activity.MouseSampleInterval` |
 | First sprint | 50 units → 25 Dev Cash + 40 XP | `game/sprint.go` |
-| A full sprint rotation | 530 units → 305 Dev Cash + 460 XP | `game/sprint.go` (6 sprints) |
+| A full sprint rotation | 1,310 units → 735 Dev Cash + 1,110 XP | `game/sprint.go` (16 sprints) |
 | The whole store | 6,370 Dev Cash | `game/catalog.go` (32 items + 40 tint purchases) |
 | Level *n* reached at | 50·(n−1)·n XP | `game/sprint.go` `thresholdForLevel` |
 
