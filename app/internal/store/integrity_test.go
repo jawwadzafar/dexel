@@ -125,7 +125,7 @@ func TestAddingAnOwnedItemIsAlsoDetected(t *testing.T) {
 	if err := json.Unmarshal(origPayload, &d); err != nil {
 		t.Fatalf("Unmarshal: %v", err)
 	}
-	d.OwnedItems = append(d.OwnedItems, "chair_racer") // the cheat: grant an unowned item
+	d.OwnedItems = append(d.OwnedItems, "chair_racer_ember") // the cheat: grant an unowned item
 	tamperedPayload := canonicalBody(d)
 	rawUpdateStateRow(t, path, schema, tamperedPayload, origMac)
 
@@ -366,8 +366,7 @@ func TestUnsignedSchema4FileIsRefusedAndQuarantinedNeverMinted(t *testing.T) {
 		"devCash": 999999999,
 		"xp": 424242,
 		"sprint": {"index": 5, "unitsDone": 0},
-		"ownedItems": ["chair_exec", "kb_split", "mouse_trackball", "wall_shelf", "buddy_cat"],
-		"ownedTints": [],
+		"ownedItems": ["chair_exec_ember", "kb_split", "mouse_trackball", "wall_shelf", "buddy_cat"],
 		"equipped": {}
 	}`
 	if err := os.WriteFile(jsonPath, []byte(raw), 0o644); err != nil {

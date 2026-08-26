@@ -53,8 +53,8 @@ func TestDBSaveLoadRoundTrip(t *testing.T) {
 	if g2.DevCash != want.DevCash {
 		t.Errorf("after Apply: DevCash = %d, want %d", g2.DevCash, want.DevCash)
 	}
-	if !g2.OwnedItems["chair_racer"] {
-		t.Error("after Apply: chair_racer not owned")
+	if !g2.OwnedItems["chair_racer_ember"] {
+		t.Error("after Apply: chair_racer_ember not owned")
 	}
 }
 
@@ -558,7 +558,7 @@ func TestMacPreimageIsByteIdenticalToTheJSONEraPreimage(t *testing.T) {
 		DevCash:    12345,
 		XP:         678,
 		Sprint:     SprintSave{Index: 2, UnitsDone: 30.5},
-		OwnedItems: []string{"chair_basic", "chair_racer"},
+		OwnedItems: []string{"chair_basic_slate", "chair_racer_ember"},
 		Mac:        "this-must-be-zeroed-before-hashing",
 	}
 

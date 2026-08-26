@@ -351,8 +351,8 @@ func TestStateActivityLineIsHonestAndScreenLinesAlwaysElevenTickerAlwaysThree(t 
 	if len(s.TickerLines) != 3 {
 		t.Errorf("len(TickerLines) = %d, want 3", len(s.TickerLines))
 	}
-	if len(s.Equipped) != 8 {
-		t.Errorf("len(Equipped) = %d, want 8 (every slot, always)", len(s.Equipped))
+	if len(s.Equipped) != 9 {
+		t.Errorf("len(Equipped) = %d, want 9 (every slot, always)", len(s.Equipped))
 	}
 }
 

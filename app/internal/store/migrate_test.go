@@ -105,8 +105,8 @@ func TestOneTimeImportFromStateJSONKeepsBalancesAndRenamesToImported(t *testing.
 	if g.DevCash != want.DevCash {
 		t.Errorf("after Apply: DevCash = %d, want %d", g.DevCash, want.DevCash)
 	}
-	if !g.OwnedItems["chair_racer"] {
-		t.Error("after Apply: chair_racer should be owned")
+	if !g.OwnedItems["chair_racer_ember"] {
+		t.Error("after Apply: chair_racer_ember should be owned")
 	}
 }
 
@@ -199,7 +199,6 @@ func TestImportOfAnUnsignedJSONCreatesNoDB(t *testing.T) {
 		"xp": 111,
 		"sprint": {"index": 0, "unitsDone": 0},
 		"ownedItems": [],
-		"ownedTints": [],
 		"equipped": {}
 	}`
 	if err := os.WriteFile(jsonPath, []byte(raw), 0o644); err != nil {
