@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "loopback-window-controls",
-  "description": "WINDOW-POLISH: lets dexel's OWN loopback page drag, minimize and close the frameless window it is displayed in -- and nothing else. The window is built with decorations(false), so without these three commands the page has no way to move or dismiss it. Scoped to the 'main' window and to loopback origins only; `local` is false so this capability grants nothing to any future bundled page. Deliberately a SEPARATE file from default.json, which keeps its shell:allow-execute sidecar grant local-only: merging the two would have handed the page the ability to spawn the Go daemon.",
+  "description": "WINDOW-POLISH: lets dexel's OWN loopback page drag, minimise/hide and close the frameless window it is displayed in -- and nothing else. `core:app:allow-app-hide` is the macOS half of the minimise button: NSWindow.miniaturize() always parks a window THUMBNAIL in the Dock's right-hand section, so a minimised dexel appeared TWICE -- once as its app icon, again as a thumbnail -- and no window-level API can opt out of it (that is the global 'Minimize windows into application icon' setting, which is the user's to set, not ours). Hiding the app instead collapses it to the single Dock icon, and clicking that icon brings it back. Scoped to this one window and this one origin exactly like the three window verbs, and it grants hide and nothing else: there is deliberately no app-show, because the way back is the Dock icon, not the page. The window is built with decorations(false), so without these three commands the page has no way to move or dismiss it. Scoped to the 'main' window and to loopback origins only; `local` is false so this capability grants nothing to any future bundled page. Deliberately a SEPARATE file from default.json, which keeps its shell:allow-execute sidecar grant local-only: merging the two would have handed the page the ability to spawn the Go daemon.",
   "local": false,
   "windows": [
     "main"
@@ -16,6 +16,7 @@
     "core:window:allow-start-dragging",
     "core:window:allow-close",
     "core:window:allow-minimize",
-    "core:window:allow-internal-toggle-maximize"
+    "core:window:allow-internal-toggle-maximize",
+    "core:app:allow-app-hide"
   ]
 }

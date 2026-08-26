@@ -432,14 +432,38 @@ img {
   white-space: nowrap;
   line-height: 16px;
 }
-#hud-cash .nes-icon { vertical-align: middle; margin-right: 2px; }
+/* TITLE-BAR ALIGNMENT. The bar is 24px with a 2px bottom rule, so its content
+   band is 0..21 and an 8px glyph centres on ink rows 8..14. #hud-cash's text
+   already landed there; the coin and the level did not, and the three were on
+   three different centres (measured off the rendered page, not guessed:
+   coin 12.5, cash digits 11.0, level 13.0 — up to 2px apart, which is 4
+   device pixels at 2x and plainly visible).
 
+   The coin is a 16x16 `.nes-icon`, twice the height of the text beside it.
+   `vertical-align: middle` aligns it to the text's own middle (baseline plus
+   half the x-height), which for a pixel font this small is not the line box's
+   centre — it hung the coin low enough to crowd the bar's bottom rule. `top`
+   plus a 1px lift puts its 16px box on the same centre the glyphs use. */
+#hud-cash .nes-icon {
+  vertical-align: top;
+  position: relative;
+  top: -1px;
+  margin-right: 2px;
+}
+
+/* Was top:8, height:8 and NO line-height. Press Start 2P's `normal`
+   line-height is well over 8px, so the line box overflowed its 8px container
+   and the glyphs settled 2px below #hud-cash's — the same class of bug
+   #sprint-name records (BUG-3). Matching #hud-cash's box exactly (top 4,
+   height 16, line-height 16) is what puts "LV n" on the coin's line rather
+   than near it. */
 #hud-level {
   position: absolute;
   left: 80px;
-  top: 8px;
+  top: 4px;
   width: 40px;
-  height: 8px;
+  height: 16px;
+  line-height: 16px;
   font-size: 8px;
   color: var(--cream);
   text-align: left;
@@ -2243,10 +2267,34 @@ body.shell #titlebar { cursor: default; }
    sizing with an explicit 4px solid border + zero margin. */
 .nes-btn {
   margin: 0;
-  border-image-source: none;
+  /* NES.css's OWN border, restored. We used to set `border-image-source: none`
+     and a solid 4px `--wall-light` border instead, and that was the "extra
+     background around every button": NES.css's border is near-black
+     (rgb(33,37,41)) and reads as an OUTLINE, while ours was LIGHTER than the
+     `--wall-dark` face and therefore read as a panel sitting behind the
+     button. Same markup as nostalgic-css.github.io/NES.css — `<button
+     class="nes-btn">` and nothing else — so the button should look like
+     theirs, and the only reason it did not was this override.
+
+     The source is NES.css's own 5x5 SVG, unchanged except for `fill`, which
+     is `--shadow` (#241f2e) rather than their #212529 so the one baked colour
+     in this file is still one of art-direction.md's 18. It has to be baked:
+     a data-URI cannot read a CSS custom property. `border-color` is the
+     fallback for a browser that refuses the data URI, and is deliberately the
+     same colour so that path degrades to a plain dark outline rather than to
+     the light frame we just removed.
+
+     2px, not NES.css's 4px: on a 640x400 layout 4px is four ART pixels around
+     a 16-20px button. The slice/width/repeat trio is theirs verbatim — those
+     are what produce the notched pixel corners, and dropping them is what
+     made our corners square. */
+  border-image-source: url('data:image/svg+xml;utf8,<?xml version="1.0" encoding="UTF-8" ?><svg version="1.1" width="5" height="5" xmlns="http://www.w3.org/2000/svg"><path d="M2 1 h1 v1 h-1 z M1 2 h1 v1 h-1 z M3 2 h1 v1 h-1 z M2 3 h1 v1 h-1 z" fill="rgb(36,31,46)" /></svg>');
+  border-image-slice: 2;
+  border-image-width: 2;
+  border-image-repeat: stretch;
   border-style: solid;
-  border-width: 4px;
-  border-color: var(--wall-light);
+  border-width: 2px;
+  border-color: var(--shadow);
   background-color: var(--wall-dark);
   color: var(--cream);
   font-family: 'Press Start 2P', monospace;
@@ -2255,7 +2303,116 @@ body.shell #titlebar { cursor: default; }
   align-items: center;
   justify-content: center;
 }
-.nes-btn:hover, .nes-btn:focus { background-color: var(--wall-light); }
+/* `color` is as load-bearing as `background-color` here, and leaving it out
+   was a real bug. NES.css's hover rule is
+   `{ color:#212529; background-color:#e7e7e7 }` — near-BLACK text, correct
+   only because NES.css is simultaneously turning the face nearly white. We
+   replaced the face with `--wall-light` (a dark purple) and inherited the
+   near-black text with it, so hovering any button — every #menu-panel item,
+   every store action — dropped its label to #212529 on a dark ground and the
+   text all but vanished. Restating the colour is the whole fix. */
+.nes-btn:hover,
+.nes-btn:focus-visible {
+  background-color: var(--wall-light);
+  color: var(--cream);
+}
+
+/* The focus HALO, and why it only ever showed on a modal's close button.
+
+   NES.css ends its button block with
+   `.nes-btn:focus { box-shadow: 0 0 0 6px rgba(173,175,188,.3); outline: 0 }`
+   — a six-pixel light-grey glow standing off all four sides. On NES.css's
+   white page that is a soft focus ring. On ours it is a light-grey BLOCK
+   sitting behind the button, and on the 16x16 square close buttons the halo
+   is nearly twice the width of the button it surrounds.
+
+   It looked like it only affected modals because effectively it did: a
+   `<dialog>` moves focus to its first focusable child when it opens, and in
+   every one of ours (#store, #settings, #activity, #history, #sessions) that
+   child is the X. So opening any modal with the mouse instantly painted the
+   halo on its close button, while ordinary buttons only showed it after a
+   click. It is also why this survived several rounds of rendering checks:
+   `:focus` only matches while the DOCUMENT has focus, which a headless page
+   never has, so the halo was invisible to every screenshot and visible to
+   the owner. It took forcing the pseudo-class over CDP to reproduce.
+
+   `outline: 0` means we cannot simply delete the ring — that would leave
+   keyboard navigation with no visible focus at all. So the halo is dropped
+   for `:focus` (which fires on mouse clicks and on a dialog's autofocus) and
+   a tight 2px ring in `--gold` is drawn for `:focus-visible` (which fires
+   for keyboard navigation only). --gold is already this layout's "you are
+   here" colour — see `.card.hovered`'s gold outline in the store.
+   The face-lightening rule above moved to `:focus-visible` for the same
+   reason: a modal's X should not open looking pre-hovered. */
+.nes-btn:focus {
+  box-shadow: none;
+}
+.nes-btn:focus-visible {
+  /* An OUTLINE with an offset, not a box-shadow. A shadow is painted at the
+     border box, which is exactly where the border-image's notched edge is
+     already painting (it outsets ~2px), so a 2px gold shadow came out as four
+     gold CORNER dots with its edges covered. `outline-offset` lifts the ring
+     clear of that band and gives back a continuous rectangle. */
+  outline: 2px solid var(--gold);
+  outline-offset: 3px;
+  box-shadow: none;
+}
+
+/* The raised-button shadow: NES.css's, kept, at half weight.
+
+   NES.css draws its 3D effect with a pseudo-element rather than a border:
+
+     .nes-btn::after { position:absolute; top:-4px; right:-4px;
+                       bottom:-4px; left:-4px;
+                       box-shadow: inset -4px -4px #adafbc }
+
+   That is THE look — a lit shelf along the bottom and right edges is what
+   makes a NES.css button read as raised — so it stays. What was wrong was its
+   weight and its placement, both of which showed up in the shipped window:
+
+   1. FOUR PIXELS IS TOO MANY HERE. On a 640x400 layout 4px is four ART
+      pixels: as thick as the button's entire border, on a button only 16px
+      tall. NES.css is tuned for a full-size page where 4px is a hairline.
+      Halved to 2px, which reads as a raised edge instead of a second border.
+   2. IT SAT OUTSIDE THE BUTTON. The pseudo is inset -4px on every side, so
+      the band painted BEYOND the border box — the three 32x16 window buttons
+      hung a shelf past the title bar's own 2px bottom rule, and in
+      #menu-panel each item's shelf ate the panel's 6px right padding. It
+      still sits OUTSIDE, at -2px: an offset drop shadow on the bottom/right
+      is exactly what NES.css does and what makes a button read as raised.
+      Two pixels of overhang clears both the title bar's rule and the
+      panel's padding.
+   3. IT GREW ON HOVER (4px -> 6px), so the button visibly changed size under
+      the cursor. Hover now changes only the face colour (the rule above).
+
+   `:active` still flips the shelf to the top/left, which is NES.css's own
+   pressed-button idea and costs nothing once the size is fixed.
+
+   #adafbc is deliberately NOT swapped for a palette colour: it is NES.css's
+   raised-edge grey, it is what makes these read as NES buttons, and it is
+   what the layout has always shipped. `#menu-panel .menu-item` leaves
+   `position: relative` alone specifically so this pseudo stays each button's
+   own containing block — see that rule before touching either. */
+.nes-btn::after,
+.nes-btn:hover::after,
+.nes-btn:focus::after {
+  top: -2px;
+  right: -2px;
+  bottom: -2px;
+  left: -2px;
+  box-shadow: inset -2px -2px #adafbc;
+}
+.nes-btn:active:not(.is-disabled)::after {
+  box-shadow: inset 2px 2px #adafbc;
+}
+/* A disabled button is not raised — it is flat and out of the way. The rule
+   below already flattens the BUTTON's own box-shadow; without this the
+   pseudo-element would keep lighting its edges. */
+.nes-btn.is-disabled::after,
+.nes-btn.is-disabled:hover::after,
+.nes-btn.is-disabled:focus::after {
+  box-shadow: none;
+}
 .nes-btn.is-disabled, .nes-btn.is-disabled:hover, .nes-btn.is-disabled:focus {
   background-color: var(--shadow);
   color: var(--screen-dim);

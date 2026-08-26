@@ -1956,7 +1956,7 @@ mod shell_mode {
     /// The loopback capability, field by field. Each assertion here is a
     /// distinct way to end up with a silently unclosable window.
     #[test]
-    fn the_loopback_capability_grants_exactly_the_three_window_verbs() {
+    fn the_loopback_capability_grants_exactly_the_verbs_the_page_needs() {
         let cap = json(LOOPBACK_CAP, "capabilities/loopback-window-controls.json");
 
         // A remote origin matches ONLY a capability with `remote.urls`
@@ -2026,10 +2026,17 @@ mod shell_mode {
         // minimize are what shell-window.ts's two buttons need. None of the
         // three is in core:window:default, which is read-only getters plus
         // internal-toggle-maximize.
+        // core:app:allow-app-hide is the macOS minimise button (see
+        // shell-window.ts's minimizeAction): miniaturize() leaves a Dock
+        // THUMBNAIL beside the app icon, so the button hides the app instead.
+        // Losing this grant does not break the button — it silently falls
+        // back to minimize() and the duplicate Dock entry returns — which is
+        // exactly the kind of quiet regression worth pinning.
         for wanted in [
             "core:window:allow-start-dragging",
             "core:window:allow-close",
             "core:window:allow-minimize",
+            "core:app:allow-app-hide",
         ] {
             assert!(
                 perms.contains(&wanted),

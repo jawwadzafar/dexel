@@ -62,8 +62,56 @@ declare global {
       window?: {
         getCurrentWindow?: () => TauriWindowHandle;
       };
+      // macOS only, and only for the minimise button — see minimizeAction().
+      app?: {
+        hide?: () => Promise<void>;
+      };
     };
   }
+}
+
+// MINIMISE ON macOS IS `hide`, NOT `minimize`, AND THAT IS NOT A WORKAROUND.
+//
+// `NSWindow.miniaturize()` — what `window.minimize()` calls — always parks a
+// live THUMBNAIL of the window in the Dock's right-hand section, beside the
+// Trash. The app icon stays in the left section at the same time, so a
+// minimised dexel is present in the Dock TWICE, which is what the owner
+// reported. No window-level API opts out of it: the only switch is macOS's
+// global "Minimize windows into application icon" preference, which belongs
+// to the user and not to us, and which we must not be silently depending on.
+//
+// Hiding the application does what the button is actually for — put dexel
+// away, leave one Dock icon, bring it back by clicking that icon. It suits
+// this app in particular: the window is only ever a VIEW (see the shell's
+// module docs), the runtime keeps counting either way, and there is exactly
+// one window, so "hide the app" and "hide the window" mean the same thing
+// here in a way they would not in a multi-window editor.
+//
+// Everywhere else `minimize()` is right and is kept: a Linux or Windows
+// taskbar has one entry per window and minimising to it is the expected
+// behaviour, with no duplication to avoid.
+//
+// The macOS test is the user-agent rather than a Tauri OS call, deliberately:
+// the os plugin is not in this shell's capability list and adding a plugin to
+// answer one boolean would widen the page's granted surface for no reason.
+// The string is also checked defensively — if it ever fails to match, the
+// worst case is the pre-existing minimise behaviour, not a dead button.
+function isMacOS(): boolean {
+  const ua = navigator.userAgent || '';
+  return ua.indexOf('Mac OS X') !== -1 || ua.indexOf('Macintosh') !== -1;
+}
+
+// The minimise button's action: hide the app on macOS, minimise the window
+// everywhere else. Falls back to minimise if `app.hide` is missing (an older
+// shell, or a capability that does not grant core:app:allow-app-hide), so a
+// version skew between the page and the shell degrades to the old behaviour
+// instead of to a button that does nothing.
+function minimizeAction(w: TauriWindowHandle): Promise<void> {
+  if (isMacOS()) {
+    const app = window.__TAURI__ && window.__TAURI__.app;
+    if (app && typeof app.hide === 'function') return app.hide();
+  }
+  return w.minimize();
 }
 
 function currentWindow(): TauriWindowHandle | null {
@@ -110,6 +158,6 @@ export function initShellWindow(): void {
   // mode"). Set before anything paints, so there is no frame of a
   // browser-shaped titlebar in a frameless window.
   document.body.classList.add('shell');
-  wire('win-minimize', 'minimize', function (w) { return w.minimize(); });
+  wire('win-minimize', 'minimize', minimizeAction);
   wire('win-close', 'close', function (w) { return w.close(); });
 }
