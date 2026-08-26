@@ -2333,9 +2333,50 @@ body.shell #titlebar { cursor: default; }
    every store action — dropped its label to #212529 on a dark ground and the
    text all but vanished. Restating the colour is the whole fix. */
 .nes-btn:hover,
-.nes-btn:focus {
+.nes-btn:focus-visible {
   background-color: var(--wall-light);
   color: var(--cream);
+}
+
+/* The focus HALO, and why it only ever showed on a modal's close button.
+
+   NES.css ends its button block with
+   `.nes-btn:focus { box-shadow: 0 0 0 6px rgba(173,175,188,.3); outline: 0 }`
+   — a six-pixel light-grey glow standing off all four sides. On NES.css's
+   white page that is a soft focus ring. On ours it is a light-grey BLOCK
+   sitting behind the button, and on the 16x16 square close buttons the halo
+   is nearly twice the width of the button it surrounds.
+
+   It looked like it only affected modals because effectively it did: a
+   `<dialog>` moves focus to its first focusable child when it opens, and in
+   every one of ours (#store, #settings, #activity, #history, #sessions) that
+   child is the X. So opening any modal with the mouse instantly painted the
+   halo on its close button, while ordinary buttons only showed it after a
+   click. It is also why this survived several rounds of rendering checks:
+   `:focus` only matches while the DOCUMENT has focus, which a headless page
+   never has, so the halo was invisible to every screenshot and visible to
+   the owner. It took forcing the pseudo-class over CDP to reproduce.
+
+   `outline: 0` means we cannot simply delete the ring — that would leave
+   keyboard navigation with no visible focus at all. So the halo is dropped
+   for `:focus` (which fires on mouse clicks and on a dialog's autofocus) and
+   a tight 2px ring in `--gold` is drawn for `:focus-visible` (which fires
+   for keyboard navigation only). --gold is already this layout's "you are
+   here" colour — see `.card.hovered`'s gold outline in the store.
+   The face-lightening rule above moved to `:focus-visible` for the same
+   reason: a modal's X should not open looking pre-hovered. */
+.nes-btn:focus {
+  box-shadow: none;
+}
+.nes-btn:focus-visible {
+  /* An OUTLINE with an offset, not a box-shadow. A shadow is painted at the
+     border box, which is exactly where the border-image's notched edge is
+     already painting (it outsets ~2px), so a 2px gold shadow came out as four
+     gold CORNER dots with its edges covered. `outline-offset` lifts the ring
+     clear of that band and gives back a continuous rectangle. */
+  outline: 2px solid var(--gold);
+  outline-offset: 3px;
+  box-shadow: none;
 }
 
 /* The raised-button shadow: NES.css's, kept, at half weight.
