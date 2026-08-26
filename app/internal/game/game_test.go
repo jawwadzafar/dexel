@@ -263,6 +263,102 @@ func TestEquipOneWinsPerSlot(t *testing.T) {
 	}
 }
 
+// STORE-REDESIGN (docs/plan/ROADMAP.md §STORE-REDESIGN) — the one-click
+// combined action. Each sub-test drives one path of BuyAndEquip and checks
+// that funds are spent exactly ONCE (never per-step, never double) and that
+// the item ends up both owned and equipped.
+func TestBuyAndEquipBuysAndEquipsInOneCall(t *testing.T) {
+	// Non-tintable slot: buy + equip in one call, price charged once.
+	g := New()
+	g.DevCash = 1000
+	g.XP = 5000 // LV10 so no level gate interferes with this funds/equip path
+	if err := g.BuyAndEquip("keyboard", "kb_mech", nil); err != nil {
+		t.Fatalf("BuyAndEquip(kb_mech): %v", err)
+	}
+	if !g.OwnedItems["kb_mech"] {
+		t.Error("kb_mech should be owned after BuyAndEquip")
+	}
+	if g.Equipped["keyboard"].ItemID != "kb_mech" {
+		t.Errorf("Equipped[keyboard] = %+v, want kb_mech", g.Equipped["keyboard"])
+	}
+	if g.DevCash != 940 { // kb_mech is 60
+		t.Errorf("DevCash = %d, want 940 (kb_mech 60, charged once)", g.DevCash)
+	}
+	// A second click on the now-owned+equipped item is a harmless no-op:
+	// nothing more is charged.
+	if err := g.BuyAndEquip("keyboard", "kb_mech", nil); err != nil {
+		t.Fatalf("re-BuyAndEquip(kb_mech): %v", err)
+	}
+	if g.DevCash != 940 {
+		t.Errorf("DevCash = %d after re-equip, want 940 (owned item costs nothing)", g.DevCash)
+	}
+}
+
+func TestBuyAndEquipTintableChargesItemPlusTintOnce(t *testing.T) {
+	// Tintable slot with a NON-default tint the player owns neither the
+	// item nor the tint for: the combined cost is item + tint, charged as
+	// one unit, and both end up owned and equipped.
+	g := New()
+	g.DevCash = 1000
+	g.XP = 5000
+	if err := g.BuyAndEquip("chair", "chair_racer", strp("neon")); err != nil {
+		t.Fatalf("BuyAndEquip(chair_racer/neon): %v", err)
+	}
+	if !g.OwnedItems["chair_racer"] || !g.IsTintOwned("chair_racer", "neon") {
+		t.Error("chair_racer and its neon tint should both be owned")
+	}
+	eq := g.Equipped["chair"]
+	if eq.ItemID != "chair_racer" || eq.TintID == nil || *eq.TintID != "neon" {
+		t.Errorf("Equipped[chair] = %+v, want chair_racer/neon", eq)
+	}
+	if g.DevCash != 860 { // chair_racer 100 + neon tint 40 = 140
+		t.Errorf("DevCash = %d, want 860 (item 100 + tint 40, charged once)", g.DevCash)
+	}
+	// Buying the same item with its DEFAULT (free) tint charges nothing
+	// extra — a fresh game proves the default tint is free-on-ownership.
+	g2 := New()
+	g2.DevCash = 1000
+	g2.XP = 5000
+	if err := g2.BuyAndEquip("chair", "chair_racer", strp("ember")); err != nil { // ember is chair_racer's default
+		t.Fatalf("BuyAndEquip(chair_racer/ember): %v", err)
+	}
+	if g2.DevCash != 900 { // only the item's 100, default tint free
+		t.Errorf("DevCash = %d, want 900 (item 100, default tint free)", g2.DevCash)
+	}
+}
+
+func TestBuyAndEquipIsAtomicOnRefusal(t *testing.T) {
+	// Combined cost exceeds funds: nothing is bought, nothing equipped —
+	// no half-applied purchase (item bought, tint refused).
+	g := New()
+	g.DevCash = 100 // enough for chair_racer (100) but NOT for +neon tint (40)
+	g.XP = 5000
+	err := g.BuyAndEquip("chair", "chair_racer", strp("neon"))
+	if !errors.Is(err, ErrInsufficientFunds) {
+		t.Fatalf("got %v, want ErrInsufficientFunds", err)
+	}
+	if g.OwnedItems["chair_racer"] || g.IsTintOwned("chair_racer", "neon") {
+		t.Error("a refused combined buy must own NOTHING (no half-applied purchase)")
+	}
+	if g.DevCash != 100 {
+		t.Errorf("DevCash = %d, want 100 (untouched on refusal)", g.DevCash)
+	}
+	if g.Equipped["chair"].ItemID == "chair_racer" {
+		t.Error("a refused buy must not equip the item")
+	}
+
+	// Level gate wins over affordability and mutates nothing.
+	g2 := New()
+	g2.DevCash = 100000 // rich, but...
+	g2.XP = 0           // ...LV1, below chair_racer's gate
+	if err := g2.BuyAndEquip("chair", "chair_racer", strp("ember")); !errors.Is(err, ErrLevelLocked) {
+		t.Fatalf("got %v, want ErrLevelLocked", err)
+	}
+	if g2.OwnedItems["chair_racer"] || g2.DevCash != 100000 {
+		t.Error("a level-locked buy must own nothing and spend nothing")
+	}
+}
+
 func TestTickAdvancesSprintAndPaysOutDevCashAndXPOnCompletion(t *testing.T) {
 	g := New()
 	if completed := g.Tick(engine.TickResult{Mood: engine.MoodCoding, WorkUnits: 50}); !completed {

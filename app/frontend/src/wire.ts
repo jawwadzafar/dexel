@@ -374,6 +374,15 @@ export type ClientAction =
   | { action: 'BUY_ITEM'; itemId: string }
   | { action: 'BUY_TINT'; itemId: string; tintId: string }
   | { action: 'EQUIP_ITEM'; slot: string; itemId: string; tintId: string | null }
+  // STORE-REDESIGN (docs/plan/ROADMAP.md §STORE-REDESIGN) — the card-grid
+  // store's ONE-CLICK action. The server (app/actions.go BUY_AND_EQUIP ->
+  // game.BuyAndEquip) buys the item and/or the tint if not already owned
+  // and equips it, all as one atomic transaction validated server-side
+  // (ownership, funds against the COMBINED cost, level gate, tint
+  // ownership) — the client never chains BUY then EQUIP across the 1Hz
+  // broadcast. `tintId` is null for a non-tintable slot and the desired
+  // tint id for a tintable one (hoodie/chair), mirroring EQUIP_ITEM.
+  | { action: 'BUY_AND_EQUIP'; slot: string; itemId: string; tintId: string | null }
   | { action: 'STORE_OPEN' }
   | { action: 'STORE_CLOSE' }
   // Phase P1 (docs/ui-spec.md §6.2/§7). `name` is raw user text; the

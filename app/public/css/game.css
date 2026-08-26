@@ -870,14 +870,26 @@ body.shell #titlebar { cursor: default; }
 
 /* ================= store modal ================= */
 
+/* STORE-REDESIGN (docs/plan/ROADMAP.md §STORE-REDESIGN). A direct card
+   grid with one-click buy+equip — no left list, no right preview pane.
+   Every item is a CARD that IS its own preview (the art thumbnail), with
+   the NAME, the PRICE in the top-right corner, and (on tintable slots) a
+   row of colour SWATCHES. Cards are grouped under a full-width slot header
+   and the whole grid scrolls inside the dialog. The dialog is taller than
+   before (352px, comfortably under BUG-8's ~362px browser dialog:modal
+   height cap) to give the grid room.
+
+   Every length is an authored integer px inside the 640x400 layout root;
+   the shared window-fit transform above (#store, #activity, ... rule)
+   applies --ui-scale AFTER layout, so nothing here reflows at 2x. */
 #store {
   position: fixed;
   /* Authored position inside the 640x400 layout. Consumed by the
      shared window-fit transform above, NOT by left/top. */
   --dlg-x: 40px;
-  --dlg-y: 28px;
+  --dlg-y: 24px;
   width: 560px;
-  height: 288px;
+  height: 352px; /* BUG-8: under the ~362px dialog:modal cap, with room */
   margin: 0;
   padding: 12px;
   border: 4px solid var(--wall-light);
@@ -892,7 +904,7 @@ body.shell #titlebar { cursor: default; }
   position: absolute;
   left: 12px;
   top: 12px;
-  width: 400px;
+  width: 300px;
   height: 16px;
   font-size: 8px;
   color: var(--cream);
@@ -911,13 +923,14 @@ body.shell #titlebar { cursor: default; }
 }
 
 #store-cash {
-  /* BUG-3 audit: same 8px-box clipped-glyph risk pattern; bumped to 10px. */
+  /* "Cash" naming (STORE-REDESIGN): the store-local label reads CASH, not
+     "Dev Cash". Right-aligned in the header, clear of #store-close. */
   position: absolute;
-  left: 340px;
-  top: 32px;
-  width: 200px;
-  height: 10px;
-  line-height: 10px;
+  left: 320px;
+  top: 14px;
+  width: 192px;
+  height: 12px;
+  line-height: 12px;
   font-size: 8px;
   color: var(--gold);
   text-align: right;
@@ -925,132 +938,103 @@ body.shell #titlebar { cursor: default; }
 }
 #store-cash.flash-insufficient { color: var(--pot); }
 
-#store-cats {
-  position: absolute;
-  left: 12px;
-  top: 56px;
-  width: 120px;
-  height: 212px;
-  font-size: 8px;
-  overflow: hidden;
-}
-
-.cat-row {
-  position: relative;
-  height: 20px;
-  line-height: 20px;
-  padding-left: 8px;
-  color: var(--screen-dim);
-  white-space: nowrap;
-  overflow: hidden;
-}
-.cat-row .gutter {
-  position: absolute;
-  left: 0;
-  top: 0;
-  width: 8px;
-  height: 20px;
-  line-height: 20px;
-}
-.cat-row .check {
-  position: absolute;
-  right: 0;
-  top: 0;
-  width: 8px;
-  height: 20px;
-  line-height: 20px;
-  color: var(--gold);
-  text-align: right;
-}
-.cat-row.selected { background: var(--wall-light); color: var(--cream); }
-.cat-row.hovered:not(.selected) { background: var(--wall-dark); }
-
-.store-help {
-  position: absolute;
-  left: 0;
-  top: 168px;
-  width: 120px;
-  font-size: 8px;
-  color: var(--screen-dim);
-  line-height: 12px;
-}
-.store-help div { height: 12px; }
-
 #store-grid {
   position: absolute;
-  left: 140px;
-  top: 56px;
-  width: 232px;
-  height: 212px;
+  left: 12px;
+  top: 40px;
+  width: 520px;
+  height: 300px;
   overflow-y: auto;
   scrollbar-width: none;
+  display: flex;
+  flex-wrap: wrap;
+  align-content: flex-start;
+  gap: 8px;
 }
 #store-grid::-webkit-scrollbar { display: none; }
 
+/* Full-width slot header — forces a new flex row, then its item cards wrap
+   below it. */
+.slot-head {
+  flex: 0 0 100%;
+  height: 16px;
+  line-height: 16px;
+  font-size: 8px;
+  color: var(--gold);
+  border-bottom: 2px solid var(--wall-light);
+  padding-left: 2px;
+  white-space: nowrap;
+}
+.slot-head:not(:first-child) { margin-top: 4px; }
+
+/* Three cards per row: 3*168 + 2*8 gap = 520 = grid width. */
 .card {
   position: relative;
-  width: 232px;
-  height: 64px;
-  margin-bottom: 8px;
+  flex: 0 0 168px;
+  width: 168px;
+  height: 112px;
   background: var(--wall-dark);
   outline: 2px solid transparent;
+  cursor: pointer;
 }
-.card:last-child { margin-bottom: 0; }
-.card.selected { outline: 2px solid var(--screen); }
 .card.hovered { outline: 2px solid var(--gold); }
+.card.equipped { outline: 2px solid var(--screen); }
+.card.selected { outline: 2px solid var(--lamp); } /* keyboard selection */
 
 .card .thumb {
   position: absolute;
-  left: 6px;
-  top: 6px;
-  width: 40px;
-  height: 40px;
+  left: 8px;
+  top: 8px;
+  width: 52px;
+  height: 52px;
   background: var(--shadow);
   overflow: hidden;
 }
-.card .thumb img { width: 100%; height: 100%; object-fit: contain; }
-
-.card .name {
-  /* BUG-3: was height:8/overflow:hidden with no explicit line-height —
-     clipped glyph descenders on item names. Bumped to 10px. */
-  position: absolute;
-  left: 52px;
-  top: 6px;
-  width: 174px;
-  height: 10px;
-  line-height: 10px;
-  font-size: 8px;
-  color: var(--cream);
-  white-space: nowrap;
-  overflow: hidden;
+.card .thumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  image-rendering: pixelated;
 }
 
-.card .price-state {
-  /* BUG-3 audit: same pattern as .card .name; bumped to 10px. */
+/* PRICE, top-right corner (the spec's key placement). */
+.card .price {
   position: absolute;
-  left: 52px;
-  top: 20px;
-  width: 174px;
+  top: 8px;
+  right: 8px;
   height: 10px;
   line-height: 10px;
   font-size: 8px;
-  color: var(--screen-dim);
+  color: var(--gold);
+  text-align: right;
   white-space: nowrap;
+}
+
+.card .name {
+  position: absolute;
+  left: 68px;
+  top: 24px;
+  width: 92px;
+  height: 22px;
+  line-height: 11px;
+  font-size: 8px;
+  color: var(--cream);
+  overflow: hidden;
+  word-break: break-word;
 }
 
 .card .swatches {
   position: absolute;
-  left: 52px;
-  top: 34px;
-  width: 70px;
-  height: 10px;
+  left: 68px;
+  top: 50px;
+  width: 92px;
+  height: 12px;
   display: flex;
   gap: 2px;
 }
-
 .swatch {
-  width: 10px;
-  height: 10px;
+  width: 12px;
+  height: 12px;
   position: relative;
   cursor: pointer;
 }
@@ -1062,129 +1046,96 @@ body.shell #titlebar { cursor: default; }
   background: linear-gradient(to top right, transparent calc(50% - 1px), var(--shadow) 50%, transparent calc(50% + 1px));
 }
 
-.card .action {
+/* The state band along the card's bottom edge — the card itself is the
+   button, so this is a label, not a <button>. Its text/colour is set per
+   state by store-modal.ts (BUY + EQUIP / EQUIP / ✓ EQUIPPED / NEED n /
+   LV n). */
+.card .state {
   position: absolute;
-  left: 130px;
-  top: 30px;
-  width: 96px;
-  height: 24px;
-  padding: 0;
+  left: 8px;
+  top: 86px;
+  width: 152px;
+  height: 18px;
+  line-height: 18px;
   font-size: 8px;
+  text-align: center;
+  background: var(--wall-light);
+  color: var(--screen);
   white-space: nowrap;
   overflow: hidden;
-  line-height: 1;
 }
+.card.equipped .state { color: var(--gold); }
+.card.cant-afford .state { color: var(--pot); }
+.card.cant-afford .thumb,
+.card.cant-afford .name { opacity: 0.5; }
 
-/* Level-gated item (catalog MinLevel > player level, store-modal.ts's
-   'locked' action). The card reads as "coming later": thumb, name and
-   price dim back, while the action button turns into a bright gold "LV n"
-   badge — kept fully legible on purpose so the player can SEE the target
-   they are working toward (docs/game/BACKLOG.md §2). The button stays
-   .is-disabled (flat, not-allowed); the rule below is more specific than
-   .nes-btn.is-disabled, so the gold badge colour wins over the dim. */
+/* Level-gated card (catalog MinLevel > player level). Reads unmistakably
+   as LOCKED: a chunky pixel padlock overlaid on the (dimmed) thumb, and a
+   gold "LV n" badge in the state band — icon and level number together
+   (owner refinement, 2026-08-26). Thumb/name/price dim back so the lock
+   and the target level are what the eye lands on. */
 .card.locked .thumb,
 .card.locked .name,
-.card.locked .price-state { opacity: 0.4; }
-.card.locked .action.is-locked,
-.card.locked .action.is-locked:hover,
-.card.locked .action.is-locked:focus {
+.card.locked .price { opacity: 0.4; }
+.card.locked .state {
   color: var(--gold);
-  border-color: var(--gold);
+  background: var(--wall-dark);
+}
+
+/* The padlock, drawn in pure CSS blocks (no sprite, no emoji): a squared
+   shackle arch, a solid body, and a punched keyhole — matching the game's
+   chunky pixel aesthetic. Sits above the thumb (a sibling, so the thumb's
+   dim does not touch it) and centred over the 52x52 thumb. */
+.card .lock {
+  position: absolute;
+  left: 22px;   /* thumb centre is card-local (34,34); lock is ~20x24 */
+  top: 18px;
+  width: 20px;
+  height: 26px;
+  z-index: 3;
+  pointer-events: none;
+}
+.card .lock .shackle {
+  position: absolute;
+  left: 4px;
+  top: 0;
+  width: 12px;
+  height: 10px;
+  border: 3px solid var(--gold);
+  border-bottom: none;
+  box-sizing: border-box;
+}
+.card .lock .body {
+  position: absolute;
+  left: 0;
+  top: 9px;
+  width: 20px;
+  height: 17px;
+  background: var(--gold);
+  box-shadow: 0 0 0 1px var(--shadow);
+}
+.card .lock .body::after { /* keyhole */
+  content: "";
+  position: absolute;
+  left: 8px;
+  top: 5px;
+  width: 4px;
+  height: 8px;
+  background: var(--shadow);
 }
 
 #store-scroll {
   position: absolute;
-  left: 374px;
-  top: 56px;
+  left: 538px;
+  top: 40px;
   width: 6px;
-  height: 212px;
+  height: 300px;
 }
 #store-scroll .thumb-bar {
   position: absolute;
   left: 0;
   width: 6px;
   background: var(--wall-light);
-}
-
-#store-preview {
-  position: absolute;
-  left: 380px;
-  top: 56px;
-  width: 160px;
-  height: 212px;
-}
-#store-preview .label {
-  position: absolute;
-  left: 0;
-  top: 0;
-  width: 160px;
-  height: 8px;
-  font-size: 8px;
-  color: var(--screen-dim);
-}
-#store-preview-viewport {
-  position: absolute;
-  left: 4px;
-  top: 16px;
-  width: 152px;
-  height: 152px;
-  border: 1px solid var(--metal);
-  background: var(--shadow);
-  overflow: hidden;
-}
-#store-preview-viewport .scene {
-  position: absolute;
-  image-rendering: pixelated;
-}
-#store-preview-viewport .nothing {
-  position: absolute;
-  inset: 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  color: var(--screen-dim);
-  font-size: 8px;
-}
-#store-preview-name {
-  /* BUG-3: was height:8/overflow:hidden — clipped glyph descenders.
-     Bumped to 10px; #store-preview-state below still starts at 188px,
-     12px clear of this row's new bottom edge (176+10=186). */
-  position: absolute;
-  left: 0;
-  top: 176px;
-  width: 160px;
-  height: 10px;
-  line-height: 10px;
-  font-size: 8px;
-  color: var(--cream);
-  white-space: nowrap;
-  overflow: hidden;
-}
-#store-preview-state {
-  /* BUG-3 audit: same pattern; bumped to 10px. */
-  position: absolute;
-  left: 0;
-  top: 188px;
-  width: 160px;
-  height: 10px;
-  line-height: 10px;
-  font-size: 8px;
-  color: var(--cream);
-}
-#store-preview-color {
-  /* BUG-3: was height:8/overflow:hidden — clipped glyph descenders.
-     Bumped to 10px; #store-preview is 212px tall so this row (ends at
-     200+10=210) still has 2px clear of the container's bottom edge. */
-  position: absolute;
-  left: 0;
-  top: 200px;
-  width: 160px;
-  height: 10px;
-  line-height: 10px;
-  font-size: 8px;
-  color: var(--screen-dim);
-  white-space: nowrap;
-  overflow: hidden;
 }
 
 /* ================= activity modal ================= */

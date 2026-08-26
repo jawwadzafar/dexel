@@ -116,32 +116,21 @@
 
     <div id="scrim"></div>
 
+    <!-- STORE-REDESIGN (docs/plan/ROADMAP.md §STORE-REDESIGN): a direct
+         card grid with one-click buy+equip. The list+preview split is gone
+         — every item IS a card (its own art thumbnail), grouped under a
+         slot header, with the price in the top-right corner and, on
+         tintable slots, a row of colour swatches. features/store-modal.ts
+         builds every child of #store-grid; #store-scroll is its custom
+         scroll thumb. -->
     <dialog id="store" class="nes-dialog is-dark">
       <div id="store-title">DEV STORE &amp; CUSTOMIZATION</div>
       <button id="store-close" class="nes-btn">X</button>
-      <div id="store-cash"><span class="label">TOTAL DEV CASH: </span><i class="nes-icon coin is-small"></i><span class="value">0</span></div>
-
-      <div id="store-cats">
-        <div class="cat-list"></div>
-        <div class="store-help">
-          <div>^v MOVE</div>
-          <div>1-6 COLOUR</div>
-          <div>ENTER ACT</div>
-          <div>ESC CLOSE</div>
-        </div>
-      </div>
+      <div id="store-cash"><span class="label">CASH: </span><i class="nes-icon coin is-small"></i><span class="value">0</span></div>
 
       <div id="store-grid"></div>
 
       <div id="store-scroll"><div class="thumb-bar"></div></div>
-
-      <div id="store-preview">
-        <div class="label">PREVIEW</div>
-        <div id="store-preview-viewport"></div>
-        <div id="store-preview-name"></div>
-        <div id="store-preview-state"></div>
-        <div id="store-preview-color"></div>
-      </div>
     </dialog>
 
     <dialog id="activity" class="nes-dialog is-dark">

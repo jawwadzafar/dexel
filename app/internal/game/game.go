@@ -702,6 +702,84 @@ func (g *Game) EquipItem(slot, itemID string, tintID *string) error {
 	return nil
 }
 
+// BuyAndEquip performs BUY (if the item is not yet owned), BUY_TINT (if the
+// slot is tintable and the requested tint is not yet owned) and EQUIP as ONE
+// atomic transaction — the one-click store's combined action
+// (docs/plan/ROADMAP.md §STORE-REDESIGN). It VALIDATES everything before it
+// mutates any state, so a refusal (unknown item/slot/tint, slot mismatch,
+// level lock, insufficient funds) leaves DevCash, OwnedItems, OwnedTints and
+// Equipped exactly as they were — there is never a half-applied purchase
+// (bought-but-not-equipped, or item-bought-then-tint-refused). The
+// validation mirrors BuyItem / BuyTint / EquipItem exactly (same errors,
+// same precedence: the level gate is checked before affordability, and the
+// tint must be owned-or-buyable just as EQUIP_ITEM refuses an unowned tint);
+// the only thing this method removes is the wait for a client round-trip
+// between the steps. Funds are checked against the COMBINED cost so a click
+// that would buy both an item and a non-default tint is refused as one unit
+// rather than buying the item and then failing on the tint.
+func (g *Game) BuyAndEquip(slot, itemID string, tintID *string) error {
+	item, ok := g.itemsByID[itemID]
+	if !ok {
+		return fmt.Errorf("%w: %s", ErrUnknownItem, itemID)
+	}
+	if item.Slot != slot {
+		return fmt.Errorf("%w: item %s belongs to slot %s, not %s", ErrSlotMismatch, itemID, item.Slot, slot)
+	}
+	slotDef, ok := g.slotsByID[slot]
+	if !ok {
+		return fmt.Errorf("%w: %s", ErrUnknownSlot, slot)
+	}
+
+	// ---- validate only (no state has mutated past this block) ----
+	var cost uint64
+	buyItem := !g.OwnedItems[itemID]
+	if buyItem {
+		// Level gate before affordability, exactly as BuyItem does: a
+		// below-level item cannot be bought at any price, so "reach LV n"
+		// is the truthful refusal even for a broke player.
+		if lvl := levelForXP(g.XP); lvl < item.MinLevel {
+			return fmt.Errorf("%w: reach LV %d (currently LV %d)", ErrLevelLocked, item.MinLevel, lvl)
+		}
+		cost += item.Price
+	}
+
+	var finalTint *string
+	buyTint := false
+	if slotDef.Tintable {
+		want := ""
+		if tintID != nil {
+			want = *tintID
+		}
+		if want == "" {
+			return fmt.Errorf("%w: slot %s requires a tintId", ErrUnknownTint, slot)
+		}
+		tint, ok := g.tintsByID[want]
+		if !ok {
+			return fmt.Errorf("%w: %s", ErrUnknownTint, want)
+		}
+		if !g.IsTintOwned(itemID, want) {
+			buyTint = true
+			cost += tint.Price
+		}
+		finalTint = &want
+	}
+
+	if g.DevCash < cost {
+		return fmt.Errorf("%w: have %d, need %d", ErrInsufficientFunds, g.DevCash, cost)
+	}
+
+	// ---- apply (validation passed; all-or-nothing) ----
+	g.DevCash -= cost
+	if buyItem {
+		g.OwnedItems[itemID] = true
+	}
+	if buyTint {
+		g.OwnedTints[ownedTintKey(itemID, *finalTint)] = true
+	}
+	g.Equipped[slot] = EquippedRef{ItemID: itemID, TintID: finalTint}
+	return nil
+}
+
 // OpenStore/CloseStore implement docs/ui-spec.md §5.3's work gate: while
 // the store is open, Tick must accrue no work/Dev Cash and must hold the
 // last mood (see Tick's doc comment). Both are keyed by the calling
