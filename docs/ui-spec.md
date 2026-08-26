@@ -2184,7 +2184,7 @@ the 292px available (the full ledger is in `game.css`'s own comment).
 
 | Section | Contents |
 |---|---|
-| `NAME` | `#settings-name-current` (`CURRENTLY <name>`, the live server-authored name), `#settings-name-label`, `#settings-name` (an `<input maxlength="24">`), `#settings-name-save` (`SAVE NAME`) |
+| `NAME` | `#settings-name-current` (`CURRENTLY <name>`, the live server-authored name), `#settings-name-label`, `#settings-name` (an `<input maxlength="12">` — see §11.7), `#settings-name-save` (`SAVE NAME`) |
 | `WINDOW` | one `.settings-row`: label `ALWAYS ON TOP` + `#settings-ontop`, then one `.settings-note` |
 | `SOUND` | one `.settings-row`: label `SOUND EFFECTS` + `#settings-sound`, then two `.settings-note` lines (§13.4) |
 | `PRIVACY` | one `.settings-row`: label `SHOW AWAY TIME` + `#settings-away`, then two `.settings-note` lines |
@@ -2377,6 +2377,41 @@ decides*. A window that cannot be put behind anything is an obstruction on
 macOS, not a companion, and forcing it on every user was the wrong way to
 act on a good idea. So the behaviour is kept, the **default is off**, and
 Settings owns the switch.
+
+### 11.7 Why the name field is 12 characters and the server's cap is 24
+
+Two different numbers on purpose, and the gap is the point.
+
+`game.MaxNameLen` is **24 runes** and is the only validation — it is what
+`SET_NAME` enforces and what a hand-edited `config.json` is held to (ADR 0014
+keeps that file editable, so this cap has to live on the server).
+
+`#settings-name` and `#onboarding-name` carry **`maxlength="12"`**, and their
+labels say so (`RENAME YOUR DEXEL (12 MAX)`). This is not cosmetic. The name
+is not merely a label: `activity_line.go` composes the whole status line
+around it, and that line has a **34-character budget** (§2.3). A phrasing
+that does not fit is *dropped from the pool*, not clipped — so the name
+directly decides which sentences the server can still say:
+
+| name length | what the line can say (app "VS Code") |
+|---|---|
+| 6  | `jawwad is coding in VS Code` |
+| 11 | `jawwadzafar is coding in VS Code` |
+| 24 | `<name> is coding` — every app-naming phrasing is unreachable |
+
+At 24 characters only 10 remain, so **every** `{app}` template is dropped and
+the line silently degrades to `{name} is here` / `{name} is coding`. The app
+name vanishes with nothing on screen explaining why, which is exactly how
+this was reported ("it says just Coding, it forgot what app we are in").
+
+12 is the tightest common case rather than a round number: `{name} is coding
+in {app}` needs the name within 12 for `Terminal`, 13 for `VS Code` and
+`Ghostty`, 15 for `iTerm`, 17 for `Zed`. Genuinely long app names
+(`IntelliJ IDEA`, `VS Code Insiders`) still fall back to `{name} is coding`,
+which is correct — there is no honest way to fit both.
+
+The `CURRENTLY` row still truncates at 24, not 12: a longer name arriving from
+a hand-edited config is legal and should be shown as far as it fits.
 
 ### 11.6 Verified in the real running game
 

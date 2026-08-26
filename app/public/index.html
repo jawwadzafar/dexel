@@ -279,8 +279,25 @@
              every state tick, so it stays true even while the input below
              holds an unsaved edit. -->
         <div id="settings-name-current"><span class="label">CURRENTLY </span><span class="value"></span></div>
-        <label id="settings-name-label" for="settings-name">RENAME YOUR DEXEL</label>
-        <input id="settings-name" type="text" maxlength="24" autocomplete="off"
+        <!-- maxlength is 12, NOT game.MaxNameLen's 24, and the difference is
+             deliberate. The name is not just a label: the server composes the
+             status line around it ("{name} is coding in {app}",
+             app/internal/game/activity_line.go) inside a 34-character budget,
+             and any phrasing that does not fit is DROPPED rather than clipped.
+             A 24-character name leaves 10 characters, so every app-naming
+             phrasing is unreachable and the line silently degrades to
+             "{name} is here" — the app disappears and nothing explains why.
+             12 keeps "coding in {app}" reachable for every common editor and
+             terminal (Terminal is the tightest at 12; VS Code and Ghostty 13,
+             iTerm 15, Zed 17).
+
+             The SERVER still caps at 24 runes and remains the only validation
+             (docs/ui-spec.md §6.2). That is the ceiling for a hand-edited
+             config.json, which ADR 0014 deliberately keeps editable — this
+             attribute only stops the UI handing someone a name that would
+             cost them the app name in every sentence. -->
+        <label id="settings-name-label" for="settings-name">RENAME YOUR DEXEL (12 MAX)</label>
+        <input id="settings-name" type="text" maxlength="12" autocomplete="off"
                spellcheck="false" placeholder="dexel">
         <button id="settings-name-save" class="nes-btn">SAVE NAME</button>
 
@@ -341,8 +358,12 @@
       <div id="onboarding-preview"></div>
       <div id="onboarding-tint-name"></div>
 
-      <label id="onboarding-name-label" for="onboarding-name">WHAT IS ITS NAME?</label>
-      <input id="onboarding-name" type="text" maxlength="24" autocomplete="off"
+      <!-- 12, for the same reason #settings-name is 12: the status line is
+           composed around this name inside a 34-character budget and drops
+           any phrasing that will not fit, so a long name costs the app name
+           in every sentence. See that input's comment. -->
+      <label id="onboarding-name-label" for="onboarding-name">WHAT IS ITS NAME? (12 MAX)</label>
+      <input id="onboarding-name" type="text" maxlength="12" autocomplete="off"
              spellcheck="false" placeholder="dexel" aria-describedby="onboarding-help">
 
       <div id="onboarding-colour-label">STARTER COLOUR</div>

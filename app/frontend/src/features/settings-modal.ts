@@ -60,9 +60,14 @@ const el = {
   awayBtn: byId<HTMLButtonElement>('settings-away')
 };
 
-// Matches game.MaxNameLen (app/internal/game/identity.go) and
-// #settings-name's own maxlength. A courtesy only: the SERVER truncates
-// and validates (docs/ui-spec.md §6.2).
+// The width the CURRENTLY row renders, and it matches game.MaxNameLen
+// (app/internal/game/identity.go) — the SERVER's cap — deliberately, NOT
+// #settings-name's `maxlength`, which is the tighter 12 that keeps the
+// status line able to name the frontmost app (see that input's comment in
+// index.html). config.json is hand-editable by design (ADR 0014), so a name
+// longer than the input allows is a legal thing to be shown here; this is
+// the length at which showing it stops and truncation begins. A courtesy
+// either way: the SERVER truncates and validates (docs/ui-spec.md §6.2).
 const MAX_NAME_LEN = 24;
 
 export function isOpen(): boolean { return el.dialog.open; }
