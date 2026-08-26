@@ -614,48 +614,56 @@ fix" a pixel — the next run overwrites it.
 
 ### The mark
 
-**dexel, hooded, front on, lit by the screen.** A hooded bust centred on a
-dusk rounded-square tile: the indigo hood's crown and cheeks as a ring of
-fabric, a dark opening where a face would be, two mint eyes in it, two
-drawstrings hanging from the hem over the chest.
+**dexel, hooded, front on, faceless, on transparency.** A hooded bust that
+fills the frame: the indigo hood's crown and cheeks as a ring of fabric, a
+dark FACELESS opening where a face would be, two drawstrings hanging from the
+hem over the chest. **No tile behind it and no eyes in it** — the mark stands
+on true transparency so macOS, Windows and GNOME each frame it with their own
+system chrome instead of a dusk rounded-square baked into the file.
 
 The product's identity is a character, so the icon is the character rather
 than a rebus about it (a monitor, a coin, a terminal — the mark this one
 replaced was all three and said nothing about *whose* desk it is).
 
-* **[DESIGN CALL] The icon is front-facing, though the game is not.** The
-  scene camera is behind-the-shoulder and "the hood is a **dome**, not a
-  head: no face, no ears" (Character rules, above). That view does not
-  reduce: at 16px a dome from behind is a featureless bump on a trapezoid,
-  indistinguishable from a hundred other dark app icons. A front-facing
-  adaptation keeps every brand-carrying feature — the hood, the indigo, the
-  dusk, the screen's cool light — and adds the one thing a 16px tile can
-  still hold, a pair of eyes. The eyes are `screen` mint and not any warm
-  colour because they are not eye colour: they are **the monitor reflected**,
-  the same "one cool light in a warm frame" rule the room obeys.
-* **[DESIGN CALL] The hood's whole outer edge is rim-lit to `ink4` or
-  brighter.** Conventional shading would let the shadow side go dark, but the
-  tile is dark too, and `ink2` on `shadow` is a 1.7:1 read — the bust's lower
-  corners dissolved. The rim clamp is justified in-fiction as the screen glow
-  wrapping the figure, and `gen_icon.py`'s `check_contrast` measures the
-  result instead of trusting it.
-* **[DESIGN CALL] No `hair` inside the opening.** Two versions were rendered
-  and rejected off the review sheet: a warm arc along the *bottom* of the
-  opening reads as a mouth (the 256px render grinned), and along the *top* it
-  reads as a bowl-cut fringe, which Character rules forbid outright. The
-  opening is flat `shadow`.
+* **[DESIGN CALL] No tile, no eyes — the mark is transparent and faceless.**
+  Owner direction, 2026-08: "remove the glowing eyes. remove background also
+  so that on mac and other places it's just icon and the OS system." The dusk
+  rounded-square tile and the two `screen`-mint eyes are both gone. The hood
+  opening is now a plain dark `shadow` cavity, faceless by intent. The mark
+  was scaled up to fill ~88–91% of the canvas (the tile's padding is no longer
+  there to spend), with at least a 1px clear margin all round so a
+  plate-compositing desktop can never clip the silhouette.
+* **[DESIGN CALL] A full `ink5` keyline carries the silhouette on any ground.**
+  A dark indigo hood on transparency is nearly invisible on a dark Dock — the
+  tile used to be its contrast and the eyes its accent, and both are gone. So
+  the whole outer edge of the bust is a 1px `ink5` outline: `ink5` is the
+  brightest indigo the tint reaches, a 3.6:1 read on black and 3.2:1 on a
+  #14131a Dock, so the figure's edge is legible on the darkest ground it will
+  sit on. On a white taskbar the dark fabric body is the silhouette instead.
+  This is the same "screen glow wrapping the figure" rim the in-game character
+  gets, now closed into a self-contained keyline because there is no tile edge
+  left to do the job. `gen_icon.py`'s `check_contrast` measures the black case.
+* **[DESIGN CALL] The form reads by its own shading, not against a tile.** One
+  key light from the upper left lifts the crown to `ink5`/`ink4` while the
+  shoulders and the fabric under the hood's overhang fall to `ink2`/`ink3` — a
+  flat indigo blob would be a lozenge, the shaded one is unmistakably a domed
+  hood over shoulders. The `ink5` hem rolled around the opening's inner edge
+  puts the brightest ink directly against the darkest, the crispest boundary
+  available, and it is what still says "hood, seen front on" at 16px with no
+  eyes to anchor it. The opening stays flat `shadow` — no `hair` lining: a warm
+  arc along the *bottom* of it reads as a mouth and along the *top* as a
+  bowl-cut fringe, both rejected off the review sheet in the previous version.
 
 ### Colour: derived, never picked
 
 | Element | Colour | Where it comes from |
 |---|---|---|
 | hood fabric | `ink1`..`ink5` | `round(indigo * RAMP[i] / 255)` — the **default hoodie tint** `#6a5aa0` composited over the 5-step ramp by the exact formula the CSS tint mechanism uses. To the byte, the garment a player with a fresh save is looking at. |
-| tile | `shadow`, + a dithered `wall_dark`/`wall_light` glow pool behind the crown | the room's wall and its lamp bloom |
-| tile rim (1px, all round) | `wall_light` | one step above the fill — see legibility, below |
-| the opening | `shadow` | occlusion, as everywhere else |
-| eyes | `screen` | the terminal's own green-mint, i.e. the monitor |
-| eye glint | `lamp` | the room's warm key light, in the one place a warm/cool pair reads |
+| keyline (1px, all round) | `ink5` | the brightest step of the same tint — the self-contained outline that holds the silhouette on a dark ground now that there is no tile; see legibility, below |
+| the opening | `shadow` | occlusion, as everywhere else — a dark, empty, faceless cavity |
+| hem (1px, inside the opening) | `ink5` | the rolled front edge of the hood; brightest ink against the darkest, the boundary that reads the ring as a hood |
 | drawstrings | `cream`, `gold` tip | UI text colour, and Dev Cash |
+| background | *(none — alpha 0)* | the OS supplies the frame; every pixel outside the bust is fully transparent |
 
 The five ink hexes are **computed in `gen_icon.py` from `gen_assets.RAMP`**,
 not typed in, so re-cutting the ramp re-cuts the icon rather than silently
@@ -684,11 +692,11 @@ sheet at true size, not by rule:
 
 | Master | What it drops, and why |
 |---|---|
-| M64 | nothing: 5x5 rounded eyes with a 1px `lamp` glint, the `ink5` hem around the opening, 2px drawstrings with a `gold` aglet, five-step banded fabric, the two-colour glow pool |
-| M48 | 4x4 eyes, a smaller glow |
-| M32 | no glint; eyes go to **2x3, four pixels apart** — the obvious 3x3-at-2px reads as one pair of goggles rather than two eyes; 1px drawstrings; single-colour glow |
-| M24 | **ordered dithering off** (at 24px a Bayer pattern is not a gradient, it is four stray pixels of noise), no glow, no drawstrings, 2x2 eyes |
-| M16 | no hem (an `ink5` ring 1px inside the `ink5` rim reads as a mis-registration), full-bleed tile, brighter fabric, and 2x2 eyes that fill the opening with **no shadow margin** — the deliberate opposite of every larger master, because at true 16px the 1x2 version with its margin reads as two specks of dust |
+| M64 | nothing: the `ink5` hem around the opening, 2px drawstrings with a `gold` aglet, five-step banded fabric, the full `ink5` keyline |
+| M48 | a smaller drawstring spread |
+| M32 | 1px drawstrings; dithering, hem and keyline still on |
+| M24 | **ordered dithering off** (at 24px a Bayer pattern is not a gradient, it is four stray pixels of noise), no drawstrings; hem and keyline still on |
+| M16 | no drawstrings, no hem (an `ink5` hem 1px inside the `ink5` keyline leaves one mid pixel between two highlights and reads as a mis-registration, so the keyline alone carries the outer edge and the flat `shadow` opening carries the middle), brighter fabric — at 16px the ring has to win outright |
 
 ### Shading: bands with dithered seams, not a dithered gradient
 
@@ -706,20 +714,21 @@ Below 32px ordered dithering is switched off entirely rather than sharpened.
 
 ### The legibility contract
 
-Three reads carry the icon, and `gen_icon.py` asserts a measured floor for
-each rather than an opinion:
+A tile-less, faceless mark lives or dies by two reads, and `gen_icon.py`
+asserts a measured floor for each rather than an opinion:
 
 | Read | Ratio | Floor | Why it matters |
 |---|---|---|---|
-| hood rim vs tile | 2.11:1 | 2.0:1 | the silhouette. The rim clamp exists to hold this number. |
-| eye vs opening | 9.23:1 | 8.0:1 | the feature that has to survive to 16px |
-| tile rim vs black | 1.82:1 | 1.5:1 | whether the icon has an edge at all on a black taskbar |
+| keyline (`ink5`) vs black | 3.58:1 | 2.0:1 | the whole silhouette on the darkest Dock it will sit on — the make-or-break, since there is no tile left to carry it |
+| crown (`ink5`) vs opening (`shadow`) | 2.73:1 | 2.0:1 | whether the hood reads as a lit ring around a dark hole, the job the mint eyes used to do |
 
-The tile is dark, so on a dark Dock its edge comes from a rim one step
-**lighter** than its fill, all the way round — never a bottom-right drop
-shadow, which is invisible against black. The motif is light-on-dark, so on a
-white taskbar the tile itself is the silhouette. Both cases, plus mid grey,
-are on the review sheet.
+Reported (not floored) alongside them: the keyline against a #14131a dark Dock
+(3.15:1) and the dark fabric body against a white taskbar (`ink1` vs white,
+16.66:1 — on a light ground the fabric itself is the silhouette). The mark is
+transparent, so it was judged on a review sheet that shows it on dark, light,
+mid-grey AND a transparency checkerboard, plus mock macOS-dock, Windows-taskbar
+(both themes) and GNOME-dash rows; the dark-ground read is make-or-break and
+the sheet leads with it.
 
 ### Delivered files
 
