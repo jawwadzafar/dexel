@@ -294,14 +294,10 @@ func TestRichStateSaveLoadRoundTripHasNoFalsePositive(t *testing.T) {
 	g := game.New()
 	g.DevCash = 5000
 	g.XP = 2500
-	if err := g.BuyItem("chair_racer"); err != nil {
+	if err := g.BuyItem("chair_racer_ember"); err != nil {
 		t.Fatalf("BuyItem: %v", err)
 	}
-	if err := g.BuyTint("chair_racer", "neon"); err != nil {
-		t.Fatalf("BuyTint: %v", err)
-	}
-	neon := "neon"
-	if err := g.EquipItem("chair", "chair_racer", &neon); err != nil {
+	if err := g.EquipItem("chair", "chair_racer_ember"); err != nil {
 		t.Fatalf("EquipItem: %v", err)
 	}
 	g.RestoreSprint(3, 12.5)

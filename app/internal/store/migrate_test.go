@@ -32,16 +32,14 @@ func writeSignedJSONFixture(t *testing.T, jsonPath string, d SaveData) SaveData 
 // richFixture returns a non-trivial SaveData exercising every field
 // group DB-1's migration must carry across intact.
 func richFixture() SaveData {
-	neon := "neon"
 	return SaveData{
 		Schema:     CurrentSchema,
 		DevCash:    12345,
 		XP:         6789,
 		Sprint:     SprintSave{Index: 3, UnitsDone: 41.5},
-		OwnedItems: []string{"chair_basic", "chair_racer"},
-		OwnedTints: []string{"chair_racer:neon"},
+		OwnedItems: []string{"chair_basic_slate", "chair_racer_ember"},
 		Equipped: map[string]EquippedSave{
-			"chair": {ItemID: "chair_racer", TintID: &neon},
+			"chair": {ItemID: "chair_racer_ember"},
 		},
 		Stats: StatsSave{
 			Date:       "2026-06-15",
@@ -82,9 +80,6 @@ func TestOneTimeImportFromStateJSONKeepsBalancesAndRenamesToImported(t *testing.
 	}
 	if !reflect.DeepEqual(d.OwnedItems, want.OwnedItems) {
 		t.Errorf("ownedItems = %v, want %v", d.OwnedItems, want.OwnedItems)
-	}
-	if !reflect.DeepEqual(d.OwnedTints, want.OwnedTints) {
-		t.Errorf("ownedTints = %v, want %v", d.OwnedTints, want.OwnedTints)
 	}
 	if !reflect.DeepEqual(d.Equipped, want.Equipped) {
 		t.Errorf("equipped = %+v, want %+v", d.Equipped, want.Equipped)

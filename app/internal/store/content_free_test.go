@@ -32,7 +32,6 @@ func contentFreeRegistry() contentfree.Registry {
 				"XP":               "uint64",
 				"Sprint":           "store.SprintSave",
 				"OwnedItems":       "[]string",
-				"OwnedTints":       "[]string",
 				"Equipped":         "map[string]store.EquippedSave",
 				"ImportedFromRust": "bool",
 				"ImportedAt":       "string",
@@ -72,7 +71,6 @@ func contentFreeRegistry() contentfree.Registry {
 			Sample: EquippedSave{},
 			Allowed: map[string]string{
 				"ItemID": "string",
-				"TintID": "*string",
 			},
 		},
 

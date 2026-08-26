@@ -55,7 +55,6 @@ func contentFreeRegistry() contentfree.Registry {
 				"TickerLines":  "[]string",
 				"Equipped":     "map[string]game.EquippedRef",
 				"OwnedItems":   "[]string",
-				"OwnedTints":   "[]string",
 				"Stats":        "game.StatsView",
 				// Phase P2 (Sessions, docs/plan/P2-design.md §6.1, ADR
 				// 0017): the `sessions` block, always sent.
@@ -111,7 +110,6 @@ func contentFreeRegistry() contentfree.Registry {
 			Sample: EquippedRef{},
 			Allowed: map[string]string{
 				"ItemID": "string",
-				"TintID": "*string",
 			},
 		},
 

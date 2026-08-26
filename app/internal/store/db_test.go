@@ -22,14 +22,10 @@ func TestDBSaveLoadRoundTrip(t *testing.T) {
 	g := game.New()
 	g.DevCash = 4000
 	g.XP = 900
-	if err := g.BuyItem("chair_racer"); err != nil {
+	if err := g.BuyItem("chair_racer_ember"); err != nil {
 		t.Fatalf("BuyItem: %v", err)
 	}
-	if err := g.BuyTint("chair_racer", "neon"); err != nil {
-		t.Fatalf("BuyTint: %v", err)
-	}
-	neon := "neon"
-	if err := g.EquipItem("chair", "chair_racer", &neon); err != nil {
+	if err := g.EquipItem("chair", "chair_racer_ember"); err != nil {
 		t.Fatalf("EquipItem: %v", err)
 	}
 	g.RestoreSprint(2, 30.5)
@@ -592,10 +588,9 @@ func TestSaveIsDeterministicForLogicallyEqualState(t *testing.T) {
 		DevCash:    500,
 		XP:         200,
 		Sprint:     SprintSave{Index: 1, UnitsDone: 10.25},
-		OwnedItems: []string{"chair_basic", "chair_racer"},
-		OwnedTints: []string{"chair_racer:neon"},
+		OwnedItems: []string{"chair_basic_slate", "chair_racer_ember"},
 		Equipped: map[string]EquippedSave{
-			"chair": {ItemID: "chair_racer", TintID: strp("neon")},
+			"chair": {ItemID: "chair_racer_ember"},
 		},
 	}
 

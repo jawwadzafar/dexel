@@ -1,26 +1,19 @@
 package game
 
-import "testing"
+import (
+	"sort"
+	"testing"
+)
 
 // slotGroups returns the catalog items grouped by slot, each group in the
-// catalog's own cheapest-first order (which is also rank order: index 0 is
-// the free tier-0 default, index 3 the fanciest). catalogItems is authored
-// as exactly four items per slot, in slot order, so a simple chunk walk is
-// faithful — the test below re-derives that shape rather than trusting it.
+// catalog's own cheapest-first order (index 0 is the slot's free tier-0
+// default). STORE-2.0 turned colours into items, so a slot no longer holds a
+// fixed count — the tests below re-derive shape rather than assuming it.
 func slotGroups(t *testing.T) map[string][]CatalogItem {
 	t.Helper()
 	groups := map[string][]CatalogItem{}
-	var order []string
 	for _, it := range catalogItems {
-		if _, seen := groups[it.Slot]; !seen {
-			order = append(order, it.Slot)
-		}
 		groups[it.Slot] = append(groups[it.Slot], it)
-	}
-	for _, slot := range order {
-		if len(groups[slot]) != 4 {
-			t.Fatalf("slot %q has %d items, expected 4 (the ladder assumes rank 0..3)", slot, len(groups[slot]))
-		}
 	}
 	return groups
 }
@@ -51,11 +44,11 @@ func affordabilityLevel(price uint64) int {
 	return 1 << 30
 }
 
-// TestMinLevelLadder pins the owner-approved level-gating ladder: every
-// item's MinLevel is sane (0..10), the free tier-0 default of every slot
-// is ungated (MinLevel 0 = LV1), MinLevel never decreases as an item gets
-// fancier within its slot, and each rank sits in its band — first upgrade
-// LV2-3, mid LV4-6, top/show-off LV7-10.
+// TestMinLevelLadder pins the owner-approved level-gating ladder under
+// STORE-2.0: every item's MinLevel is sane (0..10), every slot has exactly
+// one free (price-0) item and it is that slot's ungated (MinLevel 0) tier-0
+// default, and within a slot MinLevel never decreases as price rises — so a
+// pricier colour/style is never gated LOWER than a cheaper one.
 func TestMinLevelLadder(t *testing.T) {
 	groups := slotGroups(t)
 
@@ -66,60 +59,68 @@ func TestMinLevelLadder(t *testing.T) {
 		}
 	}
 
-	// Free tier-0 defaults are ungated (LV1).
-	for slot, id := range tierZeroItemBySlot {
-		var found bool
-		for _, it := range groups[slot] {
-			if it.ID == id {
-				found = true
+	// Every slot: exactly one free item, and it is the tier-0 default,
+	// ungated (MinLevel 0).
+	for _, slot := range DefaultSlots() {
+		items := groups[slot.ID]
+		if len(items) == 0 {
+			t.Errorf("slot %q has no items", slot.ID)
+			continue
+		}
+		free := 0
+		for _, it := range items {
+			if it.Price == 0 {
+				free++
 				if it.MinLevel != 0 {
-					t.Errorf("tier-0 default %q (slot %s) MinLevel = %d, want 0 (ungated LV1)", id, slot, it.MinLevel)
+					t.Errorf("free item %q (slot %s) MinLevel = %d, want 0 (ungated LV1)", it.ID, slot.ID, it.MinLevel)
+				}
+				if it.ID != tierZeroItemBySlot[slot.ID] {
+					t.Errorf("slot %s free item %q is not the tier-0 default %q", slot.ID, it.ID, tierZeroItemBySlot[slot.ID])
 				}
 			}
 		}
-		if !found {
-			t.Errorf("tier-0 default %q not found in slot %s", id, slot)
+		if free != 1 {
+			t.Errorf("slot %q has %d free (price 0) items, want exactly 1", slot.ID, free)
 		}
 	}
 
-	// Per-slot ladder: rank 0 free, ranks monotonically non-decreasing,
-	// and each rank inside its owner-approved band.
-	bands := [4][2]int{{0, 0}, {2, 3}, {4, 6}, {7, 10}}
-	for slot, items := range groups {
-		if items[0].MinLevel != 0 {
-			t.Errorf("slot %s rank-0 %q MinLevel = %d, want 0", slot, items[0].ID, items[0].MinLevel)
-		}
-		for rank, it := range items {
-			lo, hi := bands[rank][0], bands[rank][1]
-			if it.MinLevel < lo || it.MinLevel > hi {
-				t.Errorf("slot %s rank-%d %q MinLevel = %d, want within [%d,%d]", slot, rank, it.ID, it.MinLevel, lo, hi)
-			}
-			if rank > 0 && it.MinLevel < items[rank-1].MinLevel {
-				t.Errorf("slot %s: %q (MinLevel %d) is gated lower than the cheaper %q (MinLevel %d) — ladder must not decrease",
-					slot, it.ID, it.MinLevel, items[rank-1].ID, items[rank-1].MinLevel)
+	// Per-slot ladder: sorted by price ascending, MinLevel is
+	// non-decreasing (a pricier item is never gated lower than a cheaper).
+	for slotID, items := range groups {
+		byPrice := append([]CatalogItem(nil), items...)
+		sort.SliceStable(byPrice, func(i, j int) bool { return byPrice[i].Price < byPrice[j].Price })
+		for i := 1; i < len(byPrice); i++ {
+			if byPrice[i].MinLevel < byPrice[i-1].MinLevel {
+				t.Errorf("slot %s: %q (price %d, MinLevel %d) is gated lower than the cheaper %q (price %d, MinLevel %d) — ladder must not decrease",
+					slotID, byPrice[i].ID, byPrice[i].Price, byPrice[i].MinLevel,
+					byPrice[i-1].ID, byPrice[i-1].Price, byPrice[i-1].MinLevel)
 			}
 		}
 	}
 }
 
-// TestTopTierLockBites is the crossover guard: for every slot's fanciest
-// (rank-3) item, its MinLevel must be STRICTLY above the level at which a
+// TestTopTierLockBites is the crossover guard: for every slot's most
+// expensive item, its MinLevel must be STRICTLY above the level at which a
 // hoarder could first afford it. That is the whole point of the feature —
 // the owner's "good stuff should stay locked behind a level even when you
 // could afford it": level, not cash, is the binding constraint on the top
-// tier. (Mid and cheap tiers are deliberately left roughly cash-bound and
-// are not asserted here.)
+// tier.
 func TestTopTierLockBites(t *testing.T) {
 	groups := slotGroups(t)
-	for slot, items := range groups {
-		top := items[3]
+	for slotID, items := range groups {
+		top := items[0]
+		for _, it := range items {
+			if it.Price > top.Price {
+				top = it
+			}
+		}
 		afford := affordabilityLevel(top.Price)
 		if top.MinLevel <= afford {
 			t.Errorf("slot %s top item %q (price %d): MinLevel %d does NOT bite — affordable at LV%d, so cash is the constraint, not level",
-				slot, top.ID, top.Price, top.MinLevel, afford)
+				slotID, top.ID, top.Price, top.MinLevel, afford)
 		} else {
-			t.Logf("slot %-8s %-16s price %3d  affordable@LV%d  MinLevel LV%d  bite +%d",
-				slot, top.ID, top.Price, afford, top.MinLevel, top.MinLevel-afford)
+			t.Logf("slot %-8s %-22s price %3d  affordable@LV%d  MinLevel LV%d  bite +%d",
+				slotID, top.ID, top.Price, afford, top.MinLevel, top.MinLevel-afford)
 		}
 	}
 }

@@ -19,13 +19,10 @@ func TestSaveLoadRoundTrip(t *testing.T) {
 	g := game.New()
 	g.DevCash = 1000
 	g.XP = 500
-	if err := g.BuyItem("chair_racer"); err != nil {
+	if err := g.BuyItem("chair_racer_ember"); err != nil {
 		t.Fatalf("BuyItem: %v", err)
 	}
-	if err := g.BuyTint("chair_racer", "neon"); err != nil {
-		t.Fatalf("BuyTint: %v", err)
-	}
-	if err := g.EquipItem("chair", "chair_racer", strp("neon")); err != nil {
+	if err := g.EquipItem("chair", "chair_racer_ember"); err != nil {
 		t.Fatalf("EquipItem: %v", err)
 	}
 	g.RestoreSprint(3, 12.5)
@@ -57,15 +54,12 @@ func TestSaveLoadRoundTrip(t *testing.T) {
 	if g2.SprintIndex() != 3 || g2.Progress != 12.5 {
 		t.Errorf("after Apply: sprint = (%d, %v), want (3, 12.5)", g2.SprintIndex(), g2.Progress)
 	}
-	if !g2.OwnedItems["chair_racer"] {
-		t.Error("after Apply: chair_racer not owned")
-	}
-	if !g2.IsTintOwned("chair_racer", "neon") {
-		t.Error("after Apply: chair_racer:neon not owned")
+	if !g2.OwnedItems["chair_racer_ember"] {
+		t.Error("after Apply: chair_racer_ember not owned")
 	}
 	ref := g2.Equipped["chair"]
-	if ref.ItemID != "chair_racer" || ref.TintID == nil || *ref.TintID != "neon" {
-		t.Errorf("after Apply: Equipped[chair] = %+v, want chair_racer/neon", ref)
+	if ref.ItemID != "chair_racer_ember" {
+		t.Errorf("after Apply: Equipped[chair] = %+v, want chair_racer_ember", ref)
 	}
 }
 

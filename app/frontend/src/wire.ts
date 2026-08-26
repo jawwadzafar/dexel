@@ -13,17 +13,13 @@ export type ActiveState = 'coding' | 'idle' | 'onBreak';
 // ---------------------------------------------------------------------
 // catalog (sent once on connect, static thereafter)
 // ---------------------------------------------------------------------
+// STORE-2.0 (docs/plan/ROADMAP.md §STORE-2.0): the runtime tint system is
+// gone. Colours are ordinary items now, so a slot has no `tintable` flag,
+// there is no CatalogTint, and an item has no detail/thumbForm/thumbDetail/
+// defaultTint — just a single sprite + thumb.
 export interface CatalogSlot {
   id: string;
   name: string;
-  tintable: boolean;
-}
-
-export interface CatalogTint {
-  id: string;
-  name: string;
-  hex: string;
-  price: number;
 }
 
 export interface CatalogItem {
@@ -37,15 +33,10 @@ export interface CatalogItem {
   // server that omits it degrades to "ungated", matching the existing
   // optional-field pattern elsewhere on this wire.
   minLevel?: number;
+  // sprite/thumb are null only for the "nothing" items (plant_none,
+  // wall_bare, buddy_none); every other item names "<id>.png"/"thumb_<id>.png".
   sprite: string | null;
-  detail: string | null;
-  // Thumbnail fields — ui-spec.md §6.1 "Thumbnail fields": exactly one of
-  // `thumb` or the `thumbForm`/`thumbDetail` pair is non-null, decided by
-  // the item's slot (tintable vs not), never guessed by the frontend.
   thumb: string | null;
-  thumbForm: string | null;
-  thumbDetail: string | null;
-  defaultTint: string | null;
   flavor: string;
 }
 
@@ -53,20 +44,19 @@ export interface CatalogMessage {
   type: 'catalog';
   v: number;
   slots: CatalogSlot[];
-  tints: CatalogTint[];
   items: CatalogItem[];
 }
 
 // ---------------------------------------------------------------------
 // state (on connect, every 1s, and immediately after any mutation)
 // ---------------------------------------------------------------------
+// STORE-2.0: item-only equip (colours are items now), so no tintId.
 export interface EquippedEntry {
   itemId: string;
-  tintId: string | null;
 }
 
 // Keyed by slot id (hoodie, chair, keyboard, mouse, beverage, plant, wall,
-// buddy) — ui-spec.md: "equipped has an entry for every slot, always."
+// buddy, monitor) — ui-spec.md: "equipped has an entry for every slot, always."
 export type Equipped = Record<string, EquippedEntry>;
 
 export interface SprintInfo {
@@ -295,7 +285,6 @@ export interface StateMessage {
   tickerLines: string[]; // always exactly 3, newest first
   equipped: Equipped;
   ownedItems: string[];
-  ownedTints: string[]; // "<itemId>:<tintId>"
   // Optional so a stale server (pre-A1) degrades gracefully rather than
   // failing type-checking or crashing at runtime — main.ts's renderActivity
   // treats a missing stats block as all-zero.
@@ -372,17 +361,14 @@ export type ServerMessage = CatalogMessage | StateMessage | FlashMessage | Sessi
 // ---------------------------------------------------------------------
 export type ClientAction =
   | { action: 'BUY_ITEM'; itemId: string }
-  | { action: 'BUY_TINT'; itemId: string; tintId: string }
-  | { action: 'EQUIP_ITEM'; slot: string; itemId: string; tintId: string | null }
+  | { action: 'EQUIP_ITEM'; slot: string; itemId: string }
   // STORE-REDESIGN (docs/plan/ROADMAP.md §STORE-REDESIGN) — the card-grid
-  // store's ONE-CLICK action. The server (app/actions.go BUY_AND_EQUIP ->
-  // game.BuyAndEquip) buys the item and/or the tint if not already owned
-  // and equips it, all as one atomic transaction validated server-side
-  // (ownership, funds against the COMBINED cost, level gate, tint
-  // ownership) — the client never chains BUY then EQUIP across the 1Hz
-  // broadcast. `tintId` is null for a non-tintable slot and the desired
-  // tint id for a tintable one (hoodie/chair), mirroring EQUIP_ITEM.
-  | { action: 'BUY_AND_EQUIP'; slot: string; itemId: string; tintId: string | null }
+  // store's ONE-CLICK action, item-only since STORE-2.0. The server
+  // (app/actions.go BUY_AND_EQUIP -> game.BuyAndEquip) buys the item if not
+  // already owned and equips it, all as one atomic transaction validated
+  // server-side (ownership, funds, level gate) — the client never chains
+  // BUY then EQUIP across the 1Hz broadcast.
+  | { action: 'BUY_AND_EQUIP'; slot: string; itemId: string }
   | { action: 'STORE_OPEN' }
   | { action: 'STORE_CLOSE' }
   // Phase P1 (docs/ui-spec.md §6.2/§7). `name` is raw user text; the
