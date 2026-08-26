@@ -100,6 +100,7 @@ var subcommands = map[string]subcommand{
 	"autostart": {"enable|disable|status the login autostart entry — never enabled implicitly", cmdAutostart},
 	"open":      {"start if needed, then open the UI (desktop app, else browser)", cmdOpen},
 	"logs":      {"the runtime log [-n N] [-f] [--path] [--truncate]", cmdLogs},
+	"doctor":    {"print a diagnostics report (versions, paths, runtime, capability) to paste when reporting an issue", cmdDoctor},
 	"uninstall": {"remove dexel from this machine [--purge to delete your save too] [--yes]", cmdUninstall},
 	"update":    {"update to the latest release, in place [--check] [-y] [--force]; your save is preserved", cmdUpdate},
 	"serve":     {"run the server in the FOREGROUND (the developer path; all of today's flags)", func(args []string) int { runServe(modeServe, args); return 0 }},
@@ -168,7 +169,8 @@ func classify(args []string) decision {
 // `dexel help` can go to stdout (it is what the user asked for) while an
 // unknown word goes to stderr (it is an error report).
 func usage(w io.Writer) {
-	fmt.Fprintf(w, "dexel — your developer companion\n\nUsage:\n  dexel                 start the runtime if needed, then open the UI\n  dexel <command> [flags]\n  dexel -addr ... [...] run the server in the foreground (legacy shape, unchanged;\n                        `dexel serve -h` prints that flag set)\n\nCommands:\n")
+	fmt.Fprintf(w, "%s\n\n%s\n  dexel                 start the runtime if needed, then open the UI\n  dexel <command> [flags]\n  dexel -addr ... [...] run the server in the foreground (legacy shape, unchanged;\n                        `dexel serve -h` prints that flag set)\n\n%s\n",
+		bold(w, "dexel — your developer companion"), bold(w, "Usage:"), bold(w, "Commands:"))
 	names := make([]string, 0, len(subcommands))
 	for name := range subcommands {
 		names = append(names, name)
@@ -177,7 +179,7 @@ func usage(w io.Writer) {
 	for _, name := range names {
 		fmt.Fprintf(w, "  %-9s %s\n", name, subcommands[name].help)
 	}
-	fmt.Fprintf(w, "\nState and logs live under DEXEL_HOME, or the platform default;\n`dexel status` prints both paths.\n")
+	fmt.Fprintf(w, "\nState and logs live under DEXEL_HOME, or the platform default;\n`dexel status` prints both paths. `dexel doctor` prints a full diagnostics report.\n")
 }
 
 // main is the ~20-line dispatcher ARCHITECTURE.md Decision 2 asks for.
@@ -213,8 +215,120 @@ func dispatch(d decision) int {
 		return subcommands[d.Name].run(d.Args)
 
 	default: // dispatchUnknown
-		fmt.Fprintf(os.Stderr, "dexel: unknown command %q\n\n", d.Name)
+		fmt.Fprintf(os.Stderr, "dexel: unknown command %q\n", d.Name)
+		// A near-miss like `statsu`/`opne`/`unistall` gets a "did you
+		// mean ...?" before the full usage — the smallest possible nudge
+		// toward the word the user was reaching for, without changing the
+		// honest exit-2 outcome (an unknown word is still an error, never
+		// a silent fall-through to a running server; see dispatchUnknown).
+		if s := suggestCommand(d.Name); s != "" {
+			fmt.Fprintf(os.Stderr, "did you mean %q?\n", s)
+		}
+		fmt.Fprintln(os.Stderr)
 		usage(os.Stderr)
 		return 2
 	}
+}
+
+// ------------------------------------------------- did-you-mean & color
+//
+// Two small pieces of terminal polish, kept here beside the dispatcher
+// they serve: the suggestion printed for an unknown word, and the color
+// gate every human-facing header in the CLI (help, status, doctor) shares.
+
+// suggestCommand returns the known subcommand closest to an unknown word,
+// or "" when nothing is within edit distance 2. It powers the "did you
+// mean ...?" hint on a typo. Names are considered in sorted order and the
+// FIRST minimal-distance match wins, so the suggestion is deterministic
+// (map iteration order is not) — `statsu` -> `status`, `opne` -> `open`,
+// `unistall` -> `uninstall`.
+func suggestCommand(unknown string) string {
+	const maxDistance = 2
+	names := make([]string, 0, len(subcommands))
+	for name := range subcommands {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	best := ""
+	bestDist := maxDistance + 1
+	for _, name := range names {
+		if d := levenshtein(unknown, name); d < bestDist {
+			bestDist, best = d, name
+		}
+	}
+	if bestDist > maxDistance {
+		return ""
+	}
+	return best
+}
+
+// levenshtein is the classic insert/delete/substitute edit distance, with
+// two rolling rows. The inputs are always a short mistyped verb against a
+// dozen short words, so this is more than fast enough and allocates two
+// small slices.
+func levenshtein(a, b string) int {
+	ra, rb := []rune(a), []rune(b)
+	prev := make([]int, len(rb)+1)
+	curr := make([]int, len(rb)+1)
+	for j := range prev {
+		prev[j] = j
+	}
+	for i := 1; i <= len(ra); i++ {
+		curr[0] = i
+		for j := 1; j <= len(rb); j++ {
+			cost := 1
+			if ra[i-1] == rb[j-1] {
+				cost = 0
+			}
+			curr[j] = min(prev[j]+1, min(curr[j-1]+1, prev[j-1]+cost))
+		}
+		prev, curr = curr, prev
+	}
+	return prev[len(rb)]
+}
+
+// ANSI SGR codes used by bold(). Kept to bold only — a single, tasteful
+// weight change on headers, never a rainbow.
+const (
+	ansiBold  = "\033[1m"
+	ansiReset = "\033[0m"
+)
+
+// colorForWriter reports whether ANSI color should be written to w. It
+// mirrors install.sh's supports_color gate exactly: color only when the
+// destination is a real terminal AND NO_COLOR is unset AND TERM is not
+// "dumb". Only the process's actual stdout/stderr are ever colored; any
+// other writer — a bytes.Buffer in a test, a pipe, a redirected file — is
+// treated as not-a-terminal, so tests and piped output stay plain by
+// construction rather than by a test having to set NO_COLOR.
+func colorForWriter(w io.Writer) bool {
+	if os.Getenv("NO_COLOR") != "" || os.Getenv("TERM") == "dumb" {
+		return false
+	}
+	var f *os.File
+	switch w {
+	case os.Stdout:
+		f = os.Stdout
+	case os.Stderr:
+		f = os.Stderr
+	default:
+		return false
+	}
+	info, err := f.Stat()
+	if err != nil {
+		return false
+	}
+	return info.Mode()&os.ModeCharDevice != 0
+}
+
+// bold wraps s in the bold SGR when color is enabled for w, and returns s
+// unchanged otherwise — so a call site writes bold(w, "Header") once and
+// gets plain text automatically wherever color is off. Because the plain
+// text is always contiguous inside the wrapper, a strings.Contains check
+// still matches whether or not color was applied.
+func bold(w io.Writer, s string) string {
+	if !colorForWriter(w) {
+		return s
+	}
+	return ansiBold + s + ansiReset
 }

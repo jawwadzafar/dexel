@@ -216,6 +216,7 @@ path. Genuinely reusable, non-main logic goes in new `app/internal/*` packages
 | `dexel update [--check]` | manifest → download → verify → atomic swap → restart if it was running |
 | `dexel uninstall [--purge]` | stop, disable autostart, remove binaries; **preserves user data** unless `--purge` |
 | `dexel logs [-f] [-n N] [--path] [--truncate]` | the runtime log |
+| `dexel doctor` | one content-free diagnostics report — build, paths, runtime status, provider capability, autostart — to paste when reporting an issue |
 | `dexel version` | semver + commit + os/arch |
 | `dexel serve [flags]` | **foreground** runtime — the developer path; all of today's flags |
 | `dexel runtime` | the detached runtime's own entry point (documented, not hidden; `start` execs it) |
@@ -224,6 +225,14 @@ path. Genuinely reusable, non-main logic goes in new `app/internal/*` packages
 a launchd plist, and a human's terminal each say the thing they mean. `runtime`
 defaults to `-addr 127.0.0.1:0`; `serve` keeps today's `127.0.0.1:8080` default
 so `go run . serve` behaves exactly as `go run .` does now.
+
+An unknown word still exits 2 with the full usage (never a silent fall-through to
+a server — Decision 3's honesty rule), but a near-miss now gets a one-line "did
+you mean …?" first: the closest subcommand within Levenshtein distance 2, chosen
+deterministically (`statsu`→`status`, `opne`→`open`, `unistall`→`uninstall`).
+Human-facing headers in `help`, `status` and `doctor` carry light bold, gated
+exactly like `install.sh`'s `supports_color` (a real terminal AND `NO_COLOR`
+unset AND `TERM` ≠ `dumb`); any redirected or piped output stays plain.
 
 ### Decision 4 — Three operations, three mechanisms, no ambiguity
 

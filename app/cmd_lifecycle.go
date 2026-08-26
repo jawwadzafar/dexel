@@ -622,7 +622,7 @@ func cmdStatus(args []string) int {
 	}
 
 	if st.Running {
-		fmt.Fprintln(env.out, "dexel is running")
+		fmt.Fprintln(env.out, bold(env.out, "dexel is running"))
 		if out.Paused {
 			// Said in the same breath as "running", because the two
 			// together are the whole answer: the process is alive AND it
@@ -639,7 +639,7 @@ func cmdStatus(args []string) int {
 			fmt.Fprintf(env.out, "  uptime    %s (since %s)\n", time.Duration(out.Uptime)*time.Second, out.StartedAt)
 		}
 	} else {
-		fmt.Fprintln(env.out, "dexel is not running")
+		fmt.Fprintln(env.out, bold(env.out, "dexel is not running"))
 		if st.Cleaned {
 			fmt.Fprintf(env.out, "  cleaned   a stale runtime.json (%s)\n", st.Reason)
 		}

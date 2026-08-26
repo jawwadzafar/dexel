@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"flag"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -77,6 +78,7 @@ func TestClassifyImplementsForkADispatchTable(t *testing.T) {
 		{"restart", []string{"restart"}, dispatchSubcommand, "restart", []string{}},
 		{"open", []string{"open"}, dispatchSubcommand, "open", []string{}},
 		{"logs with flags", []string{"logs", "-n", "5"}, dispatchSubcommand, "logs", []string{"-n", "5"}},
+		{"doctor", []string{"doctor"}, dispatchSubcommand, "doctor", []string{}},
 		{"help", []string{"help"}, dispatchSubcommand, "help", []string{}},
 
 		// Row 4: an unknown word is an error, NEVER a silent fall-through
@@ -175,6 +177,15 @@ func TestEverySubcommandIsWiredAndDocumented(t *testing.T) {
 	for _, name := range []string{"update"} {
 		if _, ok := subcommands[name]; !ok {
 			t.Errorf("§PR-7 requires an %q subcommand and there is none", name)
+		}
+	}
+	// ...and the diagnostics `doctor` verb (the CLI-hardening pass): a
+	// one-report dump a user pastes when reporting an issue. Wired into
+	// the same table, so it is discoverable in `dexel help` and can never
+	// be listed-but-unwired, exactly like every verb above.
+	for _, name := range []string{"doctor"} {
+		if _, ok := subcommands[name]; !ok {
+			t.Errorf("the hardening pass requires a %q subcommand and there is none", name)
 		}
 	}
 }
@@ -655,5 +666,121 @@ func TestExecOfAnAppBundleFailsWhichIsWhyOpenIsUsed(t *testing.T) {
 	// ...and the launcher does not do that.
 	if name, _ := desktopAppLaunchCommand("darwin", bundle, "http://127.0.0.1:1"); name != "open" {
 		t.Fatalf("darwin bundle launch command = %q, want the `open` tool", name)
+	}
+}
+
+// TestSuggestCommand pins the did-you-mean logic: a near-miss (edit
+// distance <= 2) resolves to the real verb the user was reaching for, and
+// a word that is not close to anything gets no suggestion (so the hint is
+// never noise). The three cases in the task's brief are asserted by name;
+// determinism (sorted-order, first-minimal-distance) is what makes these
+// stable rather than dependent on map iteration order.
+func TestSuggestCommand(t *testing.T) {
+	cases := map[string]string{
+		"statsu":   "status",
+		"opne":     "open",
+		"unistall": "uninstall",
+		"strat":    "start",
+		"resatrt":  "restart",
+		"verison":  "version",
+		// Not close to any subcommand -> no suggestion at all.
+		"xyzzy":               "",
+		"completelyunrelated": "",
+		"":                    "", // empty is close to nothing meaningful
+	}
+	for in, want := range cases {
+		t.Run(in, func(t *testing.T) {
+			if got := suggestCommand(in); got != want {
+				t.Fatalf("suggestCommand(%q) = %q, want %q", in, got, want)
+			}
+		})
+	}
+	// Every suggestion it DOES make must be a real, wired subcommand —
+	// suggesting a word that then prints "unknown command" would be worse
+	// than staying silent.
+	for _, typo := range []string{"statsu", "opne", "unistall", "logz", "paus", "resom", "doctro"} {
+		if s := suggestCommand(typo); s != "" {
+			if _, ok := subcommands[s]; !ok {
+				t.Errorf("suggestCommand(%q) = %q, which is not a real subcommand", typo, s)
+			}
+		}
+	}
+}
+
+// TestLevenshtein pins the edit-distance primitive the suggestion rests
+// on, including the empty-string and unicode edges.
+func TestLevenshtein(t *testing.T) {
+	cases := []struct {
+		a, b string
+		want int
+	}{
+		{"", "", 0},
+		{"a", "", 1},
+		{"", "abc", 3},
+		{"abc", "abc", 0},
+		{"statsu", "status", 2}, // a transposition is two edits in plain Levenshtein
+		{"unistall", "uninstall", 1},
+		{"kitten", "sitting", 3}, // the textbook case
+		{"café", "cafe", 1},      // one substitution over runes, not bytes
+	}
+	for _, tc := range cases {
+		if got := levenshtein(tc.a, tc.b); got != tc.want {
+			t.Errorf("levenshtein(%q, %q) = %d, want %d", tc.a, tc.b, got, tc.want)
+		}
+		// Symmetric by definition.
+		if got := levenshtein(tc.b, tc.a); got != tc.want {
+			t.Errorf("levenshtein(%q, %q) = %d, want %d (asymmetric!)", tc.b, tc.a, got, tc.want)
+		}
+	}
+}
+
+// TestBoldIsPlainForNonTerminalWriters is the guarantee the whole color
+// scheme rests on: a writer that is not the process's real stdout/stderr
+// (every test buffer, every pipe, every redirected file) gets ZERO escape
+// bytes, so `bold` is invisible to tests and to piped output regardless of
+// NO_COLOR/TERM. This is why adding color to help/status/doctor changed no
+// existing assertion.
+func TestBoldIsPlainForNonTerminalWriters(t *testing.T) {
+	var b strings.Builder
+	got := bold(&b, "Header")
+	if got != "Header" {
+		t.Fatalf("bold(buffer, %q) = %q, want the plain string with no escapes", "Header", got)
+	}
+	if colorForWriter(&b) {
+		t.Fatal("colorForWriter(buffer) = true — a non-terminal writer must never be colored")
+	}
+	if strings.ContainsRune(got, '\033') {
+		t.Fatalf("bold() leaked an escape byte into a buffer: %q", got)
+	}
+}
+
+// TestUnknownCommandSuggestsBeforeUsage exercises the real dispatch path
+// for a typo: it must exit 2, name the unknown word, offer the near verb,
+// and still print the full usage. os.Stderr is redirected to a pipe so the
+// exact bytes the user would see are asserted.
+func TestUnknownCommandSuggestsBeforeUsage(t *testing.T) {
+	old := os.Stderr
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("pipe: %v", err)
+	}
+	os.Stderr = w
+	code := dispatch(decision{Kind: dispatchUnknown, Name: "statsu", Args: []string{}})
+	_ = w.Close()
+	os.Stderr = old
+	out, _ := io.ReadAll(r)
+	got := string(out)
+
+	if code != 2 {
+		t.Fatalf("dispatch(unknown) exit = %d, want 2", code)
+	}
+	for _, want := range []string{`unknown command "statsu"`, `did you mean "status"?`, "Commands:", "status"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("unknown-command output is missing %q:\n%s", want, got)
+		}
+	}
+	// The suggestion must come BEFORE the usage block, or it is buried.
+	if i, j := strings.Index(got, "did you mean"), strings.Index(got, "Commands:"); i < 0 || j < 0 || i > j {
+		t.Errorf("the suggestion must appear before the usage block:\n%s", got)
 	}
 }
