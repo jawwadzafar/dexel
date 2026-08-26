@@ -1075,6 +1075,23 @@ body.shell #titlebar { cursor: default; }
   line-height: 1;
 }
 
+/* Level-gated item (catalog MinLevel > player level, store-modal.ts's
+   'locked' action). The card reads as "coming later": thumb, name and
+   price dim back, while the action button turns into a bright gold "LV n"
+   badge — kept fully legible on purpose so the player can SEE the target
+   they are working toward (docs/game/BACKLOG.md §2). The button stays
+   .is-disabled (flat, not-allowed); the rule below is more specific than
+   .nes-btn.is-disabled, so the gold badge colour wins over the dim. */
+.card.locked .thumb,
+.card.locked .name,
+.card.locked .price-state { opacity: 0.4; }
+.card.locked .action.is-locked,
+.card.locked .action.is-locked:hover,
+.card.locked .action.is-locked:focus {
+  color: var(--gold);
+  border-color: var(--gold);
+}
+
 #store-scroll {
   position: absolute;
   left: 374px;

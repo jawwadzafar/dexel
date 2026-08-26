@@ -598,6 +598,14 @@ var (
 	ErrNotOwned          = errors.New("not owned")
 	ErrNotTintable       = errors.New("slot is not tintable")
 	ErrInsufficientFunds = errors.New("insufficient dev cash")
+	// ErrLevelLocked — the item's CatalogItem.MinLevel exceeds the player's
+	// current level (levelForXP(g.XP)). A new refusal mode on top of the
+	// docs/ui-spec.md §6.2 set: level-gating is what makes "LV" mean
+	// something (docs/game/BACKLOG.md §2). Checked BEFORE affordability so
+	// the "reach LV n" message wins even when the player is also broke —
+	// the level is the true blocker (money cannot buy a locked item), and
+	// the store already advertises the "LV n" badge proactively.
+	ErrLevelLocked = errors.New("level too low")
 )
 
 // BuyItem spends DevCash to own an item permanently. Buying never
@@ -610,6 +618,12 @@ func (g *Game) BuyItem(itemID string) error {
 	}
 	if g.OwnedItems[itemID] {
 		return fmt.Errorf("%w: %s", ErrAlreadyOwned, itemID)
+	}
+	// Level gate before affordability (see ErrLevelLocked): a below-level
+	// item cannot be bought at any price, so "reach LV n" is the truthful
+	// message even for a broke player. No state has mutated at this point.
+	if lvl := levelForXP(g.XP); lvl < item.MinLevel {
+		return fmt.Errorf("%w: reach LV %d (currently LV %d)", ErrLevelLocked, item.MinLevel, lvl)
 	}
 	if g.DevCash < item.Price {
 		return fmt.Errorf("%w: have %d, need %d", ErrInsufficientFunds, g.DevCash, item.Price)

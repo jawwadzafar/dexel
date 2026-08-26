@@ -125,15 +125,22 @@ function currentItems(): CatalogItem[] { return store.getCatalogBySlot(currentSl
 function currentItem(): CatalogItem | undefined { return currentItems()[storeUI.cardIndex]; }
 
 interface CardAction {
-  kind: 'buy' | 'insufficient' | 'buytint' | 'none' | 'equip';
+  kind: 'buy' | 'insufficient' | 'buytint' | 'none' | 'equip' | 'locked';
   label: string;
 }
 
-// ui-spec.md §4.3 — the one action button, fixed precedence.
+// ui-spec.md §4.3 — the one action button, fixed precedence. LEVEL-GATING
+// adds one kind ABOVE buy: an unowned item whose catalog minLevel exceeds
+// the player's current level is 'locked' — shown as a "LV n" badge and
+// non-buyable at any price (mirrors the server's ErrLevelLocked, which is
+// checked before affordability). Once the player reaches the level it
+// falls through to the normal BUY -> NEED -> BUY COLOUR -> EQUIP flow.
 function computeCardAction(slot: CatalogSlot, item: CatalogItem, tintId: string | null): CardAction {
   const state = store.getState()!;
   const owned = (state.ownedItems || []).indexOf(item.id) !== -1;
   if (!owned) {
+    const minLevel = item.minLevel || 0;
+    if (state.level < minLevel) return { kind: 'locked', label: 'LV ' + minLevel };
     if (state.devCash >= item.price) return { kind: 'buy', label: 'BUY ' + item.price };
     return { kind: 'insufficient', label: 'NEED ' + item.price };
   }
@@ -153,7 +160,13 @@ function computeCardAction(slot: CatalogSlot, item: CatalogItem, tintId: string 
 function priceStateText(slot: CatalogSlot, item: CatalogItem, tintId: string | null): string {
   const state = store.getState()!;
   const owned = (state.ownedItems || []).indexOf(item.id) !== -1;
-  if (!owned) return item.price + ' ◆';
+  if (!owned) {
+    const minLevel = item.minLevel || 0;
+    // Locked: lead with the requirement, still show the price so the
+    // player sees the item is affordable but not yet allowed.
+    if (state.level < minLevel) return 'LV ' + minLevel + ' · ' + item.price + ' ◆';
+    return item.price + ' ◆';
+  }
   const eq = state.equipped[slot.id];
   const sameEquip = !!eq && eq.itemId === item.id && (!slot.tintable || eq.tintId === tintId);
   if (sameEquip) return 'OWNED · EQUIPPED';
@@ -286,10 +299,12 @@ export function refreshGridStates(): void {
       }
     }
     const action = computeCardAction(slot, item, tintId);
+    card.classList.toggle('locked', action.kind === 'locked');
     const btn = card.querySelector('.action');
     if (btn) {
       btn.textContent = action.label;
-      btn.classList.toggle('is-disabled', action.kind === 'insufficient' || action.kind === 'none');
+      btn.classList.toggle('is-disabled', action.kind === 'insufficient' || action.kind === 'none' || action.kind === 'locked');
+      btn.classList.toggle('is-locked', action.kind === 'locked');
     }
   });
 }
@@ -385,7 +400,11 @@ function updatePreview(): void {
   const owned = (state.ownedItems || []).indexOf(item.id) !== -1;
   const eq = state.equipped[slot.id];
   const sameEquip = !!eq && eq.itemId === item.id && (!slot.tintable || eq.tintId === tintId);
-  el.previewState.textContent = !owned ? (item.price + ' ◆') : (sameEquip ? 'EQUIPPED' : 'OWNED');
+  const minLevel = item.minLevel || 0;
+  const locked = !owned && state.level < minLevel;
+  el.previewState.textContent = !owned
+    ? (locked ? ('LV ' + minLevel + ' · ' + item.price + ' ◆') : (item.price + ' ◆'))
+    : (sameEquip ? 'EQUIPPED' : 'OWNED');
   el.previewColor.textContent = slot.tintable ? truncate((store.getTintById(tintId as string) || { name: '' }).name || '', 24) : '';
 }
 

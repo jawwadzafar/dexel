@@ -359,3 +359,25 @@ it shakes; click the beverage → steam/sip; click the buddy/pet → it reacts.
 Art frames via gen_assets (deterministic, self-checked), hit-regions +
 reaction scheduler in scene.ts (reactions never override state-driven frames
 for long; cozy not slapstick). Foundation for future interactive items.
+
+### STORE-REDESIGN (2026-08-26, owner) — card grid, one-click buy+equip
+Supersedes the earlier "store bigger + declutter" item and absorbs the coin/
+Cash-rename store parts. Owner intent: the two-step BUY→EQUIP is confusing; the
+list+preview split is too many clicks.
+- **Card grid, no preview pane.** Every item shown directly as a CARD that IS
+  its preview (the item art/thumb), name, and PRICE in the top-right corner.
+  No left list + right preview — just a scrollable grid of cards.
+- **One click = buy AND equip.** Click an unowned, affordable, unlocked card →
+  it buys and equips in one action (client chains BUY then EQUIP, or a combined
+  action). Owned-but-not-equipped card → one click equips. Equipped → ✓ state.
+  Can't afford → NEED/greyed. Level-locked → "LV n" badge (from level-gating).
+- **Tints as swatches, not "1-6".** Tintable items (hoodie, chair) show small
+  colour swatches on the card; clicking a swatch buys/equips that colour. This
+  removes the "1-6 / colour help" clutter the owner asked to drop.
+- **Taller store.** The store modal gets more height (max out the dialog cap;
+  a scrollable grid handles overflow) — it needs the space.
+- Preserve: level-gating's locked display, the humanized prices, "Cash" naming,
+  content-free/privacy. Real-game gated at 1x/2x, screenshot for validation.
+- Sequence: AFTER level-gating lands (backend: catalog MinLevel + purchase
+  validation stays; this replaces the store-modal UI). Folds in coin wiring +
+  Cash rename so the store panel is rewritten once, not thrice.

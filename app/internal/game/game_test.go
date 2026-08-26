@@ -145,6 +145,7 @@ func TestNewGameOwnsAndEquipsEveryTierZeroItem(t *testing.T) {
 func TestBuyItemSpendsAndOwns(t *testing.T) {
 	g := New()
 	g.DevCash = 1000
+	g.XP = 5000 // LV10: unlock every level-gated item; this test exercises funds/ownership, not the level gate
 	if err := g.BuyItem("chair_racer"); err != nil {
 		t.Fatalf("BuyItem: %v", err)
 	}
@@ -161,6 +162,7 @@ func TestBuyItemSpendsAndOwns(t *testing.T) {
 
 func TestBuyItemRejectsInsufficientFundsAndUnknownID(t *testing.T) {
 	g := New()
+	g.XP = 5000 // LV10 so the level gate passes and the funds check is what refuses (DevCash stays 0)
 	if err := g.BuyItem("chair_racer"); !errors.Is(err, ErrInsufficientFunds) {
 		t.Errorf("got %v, want ErrInsufficientFunds", err)
 	}
@@ -175,6 +177,7 @@ func TestBuyItemRejectsInsufficientFundsAndUnknownID(t *testing.T) {
 func TestDefaultTintIsFreeOnOwnershipButExtraTintsCostMoney(t *testing.T) {
 	g := New()
 	g.DevCash = 1000
+	g.XP = 5000 // LV10: unlock chair_racer so this tint test isn't blocked by the level gate
 	if err := g.BuyItem("chair_racer"); err != nil {
 		t.Fatalf("BuyItem: %v", err)
 	}
@@ -216,6 +219,7 @@ func TestBuyTintRejectsUnownedItemAndNonTintableSlot(t *testing.T) {
 func TestEquipRequiresOwnershipAndCorrectSlotAndTint(t *testing.T) {
 	g := New()
 	g.DevCash = 1000
+	g.XP = 5000 // LV10: unlock chair_racer so BuyItem below succeeds regardless of the level gate
 
 	if err := g.EquipItem("chair", "chair_racer", strp("ember")); !errors.Is(err, ErrNotOwned) {
 		t.Errorf("equipping unowned item: got %v, want ErrNotOwned", err)
@@ -243,6 +247,7 @@ func TestEquipRequiresOwnershipAndCorrectSlotAndTint(t *testing.T) {
 func TestEquipOneWinsPerSlot(t *testing.T) {
 	g := New()
 	g.DevCash = 1000
+	g.XP = 5000 // LV10: unlock hoodie_zip so this equip test isn't blocked by the level gate
 	_ = g.BuyItem("hoodie_zip")
 	_ = g.EquipItem("hoodie", "hoodie_zip", strp("slate"))
 	if g.Equipped["hoodie"].ItemID != "hoodie_zip" {

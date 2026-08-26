@@ -31,6 +31,12 @@ export interface CatalogItem {
   slot: string;
   name: string;
   price: number;
+  // Minimum player level required to BUY this item (internal/game
+  // catalog.go CatalogItem.MinLevel). 0/omitted = LV1 = ungated. Gates
+  // purchase only — an owned item is never re-locked. Optional so a stale
+  // server that omits it degrades to "ungated", matching the existing
+  // optional-field pattern elsewhere on this wire.
+  minLevel?: number;
   sprite: string | null;
   detail: string | null;
   // Thumbnail fields — ui-spec.md §6.1 "Thumbnail fields": exactly one of

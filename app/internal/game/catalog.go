@@ -73,10 +73,23 @@ type Tint struct {
 // ui-spec §6.1: "sprite is null for the none items; detail is null for
 // untinted slots") rather than an empty string.
 type CatalogItem struct {
-	ID          string  `json:"id"`
-	Slot        string  `json:"slot"`
-	Name        string  `json:"name"`
-	Price       uint64  `json:"price"`
+	ID    string `json:"id"`
+	Slot  string `json:"slot"`
+	Name  string `json:"name"`
+	Price uint64 `json:"price"`
+	// MinLevel is the minimum player level (levelForXP, see sprint.go)
+	// required to BUY this item; 0 (the omitted/zero value) means LV1 =
+	// ungated. It gates PURCHASE only, never equipping an already-owned
+	// item, and is orthogonal to Price — a locked item is shown greyed
+	// with a "LV n" badge even when the player can afford it, so the store
+	// advertises what is coming (docs/game/BACKLOG.md §2's "LV means
+	// nothing" note is what this closes). The ladder and the crossover
+	// tuning (top-tier MinLevels sit ABOVE the level at which the item is
+	// merely affordable, so level — not cash — is the binding constraint)
+	// live in catalog_test.go's TestMinLevelLadder / TestTopTierLockBites.
+	// NOTE (docs owned by a concurrent agent): ui-spec §6.1 to be
+	// reconciled to document this field.
+	MinLevel    int     `json:"minLevel"`
 	Sprite      *string `json:"sprite"`
 	Detail      *string `json:"detail"`
 	Thumb       *string `json:"thumb"`
@@ -146,15 +159,15 @@ var catalogItems = []CatalogItem{
 		Sprite: strp("hoodie_classic.png"), Detail: nil, Thumb: nil,
 		ThumbForm: strp("thumb_hoodie_classic_form.png"), ThumbDetail: strp("thumb_hoodie_classic_detail.png"),
 		DefaultTint: strp("indigo"), Flavor: "Drawstrings, one pocket, no opinions."},
-	{ID: "hoodie_zip", Slot: "hoodie", Name: "Zip-Up", Price: 120,
+	{ID: "hoodie_zip", Slot: "hoodie", Name: "Zip-Up", Price: 120, MinLevel: 3,
 		Sprite: strp("hoodie_zip.png"), Detail: nil, Thumb: nil,
 		ThumbForm: strp("thumb_hoodie_zip_form.png"), ThumbDetail: strp("thumb_hoodie_zip_detail.png"),
 		DefaultTint: strp("slate"), Flavor: "For when the office is exactly two degrees off."},
-	{ID: "hoodie_tech", Slot: "hoodie", Name: "Techwear", Price: 300,
+	{ID: "hoodie_tech", Slot: "hoodie", Name: "Techwear", Price: 300, MinLevel: 5,
 		Sprite: strp("hoodie_tech.png"), Detail: nil, Thumb: nil,
 		ThumbForm: strp("thumb_hoodie_tech_form.png"), ThumbDetail: strp("thumb_hoodie_tech_detail.png"),
 		DefaultTint: strp("forest"), Flavor: "Straps that hold nothing. Reflective, though."},
-	{ID: "hoodie_cloak", Slot: "hoodie", Name: "Night Cloak", Price: 500,
+	{ID: "hoodie_cloak", Slot: "hoodie", Name: "Night Cloak", Price: 500, MinLevel: 8,
 		Sprite: strp("hoodie_cloak.png"), Detail: nil, Thumb: nil,
 		ThumbForm: strp("thumb_hoodie_cloak_form.png"), ThumbDetail: strp("thumb_hoodie_cloak_detail.png"),
 		DefaultTint: strp("neon"), Flavor: "Ships at 3am or not at all."},
@@ -164,15 +177,15 @@ var catalogItems = []CatalogItem{
 		Sprite: strp("chair_basic_form.png"), Detail: strp("chair_basic_detail.png"), Thumb: nil,
 		ThumbForm: strp("thumb_chair_basic_form.png"), ThumbDetail: strp("thumb_chair_basic_detail.png"),
 		DefaultTint: strp("slate"), Flavor: `Adjusts in one axis. That axis is "no".`},
-	{ID: "chair_racer", Slot: "chair", Name: "Racer", Price: 100,
+	{ID: "chair_racer", Slot: "chair", Name: "Racer", Price: 100, MinLevel: 3,
 		Sprite: strp("chair_racer_form.png"), Detail: strp("chair_racer_detail.png"), Thumb: nil,
 		ThumbForm: strp("thumb_chair_racer_form.png"), ThumbDetail: strp("thumb_chair_racer_detail.png"),
 		DefaultTint: strp("ember"), Flavor: "Bolstered wings. Zero laps completed."},
-	{ID: "chair_exec", Slot: "chair", Name: "Executive Leather", Price: 300,
+	{ID: "chair_exec", Slot: "chair", Name: "Executive Leather", Price: 300, MinLevel: 5,
 		Sprite: strp("chair_exec_form.png"), Detail: strp("chair_exec_detail.png"), Thumb: nil,
 		ThumbForm: strp("thumb_chair_exec_form.png"), ThumbDetail: strp("thumb_chair_exec_detail.png"),
 		DefaultTint: strp("ember"), Flavor: "Tufted. Reclines further than the deadline."},
-	{ID: "chair_antigrav", Slot: "chair", Name: "Anti-Gravity", Price: 500,
+	{ID: "chair_antigrav", Slot: "chair", Name: "Anti-Gravity", Price: 500, MinLevel: 8,
 		Sprite: strp("chair_antigrav_form.png"), Detail: strp("chair_antigrav_detail.png"), Thumb: nil,
 		ThumbForm: strp("thumb_chair_antigrav_form.png"), ThumbDetail: strp("thumb_chair_antigrav_detail.png"),
 		DefaultTint: strp("cobalt"), Flavor: "Floats. Physics pending review."},
@@ -181,13 +194,13 @@ var catalogItems = []CatalogItem{
 	{ID: "kb_membrane", Slot: "keyboard", Name: "Stock Membrane", Price: 0,
 		Sprite: strp("kb_membrane.png"), Detail: nil, Thumb: strp("thumb_kb_membrane.png"),
 		DefaultTint: nil, Flavor: "Came with the machine. Still here."},
-	{ID: "kb_mech", Slot: "keyboard", Name: "Mechanical", Price: 60,
+	{ID: "kb_mech", Slot: "keyboard", Name: "Mechanical", Price: 60, MinLevel: 2,
 		Sprite: strp("kb_mech.png"), Detail: nil, Thumb: strp("thumb_kb_mech.png"),
 		DefaultTint: nil, Flavor: "Audible from the next room. Intentionally."},
-	{ID: "kb_split", Slot: "keyboard", Name: "Split Ergo", Price: 180,
+	{ID: "kb_split", Slot: "keyboard", Name: "Split Ergo", Price: 180, MinLevel: 4,
 		Sprite: strp("kb_split.png"), Detail: nil, Thumb: strp("thumb_kb_split.png"),
 		DefaultTint: nil, Flavor: "Two halves, one wrist, endless smugness."},
-	{ID: "kb_neon", Slot: "keyboard", Name: "Neon 60%", Price: 300,
+	{ID: "kb_neon", Slot: "keyboard", Name: "Neon 60%", Price: 300, MinLevel: 7,
 		Sprite: strp("kb_neon.png"), Detail: nil, Thumb: strp("thumb_kb_neon.png"),
 		DefaultTint: nil, Flavor: "Fewer keys, more colours, same bugs."},
 
@@ -195,13 +208,13 @@ var catalogItems = []CatalogItem{
 	{ID: "mouse_stock", Slot: "mouse", Name: "Stock Mouse", Price: 0,
 		Sprite: strp("mouse_stock.png"), Detail: nil, Thumb: strp("thumb_mouse_stock.png"),
 		DefaultTint: nil, Flavor: "Two buttons and a wheel. It works."},
-	{ID: "mouse_gaming", Slot: "mouse", Name: "Gaming Mouse", Price: 50,
+	{ID: "mouse_gaming", Slot: "mouse", Name: "Gaming Mouse", Price: 50, MinLevel: 2,
 		Sprite: strp("mouse_gaming.png"), Detail: nil, Thumb: strp("thumb_mouse_gaming.png"),
 		DefaultTint: nil, Flavor: "Seven buttons. Two are bound."},
-	{ID: "mouse_trackball", Slot: "mouse", Name: "Trackball", Price: 150,
+	{ID: "mouse_trackball", Slot: "mouse", Name: "Trackball", Price: 150, MinLevel: 4,
 		Sprite: strp("mouse_trackball.png"), Detail: nil, Thumb: strp("thumb_mouse_trackball.png"),
 		DefaultTint: nil, Flavor: "The wrist thanks you. The cursor does not."},
-	{ID: "mouse_vertical", Slot: "mouse", Name: "Vertical Ergo", Price: 220,
+	{ID: "mouse_vertical", Slot: "mouse", Name: "Vertical Ergo", Price: 220, MinLevel: 7,
 		Sprite: strp("mouse_vertical.png"), Detail: nil, Thumb: strp("thumb_mouse_vertical.png"),
 		DefaultTint: nil, Flavor: "Held like a handshake with your desk."},
 
@@ -209,13 +222,13 @@ var catalogItems = []CatalogItem{
 	{ID: "bev_mug", Slot: "beverage", Name: "Chipped Mug", Price: 0,
 		Sprite: strp("bev_mug.png"), Detail: nil, Thumb: strp("thumb_bev_mug.png"),
 		DefaultTint: nil, Flavor: "The chip is load-bearing."},
-	{ID: "bev_thermos", Slot: "beverage", Name: "Thermos", Price: 40,
+	{ID: "bev_thermos", Slot: "beverage", Name: "Thermos", Price: 40, MinLevel: 2,
 		Sprite: strp("bev_thermos.png"), Detail: nil, Thumb: strp("thumb_bev_thermos.png"),
 		DefaultTint: nil, Flavor: "Still hot at 4pm. Suspiciously."},
-	{ID: "bev_teacup", Slot: "beverage", Name: "Tea & Saucer", Price: 90,
+	{ID: "bev_teacup", Slot: "beverage", Name: "Tea & Saucer", Price: 90, MinLevel: 4,
 		Sprite: strp("bev_teacup.png"), Detail: nil, Thumb: strp("thumb_bev_teacup.png"),
 		DefaultTint: nil, Flavor: "A saucer. On a developer's desk."},
-	{ID: "bev_energy", Slot: "beverage", Name: "Energy Can", Price: 140,
+	{ID: "bev_energy", Slot: "beverage", Name: "Energy Can", Price: 140, MinLevel: 7,
 		Sprite: strp("bev_energy.png"), Detail: nil, Thumb: strp("thumb_bev_energy.png"),
 		DefaultTint: nil, Flavor: "Tastes like a changelog."},
 
@@ -223,13 +236,13 @@ var catalogItems = []CatalogItem{
 	{ID: "plant_none", Slot: "plant", Name: "Bare Desk", Price: 0,
 		Sprite: nil, Detail: nil, Thumb: nil,
 		DefaultTint: nil, Flavor: "Minimalism, or forgetfulness."},
-	{ID: "plant_succulent", Slot: "plant", Name: "Succulent", Price: 50,
+	{ID: "plant_succulent", Slot: "plant", Name: "Succulent", Price: 50, MinLevel: 2,
 		Sprite: strp("plant_succulent.png"), Detail: nil, Thumb: strp("thumb_plant_succulent.png"),
 		DefaultTint: nil, Flavor: "Survives neglect. Relatable."},
-	{ID: "plant_monstera", Slot: "plant", Name: "Monstera", Price: 140,
+	{ID: "plant_monstera", Slot: "plant", Name: "Monstera", Price: 140, MinLevel: 4,
 		Sprite: strp("plant_monstera.png"), Detail: nil, Thumb: strp("thumb_plant_monstera.png"),
 		DefaultTint: nil, Flavor: "Big leaves. Bigger commitment."},
-	{ID: "plant_bonsai", Slot: "plant", Name: "Bonsai", Price: 260,
+	{ID: "plant_bonsai", Slot: "plant", Name: "Bonsai", Price: 260, MinLevel: 8,
 		Sprite: strp("plant_bonsai.png"), Detail: nil, Thumb: strp("thumb_plant_bonsai.png"),
 		DefaultTint: nil, Flavor: "Pruned more carefully than the git history."},
 
@@ -237,13 +250,13 @@ var catalogItems = []CatalogItem{
 	{ID: "wall_bare", Slot: "wall", Name: "Bare Wall", Price: 0,
 		Sprite: nil, Detail: nil, Thumb: nil,
 		DefaultTint: nil, Flavor: "Ready for anything."},
-	{ID: "wall_poster", Slot: "wall", Name: `"Works On My Machine"`, Price: 80,
+	{ID: "wall_poster", Slot: "wall", Name: `"Works On My Machine"`, Price: 80, MinLevel: 2,
 		Sprite: strp("wall_poster.png"), Detail: nil, Thumb: strp("thumb_wall_poster.png"),
 		DefaultTint: nil, Flavor: "The oldest defence."},
-	{ID: "wall_shelf", Slot: "wall", Name: "Shelf: Books & Trophy", Price: 200,
+	{ID: "wall_shelf", Slot: "wall", Name: "Shelf: Books & Trophy", Price: 200, MinLevel: 5,
 		Sprite: strp("wall_shelf.png"), Detail: nil, Thumb: strp("thumb_wall_shelf.png"),
 		DefaultTint: nil, Flavor: "Four books, one trophy, zero pages read."},
-	{ID: "wall_neon", Slot: "wall", Name: "Neon Sign", Price: 380,
+	{ID: "wall_neon", Slot: "wall", Name: "Neon Sign", Price: 380, MinLevel: 9,
 		Sprite: strp("wall_neon.png"), Detail: nil, Thumb: strp("thumb_wall_neon.png"),
 		DefaultTint: nil, Flavor: "Casts a glow on every late commit."},
 
@@ -251,15 +264,15 @@ var catalogItems = []CatalogItem{
 	{ID: "buddy_none", Slot: "buddy", Name: "No Buddy", Price: 0,
 		Sprite: nil, Detail: nil, Thumb: nil,
 		DefaultTint: nil, Flavor: "Solo run."},
-	{ID: "buddy_duck", Slot: "buddy", Name: "Rubber Duck", Price: 60,
+	{ID: "buddy_duck", Slot: "buddy", Name: "Rubber Duck", Price: 60, MinLevel: 2,
 		Sprite: strp("buddy_duck.png"), Detail: nil, Thumb: strp("thumb_buddy_duck.png"),
 		DefaultTint: nil, Flavor: "Best listener on the team."},
-	{ID: "buddy_bot", Slot: "buddy", Name: "Desk Bot", Price: 250,
+	{ID: "buddy_bot", Slot: "buddy", Name: "Desk Bot", Price: 250, MinLevel: 6,
 		// 2-frame blink animation (buddy_bot_a.png/_b.png); sprite points
 		// at frame A — see this file's top-of-file doc comment.
 		Sprite: strp("buddy_bot_a.png"), Detail: nil, Thumb: strp("thumb_buddy_bot.png"),
 		DefaultTint: nil, Flavor: "Blinks. Judges. Blinks again."},
-	{ID: "buddy_cat", Slot: "buddy", Name: "Sleeping Cat", Price: 300,
+	{ID: "buddy_cat", Slot: "buddy", Name: "Sleeping Cat", Price: 300, MinLevel: 10,
 		Sprite: strp("buddy_cat.png"), Detail: nil, Thumb: strp("thumb_buddy_cat.png"),
 		DefaultTint: nil, Flavor: "Has opinions about the keyboard. Asleep."},
 }
