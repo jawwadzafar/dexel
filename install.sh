@@ -325,11 +325,11 @@ setup_colors() {
 banner() {
     [ "$QUIET" = 1 ] && return 0
     printf '\n'
-    printf '%s   /\\     %s####   #####  #   #  #####  #%s\n'        "$C_MINT" "$C_INDIGO" "$C_RESET"
-    printf '%s  /  \\    %s#   #  #       # #   #      #%s\n'        "$C_MINT" "$C_INDIGO" "$C_RESET"
-    printf '%s  |oo|    %s#   #  ####     #    ####   #%s\n'         "$C_MINT" "$C_INDIGO" "$C_RESET"
-    printf '%s  |  |    %s#   #  #       # #   #      #%s\n'         "$C_MINT" "$C_INDIGO" "$C_RESET"
-    printf '%s  |__|    %s####   #####  #   #  #####  #####%s\n'     "$C_MINT" "$C_INDIGO" "$C_RESET"
+    printf '%s%s%s\n' "$C_INDIGO" '       _                        _' "$C_RESET"
+    printf '%s%s%s\n' "$C_INDIGO" '    __| |   ___  __  __   ___  | |' "$C_RESET"
+    printf '%s%s%s\n' "$C_INDIGO" '   / _` |  / _ \ \ \/ /  / _ \ | |' "$C_RESET"
+    printf '%s%s%s\n' "$C_INDIGO" '  | (_| | |  __/  >  <  |  __/ | |' "$C_RESET"
+    printf '%s%s%s\n' "$C_INDIGO" '   \__,_|  \___| /_/\_\  \___| |_|' "$C_RESET"
     printf '\n'
     printf '  %sa cozy pixel-art companion that runs on your real typing%s\n' "$C_DIM" "$C_RESET"
     printf '  installing dexel %s%s%s on %s%s%s\n' \

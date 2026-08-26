@@ -123,11 +123,11 @@ function Warn([string]$Text) { Write-Warning $Text }
 function Show-Banner([string]$Version, [string]$Target) {
     if ($script:Quiet) { return }
     $fig = @(
-        '   /\     ####   #####  #   #  #####  #',
-        '  /  \    #   #  #       # #   #      #',
-        '  |oo|    #   #  ####     #    ####   #',
-        '  |  |    #   #  #       # #   #      #',
-        '  |__|    ####   #####  #   #  #####  #####'
+        '       _                        _',
+        '    __| |   ___  __  __   ___  | |',
+        '   / _` |  / _ \ \ \/ /  / _ \ | |',
+        '  | (_| | |  __/  >  <  |  __/ | |',
+        '   \__,_|  \___| /_/\_\  \___| |_|'
     )
     Write-Host ''
     foreach ($line in $fig) {
