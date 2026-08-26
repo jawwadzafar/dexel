@@ -173,13 +173,53 @@ jobs:
   #      job above just published, since this job has no matrix/artifact
   #      dependency on it today).
   release-macos:
-    name: "[gated] Build darwin/arm64"
-    runs-on: [self-hosted, darkmirror]
+    name: Build darwin/arm64
+    # Runs on the registered macOS self-hosted runner (labels: self-hosted,
+    # macOS, ARM64, mac). darwin/arm64 needs cgo + a real macOS clang
+    # toolchain (Cocoa/CoreGraphics in internal/activity/provider_darwin.go),
+    # so it can only build natively here. `needs: release` waits for the
+    # linux/windows job to create the GitHub Release, then this job attaches
+    # the darwin archive to that same tag.
+    needs: release
+    runs-on: [self-hosted, macOS, ARM64]
     steps:
-      - name: "Skip: no macOS runner registered"
+      - name: Clean workspace
         run: |
-          echo "::warning::darwin/arm64 build SKIPPED — no runner with the 'mac' label is registered for this repo."
-          echo "::warning::darwin/arm64 needs cgo (Cocoa/CoreGraphics) and a real macOS clang toolchain; it cannot be cross-built from this Linux runner."
-          echo "::warning::Register a macOS self-hosted runner with label 'mac', then update this job per the comment above this step to build and attach it."
-          echo "::warning::To build it locally right now on a Mac: bash scripts/build-release.sh darwin/arm64"
-          exit 0
+          rm -rf "${GITHUB_WORKSPACE:?}"/* "${GITHUB_WORKSPACE:?}"/.[!.]* 2>/dev/null || true
+
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # full history/tags for `git describe`
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.27"
+
+      - name: Determine release version
+        id: version
+        run: |
+          if [ "${{ github.ref_type }}" = "tag" ]; then
+            version="${{ github.ref_name }}"
+          else
+            version="$(git describe --tags --always --dirty)"
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "darwin release version: $version"
+
+      # build-release.sh embeds the COMMITTED app/public bundle via go:embed
+      # (no npm build here), and builds darwin/arm64 with CGO_ENABLED=1 using
+      # the Mac's own clang.
+      - name: Build darwin/arm64 archive
+        env:
+          DEXEL_RELEASE_VERSION: ${{ steps.version.outputs.version }}
+        run: bash scripts/build-release.sh darwin/arm64
+
+      - name: List darwin artifact
+        run: ls -la dist/
+
+      - name: Attach darwin archive to the release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release upload "${{ steps.version.outputs.version }}" \
+            dist/dexel-*-darwin-arm64.tar.gz --clobber
