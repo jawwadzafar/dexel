@@ -308,6 +308,16 @@ SPEC: list[tuple[str, int, int]] = [
     # assert_monitor_shake for the composition contract that forces this.
     ("monitor_shake_a.png", 132, 64),
     ("monitor_shake_b.png", 132, 64),
+    # STORE-2.0 "monitor" colour slot (docs/plan/ROADMAP.md, catalog.go). The
+    # runtime tint system is gone from the wire/save/economy, but the frontend
+    # still recolours the formerly-tintable parts at RENDER time via CSS tint
+    # keyed on a colour token in the item id - and the monitor slot recolours
+    # the SAME way. So instead of one PNG per colour we ship ONE ramp-pure
+    # bezel FORM, on monitor.png's own 132x64 canvas, that the frontend tints
+    # per equipped monitor colour (slate/cobalt/forest/neon) and overlays on
+    # the fixed monitor.png so ONLY the bezel recolours - the screen rect (and
+    # its terminal geometry) is left transparent and untouched.
+    ("monitor_frame.png", 132, 64),
     # Developer (14), all 192x76, identical canvas and anchor. PERSPECTIVE
     # REWRITE: the canvas is wide (the `mouse` pose reaches room x252) and
     # short (the figure has to read inside room y99..160 - keyboard above,
@@ -427,7 +437,7 @@ SPEC: list[tuple[str, int, int]] = [
     ("buddy_cat_react_b.png", 28, 30),
 ]
 SPEC_NAMES = {name for name, _, _ in SPEC}
-assert len(SPEC) == 75, f"manifest drifted: {len(SPEC)} entries, expected 75"
+assert len(SPEC) == 76, f"manifest drifted: {len(SPEC)} entries, expected 76"
 
 # `*_form.png` files are palette-purity EXEMPT and ramp-purity CHECKED instead
 # (art-direction "Palette-purity exception (the only one)"). Covers both the
@@ -435,6 +445,12 @@ assert len(SPEC) == 75, f"manifest drifted: {len(SPEC)} entries, expected 75"
 # (`dev_form_<frame>.png`).
 FORM_FILES = {name for name in SPEC_NAMES
               if name.endswith("_form.png") or name.startswith("dev_form_")}
+# The monitor's tintable bezel is named `monitor_frame.png` (it overlays
+# monitor.png, so it reads as the monitor's FRAME, not a garment "form") and
+# so matches neither naming pattern above - add it explicitly so it is
+# ramp-audited like every other tintable grayscale layer, per the art
+# direction's "Palette-purity exception".
+FORM_FILES.add("monitor_frame.png")
 
 # The two frame-difference rules this generator must prove, not just assert
 # by convention (art-direction "Character rules" / buddy manifest note).
@@ -994,6 +1010,100 @@ def build_monitor_shake(tag: str) -> Sprite:
     """monitor.png with its head slid MONITOR_SHAKE_DX[tag] px sideways."""
     return shifted_copy(build_monitor(), MONITOR_SHAKE_DX[tag], 0,
                         rows=set(MONITOR_HEAD_ROWS))
+
+
+def build_monitor_frame() -> Sprite:
+    """132x64 RAMP-PURE bezel FORM for the STORE-2.0 'monitor' colour slot
+    (docs/plan/ROADMAP.md; catalog.go items monitor_slate/cobalt/forest/neon,
+    which differ only by bezel colour).
+
+    The runtime tint system is gone from the wire/save/economy, but the
+    frontend still recolours parts at RENDER time via the CSS mask+multiply
+    tint recipe (art-direction "The CSS tint mechanism"), keyed on a colour
+    token parsed from the item id. The monitor recolours the same way, so -
+    exactly like chair_<style>_form / dev_form_* - this ships as ONE grayscale
+    ramp form, NOT one PNG per colour. The frontend overlays it, CSS-tinted by
+    the equipped monitor's colour, on top of the fixed monitor.png.
+
+    Geometry mirrors build_monitor's METAL casing so the tint lands exactly on
+    the bezel/frame the base sprite draws: the 4px bezel border, the 8px chin,
+    the neck and the foot. Three regions are left TRANSPARENT so the fixed
+    monitor.png shows through them UNCHANGED and never takes the bezel tint:
+      * the inner SCREEN rect (MONITOR_SCREEN_RECT) - the load-bearing
+        terminal geometry, which must not recolour;
+      * the chin's power LED (a fixed `screen` feature of monitor.png); and
+      * the contact-shadow row - it belongs to the desk, not the casing.
+
+    One upper-left key light, like every other form: the casing base sits at
+    ramp4 (tint HEADROOM per the tint-crush lesson), a dithered ramp5 rim
+    rides the outer top+left edge so the bezel stays a legible lit edge even
+    at the darkest tint (slate ~= metal ~= the old bezel), and the shadow side
+    (outer right) plus the inner AO ring where the bezel recesses to the glass
+    fall to ramp2/ramp3.
+    """
+    s = Sprite(132, 64, palette=RAMP)
+    x0, y0, x1, y1 = MONITOR_SCREEN_RECT       # (4, 4, 127, 47)
+
+    # Casing base at ramp4, then punch the exact screen rect back to clear -
+    # the same "one rect call defines the hole" discipline as build_monitor,
+    # so the transparent screen region stays byte-exact with MONITOR_SCREEN_RECT.
+    s.rect(0, 0, 131, y1, "ramp4")
+    for y in range(y0, y1 + 1):
+        for x in range(x0, x1 + 1):
+            s.clear(x, y)
+    s.rect(0, y1 + 1, 131, y1 + 8, "ramp4")    # chin
+    s.rect(60, y1 + 9, 72, y1 + 12, "ramp4")   # neck
+    s.rect(46, y1 + 13, 86, y1 + 15, "ramp4")  # foot
+
+    # Outer bevel, top band (rows 0..2): a dithered ramp5 lit edge fading back
+    # to base - the raised top of the bezel under the upper-left key light.
+    for x in range(0, 132):
+        s.dot(x, 0, bayer_mix(x, 0, 0.7, "ramp4", "ramp5"))
+    for y, ratio in ((1, 0.45), (2, 0.2)):
+        for x in range(x0, x1 + 1):
+            s.dot(x, y, bayer_mix(x, y, ratio, "ramp4", "ramp5"))
+    # Inner AO ring, top (row 3, the row touching the glass well).
+    for x in range(x0, x1 + 1):
+        s.dot(x, 3, bayer_mix(x, 3, 0.55, "ramp4", "ramp2"))
+
+    # Outer bevel, left column (cols 0..2): the same upper-left highlight.
+    for x, ratio in ((0, 0.7), (1, 0.4), (2, 0.15)):
+        for y in range(0, y1 + 1):
+            s.dot(x, y, bayer_mix(x, y, ratio, "ramp4", "ramp5"))
+    # Inner AO ring, left (col 3).
+    for y in range(y0, y1 + 1):
+        s.dot(3, y, bayer_mix(3, y, 0.5, "ramp4", "ramp2"))
+
+    # Outer bevel, right column (cols 129..131): the shadow side, away from
+    # the key light - the far edge falls toward ramp2.
+    for x, ratio in ((131, 0.7), (130, 0.4), (129, 0.15)):
+        for y in range(0, y1 + 1):
+            s.dot(x, y, bayer_mix(x, y, ratio, "ramp4", "ramp2"))
+    # Inner lip, right (col 128): one ramp step down - the recess to the glass.
+    for y in range(y0, y1 + 1):
+        s.dot(128, y, bayer_mix(128, y, 0.4, "ramp4", "ramp3"))
+
+    # Chin: a lit ridge where the bezel steps down to it, an AO row before the
+    # neck, and the power-LED hole punched clear (so monitor.png's `screen` LED
+    # shows through un-tinted).
+    for x in range(0, 132):
+        s.dot(x, y1 + 1, bayer_mix(x, y1 + 1, 0.35, "ramp4", "ramp5"))
+        s.dot(x, y1 + 8, bayer_mix(x, y1 + 8, 0.4, "ramp4", "ramp2"))
+    for y in range(y1 + 4, y1 + 6):            # LED rows 52..53
+        for x in range(64, 66):                # LED cols 64..65
+            s.clear(x, y)
+
+    # Neck bevel (light left, shadow right) + foot (lit top, AO front),
+    # matching build_monitor so slate reads exactly like the old casing.
+    neck_y0, neck_y1 = y1 + 9, y1 + 12
+    foot_y0, foot_y1 = y1 + 13, y1 + 15
+    for y in range(neck_y0, neck_y1 + 1):
+        s.dot(60, y, bayer_mix(60, y, 0.6, "ramp4", "ramp5"))
+        s.dot(72, y, bayer_mix(72, y, 0.6, "ramp4", "ramp2"))
+    for x in range(46, 87):
+        s.dot(x, foot_y0, bayer_mix(x, foot_y0, 0.35, "ramp4", "ramp5"))
+        s.dot(x, foot_y1, bayer_mix(x, foot_y1, 0.45, "ramp4", "ramp2"))
+    return s
 
 
 # --------------------------------------------------------------------------
@@ -3024,6 +3134,7 @@ BUILDERS = {
     "monitor.png": build_monitor,
     "monitor_shake_a.png": lambda: build_monitor_shake("a"),
     "monitor_shake_b.png": lambda: build_monitor_shake("b"),
+    "monitor_frame.png": build_monitor_frame,
     "dev_form_idle.png": lambda: build_dev_form("idle"),
     "dev_form_type_a.png": lambda: build_dev_form("type_a"),
     "dev_form_type_b.png": lambda: build_dev_form("type_b"),
@@ -3137,6 +3248,13 @@ TINT_ITEMS: dict[str, tuple[str, str]] = {
     "chair_exec": ("chair_exec_form.png", "chair_exec_detail.png"),
     "chair_antigrav": ("chair_antigrav_form.png", "chair_antigrav_detail.png"),
 }
+# STORE-2.0 "monitor" colour slot: unlike the hoodie/chair (which are a
+# form+detail pair), the monitor ships ONE tintable bezel form overlaid on the
+# fixed monitor.png, so its store card needs a single `_form` thumbnail and NO
+# `_detail`. A ÷2 centre-crop of monitor_frame.png would be unrecognisable (its
+# screen interior is transparent), so the thumb is authored directly at 40x40
+# via THUMB_BUILDERS below, same as the chair thumbs.
+FORM_ONLY_ITEMS: dict[str, str] = {"monitor": "monitor_frame.png"}
 
 
 def derive_thumbnail(img: Image.Image) -> Image.Image:
@@ -3191,6 +3309,10 @@ THUMB_OVERRIDES: set[str] = {
     "thumb_chair_racer_form.png", "thumb_chair_racer_detail.png",
     "thumb_chair_exec_form.png", "thumb_chair_exec_detail.png",
     "thumb_chair_antigrav_form.png", "thumb_chair_antigrav_detail.png",
+    # STORE-2.0 monitor slot: a single tintable `_form` icon (a screen on a
+    # stand), authored directly at 40x40 because monitor_frame.png's screen
+    # interior is transparent and a centre-crop would show nothing.
+    "thumb_monitor_form.png",
 }
 
 
@@ -3285,7 +3407,43 @@ def build_thumb_chair_antigrav_detail() -> Sprite:
     return s
 
 
+def build_thumb_monitor_form() -> Sprite:
+    """40x40 RAMP-PURE store-card icon for the monitor colour slot: a screen on
+    a stand, its BEZEL in the ramp so the store card's CSS tint colours it per
+    selected monitor colour (the same recipe the chair thumbs use). The screen
+    glass sits at ramp1 (a dark, off screen) so the bezel reads as a frame
+    AROUND it; one upper-left key light (dithered ramp5 rim on the top+left,
+    ramp2 on the shadowed right+bottom) keeps the frame legible at the darkest
+    tint. Ramp-pure, so there is no `shadow`-palette contact row (a form file
+    may only paint the ramp) - a store icon rests on nothing anyway."""
+    s = Sprite(40, 40, palette=RAMP)
+    bx0, by0, bx1, by1 = 6, 6, 33, 27           # bezel outer rect (28x22)
+    sx0, sy0, sx1, sy1 = 9, 9, 30, 24           # screen glass
+    s.rect(bx0, by0, bx1, by1, "ramp4")         # bezel casing
+    s.rect(sx0, sy0, sx1, sy1, "ramp1")         # dark screen glass
+    for i in range(4):                          # glass reflection streak (upper-left)
+        s.dot(sx0 + 1 + i, sy0 + 1 + i, "ramp3")
+    # Bezel bevel: lit top+left, shadowed right+bottom.
+    for x in range(bx0, bx1 + 1):
+        s.dot(x, by0, bayer_mix(x, by0, 0.7, "ramp4", "ramp5"))
+        s.dot(x, by1, bayer_mix(x, by1, 0.5, "ramp4", "ramp2"))
+    for y in range(by0, by1 + 1):
+        s.dot(bx0, y, bayer_mix(bx0, y, 0.7, "ramp4", "ramp5"))
+        s.dot(bx1, y, bayer_mix(bx1, y, 0.5, "ramp4", "ramp2"))
+    # Stand: neck + foot, mid ramp so the screen stays the focal mass.
+    s.rect(18, by1 + 1, 21, 32, "ramp3")        # neck
+    for y in range(by1 + 1, 33):
+        s.dot(18, y, "ramp4")                   # lit left edge of the neck
+        s.dot(21, y, "ramp2")                   # shadowed right edge
+    s.rect(12, 33, 27, 34, "ramp3")             # foot base
+    for x in range(12, 28):
+        s.dot(x, 33, bayer_mix(x, 33, 0.4, "ramp3", "ramp4"))
+        s.dot(x, 34, bayer_mix(x, 34, 0.4, "ramp3", "ramp2"))
+    return s
+
+
 THUMB_BUILDERS = {
+    "thumb_monitor_form.png": build_thumb_monitor_form,
     "thumb_chair_basic_form.png": build_thumb_chair_basic_form,
     "thumb_chair_basic_detail.png": build_thumb_chair_basic_detail,
     "thumb_chair_racer_form.png": build_thumb_chair_racer_form,
@@ -3308,6 +3466,11 @@ def thumbnail_plan() -> dict[str, list[str]]:
     for item_id, (form_src, detail_src) in TINT_ITEMS.items():
         plan[f"thumb_{item_id}_form.png"] = [form_src]
         plan[f"thumb_{item_id}_detail.png"] = [detail_src]
+    for item_id, form_src in FORM_ONLY_ITEMS.items():
+        # `_form` only - no `_detail` pair (see FORM_ONLY_ITEMS). The source is
+        # recorded for provenance; the thumb is a THUMB_OVERRIDES builder, so
+        # main() builds it directly rather than deriving from this source.
+        plan[f"thumb_{item_id}_form.png"] = [form_src]
     return plan
 
 
