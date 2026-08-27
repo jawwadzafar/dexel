@@ -313,26 +313,24 @@ img {
 }
 
 #terminal {
-  /* Spec gives the text-area rect as (200,52) 240x84, but also locks
-     11 lines at an 8px line-height (88px) — 84 is 4px short of 11*8.
-     [DESIGN CALL] height is 88px (11 * 8, no clipped line) rather than the
-     literal 84, since clipping the newest (bottom) line would hide the
-     single most important row in the panel; see dexel.js report notes.
-     BUG-3 audit: unlike #sprint-name/#status-line (which had NO explicit
-     line-height and were clipped by the browser's larger UA-default
-     line-height), #terminal already pins line-height:8px explicitly, and
-     a real in-game render at 8px shows every glyph — including
-     descenders in "warning"/"resolved"/"deps" — fully intact, not
-     clipped. Bumping this to 10px was tried and rejected: 11 lines * 10px
-     = 110px pushes the text 26px past the monitor sprite's actual glass
-     area (app/assets/monitor.png's dark-fill region is local y[4,48), i.e.
-     scene y[24,68) -> screen-px y[48,136), only 88px tall — a hard
-     pixel-art boundary this UI-only fix must not paint over), so the
-     bottom lines visibly spilled onto the floor tile behind the monitor.
-     Left at 8px/88px: it isn't broken, and growing it breaks the art. */
+  /* The text must sit ENTIRELY inside the monitor's glass. That glass is
+     monitor.png's dark-fill region, local y[4,48) -> scene y[24,68) ->
+     screen-px y[48,136): exactly 88px tall, x [196,442). 11 lines at an 8px
+     line-height is 88px, so the box is a pixel-exact fit — top:48/height:88,
+     NOT the spec's literal top:52 (a 4px drop that spilled the bottom line
+     onto the chin; harmless when the chin was neutral casing, but STORE-2.0's
+     tinted bezel made the overhang read as text bleeding past the screen —
+     the owner-reported overflow). left:200/width:240 keeps ~2px of margin
+     inside the glass on each side, which is also the margin the +-1px monitor
+     shake is authored against (gen_assets assert_monitor_shake).
+     line-height stays 8px: a real in-game render shows every glyph — including
+     descenders in "warning"/"resolved"/"deps" — intact at 8px, and 10px * 11
+     = 110px would overrun the 88px glass. overflow:hidden clips anything that
+     would still reach the bezel. Do not grow height past 88px or drop top
+     below 48px: both put text on the art. */
   position: absolute;
   left: 200px;
-  top: 52px;
+  top: 48px;
   width: 240px;
   height: 88px;
   overflow: hidden;

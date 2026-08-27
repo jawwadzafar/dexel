@@ -318,6 +318,14 @@ SPEC: list[tuple[str, int, int]] = [
     # the fixed monitor.png so ONLY the bezel recolours - the screen rect (and
     # its terminal geometry) is left transparent and untouched.
     ("monitor_frame.png", 132, 64),
+    # SCENE-REACTIONS x STORE-2.0: the tinted bezel's OWN shake frames, so the
+    # frame overlay knocks IN SYNC with monitor_shake_a/b underneath it instead
+    # of the base sliding out from under a static tinted bezel. Same head-only
+    # +-1px horizontal displacement as monitor_shake (build_monitor_frame_shake
+    # reuses MONITOR_HEAD_ROWS / MONITOR_SHAKE_DX), so base + bezel move as one
+    # rigid monitor - see assert_monitor_frame_shake for the composition guard.
+    ("monitor_frame_shake_a.png", 132, 64),
+    ("monitor_frame_shake_b.png", 132, 64),
     # Developer (14), all 192x76, identical canvas and anchor. PERSPECTIVE
     # REWRITE: the canvas is wide (the `mouse` pose reaches room x252) and
     # short (the figure has to read inside room y99..160 - keyboard above,
@@ -437,7 +445,7 @@ SPEC: list[tuple[str, int, int]] = [
     ("buddy_cat_react_b.png", 28, 30),
 ]
 SPEC_NAMES = {name for name, _, _ in SPEC}
-assert len(SPEC) == 76, f"manifest drifted: {len(SPEC)} entries, expected 76"
+assert len(SPEC) == 78, f"manifest drifted: {len(SPEC)} entries, expected 78"
 
 # `*_form.png` files are palette-purity EXEMPT and ramp-purity CHECKED instead
 # (art-direction "Palette-purity exception (the only one)"). Covers both the
@@ -451,6 +459,10 @@ FORM_FILES = {name for name in SPEC_NAMES
 # ramp-audited like every other tintable grayscale layer, per the art
 # direction's "Palette-purity exception".
 FORM_FILES.add("monitor_frame.png")
+# The frame's shake frames are the same tintable grayscale bezel, displaced -
+# ramp-audited like the rest layer they are copied from.
+FORM_FILES.add("monitor_frame_shake_a.png")
+FORM_FILES.add("monitor_frame_shake_b.png")
 
 # The two frame-difference rules this generator must prove, not just assert
 # by convention (art-direction "Character rules" / buddy manifest note).
@@ -486,6 +498,8 @@ REACT_PAIRS = (
     ("dev_base_react_a.png", "dev_base_react_b.png"),
     ("monitor.png", "monitor_shake_a.png"),
     ("monitor_shake_a.png", "monitor_shake_b.png"),
+    ("monitor_frame.png", "monitor_frame_shake_a.png"),
+    ("monitor_frame_shake_a.png", "monitor_frame_shake_b.png"),
     ("bev_mug.png", "bev_mug_react_a.png"),
     ("bev_mug_react_a.png", "bev_mug_react_b.png"),
     ("bev_thermos.png", "bev_thermos_react_a.png"),
@@ -981,12 +995,14 @@ def build_monitor() -> Sprite:
 # The 11 lines of live terminal text are NOT part of this sprite: they are DOM
 # text (#terminal in app/public/css/game.css) positioned in SCENE coordinates
 # that know nothing about which monitor PNG is currently shown - left 200px /
-# top 52px / 240x88 at the frontend's 2x upscale, i.e. room x100..219,
-# y26..69. monitor.png is placed at room (94, 20) (SCENERY in
+# top 48px / 240x88 at the frontend's 2x upscale, i.e. room x100..219,
+# y24..67. monitor.png is placed at room (94, 20) (SCENERY in
 # app/frontend/src/geometry.ts), so its glass - MONITOR_SCREEN_RECT - lands on
-# room x98..221, y24..67 and the text sits inside it with 2px of margin at the
-# left and right. (Vertically the text already overhangs the glass by 2 rows
-# onto the chin; that is pre-existing and documented in game.css.)
+# room x98..221, y24..67 and the text now sits ENTIRELY inside it (a pixel-exact
+# vertical fit; 2px of margin at the left and right). The top used to be 52px,
+# which dropped the box 2 rows and overhung the chin - once STORE-2.0's tinted
+# bezel made that overhang visible it read as overflow, so game.css pins the box
+# to the glass. See game.css #terminal for the full note.
 #
 # Two consequences, both baked into the art rather than left to the wiring:
 #   * the shake is HORIZONTAL ONLY. The glass rows never move, so nothing can
@@ -997,7 +1013,7 @@ def build_monitor() -> Sprite:
 # would need the terminal element shifted by the same amount in the same
 # frame; these frames deliberately do not require that (see the handoff note).
 MONITOR_ROOM_ORIGIN = (94, 20)
-TERMINAL_ROOM_RECT = (100, 26, 219, 69)
+TERMINAL_ROOM_RECT = (100, 24, 219, 67)
 # Only the HEAD moves: bezel + glass + chin (local rows 0..55). The neck, foot
 # and contact shadow (rows 56..63) stay planted, which is both what a knocked
 # monitor does and what keeps the "contact shadow wider than the object" rule
@@ -1009,6 +1025,19 @@ MONITOR_SHAKE_DX = {"a": -1, "b": 1}
 def build_monitor_shake(tag: str) -> Sprite:
     """monitor.png with its head slid MONITOR_SHAKE_DX[tag] px sideways."""
     return shifted_copy(build_monitor(), MONITOR_SHAKE_DX[tag], 0,
+                        rows=set(MONITOR_HEAD_ROWS))
+
+
+def build_monitor_frame_shake(tag: str) -> Sprite:
+    """monitor_frame.png (the tinted bezel overlay) with its head slid the SAME
+    MONITOR_SHAKE_DX[tag] px sideways as build_monitor_shake, over the SAME
+    MONITOR_HEAD_ROWS. That is the whole of BUG-1's frame-sync fix: the frontend
+    swaps this bezel-shake in step with monitor_shake, so the base sprite and
+    its tinted frame knock as one rigid monitor instead of the frame staying
+    put while the base slides. The screen rect is transparent in the rest
+    frame, so its shifted copy is transparent too - the tint never lands on the
+    glass or the DOM terminal text (assert_monitor_frame_shake)."""
+    return shifted_copy(build_monitor_frame(), MONITOR_SHAKE_DX[tag], 0,
                         rows=set(MONITOR_HEAD_ROWS))
 
 
@@ -3135,6 +3164,8 @@ BUILDERS = {
     "monitor_shake_a.png": lambda: build_monitor_shake("a"),
     "monitor_shake_b.png": lambda: build_monitor_shake("b"),
     "monitor_frame.png": build_monitor_frame,
+    "monitor_frame_shake_a.png": lambda: build_monitor_frame_shake("a"),
+    "monitor_frame_shake_b.png": lambda: build_monitor_frame_shake("b"),
     "dev_form_idle.png": lambda: build_dev_form("idle"),
     "dev_form_type_a.png": lambda: build_dev_form("type_a"),
     "dev_form_type_b.png": lambda: build_dev_form("type_b"),
@@ -3912,6 +3943,52 @@ def assert_monitor_shake(tag: str, s: Sprite, rest: Sprite) -> str:
             f"it, foot planted")
 
 
+def assert_monitor_frame_shake(tag: str, s: Sprite, rest: Sprite) -> str:
+    """BUG-1 guard: the tinted bezel's shake must be the SAME rigid horizontal
+    knock as monitor_shake, so base + frame move as one. Three things, all from
+    the pixels:
+
+      * the head shifted rigidly by exactly MONITOR_SHAKE_DX[tag] (every head
+        px is monitor_frame.png's own row shifted dx) - matching the base;
+      * the shifted screen rect stays fully TRANSPARENT, so the tint never
+        lands on the glass the DOM terminal text sits over; and
+      * the neck, foot and contact shadow are byte-identical to
+        monitor_frame.png - only the head knocks, exactly as the base does.
+    """
+    dx = MONITOR_SHAKE_DX[tag]
+    x0, y0, x1, y1 = MONITOR_SCREEN_RECT
+    px, rp = s.img.load(), rest.img.load()
+    # The head is a rigid horizontal copy of the rest bezel, one leading column
+    # excepted (it falls off the canvas edge) - identical proof to the base's.
+    moved = [(x, y) for y in MONITOR_HEAD_ROWS
+             for x in range(max(0, dx), min(s.w, s.w + dx))
+             if px[x, y] != rp[x - dx, y]]
+    if moved:
+        raise AssertionError(
+            f"monitor_frame_shake_{tag}.png: {len(moved)} head px are not "
+            f"monitor_frame.png's own row shifted {dx:+d}px - base and bezel "
+            f"would desync; first={moved[0]}")
+    # The screen interior (shifted by dx) must stay transparent so the bezel
+    # tint never bleeds over the terminal glass.
+    tinted = [(x, y) for y in range(y0, y1 + 1)
+              for x in range(x0 + dx, x1 + dx + 1)
+              if 0 <= x < s.w and px[x, y][3] != 0]
+    if tinted:
+        raise AssertionError(
+            f"monitor_frame_shake_{tag}.png: {len(tinted)} px of the shifted "
+            f"screen rect are opaque - the bezel tint reaches the glass; "
+            f"first={tinted[0]}")
+    planted = [(x, y) for y in range(s.h) if y not in MONITOR_HEAD_ROWS
+               for x in range(s.w) if px[x, y] != rp[x, y]]
+    if planted:
+        raise AssertionError(
+            f"monitor_frame_shake_{tag}.png: {len(planted)} px of the "
+            f"neck/foot/contact shadow moved; first={planted[0]} - only the "
+            f"head may shake")
+    return (f"monitor_frame_shake_{tag}.png: bezel head {dx:+d}px in sync with "
+            f"monitor_shake_{tag}, glass rect transparent, foot planted")
+
+
 def assert_hop_shadow_planted(react: str, rest: str, shadow_row: int) -> str:
     """SCENE-REACTIONS prop-hop guard: a react frame may lift the object, but
     the contact shadow belongs to the DESK, so it must stay on the row it was
@@ -4236,6 +4313,16 @@ def main() -> int:
         try:
             print(" ", assert_monitor_shake(tag, built[f"monitor_shake_{tag}.png"],
                                             built["monitor.png"]))
+        except AssertionError as exc:
+            ok = False
+            print("  FAIL:", exc)
+
+    print("\n-- SCENE-REACTIONS: tinted bezel shake stays in sync with the base --")
+    for tag in ("a", "b"):
+        try:
+            print(" ", assert_monitor_frame_shake(
+                tag, built[f"monitor_frame_shake_{tag}.png"],
+                built["monitor_frame.png"]))
         except AssertionError as exc:
             ok = False
             print("  FAIL:", exc)

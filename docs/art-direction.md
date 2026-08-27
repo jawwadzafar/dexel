@@ -288,7 +288,7 @@ frontend draws terminal lines into that rect at runtime, in `#scene-text`.
 | | room px | UI px (x2) |
 |---|---|---|
 | screen region | (98, 24) 124x44 | (196, 48) **248x88** |
-| text area (4 UI px inset) | — | (200, 52) **240x84** |
+| text area | — | (200, 48) **240x88** (4px inset L/R; flush to the glass top/bottom so all 11 lines at 8px fit inside it) |
 | line height | 4 | **8** |
 | line count | 11 | 11 |
 | chars per line | — | **30** (8px `Press Start 2P`; see docs/ui-spec.md, which locks the font) |

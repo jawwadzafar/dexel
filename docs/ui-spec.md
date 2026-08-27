@@ -631,7 +631,7 @@ the UI-side contract because this is `#scene-text`, not a sprite:
 | | value |
 |---|---|
 | rect (UI px) | **(196, 48) 248 x 88** |
-| text area (4px inset) | (200, 52) 240 x 84 |
+| text area | **(200, 48) 240 x 88** — 4px inset L/R, flush to the glass top/bottom so all 11 lines (11 x 8px = 88) fit inside the glass with no spill onto the bezel (was (200,52) 240x84, which dropped the box 4px and spilled the bottom line onto the tinted chin) |
 | lines | **11**, `line-height: 8px`, `font-size: 8px` |
 | chars per line | **30** at 8px `Press Start 2P` |
 | colours | newest 2 lines `var(--screen)`, older `var(--screen-dim)` |
@@ -2780,8 +2780,8 @@ extend a cooldown).
 
 ### 12.5 The monitor's hard constraint
 
-The monitor's reaction is a **`src` swap and nothing else** — the element must
-never move. The DOM terminal (§2) sits over the glass with 2 px of margin, and
+The monitor's reaction is a **sprite/mask swap and nothing else** — no element
+ever moves. The DOM terminal (§2) sits over the glass with 2 px of margin, and
 its 11 lines of text do **not** move with the sprite, so nudging `left` or
 adding a transform would slide the glass out from under the text. The shake is
 therefore authored *inside* the sprite: `tools/gen_assets.py`'s
@@ -2791,6 +2791,19 @@ neck, foot and contact shadow byte-identical and the terminal's text box still
 inside the glass. Verified from the DOM in the real game: across
 rest → shake_a → shake_b → rest the monitor's bounding rect, its inline style
 and `#terminal`'s rect are all **unchanged**; only the `src` differs.
+
+**The tinted bezel shakes too (STORE-2.0).** Since the monitor colour slot the
+frontend overlays a CSS-tinted grayscale bezel (`monitor_frame.png`) on top of
+`monitor.png`, the base sprite alone shaking would leave that bezel standing
+still — a desynced, broken knock. So the bezel has its own shake masks,
+`monitor_frame_shake_a/b.png`, displaced the **same** ±1 px over the same head
+rows (`build_monitor_frame_shake`, guarded by `assert_monitor_frame_shake`:
+rigid horizontal head shift, the screen rect still fully transparent so the
+tint never reaches the glass, and the neck/foot planted). The react swaps the
+base sprite **and** the bezel overlay's `--form` mask in lockstep, keeping the
+equipped `--tint`, so the whole monitor — base plus tinted frame — knocks as one
+rigid object for every colour. Still no element moves; only the sprite `src`
+and the mask URL differ.
 
 ### 12.6 The hoodie overlay leans too
 

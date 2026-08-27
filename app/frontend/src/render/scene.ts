@@ -426,6 +426,14 @@ const PROP_REACT_SPRITES: Record<string, [string, string]> = {
 };
 const MONITOR_REST_SPRITE = 'monitor.png';
 const MONITOR_SHAKE_SPRITES: [string, string] = ['monitor_shake_a.png', 'monitor_shake_b.png'];
+// STORE-2.0 x SCENE-REACTIONS (BUG-1): the tinted bezel overlay has its own
+// shake masks, displaced the SAME +-1px as the base (gen_assets
+// build_monitor_frame_shake / assert_monitor_frame_shake). The monitor react
+// swaps BOTH the base sprite AND this overlay's --form mask in lockstep, so the
+// whole monitor — base + tinted frame — knocks as one instead of the bezel
+// staying still while the base slides out from under it.
+const MONITOR_FRAME_REST = MONITOR_FRAME_FILE;
+const MONITOR_FRAME_SHAKE: [string, string] = ['monitor_frame_shake_a.png', 'monitor_frame_shake_b.png'];
 // Every react bitmap the scene can show, warmed at startup with the rest of
 // them (render/preload.ts). A prop react is a `src` swap on a live <img>, and
 // an undecoded bitmap paints NOTHING for a frame or two — the first click on
@@ -435,6 +443,7 @@ const MONITOR_SHAKE_SPRITES: [string, string] = ['monitor_shake_a.png', 'monitor
 // they are stacked layers like every other dev frame and ride
 // warmStaticSprites via DEV_FRAMES.)
 const REACT_SPRITES: string[] = MONITOR_SHAKE_SPRITES.concat(
+  MONITOR_FRAME_SHAKE,
   ...Object.keys(PROP_REACT_SPRITES).map(function (id) { return PROP_REACT_SPRITES[id]; })
 );
 
@@ -469,6 +478,16 @@ function slotReactSprite(slotId: string): string | null {
   return r && r.frame ? reactFileFor(slotId, r.frame) : null;
 }
 
+// The bezel-overlay mask the monitor must show RIGHT NOW: its shake variant
+// while a react is playing, otherwise the rest bezel. Keeps the tinted frame in
+// lockstep with the base sprite's shake (BUG-1), and — like slotReactSprite —
+// keeps an in-flight shake surviving the ~1Hz renderMonitor() broadcast instead
+// of snapping the bezel back to rest mid-knock.
+function monitorFrameReactFile(): string {
+  const r = reacts.monitor;
+  return r && r.frame ? MONITOR_FRAME_SHAKE[r.frame === 'a' ? 0 : 1] : MONITOR_FRAME_REST;
+}
+
 // Paints one item's current react frame, and only when it changed.
 function paintReact(key: string): void {
   const r = reacts[key];
@@ -476,7 +495,11 @@ function paintReact(key: string): void {
   r.painted = r.frame;
   if (key === 'dev') { renderDev(); return; }
   if (key === 'monitor') {
+    // Swap the base sprite AND the tinted bezel overlay together, keeping the
+    // equipped colour that renderMonitor() already wrote onto --tint.
     setSrc(monitorImg, r.frame ? reactFileFor('monitor', r.frame) : MONITOR_REST_SPRITE);
+    updateTintLayer(monitorFrame, monitorFrameReactFile(),
+                    monitorFrame.style.getPropertyValue('--tint'));
     return;
   }
   renderSlotSprite(key);
@@ -890,7 +913,10 @@ function renderDev(): void {
 // click), so the guarded updateTintLayer is all it needs.
 function renderMonitor(): void {
   const item = store.equippedItemFor('monitor');
-  updateTintLayer(monitorFrame, MONITOR_FRAME_FILE, colourHexForItem(item && item.id));
+  // React-aware (like renderSlotSprite): while the monitor is mid-shake this
+  // paints the shake bezel mask, so the ~1Hz broadcast does not reset the
+  // tinted frame to rest halfway through a knock.
+  updateTintLayer(monitorFrame, monitorFrameReactFile(), colourHexForItem(item && item.id));
 }
 
 // The catalog this module has already pre-warmed. The catalog arrives once
