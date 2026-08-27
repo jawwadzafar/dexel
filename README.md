@@ -8,6 +8,9 @@
 [![Release](https://img.shields.io/github/v/release/jawwadzafar/dexel?sort=semver&label=release)](https://github.com/jawwadzafar/dexel/releases/latest)
 [![Platform](https://img.shields.io/badge/platform-linux%20%7C%20macOS%20%7C%20windows-8a7fd4)](#platforms)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![Website](https://img.shields.io/badge/website-jawwadzafar.github.io%2Fdexel-8a7fd4)](https://jawwadzafar.github.io/dexel/)
+
+**Website · [jawwadzafar.github.io/dexel](https://jawwadzafar.github.io/dexel/)**
 
 ![Dexel at the desk: coin and level HUD, a live sprint bar, and a terminal panel](docs/images/hero.png)
 
