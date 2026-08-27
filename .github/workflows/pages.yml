@@ -42,6 +42,17 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      # Bake the animated hero frames from the game's CURRENT sprite art
+      # (app/assets/) so the deployed hero always reflects the newest look.
+      # Pure Node, no dependencies — see site/tools/build-hero-sprites.mjs.
+      - name: Build animated hero sprites
+        run: node site/tools/build-hero-sprites.mjs
+
       - name: Configure Pages
         uses: actions/configure-pages@v5
 
