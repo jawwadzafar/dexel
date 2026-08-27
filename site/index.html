@@ -402,7 +402,41 @@
     content:""; position:absolute; left:50%; bottom:6px; transform:translateX(-50%);
     width:64px; height:8px; border-radius:0 0 6px 6px; background: var(--metal);
   }
-  .demo-screen { border-radius:6px; overflow:hidden; border:1px solid #000; background:#0d0b12; }
+  .demo-screen { position:relative; border-radius:6px; overflow:hidden; border:1px solid #000; background:#0d0b12; }
+
+  /* Overlay controls on the video: unmute (top-right) opts into the voiceover;
+     the play button (centre) appears for prefers-reduced-motion / JS fallback. */
+  .demo-overlay-btn {
+    position:absolute; z-index:3;
+    font-family:"Press Start 2P", monospace; line-height:1;
+    display:inline-flex; align-items:center; gap:8px;
+    background: color-mix(in srgb, var(--surface) 90%, transparent);
+    color: var(--ink); border:2px solid var(--border); border-radius:8px;
+    cursor:pointer; box-shadow: 0 4px 0 rgba(0,0,0,.4);
+    transition: transform .08s ease, box-shadow .08s ease, background .15s ease;
+  }
+  .demo-overlay-btn:hover { background: var(--gold); color:#241f2e; transform: translateY(-1px); }
+  .demo-overlay-btn[hidden] { display:none; }
+  .demo-overlay-btn .ico { font-size:15px; }
+  .demo-overlay-btn .lbl { font-size:9px; letter-spacing:.5px; }
+  .demo-unmute { top:12px; right:12px; padding:9px 11px; }
+  .demo-unmute[aria-pressed="true"] { background: var(--gold); color:#241f2e; border-color:#caa542; }
+  /* Sit clear of the native controls bar (bottom); centre the big play affordance. */
+  .demo-play {
+    top:50%; left:50%; transform:translate(-50%,-50%);
+    padding:16px 20px; background: var(--gold); color:#241f2e; border-color:#caa542;
+  }
+  .demo-play .ico { font-size:13px; }
+  .demo-play .lbl { font-size:11px; }
+  .demo-play:hover { background:#f0d07f; transform: translate(-50%,-50%) translateY(-1px); }
+
+  /* Featured full-width desk-scene screenshot atop the 3-up grid. */
+  .shot-wide { margin: 0 0 18px; }
+  .shot-wide.shot { border:2px solid var(--border); border-radius:10px; overflow:hidden; background:#0d0b12; box-shadow: var(--shadow-cast); }
+  .shot-wide .shot-btn { display:block; width:100%; padding:0; border:0; background:none; cursor: zoom-in; }
+  .shot-wide .shot-btn:hover img { opacity:.92; }
+  .shot-wide img { width:100%; }
+  .shot-wide figcaption { font-family:"Press Start 2P", monospace; font-size:10px; color:var(--ink-dim); padding:12px; background: var(--surface); border-top:2px solid var(--border); }
   /* The video is a block element that shrinks with its container; the intrinsic
      1280×800 attrs give the box its aspect ratio before the file loads. */
   .demo-media video, .demo-media img {
@@ -527,41 +561,36 @@
       </div>
     </div>
 
-    <div class="hero-visual">
-      <div class="monitor">
-        <div class="screen-img">
-          <img class="pixel" src="assets/img/hero.png" width="1280" height="800"
-               alt="dexel running at the desk: a hooded pixel developer typing, with a coin and level HUD, a live sprint progress bar, and a terminal panel." />
+    <!-- PRIMARY VISUAL: the narrated demo video. Autoplays muted when scrolled
+         into view (IntersectionObserver), pauses when out; a visible unmute
+         button opts into the voiceover; prefers-reduced-motion shows the poster
+         + a play button instead of autoplaying. Lives ONCE, here, and carries
+         the #demo anchor so the nav + README links still resolve. -->
+    <div class="hero-visual" id="demo">
+      <div class="demo-media">
+        <div class="demo-frame">
+          <div class="demo-screen">
+            <video class="pixel" id="demo-video"
+                   src="assets/demo.mp4"
+                   poster="assets/img/demo-poster.png"
+                   width="1280" height="800"
+                   controls muted loop playsinline preload="metadata"
+                   aria-label="dexel demo: typing advances the sprint, coins buy items that appear on the desk, with narration.">
+              <img class="pixel" src="assets/img/demo.gif" width="800" height="500"
+                   alt="dexel in action: typing advances the sprint, coins buy items that appear on the desk." />
+            </video>
+            <button class="demo-overlay-btn demo-unmute" type="button" id="demo-unmute"
+                    aria-label="Unmute video" aria-pressed="false" hidden>
+              <span class="ico" aria-hidden="true">🔇</span><span class="lbl">Sound</span>
+            </button>
+            <button class="demo-overlay-btn demo-play" type="button" id="demo-play"
+                    aria-label="Play video" hidden>
+              <span class="ico" aria-hidden="true">▶</span><span class="lbl">Play demo</span>
+            </button>
+          </div>
         </div>
+        <p class="demo-note">Muted by default — tap <b>🔊 Sound</b> for the narrated walkthrough.</p>
       </div>
-    </div>
-  </div>
-</section>
-
-<!-- ===================== DEMO ===================== -->
-<section id="demo">
-  <div class="wrap">
-    <div class="section-head">
-      <p class="eyebrow">Watch it work</p>
-      <h2 class="px">Type, earn, and fill in the desk</h2>
-      <p class="lede center">A quick loop from the real app: the scene comes alive, typing fills the sprint, coins open the store, and a bought item lands on the desk. Turn on sound for the narrated walkthrough.</p>
-    </div>
-
-    <div class="demo-media">
-      <div class="demo-frame">
-        <div class="demo-screen">
-          <video class="pixel"
-                 src="assets/demo.mp4"
-                 poster="assets/img/demo-poster.png"
-                 width="1280" height="800"
-                 controls muted loop playsinline preload="metadata"
-                 aria-label="dexel demo: typing advances the sprint, coins buy items that appear on the desk, with narration.">
-            <img class="pixel" src="assets/img/demo.gif" width="800" height="500"
-                 alt="dexel in action: typing advances the sprint, coins buy items that appear on the desk." />
-          </video>
-        </div>
-      </div>
-      <p class="demo-note">Muted by default — press play and unmute for the voiceover, or read on below.</p>
     </div>
   </div>
 </section>
@@ -643,6 +672,14 @@
       <h2 class="px">A whole little desk to run</h2>
       <p class="lede center">Press <kbd>S</kbd> for the store, <kbd>A</kbd> for the activity log, <kbd>H</kbd> for history.</p>
     </div>
+
+    <figure class="shot shot-wide">
+      <button class="shot-btn" type="button" aria-label="Enlarge: the desk scene">
+        <img class="pixel" src="assets/img/hero.png" width="1280" height="800"
+             alt="dexel running at the desk: a hooded pixel developer typing, with a coin and level HUD, a live sprint progress bar, and a terminal panel." />
+      </button>
+      <figcaption>The desk · dexel at work</figcaption>
+    </figure>
 
     <div class="shots">
       <figure class="shot">
@@ -835,6 +872,79 @@
         });
       });
     });
+  })();
+
+  // ---- Demo video: industry-standard autoplay-on-scroll ----
+  // Muted autoplay is browser-allowed, so we drive play/pause from an
+  // IntersectionObserver (play at >=50% visible, pause below). A visible unmute
+  // button opts into the narration. prefers-reduced-motion never autoplays:
+  // it shows the poster + a centre play button instead. JS-off / IO-unsupported
+  // degrades to the poster + native controls (no blank box either way).
+  (function () {
+    var v = document.getElementById("demo-video");
+    if (!v) return;
+    var unmuteBtn = document.getElementById("demo-unmute");
+    var playBtn = document.getElementById("demo-play");
+    var reduceMQ = window.matchMedia("(prefers-reduced-motion: reduce)");
+
+    v.muted = true; // guarantee the autoplay-eligible state regardless of markup
+
+    function syncUnmute(){
+      if (!unmuteBtn) return;
+      var ico = unmuteBtn.querySelector(".ico");
+      var lbl = unmuteBtn.querySelector(".lbl");
+      if (v.muted) {
+        if (ico) ico.textContent = "🔇"; if (lbl) lbl.textContent = "Sound";
+        unmuteBtn.setAttribute("aria-label", "Unmute video");
+        unmuteBtn.setAttribute("aria-pressed", "false");
+      } else {
+        if (ico) ico.textContent = "🔊"; if (lbl) lbl.textContent = "Mute";
+        unmuteBtn.setAttribute("aria-label", "Mute video");
+        unmuteBtn.setAttribute("aria-pressed", "true");
+      }
+    }
+
+    if (unmuteBtn) {
+      unmuteBtn.hidden = false;
+      unmuteBtn.addEventListener("click", function(){
+        v.muted = !v.muted;
+        if (!v.muted && v.paused) { v.play().catch(function(){}); }
+        syncUnmute();
+      });
+      syncUnmute();
+    }
+
+    function showPlay(){ if (playBtn) playBtn.hidden = false; }
+    function hidePlay(){ if (playBtn) playBtn.hidden = true; }
+    if (playBtn) {
+      playBtn.addEventListener("click", function(){
+        v.play().then(hidePlay).catch(function(){});
+      });
+    }
+    v.addEventListener("play", hidePlay);
+    v.addEventListener("pause", function(){ if (reduceMQ.matches) showPlay(); });
+
+    if (reduceMQ.matches) {
+      // Accessibility: never autoplay. Poster + play button; user starts it.
+      showPlay();
+      return;
+    }
+
+    if ("IntersectionObserver" in window) {
+      var io = new IntersectionObserver(function(entries){
+        entries.forEach(function(e){
+          if (e.isIntersecting && e.intersectionRatio >= 0.5) {
+            v.play().catch(function(){});
+          } else if (!v.paused) {
+            v.pause();
+          }
+        });
+      }, { threshold: [0, 0.5, 1] });
+      io.observe(v);
+    } else {
+      // No IntersectionObserver: best-effort muted play; poster + controls remain.
+      v.play().catch(function(){});
+    }
   })();
 </script>
 </body>
