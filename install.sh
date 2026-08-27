@@ -694,11 +694,26 @@ instead."
         return 0
     fi
 
-    # Auto: highest-confidence rung that can actually proceed.
-    if [ "$IN_REPO" = 1 ] && GO_BIN=$(find_go); then
+    # Auto source selection, owner rule (ROADMAP §INSTALL-REPO-VS-OTA):
+    # if this script is sitting INSIDE the repo (files beside it — app/main.go
+    # etc., see detect_repo), it is a clone, so ALWAYS build from source. The
+    # user has the source; build it deterministically rather than fetch a
+    # release that may lag main or lack their platform. A missing Go toolchain
+    # here is a hard error (install Go) — we do NOT silently fall back to a
+    # release download from within a clone. `--from-release` still overrides
+    # this for anyone who explicitly wants the release path.
+    if [ "$IN_REPO" = 1 ]; then
+        GO_BIN=$(find_go) ||
+            die "$E_TOOL" "installing from a dexel clone, so install.sh builds from source — but no
+Go toolchain was found on PATH or in a common install location. Install Go 1.27+
+(https://go.dev/dl/), or point at an existing one with GOROOT=/path/to/go or
+DEXEL_GO=/path/to/go/bin/go. (Run --from-release to download a release instead.)"
         SOURCE=source
         return 0
     fi
+
+    # Over-the-air (no repo around us): a local archive if given, else the
+    # release download.
     if [ -n "${DEXEL_ARCHIVE:-}" ]; then
         SOURCE=archive
         return 0
