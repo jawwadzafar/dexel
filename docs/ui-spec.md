@@ -144,17 +144,22 @@ finished composite is scaled uniformly, whereas `zoom` re-lays-out at the
 scaled size and at a fractional factor rounds every box independently — which
 lets 8px cells drift a pixel apart and breaks the grid this design is built on.
 
-**Modal dialogs carry the same transform themselves.** A `<dialog>` opened
-with `showModal()` is promoted to the **top layer**, and a top-layer element
-is *not* affected by an ancestor's transform (verified in this project's own
-headless Chromium: a dialog inside a `scale(0.5)` parent rendered at 1:1).
-Custom-property inheritance still reaches it, so each of the **six** dialogs
-(`#store`, `#activity`, `#history`, `#sessions`, `#settings`, `#onboarding`)
-declares its authored position as `--dlg-x` / `--dlg-y` instead of
-`left`/`top` and applies
-`translate(--ui-ox, --ui-oy) scale(--ui-scale) translate(--dlg-x, --dlg-y)`
-— the function order matters: the box is placed inside the layout's
-coordinate space *first*, then that space is scaled, then centred. With
+**Modal dialogs inherit the transform from `#root`.** The dialogs are opened
+**non-modally** (`dialog.show()`, not `showModal()`) since DRAG-1 (§5.4) — a
+non-modal dialog is *not* in the top layer, so it is an ordinary
+`position: fixed` descendant of `#root`, and because `#root` carries a
+`transform` it becomes the containing block for its fixed descendants **and**
+its transform applies to them. So each of the **seven** dialogs (`#store`,
+`#activity`, `#history`, `#sessions`, `#settings`, `#about`, `#onboarding`)
+gets `translate(--ui-ox, --ui-oy) scale(--ui-scale)` for free from `#root`,
+exactly like every scene element, and declares only its own authored offset —
+`--dlg-x` / `--dlg-y` via `transform: translate(--dlg-x, --dlg-y)`, with
+`left`/`top` kept at 0. Composed with `#root`'s transform that resolves to
+`translate(--ui-ox,--ui-oy) scale(--ui-scale) translate(--dlg-x,--dlg-y)` —
+byte-for-byte the mapping the old top-layer `showModal()` rule computed by
+hand, so nothing moved on screen. (Applying `--ui-*` here as well would now
+*double* it.) The order still matters: the box is placed inside the layout's
+coordinate space *first*, then that space is scaled, then centred; with
 `left`/`top` the offset would be applied once by layout and again by the
 transform, and the modal would drift away from the scene as the window grew.
 
@@ -655,8 +660,11 @@ resolved 118 deps in 0.9s
 ## 4. The store modal
 
 Opened via the `[S] STORE` button, the `S` key, or `Tab`. Implemented as a
-native `<dialog>` opened with `showModal()`, which buys focus trapping and
-`Esc`-to-close for free.
+native `<dialog>` opened **non-modally** with `dialog.show()` (DRAG-1, §5.4).
+Backdrop dim, click-away, and `Esc`-to-close — everything `showModal()` used
+to give for free — are provided by the shared `features/modal-dismiss.ts`
+helper (the `#scrim` backdrop, an `Esc` capture handler, and focus restore on
+close), so the frameless titlebar's drag region stays live with the store open.
 
 > **⚠ §4.0 supersedes §4.1–§4.4 below (STORE-2.0 + click-to-preview,
 > 2026-08-27).** The ASCII mock and the geometry/precedence tables further
@@ -751,9 +759,10 @@ grid card both flip to `✓ EQUIPPED` on the confirming 1 Hz broadcast (state is
 rendered from the server, never asserted by the client). `#store-back` (top
 left) returns to the grid; `Enter` runs the action.
 
-**Esc / dismissal.** The preview backs out **first**: while it is open a
-native `cancel` (Esc) is `preventDefault`-ed and just returns to the grid; a
-second Esc then closes the store. `X`, `S`, `Tab`, and a click in the empty
+**Esc / dismissal.** The preview backs out **first**: while it is open the
+first Esc just returns to the grid (the store's `onEscape` hook consumes it —
+since DRAG-1 the modal is non-modal, so there is no native `cancel` event; see
+§5.4); a second Esc then closes the store. `X`, `S`, `Tab`, and a click in the empty
 backdrop (§5.4) close the whole store from either view; opening or closing the
 store always resets to the grid. Preserved throughout: level-gating,
 humanized/exact prices, the `CASH:` label, the `coin.png` glyph, and the
@@ -918,7 +927,12 @@ buttons leave no room for a name like "Executive Leather".
 
 `#scrim` covers **only the scene band**: `left:0; top:24px; width:640px;
 height:296px; background: rgba(36,31,46,0.45)` (that is `--shadow` at 45%).
-The title bar and both bottom panels stay unobscured.
+The title bar and both bottom panels stay unobscured. Since DRAG-1 it is also
+the modals' **manual backdrop**: while visible it takes `pointer-events`
+(z-index 400, above the scene, below the panel's 1000), so a click on the
+dimmed scene dismisses the open modal — and because it starts at `top:24px` it
+never covers `#titlebar`, whose Tauri drag region therefore stays live with a
+modal open.
 
 **[DESIGN CALL] the scrim is deliberately light** so you can watch the scene
 change while the modal is open; the PDF calls for the main companion screen to
@@ -927,15 +941,22 @@ Close is `X`, `Esc`, `S`/`Tab`, **or a click in the empty area outside the
 panel** (§5.4).
 
 > **Click-away close is an owner mandate (2026-08) that reverses this
-> section's original "clicking outside does NOT close" rule.** With a modal
-> open, its `::backdrop` sits in the top layer above the whole window,
-> including the frameless desktop titlebar — so the menu / minimise / close
-> buttons stopped responding while a modal was up, which is confusing and (in
-> the frameless shell) removes the only way to move or close the window.
-> Dismissing on an outside click frees the titlebar for the next click. The
-> light scrim still does its job: the scene is visible behind the open modal
-> exactly as before; only a *click* in that empty area now dismisses instead
-> of doing nothing.
+> section's original "clicking outside does NOT close" rule.** Its final form
+> is DRAG-1 (2026-08-27). The original owner pain: with a modal open,
+> `showModal()` put the dialog in the **top layer** and made the rest of the
+> document `inert`, so the frameless desktop titlebar (`data-tauri-drag-region`
+> + the menu / minimise / close buttons) received no pointer events at all —
+> the window could not be moved or closed while a modal was up. An earlier fix
+> only *dismissed on an outside click* to free the titlebar for the next click.
+> DRAG-1 fixes it properly: the modals are now opened **non-modally**
+> (`dialog.show()`), which never inerts the page, so the titlebar drag region
+> is live **the whole time a modal is open**. The dim + click-away that
+> `showModal()` used to provide are now the `#scrim` backdrop (§4.5) driven by
+> `features/modal-dismiss.ts`, which also owns `Esc`-to-close (a capture-phase
+> handler, since a non-modal dialog does not close on `Esc` natively) and
+> restores focus on close (which `showModal()` did for free). Onboarding opts
+> out of click-away only. The light scrim still does its job: the scene stays
+> visible behind the open modal.
 
 On a successful `EQUIP_ITEM`, the backend broadcasts a fresh `state`; the
 frontend re-renders `#scene-sprites` from it. The scene must visibly change
@@ -1071,13 +1092,15 @@ Therefore:
 ### 5.4 Click-away dismiss — every browsable modal
 
 A click in the empty area **outside** an open modal's panel closes it. This
-applies to all five browsable modals — **Store, Activity, History, Sessions,
-Settings** — and is the fix for the frameless titlebar being unreachable while
-a modal is up (a `<dialog>` opened with `showModal()` puts its `::backdrop`
-in the top layer, above the whole window including the titlebar buttons; see
-the owner-mandate note in §4.5). `Esc` still closes every modal natively, and
-every in-panel control keeps working — a click *inside* the panel never
-dismisses.
+applies to all six browsable modals — **Store, Activity, History, Sessions,
+Settings, About**. It is part of DRAG-1, the fix for the frameless titlebar
+being unreachable while a modal is up: `showModal()` put the dialog in the top
+layer and made the rest of the document `inert`, so the titlebar (drag region
++ buttons) received no pointer events at all; the modals are now opened
+non-modally (`dialog.show()`), which never inerts the page, so the titlebar
+stays live the whole time (see the owner-mandate note in §4.5). `Esc` still
+closes every modal, and every in-panel control keeps working — a click
+*inside* the panel never dismisses.
 
 **Onboarding is deliberately excluded.** It is the one-time first-run naming
 flow, not a browsable modal; a stray click must not silently auto-skip it and
@@ -1085,21 +1108,26 @@ lose a half-typed name. It stays dismissable only by its explicit `[ SKIP ]`
 button and by `Esc` (both of which name the dexel with the skip default —
 §7.3), never by a click-away.
 
-**Mechanism (`features/modal-dismiss.ts`, wired once, called from each of the
-five modal files).** On the dialog's own `click`, close only when the pointer
-falls outside the panel's `getBoundingClientRect()` — NOT when
-`event.target === dialog`. The panels carry 12px of padding and lay their
-children out absolutely, so there are empty gaps *inside* the panel where the
-click target is the `<dialog>` itself; a `target === dialog` test would wrongly
-dismiss on those. The rect test is also transform-proof: each modal is scaled
-by the shared window-fit transform (§0.1, BUG-2), and both
-`getBoundingClientRect()` and `clientX/clientY` are post-transform viewport
-coordinates, so the test holds identically at 1x, 2x and every fractional
-letterbox scale. A `mousedown`-started-inside guard stops a text selection that
-begins in a name input and releases outside from reading as a click-away, and a
-`detail === 0` guard ignores the synthetic (0,0) click a keyboard-activated
-button fires. The opening click never reaches this handler, because it targets
-a top-bar / menu button that is not an ancestor of the dialog.
+**Mechanism (`features/modal-dismiss.ts`, wired once; each modal file calls
+`registerModal(dialog, { close, onEscape?, clickAway? })`).** The `#scrim` is
+the manual backdrop. It sits above the scene and below the panel (z-index 400
+vs 1000) and starts at `top:24px`, so it covers the whole scene band but never
+the titlebar; while a modal is open it takes `pointer-events` (§4.5). A
+`click` on the scrim closes the open modal — the panel is above it, so a click
+*inside* the panel never reaches it, and no coordinate maths is needed. A
+`mousedown`-started-on-scrim guard stops a text selection that begins in a name
+input and releases on the scrim from reading as a click-away, and a
+`detail === 0` guard ignores the synthetic click a keyboard-activated button
+fires. `Esc` is handled by a **capture-phase** `keydown` in the same helper
+(ahead of `keybindings.ts`), because a non-modal dialog does not close on `Esc`
+natively; an `onEscape` hook can consume it (the store backs out of its preview
+first). On any dismissal the helper also **restores focus** off any control
+still inside the closed dialog — the one thing `showModal()` did for free —
+so the next keystroke is a global shortcut again rather than being swallowed as
+text entry. Onboarding registers with `clickAway: false`. The `#scrim`'s
+visibility is derived from "is any modal open?" (`syncScrim()`), never removed
+unconditionally, so the async `<dialog>` `close` event of one modal can never
+hide the backdrop out from under another.
 
 ## 6. WebSocket state contract
 
@@ -1757,7 +1785,7 @@ replaces the old.
 Phase P1 — Identity & first minutes (`docs/plan/PRODUCT-EVOLUTION.md` §5,
 §2.9). Shown **once, ever**, on a genuine fresh install: name your Dexel,
 pick a starter colour, get a warm hello. Built to the §4 store modal's
-mechanics (native `<dialog>` + `showModal()`, the shared `#scrim`, one
+mechanics (native `<dialog>` opened non-modally with `dialog.show()` (DRAG-1 §5.4), the shared `#scrim`, one
 `'close'` event every dismissal path funnels through) — not a second modal
 idiom.
 
@@ -1982,8 +2010,8 @@ and gates nothing: it is a **lens** over tracking that already happens
   `.menu-item` class, not an id list, so it auto-grows around any new entry.
 - **Keybinding `[W]`** ("work session") on the main screen (§5.2).
   `S`/`Tab`/`A`/`H`/`M` are already taken; `W` is free.
-- Opened the same way `[A]`/`[H]` are: native `<dialog>` + `showModal()`, the
-  shared `#scrim`, `Esc` handled natively (never intercepted).
+- Opened the same way `[A]`/`[H]` are: native `<dialog>` opened non-modally (`dialog.show()`, DRAG-1 §5.4), the
+  shared `#scrim`, `Esc` handled by the shared modal helper (§5.4).
 
 ### 9.2 Geometry
 
@@ -2331,7 +2359,7 @@ first preference here that ships **on**, and every consequence of that is
 recorded in §13.4.
 
 The mechanics are the ones every modal here shares (§4, and the
-`add-a-menu-modal` skill): a native `<dialog>` opened with `showModal()`,
+`add-a-menu-modal` skill): a native `<dialog>` opened non-modally with `dialog.show()` (DRAG-1 §5.4),
 the shared `#scrim`, mouse **and** keyboard **and** `Esc`, and one `'close'`
 event that every dismissal path funnels through. What follows is only what
 is specific to this one.
@@ -3190,7 +3218,7 @@ It shows, top to bottom, and gates nothing:
 
 The card is authored at 360×252 inside the 640×400 layout (centred; under
 BUG-8's ~362px height cap). Same mechanics as every modal above (native
-`<dialog>` + `showModal()`, the shared `#scrim`, one `close` event every
+`<dialog>` opened non-modally (`dialog.show()`, DRAG-1 §5.4), the shared `#scrim`, one `close` event every
 dismissal path — X, `[I]`, `Esc`, click-away (§5.4) — funnels through). It
 reads **no** server state, so it has no `renderAll()` refresh hook.
 

@@ -23,7 +23,7 @@
 // user made, and it is driven by a field the SERVER sends, not by
 // anything this module decided on its own. ADR 0010/0013 are untouched.
 import { byId } from '../dom';
-import { enableClickAwayDismiss } from './modal-dismiss';
+import { registerModal } from './modal-dismiss';
 import * as store from '../state/store';
 import { fmtCount, fmtDuration, fmtInt } from '../format';
 import type { CoinBreakdown, StatBlock, Stats } from '../wire';
@@ -258,7 +258,7 @@ export function open(): void {
   // whichever view was last active this session (no flash of the wrong tab).
   applyTab();
   renderActivity();
-  el.activity.showModal();
+  el.activity.show();
   el.scrim.classList.add('visible');
 }
 export function close(): void {
@@ -278,7 +278,7 @@ el.activityClose.addEventListener('click', close);
 // follows the keyboard.
 el.tabTodayBtn.addEventListener('click', function () { selectTab('today', false); });
 el.tabLifeBtn.addEventListener('click', function () { selectTab('lifetime', false); });
-enableClickAwayDismiss(el.activity, close);
+registerModal(el.activity, { close: close });
 
 export function handleKeydown(e: KeyboardEvent): void {
   switch (e.key) {

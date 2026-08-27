@@ -28,7 +28,7 @@
 //     URL text so the user is one Ctrl/Cmd+C away from copying it by hand.
 // The game surface is never navigated, in any of those paths, at 1x or 2x.
 import { byId } from '../dom';
-import { enableClickAwayDismiss } from './modal-dismiss';
+import { registerModal } from './modal-dismiss';
 import {
   REPO_URL, VERSION, AUTHOR, COMMIT,
   RELEASES_URL, ISSUES_URL, DOCS_URL
@@ -74,7 +74,7 @@ export function open(): void {
   // A fresh open starts with no copy/fallback status showing.
   el.status.textContent = '';
   el.status.classList.remove('visible');
-  el.dialog.showModal();
+  el.dialog.show();
   el.scrim.classList.add('visible');
 }
 
@@ -91,7 +91,7 @@ el.dialog.addEventListener('close', function () {
 });
 el.openBtn.addEventListener('click', open);
 el.close.addEventListener('click', close);
-enableClickAwayDismiss(el.dialog, close);
+registerModal(el.dialog, { close: close });
 
 function showStatus(text: string): void {
   el.status.textContent = text;

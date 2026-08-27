@@ -473,6 +473,18 @@ need an owner with a visible window on macOS or X11:
 
 1. **The drag region actually drags.** Press and drag anywhere on the game's
    title bar (not on a button) and the window should move with the pointer.
+   **And it must still drag with a modal open (DRAG-1).** Open any modal
+   (Store `[S]`, Settings `[G]`, …) and drag the title bar — the window should
+   move even while the modal is up, and the modal should still dim, close on
+   `Esc`, and close on a click in the dimmed scene. This is what DRAG-1 fixed:
+   the modals used to be `showModal()` (top layer + document `inert`), which
+   killed the titlebar's pointer events; they are now non-modal `dialog.show()`
+   with a manual `#scrim` backdrop that never covers the titlebar. The page
+   half is verified headless (the titlebar is not `inert`,
+   `document.elementFromPoint` over the drag region returns it, a synthetic
+   `pointerdown` reaches it, and all modals open/dim/`Esc`/click-away), but the
+   ACTUAL window-drag-with-a-modal-open needs a visible window on the owner's
+   Linux GNOME / macOS to confirm.
 2. **Both buttons work.** `-` minimizes; `X` closes the window — and per the
    contract above, closing the window must leave the runtime running (`dexel
    status` still reports it).

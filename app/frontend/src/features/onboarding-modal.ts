@@ -30,6 +30,7 @@
 // PRODUCT-EVOLUTION.md §2.9's own risk guard demands). It sends only
 // SET_NAME: no equip, no spend, no economy path at all.
 import { byId } from '../dom';
+import { registerModal } from './modal-dismiss';
 import * as store from '../state/store';
 import { sendAction } from '../state/ws-client';
 import { DEV_RECT, DEV_Z_BASE, DEV_Z_FORM, DEV_Z_STYLE } from '../geometry';
@@ -186,7 +187,7 @@ function open(): void {
   if (el.dialog.open) return;
   nameSubmitted = false;
   render();
-  el.dialog.showModal();
+  el.dialog.show();
   el.scrim.classList.add('visible');
   // Focus the input so the very first keystroke is the name — the
   // ~30-second budget (PRODUCT-EVOLUTION.md §2.9's guard) has no room
@@ -238,11 +239,23 @@ el.dialog.addEventListener('close', function () {
   }
 });
 
+// DRAG-1 — this modal is now non-modal (dialog.show()) like every other, so
+// Esc no longer closes it natively. Register with the shared helper so Esc
+// still closes it (which the 'close' handler above turns into the skip). It
+// opts OUT of click-away (`clickAway: false`): onboarding must be answered or
+// skipped, never clicked away — which is why it never wired the old
+// per-dialog click-away either.
+registerModal(el.dialog, {
+  close: function () { if (el.dialog.open) el.dialog.close(); },
+  clickAway: false
+});
+
 // handleKeydown gives this modal the keyboard-ownership tier the other
 // three modals have, so bare S/A/H/M can never reach the global router
 // while it is open — not even when focus is on a button rather than the
-// input. Esc is deliberately NOT intercepted: native <dialog> closes, and
-// the 'close' handler above turns that into the skip.
+// input. Esc is deliberately NOT handled here: the shared modal helper
+// (registerModal above) closes on Esc, and the 'close' handler above turns
+// that into the skip.
 export function handleKeydown(_e: KeyboardEvent): void {
   /* intentionally inert — presence is the point (see above) */
 }

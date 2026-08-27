@@ -193,44 +193,45 @@ img {
   cursor: url(data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAYAAABzenr0AAAAzElEQVRYR+2X0Q6AIAhF5f8/2jYXZkwEjNSVvVUjDpcrGgT7FUkI2D9xRfQETwNIiWO85wfINfQUEyxBG2ArsLwC0jioGt5zFcwF4OYDPi/mBYKm4t0U8ATgRm3ThFoAqkhNgWkA0jJLvaOVSs7j3qMnSgXWBMiWPXe94QqMBMBc1VZIvaTu5u5pQewq0EqNZvIEMCmxAawK0DNkay9QmfFNAJUXfgGgUkLaE7j/h8fnASkxHTz0DGIBMCnBeeM7AArpUd3mz2x3C7wADglA8BcWMZhZAAAAAElFTkSuQmCC) 14 0, pointer;
 }
 
-/* ---------- Window fit: the modal dialogs (BUG-2) ----------
-   A <dialog> opened with showModal() is promoted to the TOP LAYER, and a
-   top-layer element is NOT affected by an ancestor's transform — verified in
-   this project's own headless Chromium, where a dialog inside a scale(0.5)
-   parent rendered at 1:1 in its unscaled position while its siblings scaled.
-   So #root's transform does not reach these five, and each one carries the
-   same transform itself. They still INHERIT --ui-* from :root: the top layer
-   changes where an element paints, not where it sits in the DOM.
+/* ---------- Window fit: the modal dialogs (BUG-2, revised by DRAG-1) ----------
+   HISTORY. These dialogs used to be opened with showModal(), which promotes a
+   <dialog> to the TOP LAYER — outside every ancestor's transform — so each
+   one carried the FULL window-fit transform itself
+   (translate(ui-ox,ui-oy) scale(ui-scale) translate(dlg-x,dlg-y)) to track
+   the scene the top layer had escaped.
 
-   Each dialog declares its own position as --dlg-x/--dlg-y instead of
-   left/top, because the order of the three functions is what makes the maths
-   come out right: read right to left, the box is first moved to its authored
-   position INSIDE the layout's coordinate space, then that whole space is
-   scaled, then the scaled space is centred in the window — exactly the
-   mapping #root gets. With left/top instead, the browser would place the box
-   before the transform ran and the offset would be applied a second time,
-   scaled, and the dialog would drift away from the scene as the window grew.
+   DRAG-1 (the frameless titlebar could not be dragged with a modal open, see
+   features/modal-dismiss.ts) changed every modal to open NON-modally with
+   dialog.show(). A non-modal dialog is NOT in the top layer, so it is once
+   again an ordinary `position: fixed` descendant of #root — and because #root
+   carries a `transform`, #root is the containing block for its fixed
+   descendants AND its transform applies to them. So the ui-ox/ui-oy/scale
+   part is now inherited from #root exactly like every other scene element,
+   and applying it here as well would DOUBLE it. Each dialog therefore keeps
+   only its own in-layout offset:
+
+       #root.transform  x  translate(dlg-x, dlg-y)
+     = translate(ui-ox,ui-oy) scale(ui-scale) translate(dlg-x,dlg-y)
+
+   — byte-for-byte the mapping the top-layer rule used to compute by hand, so
+   the modals render in the same place at every scale. --ui-* is no longer
+   read here (it reaches the box through #root now), only --dlg-x/--dlg-y.
+
+   left/top stay 0: the offset lives entirely in the transform so the box is
+   placed in the layout's coordinate space BEFORE #root scales it (a left/top
+   inset would be applied a second time, scaled, and drift as the window grew).
 
    Hit testing needs nothing extra: a transform is part of the box the browser
    hit-tests, so a click on a scaled button maps back through it natively.
 
-   WINDOW-POLISH FIX: #settings was MISSING from this list. It was added by
-   SET-1 after BUG-2 wrote this rule; it declares its own --dlg-x/--dlg-y and
-   its comment says "Consumed by the shared window-fit transform above", but
-   the selector list was never extended, so it inherited neither the transform
-   nor a left/top. A `position: fixed` box with `margin: 0` and no inset
-   resolves to its STATIC position, which put the Settings modal at the
-   top-left of the viewport, unscaled, while every other modal tracked the
-   scene — visible the moment the window was not exactly 1x. This is the tax
-   an id list charges, which is why the interaction-hardening rules above are
-   written against element selectors instead. */
+   Every id in this list must also declare its own --dlg-x/--dlg-y (the tax an
+   id list charges — SET-1 once added #settings to the position rule but not to
+   this list, and it rendered unscaled at the viewport corner until fixed). */
 #store, #activity, #history, #sessions, #settings, #about, #onboarding {
   left: 0;
   top: 0;
   transform-origin: 0 0;
-  transform: translate(var(--ui-ox), var(--ui-oy))
-             scale(var(--ui-scale))
-             translate(var(--dlg-x), var(--dlg-y));
+  transform: translate(var(--dlg-x), var(--dlg-y));
 }
 
 /* ================= Scene ================= */
@@ -908,9 +909,17 @@ body.shell #titlebar { cursor: default; }
   background: rgba(36, 31, 46, 0.45);
   display: none;
   z-index: 400;
-  pointer-events: none; /* clicking the scrim does nothing (§4.5) */
+  /* Hidden state: inert. When VISIBLE it becomes the modals' manual backdrop
+     (DRAG-1) and takes pointer events so a click on the dimmed scene
+     dismisses the open modal (features/modal-dismiss.ts). It starts at y=24,
+     so it never covers #titlebar — the Tauri drag region there stays live
+     even with a modal open, which is the whole point of DRAG-1. The panel
+     (z-index 1000) sits above the scrim (400), so clicks on the panel never
+     reach it, and the scrim sits above the scene, so a click-away never
+     leaks through to a scene reaction. */
+  pointer-events: none;
 }
-#scrim.visible { display: block; }
+#scrim.visible { display: block; pointer-events: auto; }
 
 /* ================= store modal ================= */
 
@@ -962,8 +971,15 @@ body.shell #titlebar { cursor: default; }
 }
 
 #store-close {
+  /* Inset 12px from the panel's right inner edge — the SAME margin every
+     other modal's X carries (activity/history/sessions/settings/about all
+     sit 12px in). The store dialog was widened to 600px (padding-box right
+     edge = 600 - 2*4px border = 592px); the X is 16px wide, so left:564
+     lands its right edge at 580 and leaves the matching 12px gap. It used
+     to be left:576 (right edge 592, flush against the border — the reported
+     clip) back when the widen landed but this value was not moved with it. */
   position: absolute;
-  left: 576px;
+  left: 564px;
   top: 12px;
   width: 16px;
   height: 16px;
@@ -974,11 +990,14 @@ body.shell #titlebar { cursor: default; }
 
 #store-cash {
   /* "Cash" naming (STORE-REDESIGN): the store-local label reads CASH.
-     Right-aligned in the header, clear of #store-close. */
+     Right-aligned in the header, clear of #store-close. Width trimmed from
+     228 to 212 (right edge 340+212 = 552) so it keeps a 12px gap to the X
+     now that the X was pulled in to left:564 — the old 228 would have run
+     the right-aligned value under the button. */
   position: absolute;
   left: 340px;
   top: 14px;
-  width: 228px;
+  width: 212px;
   height: 12px;
   line-height: 12px;
   font-size: 8px;

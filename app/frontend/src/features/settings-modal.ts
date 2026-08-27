@@ -41,7 +41,7 @@
 // ships reading ON while the other two ship OFF: the pre-render label has
 // to be the default too, or the modal flashes a lie for one frame.
 import { byId } from '../dom';
-import { enableClickAwayDismiss } from './modal-dismiss';
+import { registerModal } from './modal-dismiss';
 import * as store from '../state/store';
 import { sendAction } from '../state/ws-client';
 import { truncate } from '../format';
@@ -125,7 +125,7 @@ export function open(): void {
   // retype. Done HERE, on open, and nowhere else: see render().
   const state = store.getState();
   el.nameInput.value = (state && state.config && state.config.name) || '';
-  el.dialog.showModal();
+  el.dialog.show();
   el.scrim.classList.add('visible');
   // Unlike the onboarding and Sessions modals, focus is NOT forced into
   // the input: this modal is three sections and the name is only one of
@@ -148,7 +148,7 @@ el.dialog.addEventListener('close', function () {
 });
 el.openBtn.addEventListener('click', open);
 el.close.addEventListener('click', close);
-enableClickAwayDismiss(el.dialog, close);
+registerModal(el.dialog, { close: close });
 
 // ---------------------------------------------------------------------
 // rename — the EXISTING SET_NAME action

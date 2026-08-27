@@ -7,8 +7,10 @@
 // and Tab were all taken by then), [I] opens the About modal
 // (docs/ui-spec.md §15 — I for Info; S/A/H/W/G/M/P and Tab were all taken),
 // and while any one modal is open its own
-// keydown handler owns the keyboard (Esc always falls through to native
-// <dialog> behaviour, never intercepted here).
+// keydown handler owns the keyboard (Esc is owned by the shared modal helper
+// — features/modal-dismiss.ts, a capture-phase listener ahead of this one —
+// which closes the open modal and stops the event, so Esc never reaches the
+// tiers below while a modal is up; this listener still owns Esc for the menu).
 // This module knows the modal features' public
 // open()/isOpen()/handleKeydown() surface — it never reaches into their
 // DOM.
@@ -39,9 +41,10 @@ import * as menu from './menu';
 // ownership tiers below, and deliberately covers input/textarea/select and
 // anything contenteditable rather than just the one id that exists today,
 // so the next feature that adds a field inherits the fix instead of
-// rediscovering the bug. Esc is not special-cased: a native <dialog>
-// handles Esc itself, above this listener, so returning early here never
-// traps anyone.
+// rediscovering the bug. Esc is not special-cased here: the shared modal
+// helper (features/modal-dismiss.ts) owns Esc in the capture phase ahead of
+// this listener, so returning early here for a text input never traps anyone
+// — Esc still closes the modal from inside its own name/rename field.
 function isTextEntryTarget(target: EventTarget | null): boolean {
   const node = target as HTMLElement | null;
   if (!node || !node.tagName) return false;

@@ -30,7 +30,7 @@
 // refreshIfOpen() (called from main.ts's renderAll()) just re-paints
 // whatever the store already holds.
 import { byId } from '../dom';
-import { enableClickAwayDismiss } from './modal-dismiss';
+import { registerModal } from './modal-dismiss';
 import * as store from '../state/store';
 import { sendAction } from '../state/ws-client';
 import { fmtCount, fmtDuration, fmtInt, truncate } from '../format';
@@ -206,7 +206,7 @@ export function showSummary(s: SessionView): void {
   showingSummary = true;
   showView('summary');
   if (!el.dialog.open) {
-    el.dialog.showModal();
+    el.dialog.show();
     el.scrim.classList.add('visible');
   }
 }
@@ -236,7 +236,7 @@ export function open(): void {
   if (el.dialog.open) return;
   showingSummary = false;
   renderSessions();
-  el.dialog.showModal();
+  el.dialog.show();
   el.scrim.classList.add('visible');
   const state = store.getState();
   const hasActive = !!(state && state.sessions && state.sessions.active);
@@ -257,7 +257,7 @@ el.dialog.addEventListener('close', function () {
 });
 el.openBtn.addEventListener('click', open);
 el.close.addEventListener('click', close);
-enableClickAwayDismiss(el.dialog, close);
+registerModal(el.dialog, { close: close });
 el.niceBtn.addEventListener('click', close);
 
 function submitStart(): void {

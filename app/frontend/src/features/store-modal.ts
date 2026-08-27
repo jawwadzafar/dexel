@@ -38,7 +38,7 @@ import {
   hoodieOverlayFile, isColourSlot, styleToken
 } from '../colours';
 import { flashInsufficientFunds } from '../render/flash';
-import { enableClickAwayDismiss } from './modal-dismiss';
+import { registerModal } from './modal-dismiss';
 import type { CatalogItem, CatalogSlot } from '../wire';
 
 const CARDS_PER_ROW = 3;
@@ -533,7 +533,7 @@ export function open(): void {
   buildTabs();
   buildGrid();
   updateStoreCash();
-  el.store.showModal();
+  el.store.show();
   el.scrim.classList.add('visible');
   el.grid.scrollTop = 0;
   sendAction({ action: 'STORE_OPEN' });
@@ -550,18 +550,24 @@ el.store.addEventListener('close', function () {
   sendAction({ action: 'STORE_CLOSE' });
   setStoreOpenHoldDesired(false); // next open starts the B2 reassert guard fresh
 });
-// Esc backs out of the preview FIRST, then (a second Esc) closes the store.
-// The native <dialog> fires 'cancel' before it would close on Esc; when the
-// preview is open we swallow that first Esc and just return to the grid.
-el.store.addEventListener('cancel', function (e: Event) {
-  if (storeUI.previewItem) {
-    e.preventDefault();
-    closePreview();
-  }
-});
 el.storeOpenBtn.addEventListener('click', open);
 el.storeClose.addEventListener('click', close);
-enableClickAwayDismiss(el.store, close);
+// Esc backs out of the preview FIRST, then (a second Esc) closes the store.
+// DRAG-1 made the modals non-modal (dialog.show()), so there is no native
+// 'cancel' on Esc any more; the shared helper calls this onEscape hook
+// instead. Returning true means "consumed, do not close": the first Esc with
+// the preview open just returns to the grid; the next Esc (preview gone)
+// falls through to close.
+registerModal(el.store, {
+  close: close,
+  onEscape: function () {
+    if (storeUI.previewItem) {
+      closePreview();
+      return true;
+    }
+    return false;
+  }
+});
 
 function updateStoreCash(): void {
   const state = store.getState();
@@ -611,14 +617,14 @@ function openSelectedCardPreview(): void {
 }
 
 export function handleKeydown(e: KeyboardEvent): void {
-  // In the preview: Enter runs the action; Esc backs out (native 'cancel',
-  // handled above); S / Tab still close the whole store.
+  // In the preview: Enter runs the action; Esc backs out (the shared modal
+  // helper's onEscape, registered below); S / Tab still close the whole store.
   if (storeUI.previewItem) {
     switch (e.key) {
       case 'Enter': runPreviewAction(); break;
       case 's': case 'S': close(); break;
       case 'Tab': close(); break;
-      default: break; // Esc: native <dialog> 'cancel' backs out to the grid
+      default: break; // Esc: handled by onEscape (backs out to the grid)
     }
     return;
   }
@@ -632,6 +638,6 @@ export function handleKeydown(e: KeyboardEvent): void {
     case 'Enter': openSelectedCardPreview(); break;    // open the preview
     case 's': case 'S': close(); break;
     case 'Tab': close(); break; // do not preventDefault: leave native focus cycling alone
-    default: break; // Esc: native <dialog> behaviour, not intercepted
+    default: break; // Esc: handled by the shared modal helper (closes)
   }
 }
