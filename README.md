@@ -16,6 +16,13 @@
 
 </div>
 
+## See it in action
+
+![dexel in action: typing advances the sprint, coins buy items that appear on the desk](docs/images/demo.gif)
+
+A silent loop — GitHub plays it inline. Want the narrated walkthrough with
+sound? Watch the [full video on the website](https://jawwadzafar.github.io/dexel/#demo).
+
 ## What is dexel
 
 `dexel` is a small pixel-art developer who lives at a desk on your screen. Your

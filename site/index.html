@@ -385,6 +385,32 @@
   .center { text-align:center; margin-inline:auto; }
   .section-head { max-width: 60ch; margin: 0 auto clamp(28px, 4vw, 44px); text-align:center; }
 
+  /* ---------- Demo (Watch it work) ---------- */
+  /* The demo video lives inside the centered .wrap; its own box is capped and
+     centered, and the video scales fluidly (max-width:100%; height:auto) so it
+     never forces page-level horizontal overflow at any viewport. */
+  .demo-media { max-width: 900px; margin-inline: auto; min-width: 0; }
+  .demo-frame {
+    position: relative;
+    border: 3px solid var(--metal);
+    border-radius: 12px;
+    background: #0d0b12;
+    padding: 10px 10px 26px;
+    box-shadow: var(--shadow-cast);
+  }
+  .demo-frame::after {
+    content:""; position:absolute; left:50%; bottom:6px; transform:translateX(-50%);
+    width:64px; height:8px; border-radius:0 0 6px 6px; background: var(--metal);
+  }
+  .demo-screen { border-radius:6px; overflow:hidden; border:1px solid #000; background:#0d0b12; }
+  /* The video is a block element that shrinks with its container; the intrinsic
+     1280×800 attrs give the box its aspect ratio before the file loads. */
+  .demo-media video, .demo-media img {
+    display:block; width:100%; height:auto; max-width:100%;
+    image-rendering: pixelated; image-rendering: crisp-edges;
+  }
+  .demo-note { color: var(--ink-dim); font-size: 14px; text-align:center; margin: 16px auto 0; max-width: 60ch; }
+
   /* ============ Responsive hardening — screen-agnostic; desktop unchanged ============
      At >=1024px the layout is identical to before (these rules only bite when a
      track/token would otherwise overflow a narrow viewport). */
@@ -444,6 +470,7 @@
       <span class="name">dexel</span>
     </a>
     <nav class="nav-links" aria-label="Primary">
+      <a class="navlink" href="#demo">Demo</a>
       <a class="navlink" href="#install">Install</a>
       <a class="navlink" href="#features">Features</a>
       <a class="navlink" href="#screens">Screenshots</a>
@@ -507,6 +534,34 @@
                alt="dexel running at the desk: a hooded pixel developer typing, with a coin and level HUD, a live sprint progress bar, and a terminal panel." />
         </div>
       </div>
+    </div>
+  </div>
+</section>
+
+<!-- ===================== DEMO ===================== -->
+<section id="demo">
+  <div class="wrap">
+    <div class="section-head">
+      <p class="eyebrow">Watch it work</p>
+      <h2 class="px">Type, earn, and fill in the desk</h2>
+      <p class="lede center">A quick loop from the real app: the scene comes alive, typing fills the sprint, coins open the store, and a bought item lands on the desk. Turn on sound for the narrated walkthrough.</p>
+    </div>
+
+    <div class="demo-media">
+      <div class="demo-frame">
+        <div class="demo-screen">
+          <video class="pixel"
+                 src="assets/demo.mp4"
+                 poster="assets/img/demo-poster.png"
+                 width="1280" height="800"
+                 controls muted loop playsinline preload="metadata"
+                 aria-label="dexel demo: typing advances the sprint, coins buy items that appear on the desk, with narration.">
+            <img class="pixel" src="assets/img/demo.gif" width="800" height="500"
+                 alt="dexel in action: typing advances the sprint, coins buy items that appear on the desk." />
+          </video>
+        </div>
+      </div>
+      <p class="demo-note">Muted by default — press play and unmute for the voiceover, or read on below.</p>
     </div>
   </div>
 </section>
