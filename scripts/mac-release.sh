@@ -328,7 +328,15 @@ if ! command -v gh >/dev/null 2>&1; then
     "brew install gh" \
     "gh auth login"
 fi
-if ! gh auth status >/dev/null 2>&1; then
+# In CI, the GitHub Actions GITHUB_TOKEN (exported as GH_TOKEN) is how assets
+# reach the release, and gh picks it up from the environment automatically.
+# That token is an app token with NO user identity, so `gh auth status` (and
+# `gh api user` below) return non-zero against it even though it uploads fine
+# with contents:write — the interactive gate would wrongly reject a perfectly
+# valid CI run. So when a token is present in the environment, trust it and
+# skip the interactive-auth check; the `gh repo view` gate just below still
+# confirms the token can actually reach the repo, so this is not blind.
+if [ -z "${GH_TOKEN:-}" ] && [ -z "${GITHUB_TOKEN:-}" ] && ! gh auth status >/dev/null 2>&1; then
   die_fix "gh is installed but not authenticated." \
     "gh auth login" \
     "" \
