@@ -65,7 +65,7 @@ requirement as before, now with three answers instead of one.
 | logs | `<StateDir>/logs/runtime.log` | same | same |
 | update cache | `<StateDir>/cache/` | same | same |
 | **BinDir** | `~/.local/bin` | `~/.local/bin` | `%LOCALAPPDATA%\dexel\bin` |
-| desktop app | `~/.local/bin/dexel-desktop` or an AppImage | `/Applications/Dexel.app` (whose main binary is `Contents/MacOS/dexel-desktop` — §3.1.3) | `%LOCALAPPDATA%\Programs\dexel` |
+| desktop app | `~/.local/bin/dexel-desktop` or an AppImage | `~/Applications/Dexel.app` (release install — no sudo) or `/Applications/Dexel.app` (source build when writable); main binary is `Contents/MacOS/dexel-desktop` — §3.1.3 | `%LOCALAPPDATA%\Programs\dexel` |
 | legacy Rust save (READ ONLY, never removed) | `~/.local/share/dev-companion/save.json` | `~/Library/Application Support/dev-companion/save.json` | n/a |
 
 `DEXEL_HOME` overrides `StateDir` on every platform.

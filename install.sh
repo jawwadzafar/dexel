@@ -214,6 +214,10 @@ ICON_INSTALLED=0
 DESKTOP_ENTRY=""
 SHIM_INSTALLED=0
 MAC_APP=""          # where Dexel.app was installed, if it was
+WANT_MAC_APP=0      # ...and (release rung) a verifiable Dexel.app .dmg was resolved
+MAC_DMG_NAME=""     # the .dmg asset name (signed, or ...-unsigned.dmg in tier 1)
+MAC_DMG_PATH=""     # where the .dmg was downloaded in TMPD
+MAC_DMG_DIGEST=""   # the digest the GitHub API reports for the .dmg asset
 LAUNCHED=none       # none | open | start
 
 # presentation state — a single gate (USE_COLOR) decides colour/animation, and
@@ -1335,6 +1339,120 @@ $APPIMAGE_NAME. Refusing to install."
     info "$_got"
 }
 
+# ---------------------------------------------------------------------------
+# macOS desktop app (Dexel.app) — the release rung
+#
+# The macOS analogue of the Linux AppImage: the release now ships a Tauri
+# .dmg, so a `curl | bash` install on macOS installs the native frameless
+# window and OPENS it, instead of falling back to the browser. Built by
+# scripts/mac-release.sh on the owner's Mac and attached to the release
+# (release.yml's `release-macos` job); this is the download-and-install end.
+#
+# Three steps, same shape as the AppImage's decide/download/verify, plus a
+# mount step the AppImage does not need (a .dmg is a disk image, not a single
+# file). Everything here is GUARDED on the release rung + macOS and is
+# best-effort: a machine that cannot get or mount the .dmg still gets a
+# working CLI install and the browser front door (ARCHITECTURE.md Decision 17).
+# ---------------------------------------------------------------------------
+
+# decide_mac_app — resolve which .dmg to install BEFORE downloading it.
+#
+# The release ships at most ONE .dmg (mac-release.sh deletes the other tier's
+# asset), named either dexel-<TAG>-darwin-arm64.dmg (signed) or
+# ...-unsigned.dmg (the tier-1 unsigned build the owner cuts today). Try the
+# signed name first, then the unsigned one, and take whichever the release
+# actually has an asset for. An older release with no .dmg at all falls
+# through to WANT_MAC_APP=0 — CLI-only + browser, with a note, never a fail.
+decide_mac_app() {
+    if [ "$OS" != darwin ]; then
+        return 0
+    fi
+    if [ "$NO_DESKTOP" = 1 ]; then
+        # decide_desktop already announced --no-desktop; stay quiet here.
+        return 0
+    fi
+    if [ "$NO_APP" = 1 ]; then
+        info "window    skipped (--no-app); \`dexel open\` will use your browser"
+        return 0
+    fi
+    for _cand in \
+        "dexel-${TAG}-${OS}-${ARCH}.dmg" \
+        "dexel-${TAG}-${OS}-${ARCH}-unsigned.dmg"
+    do
+        if [ -n "$(asset_field "$_cand" 2)" ]; then
+            MAC_DMG_NAME="$_cand"
+            break
+        fi
+    done
+    if [ -z "$MAC_DMG_NAME" ]; then
+        info "window    release $TAG ships no Dexel.app .dmg yet; \`dexel open\` will use your browser"
+        return 0
+    fi
+    MAC_DMG_DIGEST=$(asset_field "$MAC_DMG_NAME" 4)
+    WANT_MAC_APP=1
+    info "window    $MAC_DMG_NAME ($(human_mb "$(asset_field "$MAC_DMG_NAME" 5)"))"
+}
+
+download_mac_app() {
+    if [ "$WANT_MAC_APP" != 1 ]; then
+        return 0
+    fi
+    MAC_DMG_PATH="$TMPD/$MAC_DMG_NAME"
+    spin_start "Downloading Dexel.app ($MAC_DMG_NAME)..."
+    if http_get "$(asset_url "$MAC_DMG_NAME")" "$MAC_DMG_PATH" "$(asset_accept)"; then
+        spin_ok "downloaded $MAC_DMG_NAME — the native desktop window"
+    else
+        die "$E_NETWORK" "download of $MAC_DMG_NAME failed."
+    fi
+}
+
+# verify_mac_dmg — the SAME rigor as verify() applies to the CLI tar.gz.
+#
+# mac-release.sh folds the darwin .dmg line INTO the release's sha256sums.txt,
+# so the .dmg is checked against that file exactly as the archive is: a .dmg
+# with no line there is REFUSED, not installed (an unverified desktop app is
+# not a thing this installer will place on disk). The API digest is a second
+# witness, cross-checked the way verify() cross-checks the tar.gz — the .dmg
+# is therefore verified TWICE, unlike the Linux AppImage's single witness.
+verify_mac_dmg() {
+    if [ "$WANT_MAC_APP" != 1 ]; then
+        return 0
+    fi
+    _want=$(awk -v f="$MAC_DMG_NAME" \
+        '$2 == f || $2 == "*" f { print $1; exit }' "$TMPD/sha256sums.txt")
+    if [ -z "$_want" ]; then
+        # No checksum line — refuse the .dmg, but do NOT fail the whole
+        # install: the CLI archive is already verified and installs fine, and
+        # `dexel open` still has the browser. Downgrade to CLI-only + browser.
+        warn "$MAC_DMG_NAME has no line in the release's sha256sums.txt, so it
+       cannot be verified. Skipping the desktop window — \`dexel open\` will
+       use your browser, which works. (This is expected only for a release
+       cut before the .dmg was added to the checksum file.)"
+        WANT_MAC_APP=0
+        return 0
+    fi
+
+    _got=$(sha256_of "$MAC_DMG_PATH")
+    if [ "$_want" != "$_got" ]; then
+        say ""
+        say "  expected  $_want   (from the release's sha256sums.txt)"
+        say "  actual    $_got   ($MAC_DMG_NAME)"
+        say ""
+        say "  Nothing was mounted and nothing was installed."
+        die "$E_CHECKSUM" "sha256 mismatch on $MAC_DMG_NAME."
+    fi
+
+    if [ -n "$MAC_DMG_DIGEST" ] && [ "$MAC_DMG_DIGEST" != "$_want" ]; then
+        say ""
+        say "  sha256sums.txt says  $_want"
+        say "  the GitHub API says  $MAC_DMG_DIGEST"
+        die "$E_CHECKSUM" "the release's checksum file and GitHub disagree about
+$MAC_DMG_NAME. Refusing to install."
+    fi
+    ok "sha256 verified (desktop window)"
+    info "$_got"
+}
+
 # install_desktop_app — the AppImage, plus the shim that makes `dexel open`
 # find it. Runs only on already-verified bytes.
 install_desktop_app() {
@@ -1507,17 +1625,23 @@ install_desktop_entry() {
 }
 
 # ---------------------------------------------------------------------------
-# step 7d (macOS) — build and install Dexel.app, the frameless window
+# step 7d (macOS) — install Dexel.app, the frameless window
 #
-# WHY THIS IS BUILT RATHER THAN DOWNLOADED, unlike Linux's AppImage.
-# The release ships a Linux AppImage and no macOS bundle: darwin/arm64 needs
-# a real macOS toolchain (app/internal/activity/provider_darwin.go is cgo —
-# Cocoa/CoreGraphics — so a CGO_ENABLED=0 darwin build does not degrade, it
-# fails to link), which the Linux release runner does not have.
-# scripts/mac-release.sh exists for the signed+notarized artifact and is
-# deliberately NOT used here: it wants a tag, it may prompt for a signing
-# identity, and it uploads. For "I cloned this and ran the installer" the
-# right answer is a plain local unsigned build.
+# TWO PATHS, by rung:
+#   * release rung  -> install_mac_app_from_dmg: DOWNLOAD the prebuilt,
+#     already-verified .dmg (decide_mac_app / download_mac_app / verify_mac_dmg
+#     ran earlier) and copy Dexel.app out of it. This is the macOS default now.
+#   * source rung   -> BUILD it locally, below. A clone has no release assets
+#     to download, and building deterministically from the tree the user
+#     already has is the right answer for "I cloned this and ran the installer".
+#
+# WHY THE SOURCE RUNG BUILDS RATHER THAN DOWNLOADS.
+# darwin/arm64 needs a real macOS toolchain (app/internal/activity/
+# provider_darwin.go is cgo — Cocoa/CoreGraphics — so a CGO_ENABLED=0 darwin
+# build does not degrade, it fails to link). scripts/mac-release.sh exists for
+# the release .dmg (it wants a tag, may sign/notarize, and uploads) and is
+# deliberately NOT invoked here: a clone install just needs a plain local
+# unsigned build.
 #
 # WHY IT IS BEST-EFFORT AND NEVER FATAL.
 # The window is optional (ARCHITECTURE.md Decision 17: `dexel open` falls
@@ -1567,8 +1691,111 @@ mac_app_dest() {
     printf '%s' "$HOME/Applications"
 }
 
+# install_mac_app_from_dmg — mount the already-verified .dmg, copy Dexel.app
+# into ~/Applications, detach, and de-quarantine.
+#
+# No sudo and NOT /Applications: dexel's permissionless ethos (the same rule
+# that keeps the CLI in ~/.local/bin). `dexel open` and `dexel uninstall`
+# both know ~/Applications (cmd_lifecycle.go's desktopAppCandidates,
+# cmd_uninstall.go's macAppBundleCandidates), so a window installed here is
+# found and removed with no further change.
+#
+# Best-effort, exactly like the source-build path and the Linux AppImage:
+# every failure downgrades to CLI-only + browser rather than failing the
+# install. decide_mac_app / download_mac_app / verify_mac_dmg ran earlier and
+# set WANT_MAC_APP (honouring --no-app/--no-desktop and the older-release
+# no-.dmg case), so this consumes that decision.
+install_mac_app_from_dmg() {
+    if [ "$WANT_MAC_APP" != 1 ]; then
+        return 0
+    fi
+    if ! have hdiutil; then
+        warn "hdiutil is not available, so the .dmg cannot be mounted. The CLI is
+       installed and works; \`dexel open\` will use your browser."
+        return 0
+    fi
+
+    _appdir="$HOME/Applications"
+    if ! mkdir -p "$_appdir"; then
+        warn "could not create $_appdir; skipping the desktop window. The CLI is
+       installed and works; \`dexel open\` will use your browser."
+        return 0
+    fi
+
+    # A private mountpoint under TMPD: -nobrowse keeps it out of Finder,
+    # -quiet drops the plist chatter, and an explicit mountpoint makes the
+    # detach unambiguous even if another dexel .dmg is already mounted.
+    _mnt="$TMPD/dmg-mount"
+    if ! mkdir -p "$_mnt"; then
+        warn "could not create a mountpoint for $MAC_DMG_NAME; skipping the desktop
+       window. \`dexel open\` will use your browser."
+        return 0
+    fi
+    spin_start "Installing Dexel.app into $_appdir..."
+    if ! hdiutil attach "$MAC_DMG_PATH" -mountpoint "$_mnt" -nobrowse -quiet; then
+        spin_stop
+        warn "could not mount $MAC_DMG_NAME. The CLI is installed and works;
+       \`dexel open\` will use your browser."
+        return 0
+    fi
+
+    # The .dmg holds Dexel.app at its root (plus, usually, an /Applications
+    # symlink for the drag-install affordance this script does not use). Find
+    # the bundle rather than assume its exact name.
+    _src_app="$_mnt/Dexel.app"
+    if [ ! -d "$_src_app" ]; then
+        _src_app=$(find "$_mnt" -maxdepth 1 -type d -name '*.app' 2>/dev/null | head -n 1)
+    fi
+    if [ -z "$_src_app" ] || [ ! -d "$_src_app" ]; then
+        spin_stop
+        hdiutil detach "$_mnt" -quiet 2>/dev/null || true
+        warn "$MAC_DMG_NAME mounted but contained no .app bundle. The CLI is
+       installed and works; \`dexel open\` will use your browser."
+        return 0
+    fi
+
+    _dest="$_appdir/Dexel.app"
+    # Stop a running copy, then remove the destination before copying: a
+    # bundle is a DIRECTORY, so cp -R over an existing one merges two builds.
+    # Idempotent by construction — a re-run replaces whatever is there.
+    if have pkill; then
+        pkill -x dexel-desktop >/dev/null 2>&1 || true
+    fi
+    rm -rf "$_dest" 2>/dev/null || true
+    if ! cp -R "$_src_app" "$_appdir/"; then
+        spin_stop
+        hdiutil detach "$_mnt" -quiet 2>/dev/null || true
+        warn "could not copy Dexel.app into $_appdir. The CLI is installed and
+       works; \`dexel open\` will use your browser."
+        return 0
+    fi
+    hdiutil detach "$_mnt" -quiet 2>/dev/null || true
+    spin_ok "installed $_dest"
+
+    # De-quarantine the unsigned bundle, exactly as install_binary_from does
+    # for the CLI binary: a downloaded .dmg carries com.apple.quarantine, and
+    # without clearing it Gatekeeper refuses the unsigned app as "from an
+    # unidentified developer" on first launch. Safe no-op when there is
+    # nothing to clear.
+    if have xattr; then
+        xattr -dr com.apple.quarantine "$_dest" 2>/dev/null || true
+    fi
+
+    MAC_APP="$_dest"
+    info "unsigned: if macOS still refuses it, right-click Dexel.app > Open"
+    info "once, or System Settings > Privacy & Security > Open Anyway."
+}
+
 install_mac_app() {
     if [ "$OS" != darwin ]; then
+        return 0
+    fi
+    # Release rung: install the prebuilt, already-verified .dmg. This is the
+    # macOS default now — a `curl | bash` install gets the native window, not
+    # a browser. decide/download/verify ran earlier (including honouring
+    # --no-app / --no-desktop and the no-.dmg fallback), so just consume it.
+    if [ "$SOURCE" = release ]; then
+        install_mac_app_from_dmg
         return 0
     fi
     if [ "$NO_DESKTOP" = 1 ]; then
@@ -1578,9 +1805,8 @@ install_mac_app() {
         info "window    skipped (--no-app); \`dexel open\` will use your browser"
         return 0
     fi
-    # Only from a clone: the archive and release rungs have no Rust source
-    # to build, and downloading a bundle is not an option until a release
-    # ships one.
+    # A local archive has no Rust source to build and no release to download a
+    # bundle from. Only a clone can build the window from here.
     if [ "$SOURCE" != source ]; then
         info "window    not built (installing from a $SOURCE, not a clone);"
         info "          \`dexel open\` will use your browser"
@@ -1686,6 +1912,21 @@ launch() {
         return 0
     fi
     say ""
+    # macOS default: open the native window directly. `open -a` launches the
+    # frameless Dexel.app, which drives the installed dexel (starting the
+    # detached runtime itself if none is running — desktop/src-tauri/src/lib.rs)
+    # and shows the window; it outlives this script and any terminal. This is
+    # the owner's whole ask: the window is the product, not the browser. The
+    # browser stays the fallback (via `dexel open` below) ONLY when the app is
+    # not installed or will not launch.
+    if [ "$OS" = darwin ] && [ -n "$MAC_APP" ] && [ "$HAS_SESSION" = 1 ]; then
+        step "starting dexel and opening the Dexel.app window"
+        if open -a "$MAC_APP"; then
+            LAUNCHED=open
+            return 0
+        fi
+        warn "could not open Dexel.app; falling back to the browser."
+    fi
     if [ "$HAS_SESSION" = 1 ]; then
         step "starting dexel and opening the game"
         if "$BINDIR/dexel" open; then
@@ -1934,16 +2175,29 @@ report() {
         say "dexel; it enabled no services and registered no login items. Making it come"
         say "back on every login is a separate, explicit \`dexel autostart enable\`."
     fi
+    if [ "$OS" = darwin ] && [ -n "$MAC_APP" ]; then
+        say ""
+        say "The Dexel.app window is the macOS default now: a bare \`dexel\` and"
+        say "\`dexel open\` both open it, not the browser (the browser stays the"
+        say "fallback only if the app is ever missing)."
+        say ""
+        say "Unsigned build: the first launch may still prompt. If macOS refuses"
+        say "Dexel.app as \"from an unidentified developer\", right-click it and"
+        say "choose Open once, or clear the flag by hand:"
+        say "  xattr -dr com.apple.quarantine \"$MAC_APP\""
+    fi
     if [ "$OS" = darwin ] && [ -z "$MAC_APP" ]; then
         say ""
         say "On macOS this installed the CLI only — no Dexel.app window. \`dexel"
         say "open\` uses your browser, which is a supported front door"
         say "(ARCHITECTURE.md Decision 17) and runs the same game."
         say ""
-        say "To get the frameless window: from a clone of this repo, with rustup"
-        say "and \`cargo install tauri-cli --version '^2'\` present, re-run this"
-        say "script — it builds Dexel.app and installs it for you. A signed .dmg"
-        say "is a separate thing, produced by scripts/mac-release.sh for releases."
+        say "Releases normally ship an (unsigned) Dexel.app .dmg that this"
+        say "installer downloads, verifies and opens for you. You are seeing this"
+        say "because this release has none yet, you passed --no-app, or the .dmg"
+        say "could not be verified or mounted. To build the window from source"
+        say "instead: from a clone of this repo, with rustup and"
+        say "\`cargo install tauri-cli --version '^2'\` present, re-run this script."
     fi
     say ""
     say "Uninstall — one command, and it is the exact reversal of the above:"
@@ -2172,11 +2426,14 @@ do_release_install() {
     resolve_release                        # 3
     require_platform_asset                 # 3b: macOS/absent-build honesty
     EXPECT_VERSION="$TAG"
-    decide_desktop                         # 3c: what desktop integration to do
+    decide_desktop                         # 3c: Linux desktop integration
+    decide_mac_app                         # 3d: macOS Dexel.app (.dmg) decision
     download                               # 4, 5
     verify                                 # 6
-    download_appimage                      # 4, 5 (optional shell)
-    verify_appimage                        # 6   (optional shell)
+    download_appimage                      # 4, 5 (optional Linux shell)
+    verify_appimage                        # 6   (optional Linux shell)
+    download_mac_app                       # 4, 5 (macOS window, the .dmg)
+    verify_mac_dmg                         # 6   (macOS window, vs sha256sums.txt)
 
     # Everything above this line only reads and verifies. --dry-run stops
     # here, which is why it is a complete test of the network, the release
@@ -2186,6 +2443,9 @@ do_release_install() {
         say "--dry-run: resolved, downloaded and verified $ARCHIVE_NAME."
         if [ "$WANT_APP" = 1 ]; then
             say "            ...and $APPIMAGE_NAME."
+        fi
+        if [ "$WANT_MAC_APP" = 1 ]; then
+            say "            ...and $MAC_DMG_NAME (Dexel.app)."
         fi
         say "Nothing was installed."
         return 0

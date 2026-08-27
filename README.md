@@ -45,17 +45,27 @@ curl -fsSL https://raw.githubusercontent.com/jawwadzafar/dexel/main/install.sh |
 irm https://raw.githubusercontent.com/jawwadzafar/dexel/main/install.ps1 | iex
 ```
 
-**macOS:** the one-liner above works on macOS too — each release ships an
-Apple-silicon build. Because that binary is **unsigned**, the installer
-clears the macOS quarantine flag for you automatically; if macOS still
-refuses it as "from an unidentified developer", clear it by hand:
+**macOS:** the one-liner above works on macOS too, and on macOS it installs
+the **native window app**, not just the CLI. Each release ships an
+Apple-silicon CLI build plus a `Dexel.app` disk image; the installer
+downloads both, verifies them against the release checksums, installs
+`Dexel.app` into `~/Applications` (no `sudo`), and **opens the window** — the
+frameless desktop companion is the default front door, not the browser. (If a
+release ever ships without the app, or you pass `--no-app`, it falls back to
+the CLI plus the browser, which runs the same game.)
+
+Because the build is **unsigned**, the installer clears the macOS quarantine
+flag for both the CLI and `Dexel.app` automatically. If Gatekeeper still
+refuses `Dexel.app` as "from an unidentified developer" on first launch,
+right-click it in `~/Applications` and choose **Open** once (double-clicking
+won't offer the choice), or clear the flag by hand:
 
 ```bash
-xattr -dr com.apple.quarantine ~/.local/bin/dexel
+xattr -dr com.apple.quarantine ~/Applications/Dexel.app
 ```
 
 Or sidestep signing entirely by [installing from a
-clone](#install-from-a-clone) — a binary you build locally is never
+clone](#install-from-a-clone) — a window you build locally is never
 quarantined.
 
 Remove it any time with `dexel uninstall` (add `--purge` to delete your save
@@ -78,8 +88,9 @@ your home directory.
 - **Cozy details.** A gold coin HUD, sound effects, click reactions, and
   pixel-art generated from committed code so every sprite is a reviewable diff.
 - **One self-contained binary.** A Go backend embeds the frontend and every
-  sprite — nothing to unpack. An optional native desktop app (a frameless
-  window) is available via [Tauri](https://tauri.app/).
+  sprite — nothing to unpack. A native desktop app (a frameless window) built
+  with [Tauri](https://tauri.app/) is the default experience on macOS and is
+  available everywhere else; the browser is the fallback front door.
 
 ## Screenshots
 

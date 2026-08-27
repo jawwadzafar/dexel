@@ -154,32 +154,34 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-  # GATED: darwin/arm64. No runner carrying the `mac` label is registered
-  # for this repo yet, so this job runs on the same runner as everything
-  # else and immediately no-ops with a warning rather than attempting a
-  # build it cannot produce (darwin requires cgo + a real macOS clang
-  # toolchain — see scripts/build-release.sh's header). This mirrors the
-  # gating pattern this file used previously for the Rust macos-arm64
-  # build, and the pattern docs/plan/F3-design.md §8 T5 calls for future
-  # desktop CI jobs to follow too.
+  # darwin/arm64 — the one target the Linux `release` job above cannot build.
+  # app/internal/activity/provider_darwin.go is cgo (Cocoa/CoreGraphics), so a
+  # CGO_ENABLED=0 cross-build does not degrade, it fails to LINK; and
+  # `cargo tauri build` cannot produce a .dmg off a Mac at all. So this job runs
+  # natively on the registered macOS self-hosted runner (labels: self-hosted,
+  # macOS, ARM64), gated by the MAC_RUNNER repo variable.
   #
-  # To activate once a macOS runner is registered:
-  #   1. Change `runs-on` below to `[self-hosted, mac]`.
-  #   2. Delete the "Skip: no macOS runner registered" step.
-  #   3. Uncomment (or write) the real build+upload steps — natively run
-  #      `bash scripts/build-release.sh darwin/arm64` on that host, then
-  #      upload `dist/dexel-*-darwin-arm64.tar.gz` as an additional release
-  #      asset (e.g. via `gh release upload` against the tag the `release`
-  #      job above just published, since this job has no matrix/artifact
-  #      dependency on it today).
+  # Unlike its former self it no longer just attaches the CLI archive: it
+  # produces BOTH the darwin CLI tar.gz AND the UNSIGNED Tauri desktop bundle
+  # (.dmg), and folds both darwin checksum lines into the release's
+  # sha256sums.txt. All of that is scripts/mac-release.sh — the very script the
+  # owner runs by hand — so a CI cut and a manual cut are the same recipe
+  # (docs/plan/MAC-RELEASE.md §7 "When CI takes over").
+  #
+  # `needs: release` waits for the linux/windows job to create the GitHub
+  # Release and its sha256sums.txt (linux + windows lines). mac-release.sh then
+  # downloads that file, merges the two darwin lines (tar.gz AND dmg) in, and
+  # re-uploads it, so the published sha256sums.txt ends up covering every
+  # target — and install.sh can verify the .dmg against it exactly as it does
+  # the tar.gz.
+  #
+  # UNSIGNED: no APPLE_* secrets are set, so mac-release.sh builds tier 1 — the
+  # .dmg is named `dexel-<TAG>-darwin-arm64-unsigned.dmg` and Gatekeeper warns
+  # on another machine. install.sh de-quarantines the copy it installs. Signing
+  # is a paid-Apple-cert follow-up, not a Phase-2 blocker (F3-design.md §6).
   release-macos:
-    name: Build darwin/arm64
-    # Runs on the registered macOS self-hosted runner (labels: self-hosted,
-    # macOS, ARM64, mac). darwin/arm64 needs cgo + a real macOS clang
-    # toolchain (Cocoa/CoreGraphics in internal/activity/provider_darwin.go),
-    # so it can only build natively here. `needs: release` waits for the
-    # linux/windows job to create the GitHub Release, then this job attaches
-    # the darwin archive to that same tag.
+    name: Build + attach darwin/arm64 (CLI + desktop .dmg)
+    if: vars.MAC_RUNNER == 'true'
     needs: release
     runs-on: [self-hosted, macOS, ARM64]
     steps:
@@ -189,11 +191,37 @@ jobs:
 
       - uses: actions/checkout@v4
         with:
-          fetch-depth: 0 # full history/tags for `git describe`
+          # Full history AND tags: mac-release.sh's provenance guard runs
+          # `git tag --points-at HEAD` and must see the tag it is building.
+          fetch-depth: 0
 
       - uses: actions/setup-go@v5
         with:
           go-version: "1.27"
+
+      # Rust + tauri-cli, mirroring desktop.yml's `desktop-macos` job — the
+      # `cargo tauri build` inside mac-release.sh needs both.
+      - name: Install Rust
+        run: |
+          if ! command -v cargo >/dev/null; then
+            curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal
+            . "$HOME/.cargo/env"
+            echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+          fi
+          rustc --version && cargo --version
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: desktop-macos
+          workspaces: desktop/src-tauri
+
+      - name: Install tauri-cli
+        run: |
+          if ! command -v cargo-tauri >/dev/null; then
+            cargo install tauri-cli --version "^2.0.0" --locked
+          fi
+          cargo tauri --version
 
       - name: Determine release version
         id: version
@@ -206,42 +234,24 @@ jobs:
           echo "version=$version" >> "$GITHUB_OUTPUT"
           echo "darwin release version: $version"
 
-      # build-release.sh embeds the COMMITTED app/public bundle via go:embed
-      # (no npm build here), and builds darwin/arm64 with CGO_ENABLED=1 using
-      # the Mac's own clang.
-      - name: Build darwin/arm64 archive
-        env:
-          DEXEL_RELEASE_VERSION: ${{ steps.version.outputs.version }}
-        run: bash scripts/build-release.sh darwin/arm64
-
-      - name: List darwin artifact
-        run: ls -la dist/
-
-      - name: Attach darwin archive + fold its checksum into sha256sums.txt
+      # Build tar.gz + unsigned .dmg, merge checksums, and upload all darwin
+      # assets to the tag's release. mac-release.sh reuses the release
+      # sha256sums.txt the `release` job already published, merges the darwin
+      # lines, and re-uploads it (so no separate checksum step here). The
+      # version is passed explicitly; on a tag push HEAD == the tag, so the
+      # script's provenance guard is satisfied with no DEXEL_ALLOW_TAG_MISMATCH.
+      #
+      # Tag pushes only: mac-release.sh needs a vMAJOR.MINOR.PATCH tag that HEAD
+      # points at AND an existing release to attach to — neither of which a
+      # workflow_dispatch on a branch has. A dispatch run therefore attaches no
+      # darwin assets and says so, rather than failing.
+      - name: Build + attach darwin CLI archive and desktop .dmg
+        if: github.ref_type == 'tag'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          VERSION: ${{ steps.version.outputs.version }}
-        run: |
-          set -euo pipefail
-          # 1. Upload the darwin archive to the release the linux/windows
-          #    `release` job already created.
-          gh release upload "$VERSION" dist/dexel-*-darwin-arm64.tar.gz --clobber
+        run: bash scripts/mac-release.sh "${{ steps.version.outputs.version }}"
 
-          # 2. Fold the darwin checksum INTO the release's sha256sums.txt.
-          #    That file is generated by the `release` job for the four
-          #    linux/windows archives only — it never sees the darwin
-          #    archive, which is built here on a different runner. Without
-          #    this step the darwin download has no line to verify against
-          #    and install.sh refuses it ("sha256sums.txt has no line for
-          #    dexel-*-darwin-arm64.tar.gz"). Bare filename (no dist/ prefix)
-          #    to match the other lines. Idempotent on re-run: drop any stale
-          #    darwin line before appending.
-          darwin_line="$(cd dist && sha256sum dexel-*-darwin-arm64.tar.gz)"
-          tmp="$(mktemp -d)"
-          gh release download "$VERSION" -p sha256sums.txt -D "$tmp"
-          grep -v 'darwin-arm64\.tar\.gz$' "$tmp/sha256sums.txt" > "$tmp/sums.new" || true
-          printf '%s\n' "$darwin_line" >> "$tmp/sums.new"
-          mv "$tmp/sums.new" "$tmp/sha256sums.txt"
-          gh release upload "$VERSION" "$tmp/sha256sums.txt" --clobber
-          echo "final sha256sums.txt (all targets):"
-          cat "$tmp/sha256sums.txt"
+      - name: Note — non-tag run attaches no darwin assets
+        if: github.ref_type != 'tag'
+        run: |
+          echo "::warning::release-macos builds the darwin CLI archive + desktop .dmg only on a tag push (scripts/mac-release.sh needs a release tag and an existing release). This workflow_dispatch run attached no darwin assets."

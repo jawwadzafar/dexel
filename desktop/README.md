@@ -23,7 +23,7 @@ run's full results, including the one real Linux defect it found.
 | The app window opening on the game | **seen** | **seen** — captured from the window's own compositor pixmap: full pixel-art scene, sprint bar, status ticker, menu |
 | Real input into the window | — | **verified** — a keystroke delivered by XTEST dismissed onboarding and the change was visible to a separate client, so it round-tripped through the server |
 | Attach / start / survive-window-close | **verified end to end** | **verified end to end**, on both the debug build and the packaged AppImage |
-| Bundles | `--bundles app` only; unsigned, no `.dmg` | **`.deb` 8.6M, `.rpm` 8.6M, `.AppImage` 84M** — all three built; unsigned |
+| Bundles | **`.app` + `.dmg`, unsigned** — built and shipped in releases (`cargo tauri build --bundles app,dmg`, via `scripts/mac-release.sh` / `desktop.yml`'s `desktop-macos` job). `install.sh` downloads the `.dmg`, verifies it against `sha256sums.txt`, installs `Dexel.app` into `~/Applications`, de-quarantines it, and opens it — the window is the macOS default. | **`.deb` 8.6M, `.rpm` 8.6M, `.AppImage` 84M** — all three built; unsigned |
 | Native **Wayland** backend | n/a | **BROKEN — segfaults on startup.** Must run under Xwayland (`GDK_BACKEND=x11`). See below |
 | Windows bundles | **never built** | **never built** |
 
