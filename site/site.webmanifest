@@ -1,0 +1,24 @@
+{
+  "name": "dexel",
+  "short_name": "dexel",
+  "description": "A cozy pixel-art desktop companion whose workday runs on your real typing. Counts and durations only, never content. One binary, 100% local.",
+  "start_url": "/dexel/",
+  "scope": "/dexel/",
+  "display": "standalone",
+  "background_color": "#201b2a",
+  "theme_color": "#241f2e",
+  "icons": [
+    {
+      "src": "https://jawwadzafar.github.io/dexel/assets/img/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "https://jawwadzafar.github.io/dexel/assets/img/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ]
+}

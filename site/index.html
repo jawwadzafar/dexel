@@ -3,21 +3,67 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>dexel — a cozy pixel-art companion that runs on your real typing</title>
-<meta name="description" content="dexel is a cozy pixel-art desktop companion whose workday runs on your real typing. Sprints, a store, sessions and history — counts and durations only, never content. One binary, 100% local." />
-<meta name="theme-color" content="#241f2e" />
-<link rel="icon" type="image/png" href="assets/img/favicon.png" />
-<link rel="apple-touch-icon" href="assets/img/favicon.png" />
 
-<!-- Open Graph / Twitter -->
+<!-- ===================== Primary / SEO ===================== -->
+<title>dexel — a pixel-art desktop companion that runs on your typing</title>
+<meta name="description" content="A cozy pixel-art desktop companion whose workday runs on your real typing. Sprints, a store, streaks and history — counts and durations only, never content. 100% local." />
+<meta name="author" content="Jawwad Zafar" />
+<meta name="robots" content="index, follow" />
+<meta name="theme-color" content="#241f2e" />
+<link rel="canonical" href="https://jawwadzafar.github.io/dexel/" />
+
+<!-- ===================== Icons / Manifest ===================== -->
+<link rel="icon" href="https://jawwadzafar.github.io/dexel/favicon.ico" sizes="any" />
+<link rel="icon" type="image/png" sizes="32x32" href="https://jawwadzafar.github.io/dexel/assets/img/favicon-32.png" />
+<link rel="icon" type="image/png" sizes="16x16" href="https://jawwadzafar.github.io/dexel/assets/img/favicon-16.png" />
+<link rel="apple-touch-icon" sizes="180x180" href="https://jawwadzafar.github.io/dexel/apple-touch-icon.png" />
+<link rel="manifest" href="https://jawwadzafar.github.io/dexel/site.webmanifest" />
+
+<!-- ===================== Open Graph ===================== -->
 <meta property="og:type" content="website" />
-<meta property="og:title" content="dexel — a cozy pixel-art companion that runs on your real typing" />
-<meta property="og:description" content="A small pixel-art developer who lives at a desk on your screen. Your real typing advances their sprints. Counts and durations only, never content." />
-<meta property="og:image" content="assets/img/hero.png" />
+<meta property="og:site_name" content="dexel" />
+<meta property="og:title" content="dexel — a pixel-art desktop companion that runs on your typing" />
+<meta property="og:description" content="A small pixel-art developer who lives at a desk on your screen. Your real typing advances their sprints. Counts and durations only, never content. One binary, 100% local." />
+<meta property="og:url" content="https://jawwadzafar.github.io/dexel/" />
+<meta property="og:image" content="https://jawwadzafar.github.io/dexel/assets/img/og.png" />
+<meta property="og:image:secure_url" content="https://jawwadzafar.github.io/dexel/assets/img/og.png" />
+<meta property="og:image:type" content="image/png" />
+<meta property="og:image:width" content="1200" />
+<meta property="og:image:height" content="630" />
+<meta property="og:image:alt" content="The dexel wordmark and gold coin beside a pixel-art scene of a hooded developer coding at a desk, with the tagline: a cozy pixel-art companion that runs on your real typing." />
+<meta property="og:locale" content="en_US" />
+
+<!-- ===================== Twitter / X ===================== -->
 <meta name="twitter:card" content="summary_large_image" />
-<meta name="twitter:title" content="dexel — a cozy pixel-art companion" />
-<meta name="twitter:description" content="A cozy pixel-art desktop companion whose workday runs on your real typing." />
-<meta name="twitter:image" content="assets/img/hero.png" />
+<meta name="twitter:title" content="dexel — a pixel-art desktop companion that runs on your typing" />
+<meta name="twitter:description" content="A cozy pixel-art desktop companion whose workday runs on your real typing. Counts and durations only, never content. One binary, 100% local." />
+<meta name="twitter:image" content="https://jawwadzafar.github.io/dexel/assets/img/og.png" />
+<meta name="twitter:image:alt" content="The dexel wordmark and gold coin beside a pixel-art scene of a hooded developer coding at a desk." />
+
+<!-- ===================== Structured data ===================== -->
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "SoftwareApplication",
+  "name": "dexel",
+  "description": "A cozy pixel-art desktop companion whose workday runs on your real typing. Sprints, a store, streaks and history — counts and durations only, never content. One binary, 100% local.",
+  "applicationCategory": "DeveloperApplication",
+  "operatingSystem": "macOS, Linux, Windows",
+  "url": "https://jawwadzafar.github.io/dexel/",
+  "image": "https://jawwadzafar.github.io/dexel/assets/img/og.png",
+  "softwareVersion": "0.1.0",
+  "author": {
+    "@type": "Person",
+    "name": "Jawwad Zafar"
+  },
+  "license": "https://opensource.org/licenses/MIT",
+  "offers": {
+    "@type": "Offer",
+    "price": "0",
+    "priceCurrency": "USD"
+  }
+}
+</script>
 
 <style>
   /* ---------- Self-hosted pixel font ---------- */
@@ -162,8 +208,21 @@
 
   /* ---------- Hero ---------- */
   .hero { padding-top: clamp(36px, 6vw, 64px); }
-  .hero-grid { display:grid; grid-template-columns: 1.05fr 1fr; gap: clamp(28px, 5vw, 56px); align-items:center; }
+  /* Install is the primary above-the-fold action, so the copy column is the
+     wider one; the hero screenshot is secondary and may shrink beside it. */
+  .hero-grid { display:grid; grid-template-columns: 1.35fr 0.9fr; gap: clamp(24px, 4vw, 48px); align-items:center; }
   @media (max-width: 900px){ .hero-grid { grid-template-columns: 1fr; } }
+
+  /* ---------- Hero install block (the star of the fold) ---------- */
+  .hero-install { margin: 2px 0 12px; }
+  .hero-install .os-tabs { border-radius: 12px 12px 0 0; }
+  .hero-install .os-tab { padding: 11px 14px; font-size: 10px; }
+  .hero-install .os-panel { padding: 12px; }
+  .hero-install .code-block { font-size: 12px; padding: 12px 12px 12px 14px; }
+  .hero-install .copy-btn { font-size: 9px; padding: 7px 9px; }
+  .hero-note { color: var(--ink-dim); font-size: 13px; margin: 0 0 18px; }
+  .hero-note code { background: var(--code-bg); color: var(--screen); padding: 1px 6px; border-radius: 5px; font-size: .92em; }
+  .hero .tagline { margin-bottom: 16px; }
 
   .wordmark { display:flex; align-items:center; gap:16px; margin-bottom: 18px; }
   .wordmark img { width: 46px; height:46px; }
@@ -348,9 +407,32 @@
         <h1>dexel</h1>
       </div>
       <p class="tagline">A cozy pixel-art companion that runs on your <span class="hl">real typing</span>.</p>
-      <p class="subtag">A small pixel-art developer who lives at a desk on your screen. Your real typing — in <em>any</em> app — advances their sprints, and finished sprints pay coins you spend making the desk your own.</p>
+
+      <!-- PRIMARY above-the-fold action: the real, copy-able install one-liner.
+           The command text here MUST match the fuller tabbed block in #install. -->
+      <div class="install-card hero-install">
+        <div class="os-tabs" role="tablist" aria-label="Install command by platform (hero)">
+          <button class="os-tab" id="tab-unix-h" role="tab" aria-selected="true" aria-controls="panel-unix-h">Linux / macOS / WSL</button>
+          <button class="os-tab" id="tab-win-h" role="tab" aria-selected="false" aria-controls="panel-win-h" tabindex="-1">Windows</button>
+        </div>
+        <div class="os-panel" id="panel-unix-h" role="tabpanel" aria-labelledby="tab-unix-h">
+          <div class="code-block">
+            <span class="prompt" aria-hidden="true">$&nbsp;</span>
+            <code id="cmd-unix-h">curl -fsSL https://raw.githubusercontent.com/jawwadzafar/dexel/main/install.sh | bash</code>
+            <button class="copy-btn" type="button" data-copy="cmd-unix-h" aria-label="Copy install command">Copy</button>
+          </div>
+        </div>
+        <div class="os-panel" id="panel-win-h" role="tabpanel" aria-labelledby="tab-win-h" hidden>
+          <div class="code-block">
+            <span class="prompt" aria-hidden="true">&gt;&nbsp;</span>
+            <code id="cmd-win-h">irm https://raw.githubusercontent.com/jawwadzafar/dexel/main/install.ps1 | iex</code>
+            <button class="copy-btn" type="button" data-copy="cmd-win-h" aria-label="Copy PowerShell install command">Copy</button>
+          </div>
+        </div>
+      </div>
+      <p class="hero-note">No <code>sudo</code>, no elevation — installed and running. <a href="#install">Full install notes &darr;</a></p>
+
       <div class="cta-row">
-        <a class="btn btn-primary" href="#install">Install dexel</a>
         <a class="btn btn-ghost" href="https://github.com/jawwadzafar/dexel">View on GitHub</a>
       </div>
       <div class="trust">
@@ -623,25 +705,30 @@
   })();
 
   // ---- OS tabs (install) ----
+  // Scoped PER tablist so the hero block and the #install block are two
+  // independent widgets that never toggle each other's panels.
   (function () {
-    var tabs = Array.prototype.slice.call(document.querySelectorAll(".os-tab"));
-    function select(tab){
-      tabs.forEach(function(t){
-        var on = t === tab;
-        t.setAttribute("aria-selected", on ? "true" : "false");
-        t.tabIndex = on ? 0 : -1;
-        document.getElementById(t.getAttribute("aria-controls")).hidden = !on;
-      });
-      tab.focus();
-    }
-    tabs.forEach(function(tab, i){
-      tab.addEventListener("click", function(){ select(tab); });
-      tab.addEventListener("keydown", function(e){
-        if (e.key === "ArrowRight" || e.key === "ArrowLeft"){
-          e.preventDefault();
-          var next = (i + (e.key === "ArrowRight" ? 1 : tabs.length - 1)) % tabs.length;
-          select(tabs[next]);
-        }
+    document.querySelectorAll('.os-tabs[role="tablist"]').forEach(function(group){
+      var tabs = Array.prototype.slice.call(group.querySelectorAll(".os-tab"));
+      function select(tab){
+        tabs.forEach(function(t){
+          var on = t === tab;
+          t.setAttribute("aria-selected", on ? "true" : "false");
+          t.tabIndex = on ? 0 : -1;
+          var panel = document.getElementById(t.getAttribute("aria-controls"));
+          if (panel) panel.hidden = !on;
+        });
+        tab.focus();
+      }
+      tabs.forEach(function(tab, i){
+        tab.addEventListener("click", function(){ select(tab); });
+        tab.addEventListener("keydown", function(e){
+          if (e.key === "ArrowRight" || e.key === "ArrowLeft"){
+            e.preventDefault();
+            var next = (i + (e.key === "ArrowRight" ? 1 : tabs.length - 1)) % tabs.length;
+            select(tabs[next]);
+          }
+        });
       });
     });
   })();
