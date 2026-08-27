@@ -272,7 +272,6 @@ func TestE2EPauseStopsTheNumbersAndSurvivesARestart(t *testing.T) {
 		{"idleSeconds", stillPaused.Stats.Lifetime.IdleSeconds, paused.Stats.Lifetime.IdleSeconds},
 		{"sprintsCompleted", stillPaused.Stats.Lifetime.SprintsCompleted, paused.Stats.Lifetime.SprintsCompleted},
 		{"focusSessions", stillPaused.Stats.Lifetime.FocusSessions, paused.Stats.Lifetime.FocusSessions},
-		{"appSwitches", stillPaused.Stats.Lifetime.AppSwitches, paused.Stats.Lifetime.AppSwitches},
 		{"devCash", stillPaused.DevCash, paused.DevCash},
 		{"xp", stillPaused.XP, paused.XP},
 	}

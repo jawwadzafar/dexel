@@ -17,14 +17,11 @@ func sessionTestTicks(n int) []engine.TickResult {
 	for i := 0; i < n; i++ {
 		key := uint64(i % 7)
 		mouse := i%3 == 0
-		var focus, switches uint64
+		var focus uint64
 		if i%5 == 4 {
 			focus = 1
 		}
-		if i%17 == 0 {
-			switches = 1
-		}
-		out[i] = tr(key, mouse, focus, switches)
+		out[i] = tr(key, mouse, focus)
 	}
 	return out
 }
@@ -319,7 +316,7 @@ func TestSessionSpansMidnight(t *testing.T) {
 	if err := g.StartSession("overnight"); err != nil {
 		t.Fatalf("StartSession: %v", err)
 	}
-	g.Tick(tr(5, false, 0, 0)) // before midnight
+	g.Tick(tr(5, false, 0)) // before midnight
 
 	preDate, preToday, _ := g.StatsSnapshot()
 	if preDate != "2026-03-10" {
@@ -327,7 +324,7 @@ func TestSessionSpansMidnight(t *testing.T) {
 	}
 
 	clock.advance(2 * time.Minute) // now 00:01:00 on the 11th
-	g.Tick(tr(7, false, 0, 0))     // this tick crosses midnight
+	g.Tick(tr(7, false, 0))     // this tick crosses midnight
 
 	postDate, postToday, lifetime := g.StatsSnapshot()
 	if postDate != "2026-03-11" {
@@ -400,7 +397,7 @@ func TestIdleAutoEndBackdatesTheEnd(t *testing.T) {
 		t.Fatalf("StartSession: %v", err)
 	}
 	clock.advance(5 * time.Minute)
-	g.Tick(tr(10, false, 0, 0)) // the last real activity
+	g.Tick(tr(10, false, 0)) // the last real activity
 	lastActivity := clock.t
 
 	clock.advance(SessionIdleTimeoutSeconds*time.Second + time.Second) // well past the 2h timeout
@@ -492,7 +489,7 @@ func TestMaxDurationCap(t *testing.T) {
 		// from SESSION_START).
 		for i := 0; i < 16; i++ {
 			clock.advance(time.Hour)
-			g.Tick(tr(3, false, 0, 0))
+			g.Tick(tr(3, false, 0))
 		}
 
 		rec, ok := g.TakeEndedSession()
@@ -870,7 +867,7 @@ func TestSessionTimestampsCarryNoMonotonicReading(t *testing.T) {
 		t.Errorf("lastActivityAt (at start) carries a monotonic reading (%v) (R1)", s.lastActivityAt)
 	}
 
-	g.Tick(tr(4, true, 0, 0))
+	g.Tick(tr(4, true, 0))
 	if s.lastActivityAt != s.lastActivityAt.Round(0) {
 		t.Errorf("lastActivityAt carries a monotonic reading (%v) after a real-input tick; the idle auto-end compares it against a later now (R1)", s.lastActivityAt)
 	}
@@ -914,7 +911,7 @@ func TestSuspendedMachineAutoEndsSessionOnFirstTickBack(t *testing.T) {
 	// 20 minutes of ordinary, observed work: ticks and clock in lockstep,
 	// so the process has real uptime behind it.
 	for i := 0; i < 20*60; i++ {
-		g.Tick(tr(uint64(i%5), i%3 == 0, 0, 0))
+		g.Tick(tr(uint64(i%5), i%3 == 0, 0))
 		clock.advance(time.Second)
 	}
 	lastActivity := g.session.lastActivityAt
@@ -926,7 +923,7 @@ func TestSuspendedMachineAutoEndsSessionOnFirstTickBack(t *testing.T) {
 	clock.advance(3 * time.Hour)
 
 	// Lid opens: one honest tick.
-	g.Tick(tr(2, false, 0, 0))
+	g.Tick(tr(2, false, 0))
 
 	rec, ok := g.TakeEndedSession()
 	if !ok {
@@ -968,11 +965,11 @@ func TestElapsedSecondsFollowsWallClockAcrossASuspend(t *testing.T) {
 	// tick back. 30m is under the 2h idle timeout, so the session survives
 	// and the pill must show the full wall-clock span.
 	for i := 0; i < 600; i++ {
-		g.Tick(tr(3, false, 0, 0))
+		g.Tick(tr(3, false, 0))
 		clock.advance(time.Second)
 	}
 	clock.advance(30 * time.Minute)
-	g.Tick(tr(3, false, 0, 0))
+	g.Tick(tr(3, false, 0))
 
 	active := g.State().Sessions.Active
 	if active == nil {

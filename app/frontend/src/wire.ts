@@ -73,10 +73,12 @@ export interface SprintInfo {
 // only, never content, per ADR 0002/0009. Seconds are whole seconds; the
 // frontend formats them (fmtDuration), never the server.
 //
-// Phase A2 (docs/plan/A2-design.md §6) adds focusSessions/appSwitches.
-// Both optional so a stale (pre-A2) server degrades to 0 rather than
-// failing type-checking or crashing at runtime, matching the existing
-// `stats?` pattern on StateMessage below.
+// Phase A2 (docs/plan/A2-design.md §6) adds focusSessions. Optional so a
+// stale (pre-A2) server degrades to 0 rather than failing type-checking or
+// crashing at runtime, matching the existing `stats?` pattern on
+// StateMessage below. (An `appSwitches` field lived here until the
+// app-switch metric was removed — it relied on foreground-app identity,
+// unobservable on Linux/Wayland, ADR 0009.)
 export interface StatBlock {
   keystrokes: number;
   mouseActiveSeconds: number;
@@ -84,14 +86,12 @@ export interface StatBlock {
   idleSeconds: number;
   sprintsCompleted: number;
   focusSessions?: number;
-  appSwitches?: number;
   // PR-5 — Pause semantics (docs/production-runtime/MIGRATION_PLAN.md
   // §PR-5). Seconds spent paused (tracking stopped, no ticks, no accrual)
   // — a THIRD bucket alongside activeSeconds/idleSeconds, never folded
   // into idle: `activeSeconds + idleSeconds + pausedSeconds` covers the
   // bucket's whole runtime uptime. Optional so a stale (pre-PR-5) server
-  // degrades to 0, matching the existing `focusSessions?`/`appSwitches?`
-  // pattern above.
+  // degrades to 0, matching the existing `focusSessions?` pattern above.
   pausedSeconds?: number;
 }
 
@@ -102,7 +102,6 @@ export interface CoinBreakdown {
   keystrokes: number;
   mouse: number;
   focusSessions: number;
-  appSwitches: number;
 }
 
 // Analytics track Phase A3 (docs/plan/A3-design.md §5) — one dense,
@@ -124,7 +123,6 @@ export interface DayStat {
   idleSeconds: number;
   sprintsCompleted: number;
   focusSessions: number;
-  appSwitches: number;
   coinsEarned: number;
   isActive: boolean;
   longestFocusBlockSeconds?: number;
@@ -214,7 +212,6 @@ export interface ActiveSessionView {
   idleSeconds: number;
   sprintsCompleted: number;
   focusSessions: number;
-  appSwitches: number;
   coinsEarned: number;
   longestFocusBlockSeconds: number;
   // PR-5 — Pause semantics (docs/production-runtime/MIGRATION_PLAN.md
@@ -243,7 +240,6 @@ export interface SessionView { // one finished session
   idleSeconds: number;
   sprintsCompleted: number;
   focusSessions: number;
-  appSwitches: number;
   coinsEarned: number;
   longestFocusBlockSeconds: number;
   // PR-5 (docs/production-runtime/MIGRATION_PLAN.md §PR-5) — same
@@ -315,23 +311,17 @@ export interface StateMessage {
   // fourth value for this (ADR 0010) — pausedness is conveyed only via
   // this bool, never by inventing a mood string.
   paused?: boolean;
-  // ADAPTIVE-STATS — the provider's app-identity CAPABILITY bit
+  // The provider's app-identity CAPABILITY bit
   // (Go: StateMessage.AppIdentityAvailable, itself
   // activity.Snapshot.AppIdentityAvailable): whether THIS host's provider
   // can observe the foreground application at all. FALSE on Linux/Wayland
-  // (ADR 0009), true on macOS with a real active-app source. The Activity
-  // modal uses it to HIDE its app-derived rows (App switches today/
-  // lifetime, and the App-switches coin line) where identity is
-  // unobservable AND the value is 0 — so an app-blind platform never shows
-  // a misleading frozen "0 app switches" that reads as "you never switched
-  // apps", exactly the away-time hiding pattern.
+  // (ADR 0009), true on macOS/Windows with a real active-app source.
   //
-  // Optional for the same stale-server reason as `paused`/`onboarding`
-  // above, but note the degradation direction: an ABSENT field means
-  // "assume available, show the rows" (`!== false`), which is the
-  // pre-existing behaviour — a stale server is never made worse, and the
-  // rows are only ever hidden when the server EXPLICITLY says the platform
-  // is app-blind.
+  // It formerly gated hiding the app-switch stat rows on an app-blind
+  // platform; the app-switch metric has since been removed, so this field
+  // currently has NO consumer on this page. It is left declared (optional)
+  // because the server still emits it — a harmless, honest capability
+  // signal — rather than dropped from the type.
   appIdentityAvailable?: boolean;
 }
 

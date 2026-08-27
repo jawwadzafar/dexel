@@ -124,46 +124,46 @@ export const DEV_CATALOG: CatalogMessage = {
 //     consistent with the Activity modal's own numbers instead of
 //     contradicting them.
 const DEV_HISTORY: DayStat[] = [
-  { date: '2026-07-24', keystrokes: 1200, mouseActiveSeconds: 240, activeSeconds: 3200, idleSeconds: 1800, sprintsCompleted: 1, focusSessions: 2, appSwitches: 3, coinsEarned: 38, isActive: true, longestFocusBlockSeconds: 900 },
-  { date: '2026-07-25', keystrokes: 1600, mouseActiveSeconds: 300, activeSeconds: 4100, idleSeconds: 2200, sprintsCompleted: 1, focusSessions: 2, appSwitches: 2, coinsEarned: 45, isActive: true, longestFocusBlockSeconds: 1100 },
-  { date: '2026-07-26', keystrokes: 950, mouseActiveSeconds: 180, activeSeconds: 2600, idleSeconds: 1500, sprintsCompleted: 0, focusSessions: 1, appSwitches: 1, coinsEarned: 22, isActive: true, longestFocusBlockSeconds: 700 },
-  { date: '2026-07-27', keystrokes: 2100, mouseActiveSeconds: 420, activeSeconds: 5200, idleSeconds: 2600, sprintsCompleted: 2, focusSessions: 3, appSwitches: 4, coinsEarned: 58, isActive: true, longestFocusBlockSeconds: 1400 },
-  { date: '2026-07-28', keystrokes: 1500, mouseActiveSeconds: 260, activeSeconds: 3900, idleSeconds: 2000, sprintsCompleted: 1, focusSessions: 2, appSwitches: 2, coinsEarned: 40, isActive: true, longestFocusBlockSeconds: 1000 },
-  { date: '2026-07-29', keystrokes: 220, mouseActiveSeconds: 60, activeSeconds: 600, idleSeconds: 300, sprintsCompleted: 0, focusSessions: 0, appSwitches: 0, coinsEarned: 5, isActive: true, longestFocusBlockSeconds: 0 },
-  { date: '2026-07-30', keystrokes: 1800, mouseActiveSeconds: 360, activeSeconds: 4700, idleSeconds: 2400, sprintsCompleted: 2, focusSessions: 3, appSwitches: 3, coinsEarned: 52, isActive: true, longestFocusBlockSeconds: 1250 },
-  { date: '2026-07-31', keystrokes: 1250, mouseActiveSeconds: 220, activeSeconds: 3300, idleSeconds: 1700, sprintsCompleted: 1, focusSessions: 2, appSwitches: 1, coinsEarned: 35, isActive: true, longestFocusBlockSeconds: 850 },
-  { date: '2026-08-01', keystrokes: 780, mouseActiveSeconds: 140, activeSeconds: 2100, idleSeconds: 1100, sprintsCompleted: 0, focusSessions: 1, appSwitches: 0, coinsEarned: 18, isActive: true, longestFocusBlockSeconds: 600 },
-  { date: '2026-08-02', keystrokes: 2400, mouseActiveSeconds: 480, activeSeconds: 6000, idleSeconds: 3000, sprintsCompleted: 2, focusSessions: 4, appSwitches: 5, coinsEarned: 68, isActive: true, longestFocusBlockSeconds: 1600 },
-  { date: '2026-08-03', keystrokes: 1700, mouseActiveSeconds: 310, activeSeconds: 4400, idleSeconds: 2200, sprintsCompleted: 1, focusSessions: 2, appSwitches: 2, coinsEarned: 47, isActive: true, longestFocusBlockSeconds: 1150 },
-  { date: '2026-08-04', keystrokes: 1150, mouseActiveSeconds: 200, activeSeconds: 3100, idleSeconds: 1600, sprintsCompleted: 1, focusSessions: 2, appSwitches: 1, coinsEarned: 33, isActive: true, longestFocusBlockSeconds: 800 },
+  { date: '2026-07-24', keystrokes: 1200, mouseActiveSeconds: 240, activeSeconds: 3200, idleSeconds: 1800, sprintsCompleted: 1, focusSessions: 2, coinsEarned: 38, isActive: true, longestFocusBlockSeconds: 900 },
+  { date: '2026-07-25', keystrokes: 1600, mouseActiveSeconds: 300, activeSeconds: 4100, idleSeconds: 2200, sprintsCompleted: 1, focusSessions: 2, coinsEarned: 45, isActive: true, longestFocusBlockSeconds: 1100 },
+  { date: '2026-07-26', keystrokes: 950, mouseActiveSeconds: 180, activeSeconds: 2600, idleSeconds: 1500, sprintsCompleted: 0, focusSessions: 1, coinsEarned: 22, isActive: true, longestFocusBlockSeconds: 700 },
+  { date: '2026-07-27', keystrokes: 2100, mouseActiveSeconds: 420, activeSeconds: 5200, idleSeconds: 2600, sprintsCompleted: 2, focusSessions: 3, coinsEarned: 58, isActive: true, longestFocusBlockSeconds: 1400 },
+  { date: '2026-07-28', keystrokes: 1500, mouseActiveSeconds: 260, activeSeconds: 3900, idleSeconds: 2000, sprintsCompleted: 1, focusSessions: 2, coinsEarned: 40, isActive: true, longestFocusBlockSeconds: 1000 },
+  { date: '2026-07-29', keystrokes: 220, mouseActiveSeconds: 60, activeSeconds: 600, idleSeconds: 300, sprintsCompleted: 0, focusSessions: 0, coinsEarned: 5, isActive: true, longestFocusBlockSeconds: 0 },
+  { date: '2026-07-30', keystrokes: 1800, mouseActiveSeconds: 360, activeSeconds: 4700, idleSeconds: 2400, sprintsCompleted: 2, focusSessions: 3, coinsEarned: 52, isActive: true, longestFocusBlockSeconds: 1250 },
+  { date: '2026-07-31', keystrokes: 1250, mouseActiveSeconds: 220, activeSeconds: 3300, idleSeconds: 1700, sprintsCompleted: 1, focusSessions: 2, coinsEarned: 35, isActive: true, longestFocusBlockSeconds: 850 },
+  { date: '2026-08-01', keystrokes: 780, mouseActiveSeconds: 140, activeSeconds: 2100, idleSeconds: 1100, sprintsCompleted: 0, focusSessions: 1, coinsEarned: 18, isActive: true, longestFocusBlockSeconds: 600 },
+  { date: '2026-08-02', keystrokes: 2400, mouseActiveSeconds: 480, activeSeconds: 6000, idleSeconds: 3000, sprintsCompleted: 2, focusSessions: 4, coinsEarned: 68, isActive: true, longestFocusBlockSeconds: 1600 },
+  { date: '2026-08-03', keystrokes: 1700, mouseActiveSeconds: 310, activeSeconds: 4400, idleSeconds: 2200, sprintsCompleted: 1, focusSessions: 2, coinsEarned: 47, isActive: true, longestFocusBlockSeconds: 1150 },
+  { date: '2026-08-04', keystrokes: 1150, mouseActiveSeconds: 200, activeSeconds: 3100, idleSeconds: 1600, sprintsCompleted: 1, focusSessions: 2, coinsEarned: 33, isActive: true, longestFocusBlockSeconds: 800 },
   // Gap: two honest all-zero days (process never ran) — breaks the streak.
-  { date: '2026-08-05', keystrokes: 0, mouseActiveSeconds: 0, activeSeconds: 0, idleSeconds: 0, sprintsCompleted: 0, focusSessions: 0, appSwitches: 0, coinsEarned: 0, isActive: false, longestFocusBlockSeconds: 0 },
-  { date: '2026-08-06', keystrokes: 0, mouseActiveSeconds: 0, activeSeconds: 0, idleSeconds: 0, sprintsCompleted: 0, focusSessions: 0, appSwitches: 0, coinsEarned: 0, isActive: false, longestFocusBlockSeconds: 0 },
+  { date: '2026-08-05', keystrokes: 0, mouseActiveSeconds: 0, activeSeconds: 0, idleSeconds: 0, sprintsCompleted: 0, focusSessions: 0, coinsEarned: 0, isActive: false, longestFocusBlockSeconds: 0 },
+  { date: '2026-08-06', keystrokes: 0, mouseActiveSeconds: 0, activeSeconds: 0, idleSeconds: 0, sprintsCompleted: 0, focusSessions: 0, coinsEarned: 0, isActive: false, longestFocusBlockSeconds: 0 },
   // Scattered isolated active days, each preceded/followed by a zero gap
   // day — none of these chain into a run longer than 1.
-  { date: '2026-08-07', keystrokes: 650, mouseActiveSeconds: 120, activeSeconds: 1800, idleSeconds: 900, sprintsCompleted: 0, focusSessions: 1, appSwitches: 1, coinsEarned: 18, isActive: true, longestFocusBlockSeconds: 500 },
-  { date: '2026-08-08', keystrokes: 0, mouseActiveSeconds: 0, activeSeconds: 0, idleSeconds: 0, sprintsCompleted: 0, focusSessions: 0, appSwitches: 0, coinsEarned: 0, isActive: false, longestFocusBlockSeconds: 0 },
-  { date: '2026-08-09', keystrokes: 900, mouseActiveSeconds: 160, activeSeconds: 2400, idleSeconds: 1300, sprintsCompleted: 1, focusSessions: 1, appSwitches: 0, coinsEarned: 24, isActive: true, longestFocusBlockSeconds: 650 },
-  { date: '2026-08-10', keystrokes: 0, mouseActiveSeconds: 0, activeSeconds: 0, idleSeconds: 0, sprintsCompleted: 0, focusSessions: 0, appSwitches: 0, coinsEarned: 0, isActive: false, longestFocusBlockSeconds: 0 },
-  { date: '2026-08-11', keystrokes: 520, mouseActiveSeconds: 90, activeSeconds: 1500, idleSeconds: 800, sprintsCompleted: 0, focusSessions: 1, appSwitches: 1, coinsEarned: 14, isActive: true, longestFocusBlockSeconds: 400 },
-  { date: '2026-08-12', keystrokes: 0, mouseActiveSeconds: 0, activeSeconds: 0, idleSeconds: 0, sprintsCompleted: 0, focusSessions: 0, appSwitches: 0, coinsEarned: 0, isActive: false, longestFocusBlockSeconds: 0 },
-  { date: '2026-08-13', keystrokes: 1400, mouseActiveSeconds: 260, activeSeconds: 3600, idleSeconds: 1900, sprintsCompleted: 1, focusSessions: 2, appSwitches: 2, coinsEarned: 38, isActive: true, longestFocusBlockSeconds: 950 },
-  { date: '2026-08-14', keystrokes: 0, mouseActiveSeconds: 0, activeSeconds: 0, idleSeconds: 0, sprintsCompleted: 0, focusSessions: 0, appSwitches: 0, coinsEarned: 0, isActive: false, longestFocusBlockSeconds: 0 },
+  { date: '2026-08-07', keystrokes: 650, mouseActiveSeconds: 120, activeSeconds: 1800, idleSeconds: 900, sprintsCompleted: 0, focusSessions: 1, coinsEarned: 18, isActive: true, longestFocusBlockSeconds: 500 },
+  { date: '2026-08-08', keystrokes: 0, mouseActiveSeconds: 0, activeSeconds: 0, idleSeconds: 0, sprintsCompleted: 0, focusSessions: 0, coinsEarned: 0, isActive: false, longestFocusBlockSeconds: 0 },
+  { date: '2026-08-09', keystrokes: 900, mouseActiveSeconds: 160, activeSeconds: 2400, idleSeconds: 1300, sprintsCompleted: 1, focusSessions: 1, coinsEarned: 24, isActive: true, longestFocusBlockSeconds: 650 },
+  { date: '2026-08-10', keystrokes: 0, mouseActiveSeconds: 0, activeSeconds: 0, idleSeconds: 0, sprintsCompleted: 0, focusSessions: 0, coinsEarned: 0, isActive: false, longestFocusBlockSeconds: 0 },
+  { date: '2026-08-11', keystrokes: 520, mouseActiveSeconds: 90, activeSeconds: 1500, idleSeconds: 800, sprintsCompleted: 0, focusSessions: 1, coinsEarned: 14, isActive: true, longestFocusBlockSeconds: 400 },
+  { date: '2026-08-12', keystrokes: 0, mouseActiveSeconds: 0, activeSeconds: 0, idleSeconds: 0, sprintsCompleted: 0, focusSessions: 0, coinsEarned: 0, isActive: false, longestFocusBlockSeconds: 0 },
+  { date: '2026-08-13', keystrokes: 1400, mouseActiveSeconds: 260, activeSeconds: 3600, idleSeconds: 1900, sprintsCompleted: 1, focusSessions: 2, coinsEarned: 38, isActive: true, longestFocusBlockSeconds: 950 },
+  { date: '2026-08-14', keystrokes: 0, mouseActiveSeconds: 0, activeSeconds: 0, idleSeconds: 0, sprintsCompleted: 0, focusSessions: 0, coinsEarned: 0, isActive: false, longestFocusBlockSeconds: 0 },
   // Current 8-day active run, ending today — the CURRENT streak. 08-18
   // is the clear busiest day (activeSeconds far above every other entry);
   // 08-20 is the clear longest-focus-block day — two different dates, so
   // the modal's two insight lines don't coincidentally read identically.
-  { date: '2026-08-15', keystrokes: 1650, mouseActiveSeconds: 300, activeSeconds: 4200, idleSeconds: 2100, sprintsCompleted: 1, focusSessions: 3, appSwitches: 2, coinsEarned: 46, isActive: true, longestFocusBlockSeconds: 1200 },
-  { date: '2026-08-16', keystrokes: 1450, mouseActiveSeconds: 280, activeSeconds: 3800, idleSeconds: 1950, sprintsCompleted: 1, focusSessions: 2, appSwitches: 1, coinsEarned: 41, isActive: true, longestFocusBlockSeconds: 1050 },
-  { date: '2026-08-17', keystrokes: 2000, mouseActiveSeconds: 380, activeSeconds: 5100, idleSeconds: 2600, sprintsCompleted: 2, focusSessions: 3, appSwitches: 3, coinsEarned: 56, isActive: true, longestFocusBlockSeconds: 1500 },
-  { date: '2026-08-18', keystrokes: 5200, mouseActiveSeconds: 1100, activeSeconds: 14400, idleSeconds: 3200, sprintsCompleted: 4, focusSessions: 6, appSwitches: 5, coinsEarned: 142, isActive: true, longestFocusBlockSeconds: 3600 },
-  { date: '2026-08-19', keystrokes: 1750, mouseActiveSeconds: 330, activeSeconds: 4600, idleSeconds: 2300, sprintsCompleted: 2, focusSessions: 3, appSwitches: 2, coinsEarned: 50, isActive: true, longestFocusBlockSeconds: 1300 },
-  { date: '2026-08-20', keystrokes: 2050, mouseActiveSeconds: 400, activeSeconds: 5400, idleSeconds: 2700, sprintsCompleted: 2, focusSessions: 4, appSwitches: 3, coinsEarned: 59, isActive: true, longestFocusBlockSeconds: 4800 },
-  { date: '2026-08-21', keystrokes: 1500, mouseActiveSeconds: 280, activeSeconds: 3900, idleSeconds: 2000, sprintsCompleted: 1, focusSessions: 2, appSwitches: 1, coinsEarned: 42, isActive: true, longestFocusBlockSeconds: 1100 },
+  { date: '2026-08-15', keystrokes: 1650, mouseActiveSeconds: 300, activeSeconds: 4200, idleSeconds: 2100, sprintsCompleted: 1, focusSessions: 3, coinsEarned: 46, isActive: true, longestFocusBlockSeconds: 1200 },
+  { date: '2026-08-16', keystrokes: 1450, mouseActiveSeconds: 280, activeSeconds: 3800, idleSeconds: 1950, sprintsCompleted: 1, focusSessions: 2, coinsEarned: 41, isActive: true, longestFocusBlockSeconds: 1050 },
+  { date: '2026-08-17', keystrokes: 2000, mouseActiveSeconds: 380, activeSeconds: 5100, idleSeconds: 2600, sprintsCompleted: 2, focusSessions: 3, coinsEarned: 56, isActive: true, longestFocusBlockSeconds: 1500 },
+  { date: '2026-08-18', keystrokes: 5200, mouseActiveSeconds: 1100, activeSeconds: 14400, idleSeconds: 3200, sprintsCompleted: 4, focusSessions: 6, coinsEarned: 142, isActive: true, longestFocusBlockSeconds: 3600 },
+  { date: '2026-08-19', keystrokes: 1750, mouseActiveSeconds: 330, activeSeconds: 4600, idleSeconds: 2300, sprintsCompleted: 2, focusSessions: 3, coinsEarned: 50, isActive: true, longestFocusBlockSeconds: 1300 },
+  { date: '2026-08-20', keystrokes: 2050, mouseActiveSeconds: 400, activeSeconds: 5400, idleSeconds: 2700, sprintsCompleted: 2, focusSessions: 4, coinsEarned: 59, isActive: true, longestFocusBlockSeconds: 4800 },
+  { date: '2026-08-21', keystrokes: 1500, mouseActiveSeconds: 280, activeSeconds: 3900, idleSeconds: 2000, sprintsCompleted: 1, focusSessions: 2, coinsEarned: 42, isActive: true, longestFocusBlockSeconds: 1100 },
   // Today — live, deliberately matching `stats.today` below (§5: the
   // dense array's final entry IS today's running totals, not a separate
   // number) rather than an independently-invented value.
-  { date: '2026-08-22', keystrokes: 842, mouseActiveSeconds: 96, activeSeconds: 610, idleSeconds: 340, sprintsCompleted: 1, focusSessions: 2, appSwitches: 1, coinsEarned: 18, isActive: true, longestFocusBlockSeconds: 420 }
+  { date: '2026-08-22', keystrokes: 842, mouseActiveSeconds: 96, activeSeconds: 610, idleSeconds: 340, sprintsCompleted: 1, focusSessions: 2, coinsEarned: 18, isActive: true, longestFocusBlockSeconds: 420 }
 ];
 
 // current=8 (the run ending today, 08-15..08-22) < longest=12 (the
@@ -181,22 +181,22 @@ const DEV_STREAK: StreakView = { current: 8, longest: 12 };
 // DEV_STATE.sessions.active below (id 27 — "the ordinal it WILL have",
 // §2.2) lines up honestly with it.
 const DEV_SESSIONS_RECENT_OLDEST_FIRST: SessionView[] = [
-  { id: 17, name: 'onboarding polish', startedAt: '2026-08-09T13:00:00Z', endedAt: '2026-08-09T14:30:00Z', durationSeconds: 5400, keystrokes: 2200, mouseActiveSeconds: 300, activeSeconds: 4800, idleSeconds: 600, sprintsCompleted: 2, focusSessions: 3, appSwitches: 2, coinsEarned: 45, longestFocusBlockSeconds: 1800, pausedSeconds: 0, endReason: 'user' },
+  { id: 17, name: 'onboarding polish', startedAt: '2026-08-09T13:00:00Z', endedAt: '2026-08-09T14:30:00Z', durationSeconds: 5400, keystrokes: 2200, mouseActiveSeconds: 300, activeSeconds: 4800, idleSeconds: 600, sprintsCompleted: 2, focusSessions: 3, coinsEarned: 45, longestFocusBlockSeconds: 1800, pausedSeconds: 0, endReason: 'user' },
   // The one unnamed session (§6.5) — legal, per §2.2's "unnamed is a
   // first-class state" — and the one whose coinsEarned is 0.
-  { id: 18, name: '', startedAt: '2026-08-10T09:00:00Z', endedAt: '2026-08-10T09:30:00Z', durationSeconds: 1800, keystrokes: 600, mouseActiveSeconds: 80, activeSeconds: 1500, idleSeconds: 300, sprintsCompleted: 0, focusSessions: 1, appSwitches: 0, coinsEarned: 0, longestFocusBlockSeconds: 900, pausedSeconds: 0, endReason: 'user' },
-  { id: 19, name: 'bug bash', startedAt: '2026-08-11T10:00:00Z', endedAt: '2026-08-11T12:33:20Z', durationSeconds: 9200, keystrokes: 3400, mouseActiveSeconds: 500, activeSeconds: 8000, idleSeconds: 900, sprintsCompleted: 3, focusSessions: 4, appSwitches: 5, coinsEarned: 70, longestFocusBlockSeconds: 2400, pausedSeconds: 0, endReason: 'idle' },
-  { id: 20, name: 'docs pass', startedAt: '2026-08-13T15:00:00Z', endedAt: '2026-08-13T16:00:00Z', durationSeconds: 3600, keystrokes: 1500, mouseActiveSeconds: 200, activeSeconds: 3000, idleSeconds: 400, sprintsCompleted: 1, focusSessions: 2, appSwitches: 1, coinsEarned: 30, longestFocusBlockSeconds: 1200, pausedSeconds: 0, endReason: 'user' },
-  { id: 21, name: 'perf tuning', startedAt: '2026-08-14T11:00:00Z', endedAt: '2026-08-14T13:00:00Z', durationSeconds: 7200, keystrokes: 2800, mouseActiveSeconds: 420, activeSeconds: 6500, idleSeconds: 500, sprintsCompleted: 2, focusSessions: 3, appSwitches: 2, coinsEarned: 58, longestFocusBlockSeconds: 2100, pausedSeconds: 0, endReason: 'user' },
+  { id: 18, name: '', startedAt: '2026-08-10T09:00:00Z', endedAt: '2026-08-10T09:30:00Z', durationSeconds: 1800, keystrokes: 600, mouseActiveSeconds: 80, activeSeconds: 1500, idleSeconds: 300, sprintsCompleted: 0, focusSessions: 1, coinsEarned: 0, longestFocusBlockSeconds: 900, pausedSeconds: 0, endReason: 'user' },
+  { id: 19, name: 'bug bash', startedAt: '2026-08-11T10:00:00Z', endedAt: '2026-08-11T12:33:20Z', durationSeconds: 9200, keystrokes: 3400, mouseActiveSeconds: 500, activeSeconds: 8000, idleSeconds: 900, sprintsCompleted: 3, focusSessions: 4, coinsEarned: 70, longestFocusBlockSeconds: 2400, pausedSeconds: 0, endReason: 'idle' },
+  { id: 20, name: 'docs pass', startedAt: '2026-08-13T15:00:00Z', endedAt: '2026-08-13T16:00:00Z', durationSeconds: 3600, keystrokes: 1500, mouseActiveSeconds: 200, activeSeconds: 3000, idleSeconds: 400, sprintsCompleted: 1, focusSessions: 2, coinsEarned: 30, longestFocusBlockSeconds: 1200, pausedSeconds: 0, endReason: 'user' },
+  { id: 21, name: 'perf tuning', startedAt: '2026-08-14T11:00:00Z', endedAt: '2026-08-14T13:00:00Z', durationSeconds: 7200, keystrokes: 2800, mouseActiveSeconds: 420, activeSeconds: 6500, idleSeconds: 500, sprintsCompleted: 2, focusSessions: 3, coinsEarned: 58, longestFocusBlockSeconds: 2100, pausedSeconds: 0, endReason: 'user' },
   // The 16h hard cap (game.SessionMaxDurationSeconds, §2.6) — an honest
   // overnight-watch session with little activity, which is why it is
   // also this fixture's `longestSessionSeconds` below (duration is real
   // wall-clock time, never a proxy for effort).
-  { id: 22, name: 'overnight build watch', startedAt: '2026-08-16T02:00:00Z', endedAt: '2026-08-16T18:00:00Z', durationSeconds: 57600, keystrokes: 400, mouseActiveSeconds: 60, activeSeconds: 900, idleSeconds: 200, sprintsCompleted: 0, focusSessions: 0, appSwitches: 0, coinsEarned: 6, longestFocusBlockSeconds: 0, pausedSeconds: 0, endReason: 'maxDuration' },
-  { id: 23, name: 'release cut', startedAt: '2026-08-17T09:00:00Z', endedAt: '2026-08-17T10:15:00Z', durationSeconds: 4500, keystrokes: 1800, mouseActiveSeconds: 260, activeSeconds: 3900, idleSeconds: 300, sprintsCompleted: 1, focusSessions: 2, appSwitches: 1, coinsEarned: 34, longestFocusBlockSeconds: 1500, pausedSeconds: 0, endReason: 'user' },
-  { id: 24, name: 'auth refactor pt2', startedAt: '2026-08-19T10:00:00Z', endedAt: '2026-08-19T11:42:00Z', durationSeconds: 6120, keystrokes: 3100, mouseActiveSeconds: 340, activeSeconds: 5400, idleSeconds: 500, sprintsCompleted: 2, focusSessions: 3, appSwitches: 3, coinsEarned: 52, longestFocusBlockSeconds: 1320, pausedSeconds: 0, endReason: 'user' },
-  { id: 25, name: 'flaky test hunt', startedAt: '2026-08-20T14:00:00Z', endedAt: '2026-08-20T14:45:00Z', durationSeconds: 2700, keystrokes: 1100, mouseActiveSeconds: 160, activeSeconds: 2300, idleSeconds: 300, sprintsCompleted: 1, focusSessions: 1, appSwitches: 1, coinsEarned: 20, longestFocusBlockSeconds: 1100, pausedSeconds: 0, endReason: 'user' },
-  { id: 26, name: 'changelog + release notes', startedAt: '2026-08-21T16:00:00Z', endedAt: '2026-08-21T16:25:00Z', durationSeconds: 1500, keystrokes: 500, mouseActiveSeconds: 70, activeSeconds: 1200, idleSeconds: 200, sprintsCompleted: 0, focusSessions: 1, appSwitches: 0, coinsEarned: 9, longestFocusBlockSeconds: 600, pausedSeconds: 0, endReason: 'idle' }
+  { id: 22, name: 'overnight build watch', startedAt: '2026-08-16T02:00:00Z', endedAt: '2026-08-16T18:00:00Z', durationSeconds: 57600, keystrokes: 400, mouseActiveSeconds: 60, activeSeconds: 900, idleSeconds: 200, sprintsCompleted: 0, focusSessions: 0, coinsEarned: 6, longestFocusBlockSeconds: 0, pausedSeconds: 0, endReason: 'maxDuration' },
+  { id: 23, name: 'release cut', startedAt: '2026-08-17T09:00:00Z', endedAt: '2026-08-17T10:15:00Z', durationSeconds: 4500, keystrokes: 1800, mouseActiveSeconds: 260, activeSeconds: 3900, idleSeconds: 300, sprintsCompleted: 1, focusSessions: 2, coinsEarned: 34, longestFocusBlockSeconds: 1500, pausedSeconds: 0, endReason: 'user' },
+  { id: 24, name: 'auth refactor pt2', startedAt: '2026-08-19T10:00:00Z', endedAt: '2026-08-19T11:42:00Z', durationSeconds: 6120, keystrokes: 3100, mouseActiveSeconds: 340, activeSeconds: 5400, idleSeconds: 500, sprintsCompleted: 2, focusSessions: 3, coinsEarned: 52, longestFocusBlockSeconds: 1320, pausedSeconds: 0, endReason: 'user' },
+  { id: 25, name: 'flaky test hunt', startedAt: '2026-08-20T14:00:00Z', endedAt: '2026-08-20T14:45:00Z', durationSeconds: 2700, keystrokes: 1100, mouseActiveSeconds: 160, activeSeconds: 2300, idleSeconds: 300, sprintsCompleted: 1, focusSessions: 1, coinsEarned: 20, longestFocusBlockSeconds: 1100, pausedSeconds: 0, endReason: 'user' },
+  { id: 26, name: 'changelog + release notes', startedAt: '2026-08-21T16:00:00Z', endedAt: '2026-08-21T16:25:00Z', durationSeconds: 1500, keystrokes: 500, mouseActiveSeconds: 70, activeSeconds: 1200, idleSeconds: 200, sprintsCompleted: 0, focusSessions: 1, coinsEarned: 9, longestFocusBlockSeconds: 600, pausedSeconds: 0, endReason: 'idle' }
 ];
 // The wire sends `recent` newest-first (§6.1) — reverse the readable
 // oldest-first list above once, here, rather than writing it backwards.
@@ -217,7 +217,6 @@ const DEV_ACTIVE_SESSION = {
   idleSeconds: 200,
   sprintsCompleted: 0,
   focusSessions: 2,
-  appSwitches: 1,
   coinsEarned: 14,
   longestFocusBlockSeconds: 380,
   // PR-5 (docs/production-runtime/MIGRATION_PLAN.md §PR-5) — this
@@ -255,7 +254,6 @@ export const DEV_SESSION_COMPLETE_SAMPLE: SessionView = {
   idleSeconds: 340,
   sprintsCompleted: 2,
   focusSessions: 3,
-  appSwitches: 2,
   coinsEarned: 18,
   longestFocusBlockSeconds: 840,
   pausedSeconds: 0,

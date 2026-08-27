@@ -188,7 +188,7 @@ const (
 	// we then walk and release. Doing that 20x/second to answer a question
 	// the engine only asks once per tick (main.go's 1s cadence) would burn
 	// CPU in a process whose entire pitch is being invisible. 500ms still
-	// resolves app switches finer than the engine can consume them.
+	// resolves foreground-app changes finer than the engine samples them.
 	darwinAppIdentityInterval = 500 * time.Millisecond
 )
 

@@ -44,18 +44,18 @@ const (
 //     when a focus session completes. Mouse never sets keyDelta, so mouse
 //     can never trigger this — the mouse<typing invariant holds by
 //     construction (ADR 0005), not by a runtime check.
-//   - AppSwitchWork: Fork B's coin weight per counted app-switch. Default
-//     0.0 (Fork B1 — display-only, earns nothing, economy stays identical
-//     cross-platform since Linux never reports ActiveApp). Set to 0.1 to
-//     flip on Fork B2 (macOS-first capped earning) — a one-constant flip.
-//   - AppSwitchDailyCap: Fork B2's daily cap on counted switches.
+//
+// The app-switch signal (Fork B's AppSwitchWork/AppSwitchDailyCap and the
+// ActiveApp-diff counter) was removed: it relied on observing the
+// foreground app's identity, which is unobservable on Linux/Wayland (ADR
+// 0009) so the counter was permanently frozen there, and the metric was
+// dropped from the product. ActiveApp/AppIdentityAvailable still ride
+// through as app IDENTITY (a different concern), but nothing diffs them
+// into a switch count any more.
 const (
 	FocusSessionSeconds      = 120.0
 	FocusGapToleranceSeconds = 3.0
 	FocusSessionBonusWork    = 2.0
-
-	AppSwitchWork     = 0.0
-	AppSwitchDailyCap = 40
 )
 
 // AntiMashSampleInterval documents the coalescing window the activity
@@ -123,12 +123,11 @@ type TickResult struct {
 	// (activity/provider.go): whether this provider can OBSERVE the
 	// foreground app's identity at all in the current process context — a
 	// capability bit about the provider, not an observation about the user.
-	// Carried through the engine unchanged so the game layer can tell "0
-	// app switches because none happened" (identity available, real 0)
-	// apart from "0 app switches because we are app-blind here" (Linux /
-	// Wayland, ADR 0009), and hide the app-derived stat rows in the latter
-	// rather than showing a misleading frozen 0. Content-free by
-	// construction — a single bool, no new observation.
+	// Carried through the engine unchanged. It formerly let the game/client
+	// hide the app-switch stat rows on an app-blind platform; that metric
+	// has since been removed, so the bit no longer has a consumer, but it
+	// is still carried through as an honest provider-capability signal.
+	// Content-free by construction — a single bool, no new observation.
 	AppIdentityAvailable bool
 
 	// KeystrokeDelta/MouseActive are the same raw, already-honest signals
@@ -141,15 +140,13 @@ type TickResult struct {
 	KeystrokeDelta uint64
 	MouseActive    bool
 
-	// FocusSessionsCompleted / AppSwitches (A2, docs/plan/A2-design.md §5):
-	// 0/1 this tick. FocusSessionsCompleted counts a sustained-typing run
-	// (§4) crossing FocusSessionSeconds; AppSwitches counts a change in
-	// ActiveApp since the previous tick (0 on Linux, which never sets
-	// ActiveApp — ADR 0009). Both are content-free counts already implied
-	// by data on the boundary (keystroke timing, sanitized app identity);
-	// no new Snapshot field or provider observation backs them.
+	// FocusSessionsCompleted (A2, docs/plan/A2-design.md §5): 0/1 this
+	// tick — counts a sustained-typing run (§4) crossing
+	// FocusSessionSeconds. A content-free count already implied by data on
+	// the boundary (keystroke timing); no new Snapshot field or provider
+	// observation backs it. (The sibling AppSwitches count was removed
+	// with the app-switch metric — see the const block above.)
 	FocusSessionsCompleted uint64
-	AppSwitches            uint64
 
 	// FocusRunSeconds (A3 Fork B, docs/plan/A3-design.md §7 pinned contract):
 	// the length, in whole seconds, of the CURRENT sustained-typing run as of
@@ -186,11 +183,6 @@ type Engine struct {
 	lastKeystrokeCount uint64
 	lastKeystrokeAt    time.Time
 
-	// lastActiveApp is the previous tick's ActiveApp, diffed to derive
-	// AppSwitches (A2 §5) — no new observation, ActiveApp is already on
-	// Snapshot.
-	lastActiveApp string
-
 	// focusRunActive/focusRunStart track the current sustained-typing run
 	// (A2 §4). A run starts on a keyDelta>0 tick and is extended by
 	// subsequent keyDelta>0 ticks as long as the gap since the last
@@ -214,9 +206,9 @@ func (e *Engine) Tick() TickResult {
 	now := e.now()
 
 	// wasInitialized captures whether a prior tick has already established
-	// baselines, before this tick overwrites them below — both the
-	// keystroke delta and the app-switch diff must contribute nothing on
-	// the first-ever tick (no baseline yet to diff against).
+	// baselines, before this tick overwrites them below — the keystroke
+	// delta must contribute nothing on the first-ever tick (no baseline
+	// yet to diff against).
 	wasInitialized := e.initialized
 
 	// Keystroke delta since the previous tick. The first-ever tick has no
@@ -228,26 +220,6 @@ func (e *Engine) Tick() TickResult {
 		keyDelta = snap.KeystrokeCount - e.lastKeystrokeCount
 	}
 	e.lastKeystrokeCount = snap.KeystrokeCount
-
-	// App-switch: diff this tick's (already sanitized, ADR 0009) ActiveApp
-	// against the previous tick's. No new observation — ActiveApp is
-	// already on Snapshot. Reads 0 on Linux, which never sets ActiveApp.
-	//
-	// dexel's OWN window is TRANSPARENT here (activity.SelfAppID): looking
-	// at your companion is not a context switch in your work, and counting
-	// it made the Activity modal's app-switch number a measure of how often
-	// you glanced at dexel. Neither counted nor recorded, so
-	// editor -> dexel -> editor is one continuous stretch in the editor
-	// rather than two switches. (No economy effect either way at the
-	// default AppSwitchWork = 0.0, but a counter shown to the user is a
-	// claim, and this one was about dexel rather than about work.)
-	var appSwitches uint64
-	if !activity.IsSelf(snap.ActiveApp) {
-		if wasInitialized && snap.ActiveApp != e.lastActiveApp {
-			appSwitches = 1
-		}
-		e.lastActiveApp = snap.ActiveApp
-	}
 
 	e.initialized = true
 
@@ -285,11 +257,10 @@ func (e *Engine) Tick() TickResult {
 	}
 	workUnits := weightedRate * WorkPerUnitRate
 
-	// Fold the A2 contributions into WorkUnits (§4): the focus bonus
-	// (unconditional — it is the shipped earning signal) and Fork-B's
-	// app-switch work, which is a no-op at the default AppSwitchWork=0.0.
+	// Fold the A2 focus bonus into WorkUnits (§4) — unconditional, it is
+	// the shipped earning signal. (Fork-B's app-switch work was removed
+	// with the app-switch metric.)
 	workUnits += FocusSessionBonusWork * float64(focusSessionsCompleted)
-	workUnits += AppSwitchWork * float64(appSwitches)
 
 	honesty := e.provider.Honesty()
 
@@ -312,7 +283,6 @@ func (e *Engine) Tick() TickResult {
 		KeystrokeDelta:         keyDelta,
 		MouseActive:            snap.MouseActive,
 		FocusSessionsCompleted: focusSessionsCompleted,
-		AppSwitches:            appSwitches,
 		FocusRunSeconds:        focusRunSeconds,
 	}
 }
@@ -353,9 +323,7 @@ func (e *Engine) mood(snap activity.Snapshot, honesty activity.Honesty, now time
 //     happened BEFORE the pause (the ADR 0010 lie: a keystroke observed
 //     ten hours ago is not "coding right now");
 //   - focusRunActive/focusRunStart — and pay a FocusSessionBonusWork bonus
-//     for a "sustained" typing run with a ten-hour hole in the middle;
-//   - lastActiveApp — and count one fabricated AppSwitch on the first tick
-//     back.
+//     for a "sustained" typing run with a ten-hour hole in the middle.
 //
 // Clearing `initialized` is what re-arms Tick's own first-tick guard
 // (`wasInitialized`), which is what makes the tick after resume contribute
@@ -367,7 +335,6 @@ func (e *Engine) Reset() {
 	e.initialized = false
 	e.lastKeystrokeCount = 0
 	e.lastKeystrokeAt = time.Time{}
-	e.lastActiveApp = ""
 	e.focusRunActive = false
 	e.focusRunStart = time.Time{}
 }

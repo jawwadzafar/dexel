@@ -169,7 +169,6 @@ func contentFreeRegistry() contentfree.Registry {
 				"IdleSeconds":        "uint64",
 				"SprintsCompleted":   "uint64",
 				"FocusSessions":      "uint64",
-				"AppSwitches":        "uint64",
 				// PausedSeconds (PR-5, ARCHITECTURE.md Decision 14): one
 				// more content-free duration — seconds during which
 				// dexel observed nothing.
@@ -185,7 +184,6 @@ func contentFreeRegistry() contentfree.Registry {
 				"Keystrokes":    "uint64",
 				"Mouse":         "uint64",
 				"FocusSessions": "uint64",
-				"AppSwitches":   "uint64",
 			},
 		},
 
@@ -200,7 +198,6 @@ func contentFreeRegistry() contentfree.Registry {
 				"IdleSeconds":              "uint64",
 				"SprintsCompleted":         "uint64",
 				"FocusSessions":            "uint64",
-				"AppSwitches":              "uint64",
 				"PausedSeconds":            "uint64",
 				"CoinsEarned":              "uint64",
 				"IsActive":                 "bool",
@@ -244,7 +241,6 @@ func contentFreeRegistry() contentfree.Registry {
 				"IdleSeconds":              "uint64",
 				"SprintsCompleted":         "uint64",
 				"FocusSessions":            "uint64",
-				"AppSwitches":              "uint64",
 				"PausedSeconds":            "uint64",
 				"CoinsEarned":              "uint64",
 				"LongestFocusBlockSeconds": "uint64",
@@ -266,7 +262,6 @@ func contentFreeRegistry() contentfree.Registry {
 				"IdleSeconds":              "uint64",
 				"SprintsCompleted":         "uint64",
 				"FocusSessions":            "uint64",
-				"AppSwitches":              "uint64",
 				"PausedSeconds":            "uint64",
 				"CoinsEarned":              "uint64",
 				"LongestFocusBlockSeconds": "uint64",

@@ -264,14 +264,16 @@ func TestSchema2FileMigratesToSchema3WithNewCountersAndCoinsZero(t *testing.T) {
 			state.Stats.Today.Keystrokes, state.Stats.Lifetime.Keystrokes)
 	}
 
-	// New A2 counters/coins default to 0 on a schema-2 save.
-	if state.Stats.Today.FocusSessions != 0 || state.Stats.Today.AppSwitches != 0 {
-		t.Errorf("after migrating a schema-2 save: today FocusSessions/AppSwitches = (%d,%d), want (0,0)",
-			state.Stats.Today.FocusSessions, state.Stats.Today.AppSwitches)
+	// New A2 counters/coins default to 0 on a schema-2 save. (The
+	// app-switch counter has since been removed from game.StatCounters;
+	// only FocusSessions remains to check here.)
+	if state.Stats.Today.FocusSessions != 0 {
+		t.Errorf("after migrating a schema-2 save: today FocusSessions = %d, want 0",
+			state.Stats.Today.FocusSessions)
 	}
-	if state.Stats.Lifetime.FocusSessions != 0 || state.Stats.Lifetime.AppSwitches != 0 {
-		t.Errorf("after migrating a schema-2 save: lifetime FocusSessions/AppSwitches = (%d,%d), want (0,0)",
-			state.Stats.Lifetime.FocusSessions, state.Stats.Lifetime.AppSwitches)
+	if state.Stats.Lifetime.FocusSessions != 0 {
+		t.Errorf("after migrating a schema-2 save: lifetime FocusSessions = %d, want 0",
+			state.Stats.Lifetime.FocusSessions)
 	}
 	if state.Stats.CoinsToday != (game.CoinBreakdown{}) {
 		t.Errorf("after migrating a schema-2 save: CoinsToday = %+v, want the zero value", state.Stats.CoinsToday)
@@ -307,17 +309,23 @@ func TestSchema3SaveRoundTripsWithNewCountersAndCoins(t *testing.T) {
 	g.SetClockForTest(func() time.Time { return fakeNow })
 
 	g.RestoreStats("2026-06-15",
-		game.StatCounters{Keystrokes: 42, FocusSessions: 3, AppSwitches: 7},
-		game.StatCounters{Keystrokes: 9000, FocusSessions: 30, AppSwitches: 70},
+		game.StatCounters{Keystrokes: 42, FocusSessions: 3},
+		game.StatCounters{Keystrokes: 9000, FocusSessions: 30},
 	)
-	g.RestoreCoinsToday(game.CoinBreakdown{Keystrokes: 6, Mouse: 2, FocusSessions: 4, AppSwitches: 0})
+	g.RestoreCoinsToday(game.CoinBreakdown{Keystrokes: 6, Mouse: 2, FocusSessions: 4})
 
 	want := Snapshot(g)
 	if want.Schema != CurrentSchema {
 		t.Fatalf("Snapshot().Schema = %d, want CurrentSchema (%d)", want.Schema, CurrentSchema)
 	}
-	if want.Stats.Today.FocusSessions != 3 || want.Stats.Today.AppSwitches != 7 {
-		t.Fatalf("Stats.Today FocusSessions/AppSwitches = (%d,%d), want (3,7)", want.Stats.Today.FocusSessions, want.Stats.Today.AppSwitches)
+	if want.Stats.Today.FocusSessions != 3 {
+		t.Fatalf("Stats.Today.FocusSessions = %d, want 3", want.Stats.Today.FocusSessions)
+	}
+	// AppSwitches is DEPRECATED: the persisted field is kept for schema/MAC
+	// stability but the live game no longer tracks it, so Snapshot always
+	// writes 0 regardless of what the game holds.
+	if want.Stats.Today.AppSwitches != 0 {
+		t.Fatalf("Stats.Today.AppSwitches = %d, want 0 (deprecated, always written 0)", want.Stats.Today.AppSwitches)
 	}
 	if want.Stats.CoinsToday != (CoinBreakdownSave{Keystrokes: 6, Mouse: 2, FocusSessions: 4, AppSwitches: 0}) {
 		t.Fatalf("Stats.CoinsToday = %+v, want {6,2,4,0}", want.Stats.CoinsToday)
@@ -339,14 +347,14 @@ func TestSchema3SaveRoundTripsWithNewCountersAndCoins(t *testing.T) {
 	Apply(g2, got)
 	state := g2.State()
 
-	if state.Stats.Today.FocusSessions != 3 || state.Stats.Today.AppSwitches != 7 {
-		t.Errorf("after Apply: today FocusSessions/AppSwitches = (%d,%d), want (3,7)", state.Stats.Today.FocusSessions, state.Stats.Today.AppSwitches)
+	if state.Stats.Today.FocusSessions != 3 {
+		t.Errorf("after Apply: today FocusSessions = %d, want 3", state.Stats.Today.FocusSessions)
 	}
-	if state.Stats.Lifetime.FocusSessions != 30 || state.Stats.Lifetime.AppSwitches != 70 {
-		t.Errorf("after Apply: lifetime FocusSessions/AppSwitches = (%d,%d), want (30,70)", state.Stats.Lifetime.FocusSessions, state.Stats.Lifetime.AppSwitches)
+	if state.Stats.Lifetime.FocusSessions != 30 {
+		t.Errorf("after Apply: lifetime FocusSessions = %d, want 30", state.Stats.Lifetime.FocusSessions)
 	}
-	if state.Stats.CoinsToday != (game.CoinBreakdown{Keystrokes: 6, Mouse: 2, FocusSessions: 4, AppSwitches: 0}) {
-		t.Errorf("after Apply: CoinsToday = %+v, want {6,2,4,0}", state.Stats.CoinsToday)
+	if state.Stats.CoinsToday != (game.CoinBreakdown{Keystrokes: 6, Mouse: 2, FocusSessions: 4}) {
+		t.Errorf("after Apply: CoinsToday = %+v, want {6,2,4}", state.Stats.CoinsToday)
 	}
 }
 
@@ -521,8 +529,8 @@ func TestSchema3FileMigratesToSchema4WithEmptyHistoryAndZeroStreak(t *testing.T)
 		t.Errorf("after migrating a schema-3 save: today/lifetime keystrokes = (%d,%d), want (42,9000)",
 			state.Stats.Today.Keystrokes, state.Stats.Lifetime.Keystrokes)
 	}
-	if state.Stats.CoinsToday != (game.CoinBreakdown{Keystrokes: 6, Mouse: 2, FocusSessions: 4, AppSwitches: 0}) {
-		t.Errorf("after migrating a schema-3 save: CoinsToday = %+v, want {6,2,4,0}", state.Stats.CoinsToday)
+	if state.Stats.CoinsToday != (game.CoinBreakdown{Keystrokes: 6, Mouse: 2, FocusSessions: 4}) {
+		t.Errorf("after migrating a schema-3 save: CoinsToday = %+v, want {6,2,4}", state.Stats.CoinsToday)
 	}
 
 	// The next Save this build makes writes straight to the now-imported

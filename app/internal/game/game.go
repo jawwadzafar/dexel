@@ -145,15 +145,16 @@ type StateMessage struct {
 	// AppIdentityAvailable is the provider's app-identity CAPABILITY bit
 	// (activity.Snapshot.AppIdentityAvailable, carried through
 	// engine.TickResult unchanged): whether this process's provider can
-	// observe the foreground application at all. It is content-free by
-	// construction — a single bool ABOUT THE PROVIDER, never about the user
-	// — and it exists so the client can tell a real "0 app switches" (Mac,
-	// identity available) apart from an unobservable one (Linux/Wayland,
-	// ADR 0009) and HIDE the app-derived stat rows in the latter case
-	// rather than paint a frozen, misleading "0". The frontend types it
-	// optional (`wire.ts: appIdentityAvailable?`); an absent field degrades
-	// to "assume available, show the rows" — the pre-existing behaviour, so
-	// a stale client is never made worse.
+	// observe the foreground application at all (true on macOS/Windows,
+	// false on Linux/Wayland — ADR 0009). It is content-free by
+	// construction — a single bool ABOUT THE PROVIDER, never about the
+	// user. It originally existed to let the client hide the app-switch
+	// stat rows on an app-blind platform; those rows (and the app-switch
+	// metric itself) have since been removed, so the bit currently has no
+	// client consumer. It is retained as an honest provider-capability
+	// signal rather than reaching across the activity/engine boundary to
+	// tear it out — the frontend still types it optional
+	// (`wire.ts: appIdentityAvailable?`).
 	AppIdentityAvailable bool `json:"appIdentityAvailable"`
 }
 
@@ -191,12 +192,6 @@ type StatCounters struct {
 	// sustained-typing block reaching engine.FocusSessionSeconds. Ships on
 	// both platforms (ADR 0012).
 	FocusSessions uint64 `json:"focusSessions"`
-	// AppSwitches (A2 §5) sums engine.TickResult.AppSwitches across the
-	// bucket, subject to engine.AppSwitchDailyCap applied HERE at this
-	// daily-aggregation layer (GO-1 deliberately left cap enforcement to
-	// the game layer — see Game.recordStats). Always 0 on Linux, which
-	// never sets ActiveApp (ADR 0009); shown honestly, no special-casing.
-	AppSwitches uint64 `json:"appSwitches"`
 	// PausedSeconds (PR-5, docs/production-runtime/ARCHITECTURE.md
 	// Decision 14) counts one second for every tick the runtime spent
 	// PAUSED — the user having explicitly said "stop watching me", with
@@ -276,12 +271,12 @@ type Game struct {
 	// (engine.TickResult.AppIdentityAvailable, itself Snapshot's — see
 	// activity/provider.go). NOT persisted and NOT part of the economy or
 	// the analytics tally: it is a live description of THIS process's
-	// provider, replayed onto the wire (StateMessage.AppIdentityAvailable)
-	// so the client can hide app-derived stat rows where app identity
-	// cannot be observed (Linux/Wayland, ADR 0009) instead of rendering a
-	// misleading frozen "0 app switches". Zero value (false) is the honest
-	// default before any tick has been taken: assume app-blind until a
-	// provider says otherwise.
+	// provider, replayed onto the wire (StateMessage.AppIdentityAvailable).
+	// It formerly gated hiding the app-switch stat rows on an app-blind
+	// platform; that metric is gone, so it currently has no client
+	// consumer (see StateMessage.AppIdentityAvailable). Zero value (false)
+	// is the honest default before any tick has been taken: assume
+	// app-blind until a provider says otherwise.
 	appIdentityAvailable bool
 
 	sprintIndex int
@@ -368,17 +363,18 @@ type Game struct {
 	// bucket (docs/plan/A2-design.md §6 only spec's CoinsToday).
 	coinsToday CoinBreakdown
 
-	// workKeys/workMouse/workFocus/workSwitch are the in-memory,
-	// UN-persisted per-signal work accumulators "since the last sprint
-	// award" (docs/plan/A2-design.md §5): every tick that actually
-	// advances Progress (i.e. StoreOpen()==false, mirroring Tick's own
-	// economy gate) also folds its per-signal share into these four
-	// floats via accrueWork. On sprint completion, awardCoins splits that
-	// tick's DevCash proportionally across them and resets all four to
-	// 0. They deliberately never cross the wire or hit disk (§5: "no work
-	// floats ever cross the wire or hit disk") — only the resulting
-	// integer CoinBreakdown does.
-	workKeys, workMouse, workFocus, workSwitch float64
+	// workKeys/workMouse/workFocus are the in-memory, UN-persisted
+	// per-signal work accumulators "since the last sprint award"
+	// (docs/plan/A2-design.md §5): every tick that actually advances
+	// Progress (i.e. StoreOpen()==false, mirroring Tick's own economy
+	// gate) also folds its per-signal share into these three floats via
+	// accrueWork. On sprint completion, awardCoins splits that tick's
+	// DevCash proportionally across them and resets all three to 0. They
+	// deliberately never cross the wire or hit disk (§5: "no work floats
+	// ever cross the wire or hit disk") — only the resulting integer
+	// CoinBreakdown does. (A fourth workSwitch accumulator existed for the
+	// removed app-switch metric.)
+	workKeys, workMouse, workFocus float64
 
 	// configName/onboarding are Phase P1's identity state
 	// (docs/plan/PRODUCT-EVOLUTION.md §5). They are deliberately NOT part
@@ -734,15 +730,12 @@ func (g *Game) Tick(r engine.TickResult) (completed bool) {
 
 	// recordStats runs unconditionally, BEFORE the StoreOpen gate below —
 	// see statsDate's doc comment on the Game struct for why analytics
-	// isn't frozen the way Mood/Progress/DevCash are. Its return value
-	// (whether THIS tick's app-switch, if any, was counted under
-	// engine.AppSwitchDailyCap) still needs to reach accrueWork below, so
-	// the same tick's economy-side work split agrees with what the
-	// analytics layer just counted. recordStats also folds this tick's
-	// r.FocusRunSeconds into the active session's longestFocusBlockSeconds
-	// accumulator (§2.3), unconditionally, the same "analytics, not
-	// economy" rule statsFocusBlockMax already follows.
-	switchCounted := g.recordStats(r)
+	// isn't frozen the way Mood/Progress/DevCash are. recordStats also
+	// folds this tick's r.FocusRunSeconds into the active session's
+	// longestFocusBlockSeconds accumulator (§2.3), unconditionally, the
+	// same "analytics, not economy" rule statsFocusBlockMax already
+	// follows.
+	g.recordStats(r)
 
 	// advanceSessionActivity (§2.5 point 2) folds THIS tick's real input,
 	// if any, into the session's lastActivityAt/watermark — after
@@ -773,7 +766,7 @@ func (g *Game) Tick(r engine.TickResult) (completed bool) {
 	// per-signal work accumulators either, or the proportional coin split
 	// at the next payout would attribute coins to work that never
 	// actually earned any.
-	g.accrueWork(r, switchCounted)
+	g.accrueWork(r)
 
 	g.Progress += r.WorkUnits
 	def := sprintAt(g.sprintIndex)
@@ -794,28 +787,26 @@ func (g *Game) Tick(r engine.TickResult) (completed bool) {
 // accrueWork folds one (economy-eligible, i.e. !StoreOpen) tick's
 // per-signal work contribution into the since-last-payout accumulators —
 // see their doc comment on the Game struct.
-func (g *Game) accrueWork(r engine.TickResult, switchCounted bool) {
-	keyWork, mouseWork, focusWork, switchWork := signalWork(r, switchCounted)
+func (g *Game) accrueWork(r engine.TickResult) {
+	keyWork, mouseWork, focusWork := signalWork(r)
 	g.workKeys += keyWork
 	g.workMouse += mouseWork
 	g.workFocus += focusWork
-	g.workSwitch += switchWork
 }
 
 // awardCoins is coin attribution proper (docs/plan/A2-design.md §5):
 // called exactly once per completed sprint, immediately after def.DevCash
 // is added to g.DevCash, so this is accounting ON TOP OF the single coin
 // source (ADR 0008) — it never mints coins of its own. It splits that
-// same devCash proportionally across the four signals' accrued work
+// same devCash proportionally across the three signals' accrued work
 // since the last payout, adds the integer result into today's running
 // CoinBreakdown, and resets the accumulators for the next sprint.
 func (g *Game) awardCoins(devCash uint64) {
-	breakdown := splitCoinsProportional(devCash, g.workKeys, g.workMouse, g.workFocus, g.workSwitch)
+	breakdown := splitCoinsProportional(devCash, g.workKeys, g.workMouse, g.workFocus)
 	g.coinsToday.Keystrokes += breakdown.Keystrokes
 	g.coinsToday.Mouse += breakdown.Mouse
 	g.coinsToday.FocusSessions += breakdown.FocusSessions
-	g.coinsToday.AppSwitches += breakdown.AppSwitches
-	g.workKeys, g.workMouse, g.workFocus, g.workSwitch = 0, 0, 0, 0
+	g.workKeys, g.workMouse, g.workFocus = 0, 0, 0
 
 	// P2 (docs/plan/P2-design.md §2.3): coinsEarned has no monotonic
 	// lifetime counter to subtract from (DevCash is spendable), so it is
@@ -838,15 +829,7 @@ func (g *Game) awardCoins(devCash uint64) {
 // Using r directly (never g.Mood, which Tick() leaves stale while
 // StoreOpen) is what keeps this honest during a shopping session instead
 // of double-counting or freezing on a frozen mood.
-// recordStats returns switchCounted: whether THIS tick's app-switch (if
-// any — r.AppSwitches is 0/1) was accepted under engine.AppSwitchDailyCap.
-// The cap is enforced HERE, at this daily-aggregation layer (GO-1's
-// TickResult deliberately leaves it uncapped — see engine.go's doc
-// comment on AppSwitchDailyCap): once statsToday.AppSwitches has already
-// reached the cap, a further switch this same local day is dropped
-// entirely — not counted in today, not in lifetime, and (via the
-// returned bool) not folded into the app-switch work accumulator either.
-func (g *Game) recordStats(r engine.TickResult) (switchCounted bool) {
+func (g *Game) recordStats(r engine.TickResult) {
 	g.rolloverStatsIfNewDay()
 
 	g.statsToday.Keystrokes += r.KeystrokeDelta
@@ -905,12 +888,6 @@ func (g *Game) recordStats(r engine.TickResult) (switchCounted bool) {
 		g.statsFocusBlockMax = r.FocusRunSeconds
 	}
 
-	if r.AppSwitches > 0 && g.statsToday.AppSwitches < engine.AppSwitchDailyCap {
-		g.statsToday.AppSwitches++
-		g.statsLifetime.AppSwitches++
-		switchCounted = true
-	}
-
 	// P2 (docs/plan/P2-design.md §2.3): longestFocusBlockSeconds is the
 	// session-scoped analogue of statsFocusBlockMax above — a MAX, not a
 	// sum, with no monotonic lifetime counter to derive it from, so it is
@@ -922,8 +899,6 @@ func (g *Game) recordStats(r engine.TickResult) (switchCounted bool) {
 	if g.session != nil && r.FocusRunSeconds > g.session.longestFocusBlockSeconds {
 		g.session.longestFocusBlockSeconds = r.FocusRunSeconds
 	}
-
-	return switchCounted
 }
 
 // statsDateFormat is the local-date key format for the daily bucket ("today"

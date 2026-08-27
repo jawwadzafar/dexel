@@ -35,9 +35,9 @@ type AppIdentity struct {
 	//   !Available             -> this provider cannot see app identity here
 	//                             at all (no window server to ask, or the
 	//                             platform has no permissionless way to ask).
-	//                             Nothing may be claimed about apps, and the
-	//                             app-switch counter is not "0 switches" but
-	//                             "not measured."
+	//                             Nothing may be claimed about apps: an
+	//                             unobservable identity is "not measured,"
+	//                             never a positive "no app is here."
 	//
 	// Deliberately NOT folded into Honesty: Honesty is about INPUT
 	// visibility and the engine gates its OnBreak claim on it (ADR 0010).

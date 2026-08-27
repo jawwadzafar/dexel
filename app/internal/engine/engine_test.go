@@ -186,7 +186,6 @@ type strategyTotals struct {
 	maxTickWork   float64
 	focusSessions uint64
 	keyDelta      uint64
-	appSwitches   uint64
 }
 
 // runStrategy drives a fresh Engine for windowTicks 1-second ticks, one
@@ -209,7 +208,6 @@ func runStrategy(windowTicks int, genSnap func(tick int) activity.Snapshot) stra
 		}
 		totals.focusSessions += r.FocusSessionsCompleted
 		totals.keyDelta += r.KeystrokeDelta
-		totals.appSwitches += r.AppSwitches
 		fakeNow = fakeNow.Add(time.Second)
 	}
 	return totals
@@ -226,9 +224,10 @@ func runStrategy(windowTicks int, genSnap func(tick int) activity.Snapshot) stra
 //     focus session — its 10s-off gaps exceed FocusGapToleranceSeconds
 //     and its 30s-on bursts never reach FocusSessionSeconds — so this
 //     comparison isolates the pre-A2 keystroke-vs-mouse weighting).
-//   - appSwitchMasher == idle == 0: at the shipped default
-//     (AppSwitchWork = 0.0, Fork B1) an app-switch masher earns nothing,
-//     identical to doing nothing at all.
+//   - appSwitchMasher == idle == 0: churning the foreground app every
+//     tick earns nothing, identical to doing nothing at all (the
+//     app-switch metric and its work term have been removed — this is now
+//     a regression guard that ActiveApp changes create no work).
 //   - mouse can never trigger a focus session (mouseOnly.focusSessions
 //     stays 0), proving the mouse<typing invariant holds BY CONSTRUCTION,
 //     not merely by the weight numbers.
@@ -264,8 +263,8 @@ func TestStrategyComparisonA2(t *testing.T) {
 	})
 
 	// appSwitchMasher: ActiveApp changes every single tick, no keys, no
-	// mouse. At the default AppSwitchWork = 0.0 (Fork B1) this must earn
-	// nothing — same as idle.
+	// mouse. With the app-switch metric removed, changing the foreground
+	// app contributes no work — this must earn nothing, same as idle.
 	appSwitchMasher := runStrategy(windowTicks, func(tick int) activity.Snapshot {
 		if tick%2 == 0 {
 			return activity.Snapshot{ActiveApp: "app-a"}
@@ -300,18 +299,18 @@ func TestStrategyComparisonA2(t *testing.T) {
 		t.Errorf("steadyTypist (%.6f) should earn strictly more than mouseOnly (%.6f) — ADR 0005's typing>mouse invariant must still hold under the A2 economy", steadyTypist.work, mouseOnly.work)
 	}
 	if appSwitchMasher.work != 0 {
-		t.Errorf("appSwitchMasher should earn exactly 0 at the default AppSwitchWork=0.0 (Fork B1), got %.6f", appSwitchMasher.work)
+		t.Errorf("appSwitchMasher should earn exactly 0 (ActiveApp changes contribute no work), got %.6f", appSwitchMasher.work)
 	}
 	if idle.work != 0 {
 		t.Errorf("idle should earn exactly 0, got %.6f", idle.work)
 	}
 	if appSwitchMasher.work != idle.work {
-		t.Errorf("appSwitchMasher (%.6f) should equal idle (%.6f) at the default app-switch weight — a switch-masher must not out-earn doing nothing", appSwitchMasher.work, idle.work)
+		t.Errorf("appSwitchMasher (%.6f) should equal idle (%.6f) — churning the foreground app must not out-earn doing nothing", appSwitchMasher.work, idle.work)
 	}
 
 	// The focus bonus should be visible and self-consistent: deepFocus's
-	// total must equal its plain keystroke work (no mouse/app-switch
-	// contribution in this strategy) plus exactly
+	// total must equal its plain keystroke work (no mouse contribution in
+	// this strategy) plus exactly
 	// completedSessions*FocusSessionBonusWork — proving the bonus really
 	// padded the total rather than the ordering above being an artifact
 	// of the ceiling clamp (6 keys/s is well under MaxRecentRate, so no
@@ -425,49 +424,5 @@ func TestFocusRunSecondsGrowsAndResetsOnBreak(t *testing.T) {
 	r = tick(true)
 	if r.FocusRunSeconds != 0 {
 		t.Errorf("first typed tick after a break: FocusRunSeconds = %d, want 0 (new run, not a continuation)", r.FocusRunSeconds)
-	}
-}
-
-// TestGlancingAtDexelIsNotAnAppSwitch pins that dexel's own window is
-// transparent to app-switch accounting.
-//
-// The user-visible symptom was in the Activity modal: the "app switches"
-// number counted every time you clicked dexel to look at it, so a counter
-// that claims to describe your work described how often you glanced at your
-// companion. editor -> dexel -> editor must read as ONE continuous stretch
-// in the editor, not two switches — and no switch at all is recorded for
-// dexel itself.
-func TestGlancingAtDexelIsNotAnAppSwitch(t *testing.T) {
-	p := &stubProvider{honesty: activity.HonestyGlobal}
-	e := New(p)
-
-	tick := func(app string) uint64 {
-		p.snap = activity.Snapshot{ActiveApp: app}
-		return e.Tick().AppSwitches
-	}
-
-	tick("code") // first tick never counts a switch (no previous app)
-	if got := tick("code"); got != 0 {
-		t.Fatalf("staying in the same app counted %d switches, want 0", got)
-	}
-	if got := tick(activity.SelfAppID); got != 0 {
-		t.Errorf("clicking dexel counted %d app switches, want 0 — looking at your companion is not a context switch", got)
-	}
-	if got := tick(activity.SelfAppID); got != 0 {
-		t.Errorf("staying in dexel counted %d app switches, want 0", got)
-	}
-	// ...and coming back to the SAME editor is not a switch either: dexel
-	// never displaced it as "the app you were in".
-	if got := tick("code"); got != 0 {
-		t.Errorf("editor -> dexel -> same editor counted %d switches, want 0 — dexel must not split one work stretch in two", got)
-	}
-	// A real switch still counts.
-	if got := tick("chrome"); got != 1 {
-		t.Errorf("a real app switch counted %d, want 1 — this fix must not stop counting genuine switches", got)
-	}
-	// Even one that happens to pass "through" dexel on the way.
-	tick(activity.SelfAppID)
-	if got := tick("code"); got != 1 {
-		t.Errorf("chrome -> dexel -> code counted %d switches, want 1 — the real switch is chrome->code", got)
 	}
 }

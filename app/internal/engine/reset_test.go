@@ -14,12 +14,12 @@ import (
 // the first tick and no focus bonus from a pre-pause run (Engine.Reset()
 // proven)").
 //
-// The post-pause snapshot deliberately reports a DIFFERENT app and a
-// wildly advanced keystroke counter, because those are the two fields
-// whose staleness would otherwise be paid for: a real provider's
-// monotonic counter keeps climbing through a pause dexel was not
-// watching, and the foreground app is very likely to have changed while
-// the user was away.
+// The post-pause snapshot deliberately reports a wildly advanced
+// keystroke counter, because that is the field whose staleness would
+// otherwise be paid for: a real provider's monotonic counter keeps
+// climbing through a pause dexel was not watching. (It also reports a
+// different foreground app, but with the app-switch metric removed that
+// is now inert.)
 func TestResetMakesTheNextTickBehaveLikeTheFirst(t *testing.T) {
 	p := &stubProvider{honesty: activity.HonestyGlobal}
 	e := New(p)
@@ -50,9 +50,6 @@ func TestResetMakesTheNextTickBehaveLikeTheFirst(t *testing.T) {
 	if first.Mood != MoodIdle {
 		t.Errorf("the first tick after Reset reported mood %q, want %q — a keystroke observed before the pause is not 'coding right now'", first.Mood, MoodIdle)
 	}
-	if first.AppSwitches != 0 {
-		t.Errorf("the first tick after Reset counted %d app switches, want 0 — there is no previous tick to have switched FROM", first.AppSwitches)
-	}
 	if first.FocusSessionsCompleted != 0 {
 		t.Errorf("the first tick after Reset completed %d focus sessions, want 0", first.FocusSessionsCompleted)
 	}
@@ -66,9 +63,6 @@ func TestResetMakesTheNextTickBehaveLikeTheFirst(t *testing.T) {
 	second := e.Tick()
 	if second.KeystrokeDelta != 6 || second.WorkUnits == 0 || second.Mood != MoodCoding {
 		t.Errorf("the second tick after Reset = %+v, want a normal 6-keystroke coding tick", second)
-	}
-	if second.AppSwitches != 0 {
-		t.Errorf("the second tick after Reset counted %d app switches, want 0 — the post-Reset baseline was firefox and it has not changed", second.AppSwitches)
 	}
 }
 
@@ -96,9 +90,6 @@ func TestWithoutResetTheFirstTickBackWouldLie(t *testing.T) {
 	}
 	if first.Mood != MoodCoding {
 		t.Error("control: without Reset the stale lastKeystrokeAt did NOT produce a false `coding` claim — the mood half of Reset is no longer load-bearing; re-derive it before deleting anything")
-	}
-	if first.AppSwitches == 0 {
-		t.Error("control: without Reset the stale lastActiveApp did NOT produce a fabricated app switch — the app-switch half of Reset is no longer load-bearing; re-derive it before deleting anything")
 	}
 }
 

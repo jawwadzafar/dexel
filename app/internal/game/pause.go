@@ -78,9 +78,9 @@ func (g *Game) RestorePaused(paused bool) { g.paused = paused }
 //
 //   - no ActiveSeconds/IdleSeconds — those are the two "observed" halves,
 //     and this second was not observed;
-//   - no Keystrokes/MouseActiveSeconds/FocusSessions/AppSwitches — there
-//     is no engine.TickResult to fold in, because the engine was not
-//     ticked and the provider was stopped;
+//   - no Keystrokes/MouseActiveSeconds/FocusSessions — there is no
+//     engine.TickResult to fold in, because the engine was not ticked and
+//     the provider was stopped;
 //   - no Progress/DevCash/XP/sprint completion and no work accumulators;
 //   - no checkSessionAutoEnd. An active session SURVIVES a pause
 //     (docs/plan/P2-design.md §gates: "pause is 'stop watching me', not

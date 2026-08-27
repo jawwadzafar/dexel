@@ -61,7 +61,6 @@ type DayStat struct {
 	IdleSeconds        uint64 `json:"idleSeconds"`
 	SprintsCompleted   uint64 `json:"sprintsCompleted"`
 	FocusSessions      uint64 `json:"focusSessions"`
-	AppSwitches        uint64 `json:"appSwitches"`
 	// PausedSeconds (PR-5, ARCHITECTURE.md Decision 14) mirrors
 	// StatCounters' field of the same name, so "a day's row can honestly
 	// show a paused band instead of a suspiciously idle stretch". A day
@@ -160,7 +159,6 @@ func mergeDayBuckets(existing, incoming DayBucket) DayBucket {
 			IdleSeconds:        maxU64(existing.Counters.IdleSeconds, incoming.Counters.IdleSeconds),
 			SprintsCompleted:   maxU64(existing.Counters.SprintsCompleted, incoming.Counters.SprintsCompleted),
 			FocusSessions:      maxU64(existing.Counters.FocusSessions, incoming.Counters.FocusSessions),
-			AppSwitches:        maxU64(existing.Counters.AppSwitches, incoming.Counters.AppSwitches),
 			PausedSeconds:      maxU64(existing.Counters.PausedSeconds, incoming.Counters.PausedSeconds),
 		},
 		CoinsEarned:              maxU64(existing.CoinsEarned, incoming.CoinsEarned),
@@ -309,7 +307,6 @@ func dayStatFromCounters(date string, c StatCounters, coinsEarned uint64, focusB
 		IdleSeconds:              c.IdleSeconds,
 		SprintsCompleted:         c.SprintsCompleted,
 		FocusSessions:            c.FocusSessions,
-		AppSwitches:              c.AppSwitches,
 		PausedSeconds:            c.PausedSeconds,
 		CoinsEarned:              coinsEarned,
 		IsActive:                 c.ActiveSeconds >= ActiveDayMinSeconds,

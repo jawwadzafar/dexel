@@ -47,7 +47,7 @@ func runUptime(g *Game, clock *fakeClock, seconds int, pauseAt, resumeAt int) (u
 			// A varied but deterministic observed tick: sometimes
 			// coding, sometimes not, so ActiveSeconds and IdleSeconds
 			// both grow and the partition is a real three-way split.
-			g.Tick(tr(uint64(i%3), i%2 == 0, 0, 0))
+			g.Tick(tr(uint64(i%3), i%2 == 0, 0))
 		}
 		clock.advance(time.Second)
 		uptime++
@@ -133,14 +133,14 @@ func TestPausedSecondsAreNeverIdleSeconds(t *testing.T) {
 
 // TestPauseBlocksEveryAccrual is §PR-5's second exit criterion in full:
 // "across a pause, devCash, xp, sprint.unitsDone, keystrokes,
-// mouseActiveSeconds, focusSessions, appSwitches are ALL unchanged, and
-// idleSeconds did NOT absorb the paused seconds."
+// mouseActiveSeconds, focusSessions are ALL unchanged, and idleSeconds did
+// NOT absorb the paused seconds."
 //
 // The pause is long (an hour) and the ticks it replaces would have been
-// generous ones (typing + mouse + a focus bonus + an app switch every
-// tick, i.e. the richest tick the economy can produce), so if ANY accrual
-// leaked through a pause this test would see it immediately rather than
-// as a rounding artefact.
+// generous ones (typing + mouse + a focus bonus every tick, i.e. the
+// richest tick the economy can produce), so if ANY accrual leaked through
+// a pause this test would see it immediately rather than as a rounding
+// artefact.
 func TestPauseBlocksEveryAccrual(t *testing.T) {
 	clock := newFakeClock()
 	g := New()
@@ -149,7 +149,7 @@ func TestPauseBlocksEveryAccrual(t *testing.T) {
 	// Earn a real, non-trivial amount first, so "unchanged" is a
 	// meaningful claim about live numbers rather than about zeroes.
 	for i := 0; i < 300; i++ {
-		g.Tick(tr(10, true, 1, 1))
+		g.Tick(tr(10, true, 1))
 		clock.advance(time.Second)
 	}
 	before := struct {
@@ -196,7 +196,6 @@ func TestPauseBlocksEveryAccrual(t *testing.T) {
 		{"IdleSeconds", after.IdleSeconds, before.counters.IdleSeconds},
 		{"SprintsCompleted", after.SprintsCompleted, before.counters.SprintsCompleted},
 		{"FocusSessions", after.FocusSessions, before.counters.FocusSessions},
-		{"AppSwitches", after.AppSwitches, before.counters.AppSwitches},
 	} {
 		if f.got != f.want {
 			t.Errorf("%s = %d across a pause, want %d unchanged", f.name, f.got, f.want)
@@ -404,7 +403,7 @@ func TestSessionSurvivesPauseAndCountsPausedSeconds(t *testing.T) {
 		t.Fatalf("StartSession: %v", err)
 	}
 	for i := 0; i < 120; i++ {
-		g.Tick(tr(4, true, 0, 0))
+		g.Tick(tr(4, true, 0))
 		clock.advance(time.Second)
 	}
 	beforeActive := g.State().Sessions.Active
@@ -440,7 +439,6 @@ func TestSessionSurvivesPauseAndCountsPausedSeconds(t *testing.T) {
 		{"activeSeconds", during.ActiveSeconds, beforeActive.ActiveSeconds},
 		{"idleSeconds", during.IdleSeconds, beforeActive.IdleSeconds},
 		{"focusSessions", during.FocusSessions, beforeActive.FocusSessions},
-		{"appSwitches", during.AppSwitches, beforeActive.AppSwitches},
 		{"sprintsCompleted", during.SprintsCompleted, beforeActive.SprintsCompleted},
 		{"coinsEarned", during.CoinsEarned, beforeActive.CoinsEarned},
 	} {
@@ -461,7 +459,7 @@ func TestSessionSurvivesPauseAndCountsPausedSeconds(t *testing.T) {
 
 	g.SetPaused(false)
 	for i := 0; i < 30; i++ {
-		g.Tick(tr(4, true, 0, 0))
+		g.Tick(tr(4, true, 0))
 		clock.advance(time.Second)
 	}
 	after := g.State().Sessions.Active
@@ -493,7 +491,7 @@ func TestIdleAutoEndCannotFireWhilePausedAndFiresOnTheFirstTickAfter(t *testing.
 	}
 	// Real input, so lastActivityAt is a known, non-zero moment.
 	for i := 0; i < 120; i++ {
-		g.Tick(tr(3, false, 0, 0))
+		g.Tick(tr(3, false, 0))
 		clock.advance(time.Second)
 	}
 	lastActivity := clock.t.Add(-time.Second)
@@ -511,7 +509,7 @@ func TestIdleAutoEndCannotFireWhilePausedAndFiresOnTheFirstTickAfter(t *testing.
 	// session, backdated to the last activity actually observed — not to
 	// "now", which would blame the pause on the user.
 	g.SetPaused(false)
-	g.Tick(tr(0, false, 0, 0))
+	g.Tick(tr(0, false, 0))
 	if g.State().Sessions.Active != nil {
 		t.Fatal("the session did not auto-end on the first tick after resume")
 	}

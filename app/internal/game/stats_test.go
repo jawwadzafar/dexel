@@ -41,53 +41,25 @@ func TestTickAccumulatesDailyAndLifetimeStats(t *testing.T) {
 	}
 }
 
-// TestTickAccumulatesFocusSessionsAndAppSwitches is A2's (§5) extension of
-// TestTickAccumulatesDailyAndLifetimeStats above to the two new signals:
-// engine.TickResult.FocusSessionsCompleted/AppSwitches must sum into both
-// the today and lifetime buckets, the same way every existing A1 counter
-// already does.
-func TestTickAccumulatesFocusSessionsAndAppSwitches(t *testing.T) {
+// TestTickAccumulatesFocusSessions is A2's (§5) extension of
+// TestTickAccumulatesDailyAndLifetimeStats above to the focus-session
+// signal: engine.TickResult.FocusSessionsCompleted must sum into both the
+// today and lifetime buckets, the same way every existing A1 counter
+// already does. (The sibling app-switch signal was removed.)
+func TestTickAccumulatesFocusSessions(t *testing.T) {
 	g := New()
-	g.Tick(engine.TickResult{Mood: engine.MoodCoding, FocusSessionsCompleted: 1, AppSwitches: 1})
-	g.Tick(engine.TickResult{Mood: engine.MoodCoding, FocusSessionsCompleted: 0, AppSwitches: 1})
-	g.Tick(engine.TickResult{Mood: engine.MoodCoding, FocusSessionsCompleted: 1, AppSwitches: 0})
+	g.Tick(engine.TickResult{Mood: engine.MoodCoding, FocusSessionsCompleted: 1})
+	g.Tick(engine.TickResult{Mood: engine.MoodCoding, FocusSessionsCompleted: 0})
+	g.Tick(engine.TickResult{Mood: engine.MoodCoding, FocusSessionsCompleted: 1})
 
 	today := g.State().Stats.Today
 	if today.FocusSessions != 2 {
 		t.Errorf("today.FocusSessions = %d, want 2", today.FocusSessions)
 	}
-	if today.AppSwitches != 2 {
-		t.Errorf("today.AppSwitches = %d, want 2", today.AppSwitches)
-	}
 
 	lifetime := g.State().Stats.Lifetime
 	if lifetime.FocusSessions != 2 {
 		t.Errorf("lifetime.FocusSessions = %d, want 2", lifetime.FocusSessions)
-	}
-	if lifetime.AppSwitches != 2 {
-		t.Errorf("lifetime.AppSwitches = %d, want 2", lifetime.AppSwitches)
-	}
-}
-
-// TestAppSwitchDailyCapLimitsBothTodayAndLifetime proves
-// engine.AppSwitchDailyCap is enforced at this daily-aggregation layer
-// (docs/plan/A2-design.md §5 — GO-1's engine.TickResult deliberately
-// leaves AppSwitches uncapped): feeding far more than the cap's worth of
-// switches in one day must stop incrementing AppSwitches, in EITHER
-// bucket, the moment the cap is reached.
-func TestAppSwitchDailyCapLimitsBothTodayAndLifetime(t *testing.T) {
-	g := New()
-	for i := 0; i < engine.AppSwitchDailyCap+25; i++ {
-		g.Tick(engine.TickResult{Mood: engine.MoodIdle, AppSwitches: 1})
-	}
-
-	today := g.State().Stats.Today
-	if today.AppSwitches != uint64(engine.AppSwitchDailyCap) {
-		t.Errorf("today.AppSwitches = %d, want the cap (%d)", today.AppSwitches, engine.AppSwitchDailyCap)
-	}
-	lifetime := g.State().Stats.Lifetime
-	if lifetime.AppSwitches != uint64(engine.AppSwitchDailyCap) {
-		t.Errorf("lifetime.AppSwitches = %d, want the cap (%d) too — capped switches were never counted at all", lifetime.AppSwitches, engine.AppSwitchDailyCap)
 	}
 }
 

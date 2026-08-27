@@ -17,32 +17,26 @@ type CoinBreakdown struct {
 	Keystrokes    uint64 `json:"keystrokes"`
 	Mouse         uint64 `json:"mouse"`
 	FocusSessions uint64 `json:"focusSessions"`
-	AppSwitches   uint64 `json:"appSwitches"`
 }
 
-// Sum returns the total coins across all four signals — used by A3 (§3.3)
+// Sum returns the total coins across all three signals — used by A3 (§3.3)
 // to compute a day's coinsEarned at finalize, and by the dense wire
 // history builder (§5) for today's still-accumulating coinsToday.
 func (cb CoinBreakdown) Sum() uint64 {
-	return cb.Keystrokes + cb.Mouse + cb.FocusSessions + cb.AppSwitches
+	return cb.Keystrokes + cb.Mouse + cb.FocusSessions
 }
 
-// signalWork decomposes one tick's engine.TickResult into the four
+// signalWork decomposes one tick's engine.TickResult into the three
 // signals' individual work contributions, in a way that reproduces
 // engine.Engine.Tick's own math exactly (see engine.go): keystroke and
 // mouse compete for the SAME clamped weighted-rate ceiling
 // (engine.MaxRecentRate), so they are split proportionally to their
 // pre-clamp shares of that ceiling rather than computed independently;
-// the focus-session bonus and app-switch work are additive on top of
-// that, exactly as engine.Tick folds them into WorkUnits. This keeps
-// keyWork+mouseWork+focusWork+switchWork == r.WorkUnits whenever
-// switchCounted matches r.AppSwitches (true unless the daily cap — see
-// Game.recordStats — dropped this tick's switch, which only matters once
-// Fork B's AppSwitchWork is flipped off its 0.0 default).
-//
-// switchCounted is the outcome of that daily-cap check for THIS tick
-// (false if there was no switch this tick, or the cap already reached).
-func signalWork(r engine.TickResult, switchCounted bool) (keyWork, mouseWork, focusWork, switchWork float64) {
+// the focus-session bonus is additive on top of that, exactly as
+// engine.Tick folds it into WorkUnits. This keeps
+// keyWork+mouseWork+focusWork == r.WorkUnits. (The former app-switch
+// work term was removed with the app-switch metric.)
+func signalWork(r engine.TickResult) (keyWork, mouseWork, focusWork float64) {
 	rawKey := float64(r.KeystrokeDelta) * engine.KeystrokeWeight
 	rawMouse := 0.0
 	if r.MouseActive {
@@ -62,34 +56,31 @@ func signalWork(r engine.TickResult, switchCounted bool) (keyWork, mouseWork, fo
 	}
 
 	focusWork = engine.FocusSessionBonusWork * float64(r.FocusSessionsCompleted)
-	if switchCounted {
-		switchWork = engine.AppSwitchWork
-	}
-	return keyWork, mouseWork, focusWork, switchWork
+	return keyWork, mouseWork, focusWork
 }
 
-// splitCoinsProportional splits `total` whole coins across the four
+// splitCoinsProportional splits `total` whole coins across the three
 // signals in proportion to their accrued work shares (keyWork, mouseWork,
-// focusWork, switchWork — work accrued since the last payout, see
-// Game.workKeys et al.), using the largest-remainder method so the four
-// integer counts always sum to EXACTLY `total` (coin conservation —
+// focusWork — work accrued since the last payout, see Game.workKeys et
+// al.), using the largest-remainder method so the three integer counts
+// always sum to EXACTLY `total` (coin conservation —
 // docs/plan/A2-design.md §5/§8's exit criterion). If no work was accrued
 // at all (should not happen in practice — Progress only advances via
 // accrued work — but guarded for a degenerate restored-save edge case),
 // every coin is attributed to keystrokes as a deterministic fallback.
-func splitCoinsProportional(total uint64, keyWork, mouseWork, focusWork, switchWork float64) CoinBreakdown {
+func splitCoinsProportional(total uint64, keyWork, mouseWork, focusWork float64) CoinBreakdown {
 	if total == 0 {
 		return CoinBreakdown{}
 	}
 
-	work := [4]float64{keyWork, mouseWork, focusWork, switchWork}
-	sum := work[0] + work[1] + work[2] + work[3]
+	work := [3]float64{keyWork, mouseWork, focusWork}
+	sum := work[0] + work[1] + work[2]
 	if sum <= 0 {
 		return CoinBreakdown{Keystrokes: total}
 	}
 
-	exact := [4]float64{}
-	floors := [4]uint64{}
+	exact := [3]float64{}
+	floors := [3]uint64{}
 	var assigned uint64
 	for i, w := range work {
 		e := float64(total) * (w / sum)
@@ -106,7 +97,7 @@ func splitCoinsProportional(total uint64, keyWork, mouseWork, focusWork, switchW
 		idx  int
 		frac float64
 	}
-	fracs := make([]fracEntry, 4)
+	fracs := make([]fracEntry, 3)
 	for i := range work {
 		fracs[i] = fracEntry{idx: i, frac: exact[i] - float64(floors[i])}
 	}
@@ -142,6 +133,5 @@ func splitCoinsProportional(total uint64, keyWork, mouseWork, focusWork, switchW
 		Keystrokes:    floors[0],
 		Mouse:         floors[1],
 		FocusSessions: floors[2],
-		AppSwitches:   floors[3],
 	}
 }

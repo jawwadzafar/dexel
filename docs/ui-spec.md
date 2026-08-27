@@ -1262,7 +1262,6 @@ second to reflect a click.
       "idleSeconds": 260,
       "sprintsCompleted": 3,
       "focusSessions": 4,
-      "appSwitches": 12,
       "pausedSeconds": 90
     },
     "lifetime": {
@@ -1272,14 +1271,13 @@ second to reflect a click.
       "idleSeconds": 5100,
       "sprintsCompleted": 41,
       "focusSessions": 57,
-      "appSwitches": 205,
       "pausedSeconds": 640
     },
-    "coinsToday": {"keystrokes": 6, "mouse": 2, "focusSessions": 4, "appSwitches": 0},
+    "coinsToday": {"keystrokes": 6, "mouse": 2, "focusSessions": 4},
     "history": [
-      {"date": "2024-06-01", "keystrokes": 3980, "mouseActiveSeconds": 740, "activeSeconds": 2900, "idleSeconds": 300, "sprintsCompleted": 2, "focusSessions": 3, "appSwitches": 9, "coinsEarned": 41, "isActive": true, "longestFocusBlockSeconds": 1380, "pausedSeconds": 0},
+      {"date": "2024-06-01", "keystrokes": 3980, "mouseActiveSeconds": 740, "activeSeconds": 2900, "idleSeconds": 300, "sprintsCompleted": 2, "focusSessions": 3, "coinsEarned": 41, "isActive": true, "longestFocusBlockSeconds": 1380, "pausedSeconds": 0},
       "... 28 more DayStat entries, dense and ascending ...",
-      {"date": "2024-06-30", "keystrokes": 4210, "mouseActiveSeconds": 812, "activeSeconds": 3040, "idleSeconds": 260, "sprintsCompleted": 3, "focusSessions": 4, "appSwitches": 12, "coinsEarned": 12, "isActive": true, "longestFocusBlockSeconds": 900, "pausedSeconds": 90}
+      {"date": "2024-06-30", "keystrokes": 4210, "mouseActiveSeconds": 812, "activeSeconds": 3040, "idleSeconds": 260, "sprintsCompleted": 3, "focusSessions": 4, "coinsEarned": 12, "isActive": true, "longestFocusBlockSeconds": 900, "pausedSeconds": 90}
     ],
     "streak": {"current": 6, "longest": 14}
   },
@@ -1296,14 +1294,13 @@ second to reflect a click.
       "idleSeconds": 90,
       "sprintsCompleted": 1,
       "focusSessions": 2,
-      "appSwitches": 3,
       "coinsEarned": 9,
       "longestFocusBlockSeconds": 720,
       "pausedSeconds": 0
     },
     "summary": {"completed": 27, "thisWeek": 4, "longestSessionSeconds": 9840},
     "recent": [
-      {"id": 27, "name": "", "startedAt": "2024-06-29T09:00:00Z", "endedAt": "2024-06-29T10:24:00Z", "durationSeconds": 5040, "keystrokes": 4182, "mouseActiveSeconds": 610, "activeSeconds": 4700, "idleSeconds": 200, "sprintsCompleted": 2, "focusSessions": 3, "appSwitches": 5, "coinsEarned": 18, "longestFocusBlockSeconds": 840, "pausedSeconds": 0, "endReason": "user"},
+      {"id": 27, "name": "", "startedAt": "2024-06-29T09:00:00Z", "endedAt": "2024-06-29T10:24:00Z", "durationSeconds": 5040, "keystrokes": 4182, "mouseActiveSeconds": 610, "activeSeconds": 4700, "idleSeconds": 200, "sprintsCompleted": 2, "focusSessions": 3, "coinsEarned": 18, "longestFocusBlockSeconds": 840, "pausedSeconds": 0, "endReason": "user"},
       "... up to 9 more SessionView entries, newest first ..."
     ]
   },
@@ -1342,16 +1339,12 @@ Field notes the implementers must not improvise on:
   A2), counts and durations only, never content (ADR 0002/0009). Both are
   the same `StatBlock` shape. Phase A1 fields: `keystrokes`,
   `mouseActiveSeconds`, `activeSeconds`, `idleSeconds`, `sprintsCompleted`.
-  Phase A2 adds two more counts to that same shape: `focusSessions` — a
-  completed sustained-typing block (ADR 0012, A2-design.md §3) — and
-  `appSwitches` — a counted foreground-app change; countable only where the
-  platform can observe the foreground app (**macOS** has a real active-app
-  source; **Linux/Wayland** is honestly app-blind, ADR 0009, so it is a
-  permanent `0` there). The count is still recorded and sent as-is with no
-  special-casing; whether the client *displays* it now adapts to the
-  platform's capability (ADAPTIVE-STATS, see `appIdentityAvailable` and the
-  Activity-modal note below) so an app-blind platform never paints a
-  misleading frozen `0` that reads as "you never switched apps". Seconds are
+  Phase A2 adds one more count to that same shape: `focusSessions` — a
+  completed sustained-typing block (ADR 0012, A2-design.md §3). (A2 also
+  once carried an `appSwitches` count, but the app-switch metric was
+  **removed**: it relied on observing the foreground app, unobservable on
+  **Linux/Wayland** (ADR 0009) where it stayed a permanent frozen `0`, so
+  it no longer rides the wire nor appears in any stat row. Seconds are
   whole seconds; the frontend
   formats them (`fmtDuration`/`fmtInt`), never the server. `stats` itself
   stays optional so a pre-A1 server degrades to an all-zero block.
@@ -1367,10 +1360,10 @@ Field notes the implementers must not improvise on:
   its wall-clock span). Optional client-side for the
   same stale-server reason as the rest of this shape.
 * `stats.coinsToday` — optional `CoinBreakdown { keystrokes, mouse,
-  focusSessions, appSwitches: number }` (A2, ADR 0012), all whole coin
+  focusSessions: number }` (A2, ADR 0012), all whole coin
   counts, content-free. The DevCash actually attributed to each signal
   **today**, split proportionally at each sprint payout (A2-design.md §5) so
-  the four numbers always sum to today's earned DevCash. Coins still come
+  the three numbers always sum to today's earned DevCash. Coins still come
   from exactly one source, sprint completion (ADR 0008) — this is an
   attribution view of that one payout, never a second earning path.
   Optional client-side, matching the rest of `stats`.
@@ -1381,10 +1374,10 @@ Field notes the implementers must not improvise on:
   does). A date with no recorded activity is zero-filled, never omitted — the
   array is always date-complete, so the client does no gap/date arithmetic.
   Each `DayStat` is `{ date, keystrokes, mouseActiveSeconds, activeSeconds,
-  idleSeconds, sprintsCompleted, focusSessions, appSwitches, coinsEarned,
-  isActive, longestFocusBlockSeconds, pausedSeconds }` — the same seven
+  idleSeconds, sprintsCompleted, focusSessions, coinsEarned,
+  isActive, longestFocusBlockSeconds, pausedSeconds }` — the same six
   A1/A2 counters as `stats.today`/`stats.lifetime`, plus `coinsEarned`
-  (that day's total, the same sum `coinsToday`'s four fields add to) and
+  (that day's total, the same sum `coinsToday`'s three fields add to) and
   `isActive` (a **bool set by the server**, never re-derived client-side:
   `activeSeconds >= game.ActiveDayMinSeconds`, default **300s** — the
   client and the streak banner must agree on one "active day" definition,
@@ -1412,11 +1405,11 @@ Field notes the implementers must not improvise on:
   each set room to breathe:
   * **TODAY** tab (`#activity-tab-today`) — today's stats
     (keystroke/mouse/active/idle/sprints, plus a **Focus sessions** row
-    `today.focusSessions` and an **App switches** row `today.appSwitches`)
+    `today.focusSessions`)
     **and** the **"Coins earned today"** block reading `stats.coinsToday` as
-    four `label → count` lines (Keystrokes, Mouse, Focus sessions, App
-    switches) — coins belong with today.
-  * **LIFETIME** tab (`#activity-tab-lifetime`) — the same seven stat rows
+    three `label → count` lines (Keystrokes, Mouse, Focus sessions) — coins
+    belong with today.
+  * **LIFETIME** tab (`#activity-tab-lifetime`) — the same six stat rows
     for `lifetime`.
 
   Counts render with `fmtCount` ("88.4k"), durations with `fmtDuration`
@@ -1431,7 +1424,7 @@ Field notes the implementers must not improvise on:
   **Only the active panel is in flow** — the inactive one carries the
   `hidden` attribute — but `renderActivity()` writes **both** panels' values
   every ~1Hz broadcast regardless, so switching is instant with no stale
-  flash and the away/adaptive hide rules stay applied per tab. Switch by
+  flash and the away hide rules stay applied per tab. Switch by
   **click** on a header or **Left/Right arrow** (Left → TODAY, Right →
   LIFETIME) via `handleKeydown`; the input-focus + modifier guards upstream
   in `keybindings.ts` (`isTextEntryTarget` / `hasModifier`) still gate it. A
@@ -1446,39 +1439,21 @@ Field notes the implementers must not improvise on:
   only a click on the backdrop beyond the panel closes, and Esc still closes
   natively.
 
-  **ADAPTIVE-STATS — the three app-derived rows adapt to platform
-  capability.** App switches are only countable where app identity is
-  observable (see `appIdentityAvailable` below), so the modal hides an
-  app-switch row exactly when the current platform is app-blind **and that
-  row's own value is `0`** — this is the same display-only spirit as the
-  §11.3 away-rows hide (recording is untouched; the counts still arrive on
-  every broadcast), but deliberately narrower in one respect: **history is
-  preserved**. `appSwitches` is cumulative, so a user who ran dexel on macOS
-  (real app data) and then moved to Linux still has a real, non-zero
-  **lifetime** total from those macOS days — that value *was* observed and
-  is not a lie, so it is still shown even on the app-blind platform. The net
-  effect: on macOS all three rows always show (including an honest real
-  `0`); on Linux the TODAY App-switches row and the App-switches coin line
-  hide (a misleading current-platform `0`), while a real LIFETIME total
-  survives and a genuinely-never-observed lifetime `0` hides too. The three
-  rows carry id hooks `#activity-row-today-app-switches`,
-  `#activity-row-life-app-switches`, `#activity-row-coins-app-switches` for
-  the whole-row (label included) hide, exactly like the away rows.
-* `appIdentityAvailable` — ADAPTIVE-STATS. A server-computed `bool`
-  capability bit (Go: `StateMessage.AppIdentityAvailable`, sourced verbatim
-  from `activity.Snapshot.AppIdentityAvailable` through
-  `engine.TickResult`): whether **this host's** provider can observe the
-  foreground application at all — `true` on macOS with a real active-app
-  source, `false` on Linux/Wayland (ADR 0009). It is content-free by
-  construction (a bool **about the provider**, never about the user — the
-  same not-a-privacy-concern shape as `paused`) and is on the content-free
-  allow-list with that citation. The Activity modal reads it for the hide
-  rule above; the personalized `activityLine` already degrades on the same
-  underlying capability. Optional client-side (`wire.ts:
-  appIdentityAvailable?`); an **absent** field degrades to `!== false` →
-  "assume available, show the rows" — the pre-existing behaviour, so a stale
-  client is never made worse, and rows are only ever hidden when the server
-  *explicitly* reports the platform app-blind.
+* `appIdentityAvailable` — a server-computed `bool` capability bit (Go:
+  `StateMessage.AppIdentityAvailable`, sourced verbatim from
+  `activity.Snapshot.AppIdentityAvailable` through `engine.TickResult`):
+  whether **this host's** provider can observe the foreground application at
+  all — `true` on macOS/Windows with a real active-app source, `false` on
+  Linux/Wayland (ADR 0009). It is content-free by construction (a bool
+  **about the provider**, never about the user — the same
+  not-a-privacy-concern shape as `paused`) and is on the content-free
+  allow-list with that citation. It formerly gated hiding the app-switch
+  stat rows on an app-blind platform; the app-switch metric has since been
+  **removed**, so the bit currently has **no client consumer**. It is
+  retained as an honest provider-capability signal (still emitted by the
+  server, still typed optional client-side, `wire.ts:
+  appIdentityAvailable?`) rather than reaching across the activity/engine
+  boundary to tear it out.
 * `config` — Phase P1 (Identity & first minutes,
   `docs/plan/PRODUCT-EVOLUTION.md` §5), extended by SET-1 (§11).
   `config.name`: the Dexel's name, **user-authored**, `""` when unset. The

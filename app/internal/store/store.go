@@ -55,11 +55,20 @@ type StatCountersSave struct {
 	IdleSeconds        uint64 `json:"idleSeconds"`
 	SprintsCompleted   uint64 `json:"sprintsCompleted"`
 	// FocusSessions and AppSwitches (A2, docs/plan/A2-design.md §5/§7 Task
-	// GO-3) mirror game.StatCounters' fields of the same name, added in
-	// schema 3 (see CurrentSchema's doc comment). A schema-2 file has
-	// neither key; json.Unmarshal leaves them at 0, the correct "none
-	// observed yet" state — additive, non-breaking, same pattern as the
-	// schema 1->2 bump.
+	// GO-3) were added in schema 3 (see CurrentSchema's doc comment). A
+	// schema-2 file has neither key; json.Unmarshal leaves them at 0, the
+	// correct "none observed yet" state — additive, non-breaking, same
+	// pattern as the schema 1->2 bump.
+	//
+	// AppSwitches is DEPRECATED: the app-switch metric was removed from
+	// the product (it relied on foreground-app identity, unobservable on
+	// Linux/Wayland — ADR 0009). The persisted field is deliberately KEPT
+	// (no json tag change, NO omitempty added) so the on-disk schema is
+	// unchanged and canonicalBody(d) still reproduces byte-identical MAC
+	// preimage bytes for every existing save — no schema bump, no
+	// migration, no save reset. It is never written non-zero and never
+	// read back into the live game (see statCountersToSave /
+	// statCountersFromSave), so it stays 0 going forward.
 	FocusSessions uint64 `json:"focusSessions"`
 	AppSwitches   uint64 `json:"appSwitches"`
 	// PausedSeconds (PR-5, docs/production-runtime/ARCHITECTURE.md
@@ -105,7 +114,11 @@ type CoinBreakdownSave struct {
 	Keystrokes    uint64 `json:"keystrokes"`
 	Mouse         uint64 `json:"mouse"`
 	FocusSessions uint64 `json:"focusSessions"`
-	AppSwitches   uint64 `json:"appSwitches"`
+	// AppSwitches is DEPRECATED, kept for the same schema/MAC-stability
+	// reason as StatCountersSave.AppSwitches: the field (and its json tag,
+	// no omitempty) stays so existing saves' MAC preimage is unchanged. It
+	// is never written non-zero nor read back into the live game.
+	AppSwitches uint64 `json:"appSwitches"`
 }
 
 // StatsSave is the persisted `stats` object added in schema 2 (see
@@ -547,6 +560,10 @@ func dayBucketFromSave(b DayBucketSave) game.DayBucket {
 }
 
 func statCountersToSave(c game.StatCounters) StatCountersSave {
+	// AppSwitches is intentionally left at its zero value: the app-switch
+	// metric was removed, but the persisted field is kept (DEPRECATED) so
+	// the on-disk schema and the MAC preimage are unchanged — see
+	// StatCountersSave.AppSwitches.
 	return StatCountersSave{
 		Keystrokes:         c.Keystrokes,
 		MouseActiveSeconds: c.MouseActiveSeconds,
@@ -554,12 +571,13 @@ func statCountersToSave(c game.StatCounters) StatCountersSave {
 		IdleSeconds:        c.IdleSeconds,
 		SprintsCompleted:   c.SprintsCompleted,
 		FocusSessions:      c.FocusSessions,
-		AppSwitches:        c.AppSwitches,
 		PausedSeconds:      c.PausedSeconds,
 	}
 }
 
 func statCountersFromSave(c StatCountersSave) game.StatCounters {
+	// c.AppSwitches is intentionally ignored: the DEPRECATED persisted
+	// field has no live counterpart any more (app-switch metric removed).
 	return game.StatCounters{
 		Keystrokes:         c.Keystrokes,
 		MouseActiveSeconds: c.MouseActiveSeconds,
@@ -567,26 +585,25 @@ func statCountersFromSave(c StatCountersSave) game.StatCounters {
 		IdleSeconds:        c.IdleSeconds,
 		SprintsCompleted:   c.SprintsCompleted,
 		FocusSessions:      c.FocusSessions,
-		AppSwitches:        c.AppSwitches,
 		PausedSeconds:      c.PausedSeconds,
 	}
 }
 
 func coinBreakdownToSave(c game.CoinBreakdown) CoinBreakdownSave {
+	// AppSwitches left at zero — DEPRECATED, kept for schema/MAC stability.
 	return CoinBreakdownSave{
 		Keystrokes:    c.Keystrokes,
 		Mouse:         c.Mouse,
 		FocusSessions: c.FocusSessions,
-		AppSwitches:   c.AppSwitches,
 	}
 }
 
 func coinBreakdownFromSave(c CoinBreakdownSave) game.CoinBreakdown {
+	// c.AppSwitches ignored — DEPRECATED, no live counterpart.
 	return game.CoinBreakdown{
 		Keystrokes:    c.Keystrokes,
 		Mouse:         c.Mouse,
 		FocusSessions: c.FocusSessions,
-		AppSwitches:   c.AppSwitches,
 	}
 }
 

@@ -7,13 +7,14 @@ import (
 	"github.com/jawwadzafar/dexel/app/internal/engine"
 )
 
-// TestAppIdentityAvailableRidesTheWire is the ADAPTIVE-STATS wire test: the
-// provider's app-identity CAPABILITY bit
-// (activity.Snapshot.AppIdentityAvailable) must reach the client verbatim
-// on the `state` message under the exact JSON key the frontend reads
-// (`appIdentityAvailable`), so the client can hide app-derived stat rows
-// where identity is unobservable (Linux/Wayland, ADR 0009) instead of
-// painting a misleading frozen "0 app switches".
+// TestAppIdentityAvailableRidesTheWire pins the provider's app-identity
+// CAPABILITY bit (activity.Snapshot.AppIdentityAvailable) reaching the
+// client verbatim on the `state` message under the exact JSON key
+// (`appIdentityAvailable`). This bit formerly gated hiding the app-switch
+// stat rows on an app-blind platform (Linux/Wayland, ADR 0009); that
+// metric was removed, so the bit no longer has a client consumer, but it
+// is still emitted as an honest provider-capability signal and this test
+// keeps its plumbing and honest default pinned.
 //
 // The honest default matters as much as the plumbing: BEFORE any tick a
 // fresh game must report the capability as false ("assume app-blind until a

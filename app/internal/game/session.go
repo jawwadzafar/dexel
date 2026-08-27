@@ -164,7 +164,6 @@ func subtractCounters(watermark, baseline StatCounters) StatCounters {
 		IdleSeconds:        sub(watermark.IdleSeconds, baseline.IdleSeconds),
 		SprintsCompleted:   sub(watermark.SprintsCompleted, baseline.SprintsCompleted),
 		FocusSessions:      sub(watermark.FocusSessions, baseline.FocusSessions),
-		AppSwitches:        sub(watermark.AppSwitches, baseline.AppSwitches),
 		// PausedSeconds (PR-5, MIGRATION_PLAN.md §PR-5: "pausedSeconds
 		// joins P2's session delta set"; docs/plan/P2-design.md §2.3's
 		// "(+ PausedSeconds once PR-5 lands)"). A session SURVIVES a
@@ -638,7 +637,6 @@ type ActiveSessionView struct {
 	IdleSeconds              uint64 `json:"idleSeconds"`
 	SprintsCompleted         uint64 `json:"sprintsCompleted"`
 	FocusSessions            uint64 `json:"focusSessions"`
-	AppSwitches              uint64 `json:"appSwitches"`
 	PausedSeconds            uint64 `json:"pausedSeconds"`
 	CoinsEarned              uint64 `json:"coinsEarned"`
 	LongestFocusBlockSeconds uint64 `json:"longestFocusBlockSeconds"`
@@ -658,7 +656,6 @@ type SessionView struct {
 	IdleSeconds              uint64 `json:"idleSeconds"`
 	SprintsCompleted         uint64 `json:"sprintsCompleted"`
 	FocusSessions            uint64 `json:"focusSessions"`
-	AppSwitches              uint64 `json:"appSwitches"`
 	PausedSeconds            uint64 `json:"pausedSeconds"`
 	CoinsEarned              uint64 `json:"coinsEarned"`
 	LongestFocusBlockSeconds uint64 `json:"longestFocusBlockSeconds"`
@@ -701,7 +698,6 @@ func (g *Game) sessionsView() SessionsView {
 			IdleSeconds:              c.IdleSeconds,
 			SprintsCompleted:         c.SprintsCompleted,
 			FocusSessions:            c.FocusSessions,
-			AppSwitches:              c.AppSwitches,
 			PausedSeconds:            c.PausedSeconds,
 			CoinsEarned:              s.coinsEarned,
 			LongestFocusBlockSeconds: s.longestFocusBlockSeconds,
@@ -733,7 +729,6 @@ func sessionViewFromRecord(rec SessionRecord, name string) SessionView {
 		IdleSeconds:              rec.Counters.IdleSeconds,
 		SprintsCompleted:         rec.Counters.SprintsCompleted,
 		FocusSessions:            rec.Counters.FocusSessions,
-		AppSwitches:              rec.Counters.AppSwitches,
 		PausedSeconds:            rec.Counters.PausedSeconds,
 		CoinsEarned:              rec.CoinsEarned,
 		LongestFocusBlockSeconds: rec.LongestFocusBlockSeconds,

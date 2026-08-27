@@ -13,7 +13,7 @@ export function fmtInt(n: number | undefined): string {
 }
 
 // fmtCount — the SI-style compact integer used by GitHub/YouTube for big
-// COUNTS (keystrokes, clicks, app switches, sprints, sessions, HUD cash).
+// COUNTS (keystrokes, clicks, sprints, sessions, HUD cash).
 // Rule (docs/ui-spec.md §14):
 //   * below 1000 -> exact ("0", "88", "842", "999"),
 //   * >= 1000 -> a k/M/B/T suffix at THREE significant figures, with any
