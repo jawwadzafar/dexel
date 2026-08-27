@@ -191,43 +191,10 @@
     width:64px; height:8px; border-radius:0 0 6px 6px;
     background: var(--metal);
   }
-  .monitor .float {
-    position:absolute; right:-14px; top:-26px; width:74px; height:74px;
-    filter: drop-shadow(0 4px 6px rgba(0,0,0,.5));
-    animation: bob 3.6s ease-in-out infinite;
-  }
-  @keyframes bob { 0%,100%{ transform: translateY(0);} 50%{ transform: translateY(-7px);} }
-  @media (prefers-reduced-motion: reduce){ .monitor .float{ animation:none; } }
-
-  /* ---------- Animated dexel hero ----------
-     The two frames are BAKED from the game's current sprite art by
-     site/tools/build-hero-sprites.mjs (run in the Pages build), so the hero
-     always shows the newest look. They share one crop box, so hard-swapping
-     between them animates the typing loop with no drift. */
-  .dexel-stage {
-    position: relative;
-    aspect-ratio: 16 / 10;
-    overflow: hidden;
-    border-radius: 6px;
-    background:
-      radial-gradient(130% 100% at 50% 20%, var(--wall-light) 0%, var(--wall-dark) 72%);
-  }
-  .dexel-stage::after { /* soft floor to seat the figure */
-    content:""; position:absolute; left:0; right:0; bottom:0; height:24%;
-    background: linear-gradient(180deg, transparent, rgba(0,0,0,.28));
-  }
-  .dexel-frame {
-    position:absolute; top:52%; left:50%; transform: translate(-50%,-50%);
-    width: 54%; max-width: 340px; height:auto;
-    image-rendering: pixelated;
-    filter: drop-shadow(0 5px 0 rgba(0,0,0,.30));
-  }
-  .dexel-frame-a { z-index:2; }
-  .dexel-frame-b { z-index:3; animation: dexel-type .9s steps(1,end) infinite; }
-  @keyframes dexel-type { 0%,50%{ opacity:1; } 50.01%,100%{ opacity:0; } }
-  @media (prefers-reduced-motion: reduce){
-    .dexel-frame-b { animation:none; opacity:1; }
-  }
+  /* The hero screen is a real screenshot of the running game (the whole
+     desk + HUD), captured from the app and dropped straight into the
+     monitor frame — no baked sprite animation. */
+  .monitor .screen-img img { display:block; width:100%; height:auto; image-rendering:pixelated; }
 
   /* ---------- Install ---------- */
   .install-card {
@@ -282,7 +249,6 @@
   .shots { display:grid; grid-template-columns: repeat(3, 1fr); gap:18px; }
   @media (max-width: 860px){ .shots { grid-template-columns: 1fr; } }
   .shot { border:2px solid var(--border); border-radius:10px; overflow:hidden; background:#0d0b12; box-shadow: var(--shadow-cast); }
-  .shot-wide { grid-column: 1 / -1; }
   .shot img { width:100%; }
   /* Each thumbnail is a button so it's keyboard-openable; it holds the image. */
   .shot-btn { display:block; width:100%; padding:0; border:0; background:none; cursor: zoom-in; }
@@ -396,11 +362,9 @@
 
     <div class="hero-visual">
       <div class="monitor">
-        <img class="float pixel" src="assets/img/mascot.png" alt="" aria-hidden="true" width="74" height="74" />
-        <div class="screen-img dexel-stage" role="img"
-             aria-label="A pixel-art developer in an indigo hoodie, seen from behind, typing at their desk — hands tapping the keyboard in a gentle loop.">
-          <img class="pixel dexel-frame dexel-frame-a" src="assets/sprites/dexel_frame_a.png" alt="" aria-hidden="true" />
-          <img class="pixel dexel-frame dexel-frame-b" src="assets/sprites/dexel_frame_b.png" alt="" aria-hidden="true" />
+        <div class="screen-img">
+          <img class="pixel" src="assets/img/hero.png" width="1280" height="800"
+               alt="dexel running at the desk: a hooded pixel developer typing, with a coin and level HUD, a live sprint progress bar, and a terminal panel." />
         </div>
       </div>
     </div>
@@ -497,13 +461,6 @@
     </div>
 
     <div class="shots">
-      <figure class="shot shot-wide">
-        <button class="shot-btn" type="button" aria-label="Enlarge: dexel running at the desk">
-          <img class="pixel" src="assets/img/hero.png" width="1280" height="800"
-               alt="dexel running: a hooded pixel developer typing at a desk, with a coin and level HUD, a live sprint progress bar reading 34 of 75 units, and a terminal panel." />
-        </button>
-        <figcaption>The desk · dexel at work</figcaption>
-      </figure>
       <figure class="shot">
         <button class="shot-btn" type="button" aria-label="Enlarge: the store">
           <img class="pixel" src="assets/img/store.png" width="1280" height="800"
