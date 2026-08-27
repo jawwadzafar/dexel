@@ -104,7 +104,7 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 APP_DIR="$REPO_ROOT/app"
 DIST_DIR="${DIST_DIR:-$REPO_ROOT/dist}"
 
-VERSION="${DEXEL_RELEASE_VERSION:-$(cd "$REPO_ROOT" && git describe --tags --always --dirty 2>/dev/null || echo "dev")}"
+VERSION="${DEXEL_RELEASE_VERSION:-$(cd "$REPO_ROOT" && { git describe --tags --abbrev=0 2>/dev/null || git describe --tags --always 2>/dev/null || echo "dev"; })}"
 
 # ---- target list -----------------------------------------------------------
 

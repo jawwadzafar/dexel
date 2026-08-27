@@ -1979,7 +1979,12 @@ report() {
 # the binary via -ldflags -X main.version=, so `dexel version` echoes it back.
 derive_source_version() {
     if have git && git -C "$REPO_DIR" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
-        _v=$(git -C "$REPO_DIR" describe --tags --always --dirty 2>/dev/null || true)
+        # Prefer the NEAREST TAG (e.g. v0.1.0) so a source build stamps the
+        # frozen release version, not a git-describe with a commit-distance
+        # suffix like "v0.1.0-101-g6034be6". Fall back to a full describe only
+        # when there is no tag at all, then to "dev".
+        _v=$(git -C "$REPO_DIR" describe --tags --abbrev=0 2>/dev/null || true)
+        [ -z "$_v" ] && _v=$(git -C "$REPO_DIR" describe --tags --always 2>/dev/null || true)
         if [ -n "$_v" ]; then
             printf '%s' "$_v"
             return 0
