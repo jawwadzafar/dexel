@@ -333,7 +333,8 @@
   }
   .lightbox[hidden] { display:none; }
   .lightbox-img {
-    max-width: min(1100px, 94vw); max-height: 86vh; width:auto; height:auto;
+    max-width: 92vw; max-height: 82vh; width:auto; height:auto;
+    object-fit: contain;
     border:3px solid var(--metal); border-radius:8px;
     box-shadow: 0 12px 50px rgba(0,0,0,.6);
     background:#0d0b12;
@@ -383,6 +384,54 @@
 
   .center { text-align:center; margin-inline:auto; }
   .section-head { max-width: 60ch; margin: 0 auto clamp(28px, 4vw, 44px); text-align:center; }
+
+  /* ============ Responsive hardening — screen-agnostic; desktop unchanged ============
+     At >=1024px the layout is identical to before (these rules only bite when a
+     track/token would otherwise overflow a narrow viewport). */
+
+  /* A grid track defaults to min-width:auto and will grow to its content's
+     min-content (e.g. the non-wrapping install one-liner), pushing the page
+     sideways. minmax(0,..) + min-width:0 let tracks/items shrink and scroll
+     their own overflow instead. */
+  .hero-grid { grid-template-columns: minmax(0, 1fr); }
+  .hero-copy, .hero-visual { min-width: 0; }
+  .feature-grid, .shots, .privacy ul, .install-card, .install-notes { min-width: 0; }
+  .feature, .shot, .privacy li, .note-block { min-width: 0; }
+
+  /* Long unbreakable tokens (paths, URLs) wrap instead of overflowing. */
+  .lede, .subtag, .feature p, .note-block p, .os-note, .hero-note,
+  .privacy li, .foot-inner, .platforms { overflow-wrap: break-word; }
+  .note-block p code, .os-note code, .hero-note code, .lede code,
+  .privacy li code { overflow-wrap: anywhere; }
+
+  /* Belt-and-suspenders: no element may force the page to scroll sideways. */
+  html, body { max-width: 100%; overflow-x: hidden; }
+
+  /* Install one-liner on small screens: the command scrolls inside its own
+     box and the Copy button drops to its own row so it stays reachable. */
+  @media (max-width: 920px){
+    .code-block { flex-wrap: wrap; row-gap: 10px; }
+    .code-block code { flex: 1 1 100%; order: 2; display: block; overflow-x: auto; -webkit-overflow-scrolling: touch; }
+    .code-block .prompt { order: 1; }
+    .code-block .copy-btn { order: 3; margin-left: auto; }
+    .hero-install .code-block { font-size: 12px; }
+  }
+
+  /* Wordmark + headings always fit the smallest phones. */
+  @media (max-width: 360px){
+    .wordmark { gap: 12px; }
+    .wordmark img { width: 40px; height: 40px; }
+    .wordmark h1 { font-size: 30px; }
+    .brand .name { font-size: 14px; }
+  }
+
+  /* Lightbox: fit the enlarged shot fully on phones, big tap target to close. */
+  @media (max-width: 640px){
+    .lightbox { padding: 14px; }
+    .lightbox-img { max-width: 94vw; max-height: 78vh; }
+    .lightbox-close { width: 48px; height: 48px; top: 12px; right: 12px; font-size: 15px; }
+    .lightbox-cap { bottom: 12px; font-size: 9px; }
+  }
 </style>
 </head>
 <body class="scanlines">
@@ -675,11 +724,13 @@
       img.alt = sourceImg.alt || "";
       cap.textContent = caption || "";
       box.hidden = false;
+      document.body.style.overflow = "hidden"; // lock background scroll while open
       closeBtn.focus();
       document.addEventListener("keydown", onKey);
     }
     function close(){
       box.hidden = true;
+      document.body.style.overflow = ""; // restore scroll
       img.removeAttribute("src");
       document.removeEventListener("keydown", onKey);
       if (lastFocus && typeof lastFocus.focus === "function") lastFocus.focus();
