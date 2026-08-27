@@ -453,3 +453,25 @@ Helena's Helmet selected / "?" locked):
 install.sh: if it's sitting inside the repo (files beside it — app/main.go etc.),
 ALWAYS build from source (deterministic; a clone means the user has the source).
 Only over-the-air (standalone/piped, no repo around it) look for a release.
+
+### BACKLOG (2026-08-27, owner — informational, plan for v0.2)
+- **Remove APP SWITCHES from Activity.** It's stuck at 40 and never worked on
+  Linux (app-identity is Wayland-blind). Remove the App-switches rows from the
+  activity modal, and rework/remove the behind-the-scenes app-switch tracking
+  (don't ship a metric that's broken on a primary platform). (Owner has it
+  working-ish on macOS; but the honest call is to drop it until it's reliable
+  everywhere, or make it truly adaptive+correct.)
+- **Website polish (site/):**
+  1. Navbar "GitHub" button text is grey on the yellow bg → make it BLACK
+     (contrast).
+  2. Hero image + screenshots are SKEWED (aspect distorted) and STALE (don't
+     show the new store/monitor). Update site + README images with the latest
+     look (default hoodie indigo + default monitor slate, non-overflow monitor).
+  3. Hero: replace the static screenshot with an ANIMATING dexel character built
+     from the latest assets — a build-time script that composes current sprites
+     so the site always shows the newest look on each site build. Keep the hero
+     wordmark + coin icon as-is. Move the current hero screenshot down into the
+     Screenshots section.
+  4. Screenshots: click a thumbnail to open it big (lightbox/zoom).
+- **Docs phrasing:** "build from source" should read "clone the repo, then run
+  ./install" — install.sh does the build; the user doesn't run a separate build.
