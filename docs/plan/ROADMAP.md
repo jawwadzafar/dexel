@@ -430,3 +430,26 @@ download links to the release, GitHub link. Self-contained HTML/CSS/JS
 workflow (actions/deploy-pages) publishes it. "Best site ever" — must NOT look
 like a default template. (Pages on a private repo needs Pro/Enterprise or the
 repo going public; the workflow is ready either way.)
+
+### STORE-CARDS-V3 (2026-08-27, owner) — cozy card redesign (ref images)
+Inspired by owner-supplied reference cards (Default / Straw Hat $500 / Top Hat /
+Helena's Helmet selected / "?" locked):
+- **Card = a box with a border that VARIES BY STATE** (default / hover /
+  selected / disabled / locked all visually distinct), content on a very light
+  low-opacity fill inside the box.
+- **Item shown FULL and centered** — currently hoodie cards show just the head;
+  they must zoom OUT to show the whole seated dexel wearing/using the item
+  (hoodie → full figure in that colour; chair → figure on that chair). Other
+  slots show the full item.
+- **Price = our Coin asset + amount** (coin.png + number), top-RIGHT of the card
+  (badge), not the ◆ diamond.
+- **Cohesive selected colour** = the SAME yellow as the active tab + its text
+  colour, so selection reads consistently across tabs and cards.
+- **Rebalance gating — "too many locked."** Fewer items locked at low levels;
+  most colours available early, only the premium/fanciest gated. Adjust catalog
+  MinLevels so the store isn't a wall of "?".
+
+### INSTALL-REPO-VS-OTA (2026-08-27, owner)
+install.sh: if it's sitting inside the repo (files beside it — app/main.go etc.),
+ALWAYS build from source (deterministic; a clone means the user has the source).
+Only over-the-air (standalone/piped, no repo around it) look for a release.
