@@ -117,6 +117,32 @@ function Note([string]$Text) {
 }
 function Warn([string]$Text) { Write-Warning $Text }
 
+# WriteCmd / WriteInline -- runnable COMMANDS in cyan, so the thing the user
+# can type is what visually pops (the analogue of install.sh's C_CMD). Both
+# honour the same $script:UseColor gate as everything else: colour off (piped,
+# NO_COLOR, DEXEL_NO_COLOR) prints the identical line with no colour at all.
+# WriteCmd is the aligned command-list row; WriteInline is a command sitting
+# inside a sentence ("run `dexel` to start").
+function WriteCmd([string]$Cmd, [string]$Desc) {
+    $padded = $Cmd.PadRight(22)
+    if ($script:UseColor) {
+        Write-Host '  ' -NoNewline
+        Write-Host $padded -ForegroundColor Cyan -NoNewline
+        Write-Host $Desc
+    } else {
+        Write-Host "  $padded$Desc"
+    }
+}
+function WriteInline([string]$Pre, [string]$Cmd, [string]$Post) {
+    if ($script:UseColor) {
+        Write-Host $Pre -NoNewline
+        Write-Host $Cmd -ForegroundColor Cyan -NoNewline
+        Write-Host $Post
+    } else {
+        Write-Host "$Pre$Cmd$Post"
+    }
+}
+
 # Show-Banner -- the DEXEL wordmark, once per run. Byte-for-byte the same ASCII
 # art install.sh draws (PowerShell 5.1 is ASCII-only). $Version and $Target are
 # the best hints known before the release is resolved.
@@ -736,96 +762,55 @@ The archive may not match this machine's architecture.
     return $line
 }
 
+# Write-Report -- the final screen. Short and SCANNABLE, matching install.sh:
+# the OK status, then only what the user might need to DO, with the runnable
+# commands in cyan (WriteCmd/WriteInline) so they pop. On Windows the user PATH
+# is edited automatically (Add-ToUserPath), so no PATH-fix block is needed here.
 function Write-Report([string]$VersionLine, [string]$Exe, [string]$StateDir, [string]$Shortcut) {
     Say ''
+    # 1) Status -- installed, and whether it's running.
     if ($script:UseColor) {
         Write-Host 'OK' -ForegroundColor Green -NoNewline
-        Write-Host " dexel is installed  " -NoNewline
+        Write-Host ' dexel is installed  ' -NoNewline
         Write-Host $VersionLine -ForegroundColor White
     } else {
         Say "OK dexel is installed  $VersionLine"
     }
-    Say "installed to $Exe"
-    if ($Shortcut) { Say "in your Start Menu as `"Dexel`"" }
-    Say ''
-
     if ($script:Launched -eq 'open') {
-        Say 'dexel is RUNNING and the game is open. That is the install finished,'
-        Say 'not a side effect.'
+        if ($script:UseColor) {
+            Write-Host 'OK' -ForegroundColor Green -NoNewline
+            Write-Host ' running -- the game is open'
+        } else {
+            Say 'OK running -- the game is open'
+        }
     } elseif ($env:DEXEL_NO_START -eq '1') {
-        Say 'Nothing was started ($env:DEXEL_NO_START = 1). Run `dexel` when you want it.'
+        WriteInline 'not started (DEXEL_NO_START=1) -- run ' 'dexel' ' to start'
     } else {
-        Say 'Nothing is running. Run `dexel` to start it.'
+        WriteInline 'not running -- run ' 'dexel' ' to start'
     }
+    if ($Shortcut) { Note 'in your Start Menu as "Dexel"' }
     if ($script:StoppedRuntime -and $script:Launched -eq 'none') {
-        Say ''
-        Say 'The runtime that was running before this upgrade was stopped and not'
-        Say 'restarted. Run `dexel` to bring the new build up.'
+        Note 'the previous runtime was stopped for the upgrade -- run dexel to restart'
     }
+
+    # 2) The commands they can run.
     Say ''
-    Say 'Commands:'
-    Say '  dexel                    start the runtime and open the game'
-    Say '  dexel status             is it running? what is it seeing?'
-    Say '  dexel stop               shut it down (closing the window does not)'
-    Say '  dexel autostart enable   start dexel at login -- NOT enabled, this is opt-in'
+    Say 'Run it:'
+    WriteCmd 'dexel'                  'start / open'
+    WriteCmd 'dexel status'           'is it running? (and is tracking blind?)'
+    WriteCmd 'dexel stop'             'stop it'
+    WriteCmd 'dexel autostart enable' 'start at login (off by default)'
+    WriteCmd 'dexel uninstall'        'remove it (--purge also deletes your save)'
+
+    # 3) Windows honesty -- kept to the actionable kernel: tracking is new and
+    #    field-unverified, and it fails BLIND rather than faking a workday.
     Say ''
-    if ($script:Launched -eq 'none') {
-        Say 'Autostart is OFF and nothing is running: this installer enabled no'
-        Say 'services and registered no login items. Making dexel come back on every'
-        Say 'login is a separate, explicit `dexel autostart enable`.'
-    } else {
-        Say 'Autostart is OFF. This installer started dexel because you just asked for'
-        Say 'dexel; it enabled no services and registered no login items. Making it come'
-        Say 'back on every login is a separate, explicit `dexel autostart enable`.'
-    }
+    Note 'Activity tracking is new on Windows and field-unverified: if the hooks'
+    Note 'are refused, dexel reports itself BLIND rather than faking a workday.'
+
+    # 4) Privacy -- one dim line; details live on the site/README.
     Say ''
-    Say 'On Windows, read this before you play:'
-    Say '  Activity tracking IS wired up, and it is NEW IN THIS BUILD -- field'
-    Say '  verification is pending. dexel installs two low-level Windows hooks'
-    Say '  that COUNT your keystrokes and mouse activity globally (no permission'
-    Say '  prompt, and no key is ever identified, stored or logged). What has not'
-    Say '  happened yet is anybody running it on real Windows hardware: this'
-    Say '  project has no Windows CI runner, so the parts that can be tested from'
-    Say '  Linux are tested and the hook install itself is not.'
-    Say ''
-    Say '  If Windows refuses the hooks -- enterprise policy, a locked desktop --'
-    Say '  dexel reports itself BLIND rather than pretending to see, and the'
-    Say '  companion will not claim a workday it cannot see. That is the honest'
-    Say '  failure mode, not a bug to report. Run `dexel status` to see which'
-    Say '  state you are in.'
-    Say ''
-    Say '  If typing does not accrue on a machine that says it is not blind, that'
-    Say '  IS worth reporting -- with the tail of your runtime log.'
-    Say ''
-    Say 'Uninstall -- one command, and it is the exact reversal of the above:'
-    Say ''
-    Say '  dexel uninstall           stop, disable autostart, remove every file'
-    Say '                            this installer wrote. Your save STAYS.'
-    Say '  dexel uninstall --purge   ...and delete the save too (asks twice)'
-    Say ''
-    Say 'It prints every path it removed and every path it kept, and running it'
-    Say 'twice is harmless. Add --yes to skip the prompts in a script.'
-    Say ''
-    Say 'One Windows-specific detail, stated because you will see it: a running'
-    Say '.exe cannot delete itself, so uninstall schedules a detached helper that'
-    Say 'removes dexel.exe the moment the command exits, and appends one line to'
-    Say 'the runtime log saying whether it worked.'
-    Say ''
-    Say 'By hand instead -- or if you deleted the binary before reading this:'
-    Say '  dexel stop; dexel autostart disable'
-    Say "  Remove-Item `"$Exe`""
-    # The .ico lives next to the exe (Install-ShortcutIcon): a .lnk stores a
-    # PATH to its icon, not the pixels. Built into a variable first rather
-    # than as a subexpression inside the escaped-quote string below, which is
-    # correct PowerShell but nobody on this project can run a parser to prove
-    # it (see this file's header on the authored-not-executed split).
-    $icoPath = Join-Path (Split-Path -Parent $Exe) 'dexel.ico'
-    Say "  Remove-Item `"$icoPath`""
-    if ($Shortcut) { Say "  Remove-Item `"$Shortcut`"" }
-    Say ''
-    Say 'Your keystrokes are counted, never read -- counts and durations only,'
-    Say 'enforced by build-failing structural tests. Your data stays in'
-    Say "$StateDir and upgrades never touch it."
+    Note "Counts and durations only, never your keystrokes. Data: $StateDir"
     Say ''
 }
 

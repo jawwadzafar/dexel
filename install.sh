@@ -220,6 +220,14 @@ MAC_DMG_PATH=""     # where the .dmg was downloaded in TMPD
 MAC_DMG_DIGEST=""   # the digest the GitHub API reports for the .dmg asset
 LAUNCHED=none       # none | open | start
 
+# PATH advice — path_advice() computes these (it no longer prints); report()
+# shows the fix prominently near the top of the final summary, because "add
+# ~/.local/bin to your PATH" is the single most important thing to DO and it
+# used to be buried above the launch line.
+PATH_MISSING=0
+PATH_LINE=""
+PATH_RC=""
+
 # presentation state — a single gate (USE_COLOR) decides colour/animation, and
 # every colour variable below is an EMPTY STRING when it is off, so each line is
 # written exactly once and simply degrades to plain text. See setup_colors.
@@ -229,6 +237,9 @@ USE_COLOR=0         # resolved by setup_colors: colour + animation are allowed
 UNICODE=0           # resolved by setup_colors: the locale is UTF-8
 C_INDIGO=''; C_MINT=''; C_OK=''; C_BAD=''; C_WARN=''
 C_DIM=''; C_BOLD=''; C_RESET=''; C_HIDE=''
+C_CMD=''            # runnable commands the user can type — bold cyan, so the
+                    # thing they can DO is what visually pops. Empty when
+                    # USE_COLOR is 0, exactly like every other C_* above.
 SYM_ARROW='==>'; SYM_OK='OK'; SYM_BAD='x'; SYM_WARN='!'
 SPIN_FRAMES='- \ | /'
 SPIN_PID=''         # PID of a running background spinner, or empty
@@ -323,6 +334,11 @@ setup_colors() {
                 C_MINT=$(printf '\033[36m')
                 ;;
         esac
+        # C_CMD — bold cyan for runnable commands, distinct from the indigo
+        # headers and the mint spinner. Bold so it stays legible on a light
+        # terminal where plain cyan can wash out. Same across depths (cyan is
+        # in the 8-colour set), so no per-depth case is needed.
+        C_CMD=$(printf '\033[1;36m')
         C_OK=$(printf '\033[32m')
         C_BAD=$(printf '\033[31m')
         C_WARN=$(printf '\033[33m')
@@ -332,7 +348,7 @@ setup_colors() {
     else
         USE_COLOR=0
         C_INDIGO=''; C_MINT=''; C_OK=''; C_BAD=''; C_WARN=''
-        C_DIM=''; C_BOLD=''; C_RESET=''
+        C_DIM=''; C_BOLD=''; C_RESET=''; C_CMD=''
     fi
 }
 
@@ -2065,34 +2081,32 @@ make_state_dirs() {
 # surprise.
 # ---------------------------------------------------------------------------
 
+# path_advice — decide whether $BINDIR is on PATH and, if not, work out the
+# exact two lines to add it for the caller's shell. It PRINTS NOTHING: it only
+# sets PATH_MISSING/PATH_LINE/PATH_RC, which report() then shows prominently at
+# the top of the final summary. Behaviour is unchanged — still no dotfile edit,
+# still copy-paste — only WHERE the advice appears moved (it used to be buried
+# above the launch line).
 path_advice() {
     case ":$PATH:" in
         *":$BINDIR:"*)
-            info "PATH      already includes $BINDIR"
+            PATH_MISSING=0
             return 0
             ;;
     esac
 
+    PATH_MISSING=1
     _shell_name=$(basename "${SHELL:-/bin/sh}")
     case "$_shell_name" in
-        fish) _rc="$HOME/.config/fish/config.fish"
-              _line="fish_add_path $BINDIR" ;;
-        zsh)  _rc="$HOME/.zshrc"
-              _line="export PATH=\"$BINDIR:\$PATH\"" ;;
-        bash) _rc="$HOME/.bashrc"
-              _line="export PATH=\"$BINDIR:\$PATH\"" ;;
-        *)    _rc="$HOME/.profile"
-              _line="export PATH=\"$BINDIR:\$PATH\"" ;;
+        fish) PATH_RC="$HOME/.config/fish/config.fish"
+              PATH_LINE="fish_add_path $BINDIR" ;;
+        zsh)  PATH_RC="$HOME/.zshrc"
+              PATH_LINE="export PATH=\"$BINDIR:\$PATH\"" ;;
+        bash) PATH_RC="$HOME/.bashrc"
+              PATH_LINE="export PATH=\"$BINDIR:\$PATH\"" ;;
+        *)    PATH_RC="$HOME/.profile"
+              PATH_LINE="export PATH=\"$BINDIR:\$PATH\"" ;;
     esac
-
-    say ""
-    say "$BINDIR is not on your PATH. Add it — this installer will not edit"
-    say "your shell config for you:"
-    say ""
-    say "  echo '$_line' >> $_rc"
-    say "  . $_rc"
-    say ""
-    say "Until then, run it by full path: $BINDIR/dexel"
 }
 
 # ---------------------------------------------------------------------------
@@ -2115,116 +2129,85 @@ The binary may not match this platform ($OS-$ARCH)."
     fi
 }
 
+# report — the final screen. Deliberately short and SCANNABLE: the ✓ status,
+# then only what the user might need to DO, with the runnable commands in
+# C_CMD (bold cyan) so they visually pop. Prose is kept to a minimum — a glance
+# should show what's installed and the few commands to type. Colour is applied
+# only through the C_* variables, so USE_COLOR=0 emits the identical text plain.
 report() {
     say ""
-    # The polished last screen: a green banner line, then the key facts with the
-    # things that matter (version, install path) in bold.
+    # 1) Status — installed, and whether it's running. One to two lines.
     printf '%s%s dexel is installed%s  %s%s%s\n' \
         "$C_OK" "$SYM_OK" "$C_RESET" "$C_BOLD" "$INSTALLED_VERSION" "$C_RESET"
-    printf 'installed to %s%s/dexel%s\n' "$C_BOLD" "$BINDIR" "$C_RESET"
-    if [ "$SHIM_INSTALLED" = 1 ]; then
-        say "desktop shell at $BINDIR/dexel-desktop.AppImage"
-    fi
-    if [ -n "$MAC_APP" ]; then
-        say "desktop window at $MAC_APP"
-    fi
-    if [ -n "$DESKTOP_ENTRY" ]; then
-        if [ "$ICON_INSTALLED" = 1 ]; then
-            say "in your app grid as \"Dexel\", with its own icon"
-        else
-            say "in your app grid as \"Dexel\""
-        fi
-    fi
-    say ""
-
     case "$LAUNCHED" in
         open)
-            say "dexel is RUNNING and the game is open. That is the install finished,"
-            say "not a side effect."
-            ;;
+            printf '%s%s running%s — the window is open\n' \
+                "$C_OK" "$SYM_OK" "$C_RESET" ;;
         start)
-            say "The dexel runtime is RUNNING. Nothing was opened because no desktop"
-            say "session was detected — \`dexel open\` shows the game when you have one."
-            ;;
+            printf '%s%s running%s — run %sdexel open%s for the window\n' \
+                "$C_OK" "$SYM_OK" "$C_RESET" "$C_CMD" "$C_RESET" ;;
         none)
             if [ "$NO_START" = 1 ]; then
-                say "Nothing was started (--no-start). Run \`dexel\` when you want it."
+                printf 'not started (--no-start) — run %sdexel%s to start\n' \
+                    "$C_CMD" "$C_RESET"
             else
-                say "Nothing is running. Run \`dexel\` to start it."
-            fi
-            ;;
+                printf 'not running — run %sdexel%s to start\n' \
+                    "$C_CMD" "$C_RESET"
+            fi ;;
     esac
+    # Extra install artifacts — dim, and only printed when they actually exist,
+    # so this stays invisible on the common macOS/CLI install. The app-grid
+    # entry is a real launch path, so it's worth the one line where present.
+    if [ -n "$DESKTOP_ENTRY" ]; then
+        if [ "$ICON_INSTALLED" = 1 ]; then
+            info "in your app grid as \"Dexel\" (with icon)"
+        else
+            info "in your app grid as \"Dexel\""
+        fi
+    fi
+    if [ "$SHIM_INSTALLED" = 1 ]; then
+        info "desktop window shell installed"
+    fi
     if [ "$STOPPED_RUNTIME" = 1 ] && [ "$LAUNCHED" = none ]; then
+        info "the previous runtime was stopped for the upgrade — run dexel to restart"
+    fi
+
+    # 2) PATH — the single most important thing to DO, so it's up top and loud.
+    #    Only shown when $BINDIR isn't already on PATH (path_advice decided).
+    if [ "$PATH_MISSING" = 1 ]; then
         say ""
-        say "The runtime that was running before this upgrade was stopped and not"
-        say "restarted. Run \`dexel\` to bring the new build up."
+        printf '%s%s %s is not on your PATH — run:%s\n' \
+            "$C_WARN" "$SYM_WARN" "$BINDIR" "$C_RESET"
+        printf '  %secho '\''%s'\'' >> %s%s\n' "$C_CMD" "$PATH_LINE" "$PATH_RC" "$C_RESET"
+        printf '  %s. %s%s\n' "$C_CMD" "$PATH_RC" "$C_RESET"
     fi
-    say ""
-    say "Commands:"
-    say "  dexel                    start the runtime and open the game"
-    say "  dexel status             is it running? what is it seeing?"
-    say "  dexel stop               shut it down (closing the window does not)"
-    say "  dexel autostart enable   start dexel at login — NOT enabled, this is opt-in"
-    say ""
-    if [ "$LAUNCHED" = none ]; then
-        say "Autostart is OFF and nothing is running: this installer enabled no"
-        say "services and registered no login items. Making dexel come back on every"
-        say "login is a separate, explicit \`dexel autostart enable\`."
-    else
-        say "Autostart is OFF. This installer started dexel because you just asked for"
-        say "dexel; it enabled no services and registered no login items. Making it come"
-        say "back on every login is a separate, explicit \`dexel autostart enable\`."
-    fi
+
+    # 3) macOS unsigned — one line + the one command, only with a Dexel.app.
     if [ "$OS" = darwin ] && [ -n "$MAC_APP" ]; then
         say ""
-        say "The Dexel.app window is the macOS default now: a bare \`dexel\` and"
-        say "\`dexel open\` both open it, not the browser (the browser stays the"
-        say "fallback only if the app is ever missing)."
-        say ""
-        say "Unsigned build: the first launch may still prompt. If macOS refuses"
-        say "Dexel.app as \"from an unidentified developer\", right-click it and"
-        say "choose Open once, or clear the flag by hand:"
-        say "  xattr -dr com.apple.quarantine \"$MAC_APP\""
+        say "If macOS blocks Dexel.app (unsigned): right-click it -> Open, or run:"
+        printf '  %sxattr -dr com.apple.quarantine "%s"%s\n' "$C_CMD" "$MAC_APP" "$C_RESET"
     fi
     if [ "$OS" = darwin ] && [ -z "$MAC_APP" ]; then
         say ""
-        say "On macOS this installed the CLI only — no Dexel.app window. \`dexel"
-        say "open\` uses your browser, which is a supported front door"
-        say "(ARCHITECTURE.md Decision 17) and runs the same game."
-        say ""
-        say "Releases normally ship an (unsigned) Dexel.app .dmg that this"
-        say "installer downloads, verifies and opens for you. You are seeing this"
-        say "because this release has none yet, you passed --no-app, or the .dmg"
-        say "could not be verified or mounted. To build the window from source"
-        say "instead: from a clone of this repo, with rustup and"
-        say "\`cargo install tauri-cli --version '^2'\` present, re-run this script."
+        printf 'No app window this install — %sdexel open%s uses your browser.\n' \
+            "$C_CMD" "$C_RESET"
     fi
+
+    # 4) The commands they can run.
     say ""
-    say "Uninstall — one command, and it is the exact reversal of the above:"
+    say "Run it:"
+    printf '  %sdexel%s                    start / open\n'          "$C_CMD" "$C_RESET"
+    printf '  %sdexel status%s             is it running?\n'        "$C_CMD" "$C_RESET"
+    printf '  %sdexel stop%s               stop it\n'               "$C_CMD" "$C_RESET"
+    printf '  %sdexel autostart enable%s   start at login (off by default)\n' \
+        "$C_CMD" "$C_RESET"
+    printf '  %sdexel uninstall%s          remove it (%s--purge%s also deletes your save)\n' \
+        "$C_CMD" "$C_RESET" "$C_CMD" "$C_RESET"
+
+    # 5) Privacy — one dim line; the details live on the site/README.
     say ""
-    say "  dexel uninstall           stop, disable autostart, remove every file"
-    say "                            this installer wrote. Your save STAYS."
-    say "  dexel uninstall --purge   ...and delete the save too (asks twice)"
-    say ""
-    say "It prints every path it removed and every path it kept, and running it"
-    say "twice is harmless. Add --yes to skip the prompts in a script."
-    say ""
-    say "By hand instead — or if you deleted the binary before reading this:"
-    say "  dexel stop && dexel autostart disable"
-    say "  rm -f $BINDIR/dexel"
-    if [ "$SHIM_INSTALLED" = 1 ]; then
-        say "  rm -f $BINDIR/dexel-desktop $BINDIR/dexel-desktop.AppImage"
-    fi
-    if [ -n "$DESKTOP_ENTRY" ]; then
-        say "  rm -f $DESKTOP_ENTRY"
-    fi
-    if [ "$ICON_INSTALLED" = 1 ]; then
-        say "  rm -f $DATADIR/icons/hicolor/128x128/apps/dexel.png"
-    fi
-    say ""
-    say "Your keystrokes are counted, never read — counts and durations only,"
-    say "enforced by build-failing structural tests. Your data stays in"
-    say "$STATEDIR and upgrades never touch it."
+    info "Counts and durations only, never your keystrokes. Data: $STATEDIR"
     say ""
 }
 
