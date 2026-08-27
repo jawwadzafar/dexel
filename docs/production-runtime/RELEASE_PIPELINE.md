@@ -568,7 +568,7 @@ Consequences, each of them good:
 * `install.sh` on a Mac exits 5 with "no darwin-arm64 build in v1.4.0 yet — see
   README § Install from a clone". True, actionable, not a crash.
 * `dexel update` on a Mac says the same.
-* When the owner registers their Mac (F3-design FORK 1), the flipped
+* When the owner registers their Mac, the flipped
   `release-macos` job builds `darwin/arm64` natively, uploads it into the
   **existing** `releases/v1.4.0/` prefix (allowed — the gate is per object),
   appends its line to `checksums.txt`, and re-runs `manifest`. The manifest gains
@@ -593,8 +593,7 @@ Mac — the product's primary platform.
   env, so no config file is written to the runner's disk).
 * `install.sh` needs no privilege. If it ever needs `sudo`, that is a design
   regression.
-* **Signing is deferred** (`docs/plan/F3-design.md` §6 — the certificates are an
-  owner purchase). The manifest reserves a `signatures` key so adding minisign or
+* **Signing is deferred** (the certificates are an owner purchase). The manifest reserves a `signatures` key so adding minisign or
   cosign later is additive: publish `<artifact>.sig` next to each artifact, add
   `"signature"` per artifact entry, teach the updater to verify it when present.
   Until then, sha256-over-HTTPS from an immutable bucket is the honest ceiling
@@ -648,7 +647,7 @@ Nothing in §§3-8 works until these are done. None of them are code.
 - [ ] Install `rclone` on `jwdlab-runner` (single static binary; pin the version)
       or accept a download-and-verify step at the top of the publish job.
 - [ ] Register the owner's Mac as a self-hosted runner with label **`mac`** to
-      unblock `darwin-arm64` (F3-design FORK 1). Optional for the first release —
+      unblock `darwin-arm64`. Optional for the first release —
       §7 makes a mac-less release honest rather than broken.
 
 **Smoke test, once, by hand**
@@ -656,7 +655,7 @@ Nothing in §§3-8 works until these are done. None of them are code.
 - [ ] `echo ok > healthcheck.txt`, upload it to `dexel-downloads`, and confirm
       `curl -fsSL https://downloads.dexel.jwdlab.com/healthcheck.txt` prints `ok`.
       This proves DNS + certificate + public access before any CI runs, and is the
-      exit criterion for the infra step in `MIGRATION_PLAN.md`.
+      exit criterion for the release infra step.
 - [ ] Delete `healthcheck.txt` afterwards.
 
 **Deferred, named so it does not creep**

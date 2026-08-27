@@ -67,7 +67,7 @@ overlap even slightly, resolve it before dispatch, not after both report done.
 ## Never trust "done" without independent, clean-cache re-verification
 
 An agent's own self-report is not evidence. This project's actual policy
-(the archived v0.1 run prompt): "check `docs/milestone-log.md`/`docs/pr-log.md` for
+(the archived v0.1 run prompt): "check `docs/plan/ORCHESTRATION-LOG.md` for
 real evidence of progress before assuming a pass is done, never trust an
 agent's self-report alone." Concretely:
 
@@ -90,9 +90,10 @@ agent's self-report alone." Concretely:
 
 ## Keep the plan and its log in the repo, not only in chat
 
-`docs/plan/v0.4-behind-view-plan.md`'s own opening: "the orchestration plan
-previously lived only in the overseer's conversation. A session dying = the
-plan dying, and agents diverging. This document IS the plan." Concretely for
+The hard-won lesson from earlier orchestration: the plan previously lived only
+in the overseer's conversation. A session dying = the plan dying, and agents
+diverging. The plan must instead live in the repo — today that is
+`docs/plan/ROADMAP.md` plus `docs/plan/ORCHESTRATION-LOG.md`. Concretely for
 any future orchestration:
 
 - A living plan doc (wave structure, ownership table, exit criteria, a status

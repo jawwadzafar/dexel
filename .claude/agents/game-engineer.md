@@ -34,7 +34,7 @@ You do not see other agents' conversations, and nothing is passed between agents
 2. Read `docs/plan/ROADMAP.md` and `docs/plan/ORCHESTRATION-LOG.md` for the current state before starting.
 
 **On finish:**
-1. Your primary artifact contract: `docs/plan/ORCHESTRATION-LOG.md` — one appended, dated row per landing. (`docs/milestone-log.md` is the v0.1 Bevy-era log: history, not yours to extend.)
+1. Your primary artifact contract: `docs/plan/ORCHESTRATION-LOG.md` — one appended, dated row per landing.
 2. Your report must stand alone: decisions, constraints, dead ends. A reviewer acting only on it must not repeat work you already did.
 
 **Your work is accepted only if:**

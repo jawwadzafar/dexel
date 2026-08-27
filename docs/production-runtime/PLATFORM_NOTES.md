@@ -949,8 +949,7 @@ running, or nothing at all when it was not.
 * **macOS Gatekeeper.** An unsigned, unnotarized `dexel` downloaded by `curl`
   gets no quarantine attribute (quarantine comes from browsers and Finder), so
   the install-script path runs clean. A `.dmg` a user double-clicks does not —
-  that is `dexel-desktop`'s problem and it is deferred with signing
-  (`docs/plan/F3-design.md` §6).
+  that is `dexel-desktop`'s problem and it is deferred with signing.
 * **Linux `input` group.** Required for real capture; a runtime without it is
   honestly blind rather than broken. `dexel status` surfaces `providerHonesty`
   so one command explains "why is nothing accruing".

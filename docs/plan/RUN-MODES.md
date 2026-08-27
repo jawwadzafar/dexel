@@ -207,14 +207,13 @@ The gate is a repository variable *and* a runner label on purpose: a job whose
 variable makes "dormant" mean cleanly skipped.
 
 **Status: not shipped.** Unblocking it is a matter of registering runners, not
-writing code. The recommended next step
-([F3-design.md](F3-design.md) FORK 1) is to register the owner's own Mac —
+writing code. The recommended next step is to register the owner's own Mac —
 macOS is the primary platform per ADR 0010 and the hardware already exists.
 
 Note when it does ship: the first bundles will be **unsigned and
 unnotarized**. Gatekeeper and SmartScreen will warn; the apps still run.
 Signing needs paid certificates the owner must supply and is tracked as a
-follow-up ([F3-design.md](F3-design.md) §6).
+follow-up.
 
 ---
 
@@ -314,7 +313,6 @@ real and what is merely written down.
   decision and its alternatives for modes B/C.
 - [`docs/production-runtime/ARCHITECTURE.md`](../production-runtime/ARCHITECTURE.md) —
   the full production-runtime design mode P and ADR 0018 were built from.
-- [F3-design.md](F3-design.md) — the full design, build matrix and phasing.
 - [`desktop/README.md`](../../desktop/README.md) — build instructions and the
   verified/unverified split.
 - [`.github/workflows/desktop.yml`](../../.github/workflows/desktop.yml) — the

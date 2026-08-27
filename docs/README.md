@@ -30,7 +30,7 @@ a subdirectory because so much of the repo cites them by path:
 | What changed in the game's behaviour, and when? | [`game/CHANGELOG.md`](game/CHANGELOG.md) |
 | What is being built next? | [`plan/ROADMAP.md`](plan/ROADMAP.md) |
 | Why is the stack Go + HTML instead of Rust + Bevy? | [ADR 0011](adr/0011-engine-pivot-to-pdf-native-stack.md), and [ADR 0020](adr/0020-archive-the-frozen-rust-track.md) for where those crates live now |
-| Why are `app/public/` and `app/assets/` where they are? | [`app/embed.go`](../app/embed.go)'s header, and [`plan/REPO-STRUCTURE-AUDIT.md`](plan/REPO-STRUCTURE-AUDIT.md) §4 |
+| Why are `app/public/` and `app/assets/` where they are? | [`app/embed.go`](../app/embed.go)'s header |
 
 ## `docs/production-runtime/` — the distribution and runtime architecture layer
 
@@ -41,40 +41,11 @@ was built from.
 
 - [`ARCHITECTURE.md`](production-runtime/ARCHITECTURE.md) — the decision
   record itself.
-- [`MIGRATION_PLAN.md`](production-runtime/MIGRATION_PLAN.md) — the PR
-  sequence that realised it.
 - [`PLATFORM_NOTES.md`](production-runtime/PLATFORM_NOTES.md) — per-OS
   (macOS/Linux/Windows) autostart, path, and packaging specifics.
 - [`RELEASE_PIPELINE.md`](production-runtime/RELEASE_PIPELINE.md) — how a
   release is built and shipped.
-- [`LINUX-VERIFICATION.md`](production-runtime/LINUX-VERIFICATION.md) — the
-  verification run backing the Linux release claims.
 
-## `docs/rust-parallel/` and `docs/rust-port-evaluation.md` — the concluded Rust-port experiment record
-
-**Decision: Go stays** ([`rust-parallel/VERDICT.md`](rust-parallel/VERDICT.md),
-2026-08-24). This is a frozen experiment record, not a live track — kept
-because the analysis and its 888 KB of captured WebSocket goldens remain
-useful:
-
-- [`rust-port-evaluation.md`](rust-port-evaluation.md) — the full
-  evaluation and scorecard behind the decision.
-- [`rust-parallel/CONTRACT.md`](rust-parallel/CONTRACT.md) and
-  [`rust-parallel/goldens/`](rust-parallel/goldens/) — the P0b capture of
-  the real Go server's WebSocket wire format. The goldens are **not**
-  archived alongside the verdict: VERDICT.md notes they "remain valuable to
-  Go itself as wire-contract regression fixtures," so treat them as live
-  fixtures, not history.
-- [`rust-parallel/P0a-cross-compile-probe.md`](rust-parallel/P0a-cross-compile-probe.md)
-  — the cross-compile probe kept for the record.
-
-Not the frozen Bevy game — that is
-[ADR 0020](adr/0020-archive-the-frozen-rust-track.md).
-
-## Historical layer (v0.1, Rust/Bevy era)
-
-Kept because history is cheap and the SHAs in them are still resolvable.
-**None of these is a current plan:**
-[`implementation-plan.md`](implementation-plan.md),
-[`milestone-log.md`](milestone-log.md), [`pr-log.md`](pr-log.md). Each carries
-a banner saying so.
+The concluded Rust-port experiment and the v0.1 Rust/Bevy era are archived on
+branch `attic/legacy-rust-and-fleet`; the decision to stay on Go, and where
+those crates live now, is [ADR 0020](adr/0020-archive-the-frozen-rust-track.md).

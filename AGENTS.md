@@ -13,7 +13,7 @@ sequences them; `orchestration-playbook` is the method behind it.
 
 (The opencode and goose harnesses that used to be invoked from here are
 archived on branch `attic/legacy-rust-and-fleet` — they pinned models that no
-longer exist. ADR 0020, `docs/plan/REPO-STRUCTURE-AUDIT.md` §2.3.)
+longer exist. See ADR 0020.)
 
 
 ## Changelog

@@ -310,8 +310,7 @@ runner with the label **`mac`** is what activates it:
 That last point is the reason the signing tiers are environment-driven rather
 than flag-driven: the CI job and the hand run differ only in which secrets
 exist. See also `docs/production-runtime/RELEASE_PIPELINE.md`'s owner checklist entry
-("Register the owner's Mac as a self-hosted runner with label `mac`") and
-`docs/plan/F3-design.md` FORK 1.
+("Register the owner's Mac as a self-hosted runner with label `mac`").
 
 ---
 

@@ -62,7 +62,7 @@ geometry), gated by real in-game renders judged by eye until it clearly reads as
   Activity modal to fit ≤362px (tighten row heights / overall height) or
   restructure so nothing is cut. UI/CSS follow-up.
 
-## From the 2026-08-22 adversarial review (docs/plan/REVIEW-2026-08-22.md)
+## From the 2026-08-22 adversarial review
 
 - **B-1..B-3 (BLOCKING)** — schema<5 unsigned-save mint; legacy-Rust-import
   mint; failed AppendSession → id-skip → false-tamper wipe. Fix wave queued

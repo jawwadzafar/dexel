@@ -4,8 +4,7 @@ A native window around Dexel's existing Go server. This directory is
 **packaging only**; it contains no game logic, no economy, no privacy rules.
 Those all live in `app/` and are entirely unchanged by it.
 
-See [ADR 0015](../docs/adr/0015-tauri-desktop-shell.md) for the decision and
-[`docs/plan/F3-design.md`](../docs/plan/F3-design.md) for the full design.
+See [ADR 0015](../docs/adr/0015-tauri-desktop-shell.md) for the decision.
 For which way to *run* Dexel (browser, app, installer), see
 [`docs/plan/RUN-MODES.md`](../docs/plan/RUN-MODES.md).
 

@@ -588,8 +588,8 @@ Concretely, in `desktop/src-tauri/src/lib.rs`:
 | `SidecarGuard` + `Mutex<Option<CommandChild>>` + SIGTERM/SIGKILL escalation + `libc` dependency | **deleted in full**, along with the `[target.'cfg(unix)'.dependencies] libc` entry |
 | `RunEvent::ExitRequested \| Exit → guard.shutdown()` | **deleted.** Closing the window closes the window. |
 
-What survives unchanged: `WebviewUrl::External(loopback url)` (F3-design FORK 2's
-recommended path — the page's origin IS the server's origin, so the WS
+What survives unchanged: `WebviewUrl::External(loopback url)` (the recommended
+desktop path — the page's origin IS the server's origin, so the WS
 same-origin check still passes with no `-insecure-origin` and no wildcard); the
 660×460 fixed geometry; `tauri-plugin-log`; the icon set.
 
@@ -780,7 +780,7 @@ nobody adds them back by reflex:
   (`detachAttr`, `autostart`, `lockFile`) plus one `paths` package. The repo's
   existing `provider_select_*.go` pattern is the precedent.
 * **No auto-update daemon, no telemetry, no crash reporting, no signing**
-  (deferred; certificates are an owner purchase — F3-design §6).
+  (deferred; certificates are an owner purchase).
 * **No tray/menubar icon** (deferred, named).
 * **No packaged manager distribution** (Homebrew tap, winget, AUR, `.deb`) —
   the install script + `dexel update` cover the first release; a tap is a
@@ -798,10 +798,8 @@ nobody adds them back by reflex:
   inverts. A new ADR (**ADR 0017 — background runtime and CLI control plane**)
   should record §2/§3/§7; ADR 0015 is amended, not deleted, since the window,
   origin and geometry decisions all stand.
-* `docs/adr/0016-sqlite-persistence.md`, `docs/plan/DB-1-design.md` — the state
-  container this design must not disturb.
+* `docs/adr/0016-sqlite-persistence.md` — the state container this design must
+  not disturb.
 * `docs/adr/0010-mac-first-honest-mechanics.md` — the constraint §6 is written
   against.
 * `docs/plan/RUN-MODES.md` — gains a mode for the installed CLI; modes A-D stay.
-* `docs/plan/F3-design.md` §§1-2, 6-9 — the desktop build matrix and signing
-  deferral remain accurate.

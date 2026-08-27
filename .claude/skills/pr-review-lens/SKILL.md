@@ -37,8 +37,6 @@ is real" bugs happen for the next agent.
 1. Read the PR's linked `docs/plan/ORCHESTRATION-LOG.md` entry and the
    corresponding phase section in `docs/plan/ROADMAP.md` — know what this
    PR is supposed to demonstrate before looking at the diff.
-   (`docs/milestone-log.md` and `docs/implementation-plan.md` are the v0.1
-   Bevy-era equivalents: history, not the current plan.)
 2. `gh pr diff <n>` — read the actual diff, not just the description.
 3. Re-run whatever your specific lens requires (see your agent's `role`
    and `principles`) inside your worktree. A log entry claiming that

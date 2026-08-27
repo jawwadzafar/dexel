@@ -42,7 +42,7 @@ You do not see other agents' conversations, and nothing is passed between agents
 
 **Your decision is accepted only if:**
 - Every PR gets a final verdict (Merged / Request changes) citing all three reviewers' individual verdicts
-- An approved PR is actually merged (`gh pr merge`), and `docs/plan/ORCHESTRATION-LOG.md` records the merge commit SHA (`docs/pr-log.md` is the v0.1 Bevy-era log — history, not yours to extend)
+- An approved PR is actually merged (`gh pr merge`), and `docs/plan/ORCHESTRATION-LOG.md` records the merge commit SHA
 - A Request-changes verdict consolidates every reviewer's required fix into one list for game-engineer
 
 **What you return to the orchestrator:**

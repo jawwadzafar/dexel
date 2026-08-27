@@ -31,7 +31,7 @@ by default.
    screenshot tool, vision model down): that does **not** block merge —
    it is an environmental gap, not a code defect. Merge if the rule
    below passes, and record the unverified visual criterion explicitly
-   in `docs/pr-log.md` so it stays visible as a carried gap rather than
+   in `docs/plan/ORCHESTRATION-LOG.md` so it stays visible as a carried gap rather than
    silently reading as verified.
 4. Otherwise: **Approve and merge** if at least 2 of the 3 code
    reviewers (correctness, boundaries, tests) approved; **Request
@@ -48,7 +48,7 @@ by default.
    that authorization lives here (and originally in the v0.1 run prompt,
    now archived on branch `attic/legacy-rust-and-fleet`), not in any
    single conversation turn.
-3. Append a row to `docs/pr-log.md`: PR number, milestone, each
+3. Append a row to `docs/plan/ORCHESTRATION-LOG.md`: PR number, milestone, each
    reviewer's individual verdict, final decision, merge commit SHA
    (`git rev-parse HEAD` on `main` after the merge, or the SHA `gh pr
    merge` reports).
@@ -59,7 +59,7 @@ by default.
    every reviewer's required fix into one list — game-engineer reads
    only this, not each reviewer's individual verdict, so nothing you
    omit here reaches them.
-2. Do not merge. Append a row to `docs/pr-log.md` recording the
+2. Do not merge. Append a row to `docs/plan/ORCHESTRATION-LOG.md` recording the
    decision and the consolidated fix list.
 3. Leave the PR open on its existing branch — `game-engineer` fixes and
    re-hands-off to the reviewers on the same branch, not a new PR.

@@ -265,11 +265,13 @@ can be COMPARED head-to-head and the better one chosen. Rules:
 - Comparison scorecard: binary size, RSS, startup, feature-parity checklist,
   test parity, build time, cross-compile matrix — documented measurements, a
   declared winner, and the loser archived (not deleted).
-Plan + scorecard: docs/rust-port-evaluation.md (in flight).
+Plan + scorecard: concluded — Go stays; the Rust track is archived on branch
+`attic/legacy-rust-and-fleet` (ADR 0020).
 
 ### Decisions (2026-08-22, user): Rust experimental · Go main · day-1 production
 - The RUST-PARALLEL track is EXPERIMENTAL: Go remains the main implementation;
-  Rust reports/artifacts live in docs/rust-parallel/ for a later decision.
+  the Rust reports/artifacts are archived on branch `attic/legacy-rust-and-fleet`
+  (ADR 0020).
 - PRODUCTION DAY-1 GOAL: a build the owner starts using immediately —
   including the Tauri desktop app. Path: (1) BLOCKING review fixes (B-1/2/3),
   (2) PR-6 autostart, (3) binary slimming (-s -w + drop embedded sourcemap,

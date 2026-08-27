@@ -119,11 +119,11 @@ the repo.
 first place to look if a long-running instance reports a weird day"). R7 is that
 prediction coming true, with the mechanism identified.
 
-`docs/production-runtime/LINUX-VERIFICATION.md:857-859` already lists
-suspend/resume + midnight rollover as **unverified** ("a container that never
-sleeps cannot exercise either"). Still unverified — see §7.
+The Linux verification run already listed suspend/resume + midnight rollover as
+**unverified** ("a container that never sleeps cannot exercise either"). Still
+unverified — see §7.
 
-`docs/plan/P2-design.md:1160-1163` accepts a related limitation, and this is the
+The P2 sessions design accepts a related limitation, and this is the
 load-bearing sentence for R1:
 
 ```
@@ -142,7 +142,7 @@ laptop.
 
 | Rank | # | Finding |
 |---|---|---|
-| REAL-BUG | R1 | A session's 2h idle auto-end and 16h hard cap are measured on the **monotonic** clock, so **neither can fire across a suspend**. A session left open over a weekend never ends; the bound P2-design relies on to make "wall duration > observed time" acceptable does not exist on a laptop. |
+| REAL-BUG | R1 | A session's 2h idle auto-end and 16h hard cap are measured on the **monotonic** clock, so **neither can fire across a suspend**. A session left open over a weekend never ends; the bound the P2 sessions design relies on to make "wall duration > observed time" acceptable does not exist on a laptop. |
 | REAL-BUG | R2 | `sessions.active.elapsedSeconds` **freezes across a suspend, then jumps by the whole gap at the next restart** — the identical expression measures awake time live and wall time restored. |
 | REAL-BUG | R3 | A sustained-typing focus run **survives an arbitrarily long suspend** and pays `FocusSessionBonusWork`. This is verbatim the failure `Engine.Reset`'s own doc comment describes for pause — the guard exists, nothing calls it on resume-from-suspend. |
 | REAL-BUG | R4 | For ~10s after every resume the engine claims `activeState: "coding"` (crediting `ActiveSeconds`, scrolling the terminal) on the strength of a keystroke that is 8 hours old in wall time. ADR 0010's forbidden claim, delayed. |
@@ -207,7 +207,7 @@ comparison silently switches to wall time. It is broken for a suspend, where the
 in-memory values still carry one.
 
 Severity, stated honestly: nothing false is *accrued* during the sleep (no ticks
-run — C6). The damage is (a) the two bounds P2-design leans on do not exist,
+run — C6). The damage is (a) the two bounds the P2 sessions design leans on do not exist,
 (b) session records whose two timestamps and duration contradict each other, and
 (c) an "active session" the user abandoned days ago still holding the pill.
 
@@ -611,8 +611,7 @@ This is a claim the project states three times and tests once.
   during that bucket`.
 ```
 
-Restated at `docs/production-runtime/MIGRATION_PLAN.md:197-202` (PR-5's exit
-criterion), at `docs/ui-spec.md:899-904`, and on the struct itself
+Restated at PR-5's exit criterion, at `docs/ui-spec.md:899-904`, and on the struct itself
 (`game.go:159-165`).
 
 Every one of those three counters is incremented **per tick**
@@ -652,8 +651,8 @@ would expect. Owner decision, not a silent fix. Owner of the code either way:
 **RESOLVED 2026-08-25 — option (b), amend the claim (owner decision).** The
 invariant now reads `activeSeconds + idleSeconds + pausedSeconds == the seconds
 the runtime was AWAKE, TICKING AND OBSERVING during that bucket` — amended in
-all four places it is stated (`ARCHITECTURE.md` Decision 14, `MIGRATION_PLAN.md`
-§PR-5's exit criterion, `docs/ui-spec.md` §`stats.today`, and the
+all four places it is stated (`ARCHITECTURE.md` Decision 14, the PR-5 release
+exit criterion, `docs/ui-spec.md` §`stats.today`, and the
 `StatCounters.PausedSeconds` doc comment in `internal/game/game.go`) plus
 `pause_test.go`'s own `runUptime` comment, which had *defined* uptime as the
 tick count and so could not fail. The amended claim excludes **two** things, not
@@ -813,8 +812,8 @@ monotonic, so after a resume it reports only the awake gap, i.e. it
 **Measure:** `dexel logs -f`, suspend 5 minutes, resume. Record (a) whether
 `input device ... died` / `RECOVERED` lines appear, (b) how many of N devices
 survive, (c) `activeState` on the first ticks after resume. That one run also
-confirms or refutes R4 in the field, and it is the run
-`LINUX-VERIFICATION.md:857-859` already lists as never done.
+confirms or refutes R4 in the field, and it is the run the Linux verification
+already lists as never done.
 
 ### F2 — macOS: the darwin equivalent of today's bug, plus its own sleep questions
 
@@ -1005,7 +1004,7 @@ Written for this report; none could execute. All are cheap.
    `dexel logs -f`) and F2 (macOS: wake and lock with `keyIdle` logged). These
    are the only way to close R4's blast radius and the darwin questions, and F1
    is already on the record as never done
-   (`LINUX-VERIFICATION.md:857-859`).
+   (the Linux verification run).
 7. **R9 in 3 minutes, no suspend required.** Start the runtime, open the window,
    `kill -9` the runtime, let the supervisor restart it (or start it again by
    hand), and watch the window: it should keep saying `RECONNECTING...` against
