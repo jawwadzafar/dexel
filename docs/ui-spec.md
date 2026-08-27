@@ -3173,26 +3173,34 @@ a bare "80m".
 
 A small, read-only card reachable from the hamburger menu's **ABOUT** item or
 the `[I]` shortcut (`I` for *Info* — every other launcher letter was taken).
-It shows four things and gates nothing:
+It shows, top to bottom, and gates nothing:
 
 * the product name, **dexel**, in gold;
 * the one-line tagline, "a cozy pixel-art companion that runs on your real
   typing", across two lines;
-* the build's **VERSION**; and
-* a link to the **REPOSITORY**.
+* **by &lt;AUTHOR&gt;** — the attribution, dim (default "Jawwad Zafar");
+* the build's **VERSION**, and — when the build knows one — the **commit**
+  trailing it in dim (`VERSION v0.1.0 · 3079c45`);
+* a **LINKS** block: the full repository URL, then a row of three derived
+  links — **RELEASES** (`<repo>/releases/latest`), **REPORT BUG**
+  (`<repo>/issues`), and **DOCS** (`<repo>/blob/main/docs/README.md`);
+* the privacy line, "Your keystrokes are counted, never read.", in cream (the
+  app's whole contract, so it is the weightiest line); and
+* the license line, "MIT · © 2026 Jawwad Zafar", in dim.
 
-Same mechanics as every modal above (native `<dialog>` + `showModal()`, the
-shared `#scrim`, one `close` event every dismissal path — X, `[I]`, `Esc`,
-click-away (§5.4) — funnels through). It reads **no** server state, so it has
-no `renderAll()` refresh hook.
+The card is authored at 360×252 inside the 640×400 layout (centred; under
+BUG-8's ~362px height cap). Same mechanics as every modal above (native
+`<dialog>` + `showModal()`, the shared `#scrim`, one `close` event every
+dismissal path — X, `[I]`, `Esc`, click-away (§5.4) — funnels through). It
+reads **no** server state, so it has no `renderAll()` refresh hook.
 
-### 15.1 The version and repo URL are build-injected, never hard-coded
+### 15.1 The version, commit, author, and repo URL are build-injected, never hard-coded
 
-Neither value is a string literal in the TypeScript sources. `build.mjs`
-injects two esbuild `define`s and `src/config.ts` is their only typed reader
-(consumed only by `features/about-modal.ts`, which writes them into the DOM
-once on load — the markup ships with `#about-version` and `#about-repo`
-empty):
+None of these values is a string literal in the TypeScript sources.
+`build.mjs` injects four esbuild `define`s and `src/config.ts` is their only
+typed reader (consumed only by `features/about-modal.ts`, which writes them
+into the DOM once on load — the markup ships with `#about-version`,
+`#about-commit`, `#about-author`, and every link `href` empty):
 
 * `__DEXEL_REPO_URL__` — `process.env.DEXEL_REPO_URL`, else
   `https://github.com/jawwadzafar/dexel`.
@@ -3203,6 +3211,19 @@ empty):
   commits accumulate past the tag, mirroring the Go side's stamp
   (`app/version.go`). A plain `--always` describe would drift the version
   into a commit SHA on the next commit and churn the bundle.
+* `__DEXEL_AUTHOR__` — `process.env.DEXEL_AUTHOR`, else `Jawwad Zafar`. Shown
+  as "by &lt;AUTHOR&gt;".
+* `__DEXEL_COMMIT__` — `process.env.DEXEL_COMMIT`, else the short SHA the
+  version **tag** points at (`git rev-list -n 1 --abbrev-commit <tag>`), else
+  `""`. Pinning to the tag's commit — not `HEAD` — keeps the committed bundle
+  byte-stable as commits accumulate (a `git rev-parse HEAD` here would churn
+  the bundle and fail CI's drift check). When empty, the modal simply shows no
+  commit — honest: skip what we don't have.
+
+The three derived links (`RELEASES_URL`, `ISSUES_URL`, `DOCS_URL` in
+`config.ts`) are built from `REPO_URL`, so a single `DEXEL_REPO_URL` override
+moves them all in lockstep and no second `github.com` literal enters the
+sources.
 
 There is **no version on the WebSocket wire** (`StateMessage`/`ConfigView`
 carry none), so the About modal shows the injected `VERSION`. If a future
@@ -3210,36 +3231,47 @@ server starts sending one, prefer that and keep the injected value as the
 fallback.
 
 Proof it is not hard-coded: `grep` the `.ts` sources finds no `github.com`
-URL and no version literal outside `build.mjs`'s env-define and `config.ts`'s
-`declare`s; and a
-`DEXEL_REPO_URL=https://example.com/x DEXEL_VERSION=v9.9.9 npm run build`
-produces a bundle whose About modal shows exactly those, while a normal
-rebuild reverts to the defaults byte-for-byte.
+URL and no version/author literal outside `build.mjs`'s env-defines and
+`config.ts`'s `declare`s; and a `DEXEL_REPO_URL=https://example.com/x
+DEXEL_VERSION=v9.9.9 DEXEL_AUTHOR="Ada Lovelace" DEXEL_COMMIT=deadbee npm run
+build` produces a bundle carrying exactly those, while a normal rebuild
+reverts to the defaults byte-for-byte (the committed bundle rebuilds
+identically).
 
 ### 15.2 The repo link opens externally, never in the game
 
 The app deliberately disables in-webview navigation (§0.2 — the context menu
 and drag-to-navigate escape are both killed, and the frameless shell has no
-chrome to get back with). So the repo link's ordinary left-click is
-**intercepted**: `about-modal.ts` `preventDefault()`s the in-page navigation
-and opens the URL on a separate surface instead —
+chrome to get back with). So **every** link's ordinary left-click (the repo
+URL and all three derived links) is **intercepted** by one shared
+`wireExternalLink` handler: `about-modal.ts` `preventDefault()`s the in-page
+navigation and opens the URL on a separate surface instead —
 
 * a plain browser: `window.open(url, '_blank')` opens a new tab, and the
   Tauri shell routes that same call out to the OS default browser;
 * if `window.open` is blocked / returns `null` (a locked-down webview), fall
-  back to copying the URL to the clipboard, and failing that, programmatically
-  select the URL text (`#about-repo` carries `user-select: text`) and show a
-  "COPY THE LINK ABOVE" hint so the user is one `Ctrl`/`Cmd`+`C` away.
+  back to copying the URL to the clipboard. Failing even that, the **repo**
+  link (which shows its full URL) programmatically selects that text
+  (`#about-repo` carries `user-select: text`) and shows a "COPY THE LINK
+  ABOVE" hint so the user is one `Ctrl`/`Cmd`+`C` away; the derived links show
+  a label rather than a URL, so their dead-end just reports "COULD NOT OPEN
+  LINK".
 
-The `href` and `target="_blank" rel="noopener noreferrer"` remain on the
+The `href` and `target="_blank" rel="noopener noreferrer"` remain on every
 `<a>` for accessibility and a real browser's middle/cmd-click new-tab, but the
 game surface is **never** navigated in any path.
 
 ### 15.3 Verified in the real running game
 
 Built the Go binary, ran it with the fake provider, and screenshotted the
-real page (`about_modal.png`). At 1x and 2x the modal shows the name, tagline,
-`v0.1.0`, and the repo URL; the menu item aligns with the others (label left,
-`[I]` in the right-hand key column); clicking the repo link opens a new
-tab/OS browser while the game URL is unchanged and the modal stays open; `Esc`
-and click-away both close it.
+real page (`about_v2.png` at 1x, `about_v2@2x.png` at 2x). At both scales the
+modal shows the name, tagline, **by Jawwad Zafar**, `VERSION v0.1.0 · 3079c45`,
+the LINKS block (repo URL + RELEASES · REPORT BUG · DOCS), the privacy line,
+and `MIT · © 2026 Jawwad Zafar`, with nothing clipping or overflowing; the
+menu item aligns with the others (label left, `[I]` in the right-hand key
+column). Clicking each of the four links opens a new tab/OS browser to the
+correct URL while the game URL is unchanged and the modal stays open (verified
+per-link, zero console errors); `Esc` and click-away both close it. A build
+with `DEXEL_AUTHOR`/`DEXEL_REPO_URL`/`DEXEL_VERSION`/`DEXEL_COMMIT` overrides
+flows those values through to the modal, and a normal rebuild reverts to the
+defaults with a byte-identical bundle.

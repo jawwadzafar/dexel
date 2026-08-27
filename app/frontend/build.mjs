@@ -26,11 +26,13 @@
 import { build } from 'esbuild';
 import { execSync } from 'node:child_process';
 
-// ABOUT — the repo URL and version the About modal shows are injected here,
-// NOT hard-coded in the .ts sources (src/config.ts is the typed reader of
-// these two defines, and its only consumer is features/about-modal.ts).
+// ABOUT — the repo URL, version, author, and commit the About modal shows are
+// injected here, NOT hard-coded in the .ts sources (src/config.ts is the typed
+// reader of these defines, and its only consumer is features/about-modal.ts).
 //
 // DEXEL_REPO_URL: an env override, else the canonical repository.
+//
+// DEXEL_AUTHOR: an env override, else "Jawwad Zafar".
 //
 // DEXEL_VERSION: an env override, else the NEAREST git tag
 // (`git describe --tags --abbrev=0`), else "v0.1.0". `--abbrev=0` — the tag
@@ -54,8 +56,35 @@ function resolveVersion() {
   return 'v0.1.0';
 }
 
+// DEXEL_COMMIT: an env override, else the short SHA the NEAREST git tag points
+// at (`git rev-list -n 1 --abbrev-commit <tag>`), else "" (the About modal
+// then simply shows no commit). Pinning to the TAG'S commit — not `HEAD` — is
+// the same determinism discipline as resolveVersion's `--abbrev=0`: it keeps
+// the committed bundle byte-stable as ordinary commits accumulate past the
+// frozen v0.1.0 tag. A `git rev-parse HEAD` here would churn the bundle (and
+// fail CI's bundle-drift check) on every commit.
+function resolveCommit() {
+  if (process.env.DEXEL_COMMIT) return process.env.DEXEL_COMMIT;
+  try {
+    const tag = execSync('git describe --tags --abbrev=0', {
+      stdio: ['ignore', 'pipe', 'ignore']
+    }).toString().trim();
+    if (tag) {
+      const sha = execSync(`git rev-list -n 1 --abbrev-commit ${tag}`, {
+        stdio: ['ignore', 'pipe', 'ignore']
+      }).toString().trim();
+      if (sha) return sha;
+    }
+  } catch {
+    // no tags / not a git checkout — fall through to the empty default
+  }
+  return '';
+}
+
 const REPO_URL = process.env.DEXEL_REPO_URL || 'https://github.com/jawwadzafar/dexel';
 const VERSION = resolveVersion();
+const AUTHOR = process.env.DEXEL_AUTHOR || 'Jawwad Zafar';
+const COMMIT = resolveCommit();
 
 await build({
   entryPoints: ['src/main.ts'],
@@ -69,7 +98,9 @@ await build({
   // esbuild's required form for a string define.
   define: {
     __DEXEL_REPO_URL__: JSON.stringify(REPO_URL),
-    __DEXEL_VERSION__: JSON.stringify(VERSION)
+    __DEXEL_VERSION__: JSON.stringify(VERSION),
+    __DEXEL_AUTHOR__: JSON.stringify(AUTHOR),
+    __DEXEL_COMMIT__: JSON.stringify(COMMIT)
   },
   logLevel: 'info'
 });

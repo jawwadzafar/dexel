@@ -2257,19 +2257,21 @@ body.shell #titlebar { cursor: default; }
 /* ABOUT (docs/ui-spec.md §15). Same mechanics as #settings above (native
    <dialog>, showModal(), the shared #scrim, the shared window-fit transform
    — #about was added to that selector list). A small, read-only card: name,
-   two-line tagline, one VERSION row, and the repo link.
+   two-line tagline, author, a VERSION (+commit) row, a LINKS block (repo URL +
+   releases/issues/docs), a privacy line, and the license line.
 
-   Authored inside the 640x400 layout at 360x200, centred:
-   --dlg-x = (640-360)/2 = 140, --dlg-y = (400-200)/2 = 100. 200px is well
-   under BUG-8's ~362px dialog:modal height cap. Line lengths checked at the
+   Authored inside the 640x400 layout at 360x252, centred:
+   --dlg-x = (640-360)/2 = 140, --dlg-y = (400-252)/2 = 74. 252px is under
+   BUG-8's ~362px dialog:modal height cap. Line lengths checked at the
    360-24 = 336px inner width, 8px/char: the longest tagline is 29 chars
-   (232px) and the default repo URL is 38 chars (304px). */
+   (232px), the privacy line is 40 chars (320px), and the default repo URL is
+   38 chars (304px). */
 #about {
   position: fixed;
   --dlg-x: 140px;
-  --dlg-y: 100px;
+  --dlg-y: 74px;
   width: 360px;
-  height: 200px;
+  height: 252px;
   margin: 0;
   padding: 12px;
   border: 4px solid var(--wall-light);
@@ -2322,8 +2324,20 @@ body.shell #titlebar { cursor: default; }
 }
 .about-tagline:last-of-type { margin-bottom: 8px; }
 
+/* "by <AUTHOR>" — the attribution, dim so it sits under the tagline without
+   competing with the gold name. Filled by about-modal.ts from config.AUTHOR. */
+#about-author {
+  height: 10px;
+  line-height: 10px;
+  font-size: 8px;
+  color: var(--screen-dim);
+  white-space: nowrap;
+  margin-bottom: 8px;
+}
+
 /* The VERSION row — dim label, cream value, the same label/value idiom the
-   settings name-echo uses. */
+   settings name-echo uses. #about-commit trails the value in dim, hidden when
+   the build knows no commit (about-modal.ts leaves it empty). */
 .about-row {
   height: 20px;
   line-height: 20px;
@@ -2333,6 +2347,7 @@ body.shell #titlebar { cursor: default; }
 }
 .about-row .label { color: var(--screen-dim); }
 .about-row .value { color: var(--cream); }
+#about-commit { color: var(--screen-dim); }
 
 .about-section-title {
   height: 12px;
@@ -2364,6 +2379,27 @@ body.shell #titlebar { cursor: default; }
   margin-bottom: 4px;
 }
 
+/* The derived links row (releases / issues / docs). Each link is gold and
+   underlined like the repo URL; the separators are dim. hrefs are set by
+   about-modal.ts from config.{RELEASES,ISSUES,DOCS}_URL and the left-click is
+   intercepted to open externally, exactly like the repo link. */
+#about-links {
+  height: 12px;
+  line-height: 12px;
+  font-size: 8px;
+  white-space: nowrap;
+  margin-bottom: 4px;
+}
+.about-link {
+  color: var(--gold);
+  text-decoration: underline;
+  cursor: pointer;
+}
+.about-link-sep {
+  color: var(--screen-dim);
+  margin: 0 4px;
+}
+
 /* The copy/fallback status line. Hidden until about-modal.ts has something
    to say (LINK COPIED / COPY THE LINK ABOVE), so the resting modal shows no
    empty row. */
@@ -2377,10 +2413,31 @@ body.shell #titlebar { cursor: default; }
 }
 #about-repo-status.visible { visibility: visible; }
 
+/* The privacy promise — the app's whole contract, in cream so it reads as the
+   weightiest line here (the same reason §11's PRIVACY section sits last). */
+#about-privacy {
+  height: 10px;
+  line-height: 10px;
+  font-size: 8px;
+  color: var(--cream);
+  white-space: nowrap;
+  margin-top: 6px;
+  margin-bottom: 6px;
+}
+
+/* The license line, dim like the other metadata. */
+#about-license {
+  height: 10px;
+  line-height: 10px;
+  font-size: 8px;
+  color: var(--screen-dim);
+  white-space: nowrap;
+}
+
 #about-help {
   position: absolute;
   left: 12px;
-  top: 178px;
+  top: 228px;
   width: 336px;
   height: 10px;
   line-height: 10px;
