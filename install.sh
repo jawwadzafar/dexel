@@ -2129,12 +2129,41 @@ The binary may not match this platform ($OS-$ARCH)."
     fi
 }
 
+# cmd_row CMD DESC — one aligned row of the "Run it:" list. The command is
+# printed in C_CMD (bold cyan) and padded to a fixed column using its VISIBLE
+# width only, so the colour escapes never skew the alignment and a plain
+# (USE_COLOR=0) run lines up identically. DESC may itself carry C_CMD/C_RESET
+# for an inline command (e.g. --purge); those are already-resolved strings,
+# empty when colour is off. A command wider than the column still gets two
+# spaces before its description rather than none.
+cmd_row() {
+    _cr_pad=$(printf '%-24s' "$1")
+    _cr_sp=${_cr_pad#"$1"}
+    [ -n "$_cr_sp" ] || _cr_sp='  '
+    printf '  %s%s%s%s%s\n' "$C_CMD" "$1" "$C_RESET" "$_cr_sp" "$2"
+}
+
 # report — the final screen. Deliberately short and SCANNABLE: the ✓ status,
 # then only what the user might need to DO, with the runnable commands in
 # C_CMD (bold cyan) so they visually pop. Prose is kept to a minimum — a glance
 # should show what's installed and the few commands to type. Colour is applied
 # only through the C_* variables, so USE_COLOR=0 emits the identical text plain.
 report() {
+    # $DX — the command to type to run dexel. Bare `dexel` when $BINDIR is on
+    # PATH; the FULL PATH (with $HOME collapsed to ~ for readability) when it is
+    # NOT, because a bare `dexel` there is command-not-found — the exact case a
+    # tester hit trying to `dexel uninstall` on a fresh macOS. path_advice() set
+    # PATH_MISSING just above. Every runnable command below is built from $DX so
+    # the whole list works regardless of PATH.
+    DX="dexel"
+    if [ "$PATH_MISSING" = 1 ]; then
+        _dx_dir="$BINDIR"
+        case "$BINDIR" in
+            "$HOME"/*) _dx_dir="~${BINDIR#"$HOME"}" ;;
+        esac
+        DX="$_dx_dir/dexel"
+    fi
+
     say ""
     # 1) Status — installed, and whether it's running. One to two lines.
     printf '%s%s dexel is installed%s  %s%s%s\n' \
@@ -2144,15 +2173,15 @@ report() {
             printf '%s%s running%s — the window is open\n' \
                 "$C_OK" "$SYM_OK" "$C_RESET" ;;
         start)
-            printf '%s%s running%s — run %sdexel open%s for the window\n' \
-                "$C_OK" "$SYM_OK" "$C_RESET" "$C_CMD" "$C_RESET" ;;
+            printf '%s%s running%s — run %s%s open%s for the window\n' \
+                "$C_OK" "$SYM_OK" "$C_RESET" "$C_CMD" "$DX" "$C_RESET" ;;
         none)
             if [ "$NO_START" = 1 ]; then
-                printf 'not started (--no-start) — run %sdexel%s to start\n' \
-                    "$C_CMD" "$C_RESET"
+                printf 'not started (--no-start) — run %s%s%s to start\n' \
+                    "$C_CMD" "$DX" "$C_RESET"
             else
-                printf 'not running — run %sdexel%s to start\n' \
-                    "$C_CMD" "$C_RESET"
+                printf 'not running — run %s%s%s to start\n' \
+                    "$C_CMD" "$DX" "$C_RESET"
             fi ;;
     esac
     # Extra install artifacts — dim, and only printed when they actually exist,
@@ -2169,10 +2198,16 @@ report() {
         info "desktop window shell installed"
     fi
     if [ "$STOPPED_RUNTIME" = 1 ] && [ "$LAUNCHED" = none ]; then
-        info "the previous runtime was stopped for the upgrade — run dexel to restart"
+        info "the previous runtime was stopped for the upgrade — run $DX to restart"
     fi
 
-    # 2) PATH — the single most important thing to DO, so it's up top and loud.
+    # 2) What it is + where to learn more — one sentence, one link, so a
+    #    first-timer isn't left with "no idea what it does". Not a paragraph.
+    say ""
+    info "dexel is a pixel-art dev on your desktop — keep typing in any app and they work, earn coins, and kit out the desk."
+    printf 'New here? %shttps://jawwadzafar.github.io/dexel/%s\n' "$C_CMD" "$C_RESET"
+
+    # 3) PATH — the single most important thing to DO, so it's up top and loud.
     #    Only shown when $BINDIR isn't already on PATH (path_advice decided).
     if [ "$PATH_MISSING" = 1 ]; then
         say ""
@@ -2182,7 +2217,7 @@ report() {
         printf '  %s. %s%s\n' "$C_CMD" "$PATH_RC" "$C_RESET"
     fi
 
-    # 3) macOS unsigned — one line + the one command, only with a Dexel.app.
+    # 4) macOS unsigned — one line + the one command, only with a Dexel.app.
     if [ "$OS" = darwin ] && [ -n "$MAC_APP" ]; then
         say ""
         say "If macOS blocks Dexel.app (unsigned): right-click it -> Open, or run:"
@@ -2190,22 +2225,24 @@ report() {
     fi
     if [ "$OS" = darwin ] && [ -z "$MAC_APP" ]; then
         say ""
-        printf 'No app window this install — %sdexel open%s uses your browser.\n' \
-            "$C_CMD" "$C_RESET"
+        printf 'No app window this install — %s%s open%s uses your browser.\n' \
+            "$C_CMD" "$DX" "$C_RESET"
     fi
 
-    # 4) The commands they can run.
+    # 5) The commands they can run. Every row is built from $DX, so on a box
+    #    where $BINDIR isn't on PATH these are the working FULL-PATH forms
+    #    (uninstall included — reversing the install must never be blocked by a
+    #    command-not-found). cmd_row keeps the C_CMD escapes out of its column
+    #    math so the descriptions stay aligned in colour and plain alike.
     say ""
     say "Run it:"
-    printf '  %sdexel%s                    start / open\n'          "$C_CMD" "$C_RESET"
-    printf '  %sdexel status%s             is it running?\n'        "$C_CMD" "$C_RESET"
-    printf '  %sdexel stop%s               stop it\n'               "$C_CMD" "$C_RESET"
-    printf '  %sdexel autostart enable%s   start at login (off by default)\n' \
-        "$C_CMD" "$C_RESET"
-    printf '  %sdexel uninstall%s          remove it (%s--purge%s also deletes your save)\n' \
-        "$C_CMD" "$C_RESET" "$C_CMD" "$C_RESET"
+    cmd_row "$DX"                  "start / open"
+    cmd_row "$DX status"           "is it running?"
+    cmd_row "$DX stop"             "stop it"
+    cmd_row "$DX autostart enable" "start at login (off by default)"
+    cmd_row "$DX uninstall"        "remove it (${C_CMD}--purge${C_RESET} also deletes your save)"
 
-    # 5) Privacy — one dim line; the details live on the site/README.
+    # 6) Privacy — one dim line; the details live on the site/README.
     say ""
     info "Counts and durations only, never your keystrokes. Data: $STATEDIR"
     say ""

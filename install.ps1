@@ -793,7 +793,16 @@ function Write-Report([string]$VersionLine, [string]$Exe, [string]$StateDir, [st
         Note 'the previous runtime was stopped for the upgrade -- run dexel to restart'
     }
 
-    # 2) The commands they can run.
+    # 2) What it is + where to learn more -- one sentence, one link, so a
+    #    first-timer isn't left with "no idea what it does". Not a paragraph.
+    Say ''
+    Note 'dexel is a pixel-art dev on your desktop -- keep typing in any app and they work, earn coins, and kit out the desk.'
+    WriteInline 'New here? ' 'https://jawwadzafar.github.io/dexel/' ''
+
+    # 3) The commands they can run. Windows adds $BinDir to the user PATH
+    #    automatically (Add-ToUserPath), so bare `dexel` works in a new shell
+    #    and the uninstall line needs no full path -- but it stays present and
+    #    unmissable, because reversing the install must be right here on screen.
     Say ''
     Say 'Run it:'
     WriteCmd 'dexel'                  'start / open'
@@ -802,13 +811,13 @@ function Write-Report([string]$VersionLine, [string]$Exe, [string]$StateDir, [st
     WriteCmd 'dexel autostart enable' 'start at login (off by default)'
     WriteCmd 'dexel uninstall'        'remove it (--purge also deletes your save)'
 
-    # 3) Windows honesty -- kept to the actionable kernel: tracking is new and
+    # 4) Windows honesty -- kept to the actionable kernel: tracking is new and
     #    field-unverified, and it fails BLIND rather than faking a workday.
     Say ''
     Note 'Activity tracking is new on Windows and field-unverified: if the hooks'
     Note 'are refused, dexel reports itself BLIND rather than faking a workday.'
 
-    # 4) Privacy -- one dim line; details live on the site/README.
+    # 5) Privacy -- one dim line; details live on the site/README.
     Say ''
     Note "Counts and durations only, never your keystrokes. Data: $StateDir"
     Say ''
