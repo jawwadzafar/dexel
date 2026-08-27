@@ -191,10 +191,21 @@ function buildCard(slot: CatalogSlot, item: CatalogItem): HTMLDivElement {
   card.className = 'card';
   card.dataset.item = item.id;
 
-  const thumb = document.createElement('div');
-  thumb.className = 'thumb';
-  thumb.appendChild(buildThumb(slot, item));
-  card.appendChild(thumb);
+  // Hoodie/chair render a full-figure composite (.figure) that must occupy the
+  // whole card art band (`.card .figure`, top:5..bottom:30) to show the WHOLE
+  // seated dexel — head/hood down through the chair. Nesting it in the 64x64
+  // `.thumb` (sized for the flat prop sprites) clipped it to a shoulder band,
+  // so the figure is appended DIRECTLY to the card; every other slot keeps the
+  // .thumb wrapper.
+  const content = buildThumb(slot, item);
+  if (content.classList.contains('figure')) {
+    card.appendChild(content);
+  } else {
+    const thumb = document.createElement('div');
+    thumb.className = 'thumb';
+    thumb.appendChild(content);
+    card.appendChild(thumb);
+  }
 
   const price = buildPriceBadge();
   card.appendChild(price);
@@ -257,11 +268,18 @@ function renderPrice(price: HTMLElement, cs: CardState): void {
 }
 
 // The seated-dexel figure crop, in the scene's 320x200 room-pixel space
-// (geometry.ts). Captures the hood, shoulders, arms and the chair beneath —
-// centred on the figure's own centre line (room x160). buildFigureThumb
-// positions the shared scene sprites at their room coords minus this origin,
-// then game.css scales the whole room to fit the card.
-const FIGURE_CROP = { left: 104, top: 104, w: 112, h: 96 };
+// (geometry.ts). It bounds the WHOLE seated figure with breathing room: the
+// dev sprite's opaque content is room x118..202, y99..168 (dev_form/dev_base
+// alpha) and the chair's is room x121..200, y149..200 (chair form+detail
+// alpha), so their union is x118..202, y99..200 — centred on the figure's own
+// centre line (room x160) at centre-height room y~150. This crop
+// (x104..216, y94..206) adds ~14px of horizontal and ~6px of vertical margin
+// around that union so the head/hood dome at the top and the chair's star base
+// at the bottom both sit fully inside the card, not touching its edges.
+// buildFigureThumb positions the shared scene sprites at their room coords
+// minus this origin; game.css centres and scales the whole crop (--fig-scale)
+// to fit the card art band and the larger preview art box.
+const FIGURE_CROP = { left: 104, top: 94, w: 112, h: 112 };
 // The neutral CONTEXT the figure wears/sits on when THIS card is not choosing
 // it: a hoodie card shows the item on the base chair; a chair card shows the
 // item under the base hoodie. Deterministic (never the live equip) so a card

@@ -1137,11 +1137,15 @@ body.shell #titlebar { cursor: default; }
   image-rendering: pixelated;
 }
 .figure-room img { image-rendering: pixelated; }
-/* Card region: the figure sits in the top band above the name. */
+/* Card region: the full-figure composite is a DIRECT child of the card
+   (store-modal.ts buildCard) so it occupies the whole art band above the
+   name — top:5..bottom:30 of the 120px card => a 182x85 box. The 112x112
+   FIGURE_CROP scaled by --fig-scale (112*0.72 = ~81px) fits inside it with
+   margin, showing the WHOLE seated dexel (head/hood through chair). */
 .card .figure { top: 5px; bottom: 30px; }
-.card .figure-room { --fig-scale: 0.875; }
-/* Preview overlay: bigger, fills the 128x128 art box. */
-#store-preview-art .figure-room { --fig-scale: 1.15; }
+.card .figure-room { --fig-scale: 0.72; }
+/* Preview overlay: bigger, fills the 128x128 art box (112*1.05 = ~118px). */
+#store-preview-art .figure-room { --fig-scale: 1.05; }
 .card .thumb {
   position: absolute;
   left: 59px;   /* (182-64)/2 */
