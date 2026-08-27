@@ -57,6 +57,11 @@ import * as menu from './features/menu';
 // side effect on import, and fills the version/repo from build-time config.
 // It reads no store state, so it has no renderAll() hook (nothing to refresh).
 import './features/about-modal';
+// HOWTO-1 — the first-run "how to play" intro. Wires #howto-open and the
+// #howto dialog as a side effect on import. It reads no store state to render,
+// but it does need a per-state hook (syncFirstRun) so it can auto-open once,
+// right after onboarding closes — see renderAll() below.
+import * as howToPlayModal from './features/how-to-play-modal';
 import * as keybindings from './features/keybindings';
 import { installDevTools } from './dev/dev-tools';
 import { DEV_SESSION_COMPLETE_SAMPLE, DEV_STATE_NO_SESSION } from './dev/dev-fixtures';
@@ -82,6 +87,11 @@ function renderAll(): void {
   // decision rides the same per-state render pass as everything else.
   onboardingModal.refreshIfOpen();
   onboardingModal.syncWithServer();
+  // HOWTO-1: decide whether to auto-open the first-run intro. Called AFTER
+  // onboardingModal.syncWithServer() on purpose — onboarding has already
+  // opened/closed for this tick, so the intro only ever appears once the
+  // identity modal is gone, never layered over it.
+  howToPlayModal.syncFirstRun();
 }
 
 // Phase P2 (docs/plan/P2-design.md §3.3) — the celebration beat's single

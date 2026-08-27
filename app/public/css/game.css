@@ -227,7 +227,7 @@ img {
    Every id in this list must also declare its own --dlg-x/--dlg-y (the tax an
    id list charges — SET-1 once added #settings to the position rule but not to
    this list, and it rendered unscaled at the viewport corner until fixed). */
-#store, #activity, #history, #sessions, #settings, #about, #onboarding {
+#store, #activity, #history, #sessions, #settings, #about, #howto, #onboarding {
   left: 0;
   top: 0;
   transform-origin: 0 0;
@@ -2408,6 +2408,137 @@ body.shell #titlebar { cursor: default; }
   left: 12px;
   top: 176px;
   width: 336px;
+  height: 10px;
+  line-height: 10px;
+  font-size: 8px;
+  color: var(--screen-dim);
+  text-align: right;
+}
+
+/* ================= how-to-play modal ================= */
+/* HOWTO-1 — the first-run intro. Same mechanics as #about above (native
+   <dialog>, show(), the shared #scrim, the shared window-fit transform —
+   #howto is in that selector list). Reads NO server state.
+
+   Authored inside the 640x400 layout at 440x316, centred:
+   --dlg-x = (640-440)/2 = 100, --dlg-y = (400-316)/2 = 42. 316px is under
+   BUG-8's ~362px dialog cap. The body is 416px wide inner (440 - 2*12), so
+   the step text wraps freely at 8px/char (~52 chars) rather than being pinned
+   to hand-counted single lines the way #about's nowrap taglines are. */
+#howto {
+  position: fixed;
+  --dlg-x: 100px;
+  --dlg-y: 42px;
+  width: 440px;
+  height: 316px;
+  margin: 0;
+  padding: 12px;
+  border: 4px solid var(--wall-light);
+  background: var(--metal);
+  color: var(--cream);
+  z-index: 1000;
+}
+#howto::backdrop { background: transparent; }
+
+#howto-title {
+  position: absolute;
+  left: 12px;
+  top: 12px;
+  width: 300px;
+  height: 16px;
+  font-size: 8px;
+  color: var(--cream);
+  line-height: 16px;
+}
+#howto-close {
+  position: absolute;
+  left: 404px;
+  top: 12px;
+  width: 16px;
+  height: 16px;
+  padding: 0;
+  font-size: 8px;
+  line-height: 6px;
+}
+
+#howto-body { position: absolute; left: 12px; top: 34px; width: 416px; }
+
+/* WHAT dexel is — one line, called out in gold, the same "colour, not bold,
+   is emphasis" lever #about-name and the store's Cash use (Press Start 2P is
+   a single weight). 39 chars at 8px = 312px, well inside the 416px body. */
+#howto-lead {
+  font-size: 8px;
+  line-height: 12px;
+  color: var(--gold);
+  white-space: nowrap;
+  margin-bottom: 12px;
+}
+
+/* Section labels (THE LOOP / KEYS) — small dim caps with a bottom hairline,
+   the same idiom as #menu-panel-title and the activity/history section
+   titles. */
+.howto-section-title {
+  font-size: 8px;
+  line-height: 12px;
+  color: var(--screen-dim);
+  border-bottom: 2px solid var(--wall-light);
+  padding-bottom: 3px;
+  margin-bottom: 6px;
+}
+
+/* Each loop step: a gold number badge on the left, the wrapping description
+   on the right. flex + gap keeps the text block hanging in one column even
+   when it wraps to two lines. */
+.howto-step {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+.howto-num {
+  flex: none;
+  width: 12px;
+  font-size: 8px;
+  line-height: 12px;
+  color: var(--gold);
+}
+.howto-text {
+  font-size: 8px;
+  line-height: 12px;
+  color: var(--cream);
+}
+
+/* The key legend — chips that wrap across as many rows as they need. Each
+   chip's letter is gold (the pressable thing) and its label cream. */
+#howto-keys {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 16px;
+  margin: 8px 0 12px;
+}
+.howto-key {
+  font-size: 8px;
+  line-height: 12px;
+  color: var(--cream);
+  white-space: nowrap;
+}
+.howto-key b {
+  color: var(--gold);
+  font-weight: normal; /* Press Start 2P is single-weight; colour carries it */
+}
+
+/* The one dismiss action. Left-aligned in the body, same shelf as the other
+   modals' primary buttons. */
+#howto-got-it {
+  font-size: 8px;
+  padding: 6px 12px;
+}
+
+#howto-help {
+  position: absolute;
+  left: 12px;
+  top: 292px;
+  width: 416px;
   height: 10px;
   line-height: 10px;
   font-size: 8px;

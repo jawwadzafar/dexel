@@ -28,6 +28,7 @@ import * as onboardingModal from './onboarding-modal';
 import * as sessionsModal from './sessions-modal';
 import * as settingsModal from './settings-modal';
 import * as aboutModal from './about-modal';
+import * as howToPlayModal from './how-to-play-modal';
 import * as menu from './menu';
 
 // Phase P1 hazard guard. Every shortcut this module owns is a BARE letter
@@ -120,6 +121,14 @@ export function init(): void {
       aboutModal.handleKeydown(e);
       return;
     }
+    // How to play (HOWTO-1) claims the keyboard-ownership tier while open like
+    // every modal above — it owns no input, so its handleKeydown only closes
+    // on "?", but "presence is the point": a bare letter must not reach a
+    // launcher even when focus sits on its GOT IT / close button.
+    if (howToPlayModal.isOpen()) {
+      howToPlayModal.handleKeydown(e);
+      return;
+    }
     if (menu.isOpen() && e.key === 'Escape') {
       e.preventDefault();
       menu.close();
@@ -132,6 +141,10 @@ export function init(): void {
     else if (e.key === 'w' || e.key === 'W') { e.preventDefault(); menu.close(); sessionsModal.open(); }
     else if (e.key === 'g' || e.key === 'G') { e.preventDefault(); menu.close(); settingsModal.open(); }
     else if (e.key === 'i' || e.key === 'I') { e.preventDefault(); menu.close(); aboutModal.open(); }
+    // HOWTO-1: "?" (Shift+/) opens the how-to-play intro. Shift is deliberately
+    // NOT in hasModifier (see its note), so "?" reaches here; it is the one
+    // obvious help key left once S/A/H/W/G/I/M/P and Tab were taken.
+    else if (e.key === '?') { e.preventDefault(); menu.close(); howToPlayModal.open(); }
     else if (e.key === 'm' || e.key === 'M') { e.preventDefault(); menu.toggle(); }
   });
 }

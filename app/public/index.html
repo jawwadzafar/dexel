@@ -109,6 +109,13 @@
              features/about-modal.ts (click -> open()), like every other
              launcher in this panel. -->
         <button id="about-open" class="nes-btn menu-item"><span class="mi-label">ABOUT</span><span class="mi-key">[I]</span></button>
+        <!-- HOWTO-1: the first-run "how to play" intro, also reachable any
+             time from here. [?] for help — a bare "?" (Shift+/, and Shift is
+             not a modifier keybindings.ts bails on) was the one obvious
+             help key still free once S/A/H/W/G/I/M/P and Tab were taken.
+             Owned by features/how-to-play-modal.ts (click -> open()), like
+             every other launcher in this panel. -->
+        <button id="howto-open" class="nes-btn menu-item"><span class="mi-label">HOW TO PLAY</span><span class="mi-key">[?]</span></button>
         <!-- PR-5 (docs/production-runtime/MIGRATION_PLAN.md §PR-5):
              label toggles PAUSE/RESUME and the click action flips with
              it — both driven by live state.paused, read fresh from the
@@ -436,6 +443,54 @@
       </div>
 
       <div id="about-help">I / ESC CLOSE</div>
+    </dialog>
+
+    <!-- HOWTO-1 — the "How to play" intro. Same mechanics as every modal
+         above (native <dialog> + show(), the shared #scrim, one 'close' event
+         every dismissal path funnels through, the shared window-fit transform
+         — #howto was added to that selector list). Reads NO server state.
+
+         It opens AUTOMATICALLY exactly once, on a genuine first run, right
+         after the onboarding modal (naming the dexel) closes — never layered
+         over it — and can be reopened any time from the menu's HOW TO PLAY
+         item or the "?" key. "Seen it" is a localStorage flag
+         (dexel.howToPlaySeen), NOT a save/wire field, so once dismissed it
+         never auto-opens again and no save schema changes. See
+         features/how-to-play-modal.ts. -->
+    <dialog id="howto" class="nes-dialog is-dark">
+      <div id="howto-title">HOW TO PLAY</div>
+      <button id="howto-close" class="nes-btn">X</button>
+
+      <div id="howto-body">
+        <div id="howto-lead">A pixel-art dev who works while you do.</div>
+
+        <div class="howto-section-title">THE LOOP</div>
+        <div class="howto-step">
+          <span class="howto-num">1</span>
+          <span class="howto-text">Keep typing in ANY app. Your dev works the current sprint.</span>
+        </div>
+        <div class="howto-step">
+          <span class="howto-num">2</span>
+          <span class="howto-text">Finished sprints pay you coins.</span>
+        </div>
+        <div class="howto-step">
+          <span class="howto-num">3</span>
+          <span class="howto-text">Spend coins in the STORE on hoodies, chairs, plants... they show up on the desk.</span>
+        </div>
+
+        <div class="howto-section-title">KEYS</div>
+        <div id="howto-keys">
+          <span class="howto-key"><b>S</b> store</span>
+          <span class="howto-key"><b>A</b> activity</span>
+          <span class="howto-key"><b>H</b> history</span>
+          <span class="howto-key"><b>W</b> sessions</span>
+          <span class="howto-key"><b>Esc</b> close</span>
+        </div>
+
+        <button id="howto-got-it" class="nes-btn">GOT IT!</button>
+      </div>
+
+      <div id="howto-help">PRESS ? ANYTIME</div>
     </dialog>
 
     <!-- Phase P1 — Identity & first minutes (docs/ui-spec.md §7). Opened
