@@ -203,7 +203,7 @@ With no `TAG` argument it uses the latest published release tag from
    script exists to solve a *Linux* problem (the runner has no `gcc`, so it
    probes and exports `CC`). On macOS cgo's default compiler is the clang the
    CLT check already proved works, so there is nothing to probe.
-6. **Package** — stages `dexel` + `README.md` + `LICENSE` + `NOTICE` +
+6. **Package** — stages `dexel` + `README.md` + `LICENSE` +
    `THIRD-PARTY-LICENSES.md` into `dist/dexel-<TAG>-darwin-arm64/` and tars it.
    No `public/` or `assets/` directory: since EMBED-1 both are `go:embed`ed
    into the binary. The script pre-flights `app/public/index.html`,

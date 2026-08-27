@@ -102,7 +102,7 @@ consumer (build, CI, runtime, script, skill, or doc that a human follows).
 | `tools/gen_assets.py` | The art generator — `ASSETS = REPO/"app"/"assets"` | 141 KB | `pixel-art-authoring` skill; ADR 0004; README | **KEEP** |
 | `tools/gen_icon.py` | Icon generator — imports `gen_assets`, writes `desktop/src-tauri/icons/` | 32 KB | `desktop/README.md:373` | **KEEP** |
 | `.claude/skills/` | 10 skills; `feature-build-and-verify`, `add-a-menu-modal`, `orchestration-playbook`, `pixel-art-authoring` are current | 106 KB / 26 files (incl. `agents/`) | Claude Code loads them; they are the live working method | **KEEP** (3 need content updates — §2.4) |
-| `README.md`, `LICENSE`, `NOTICE`, `THIRD-PARTY-LICENSES.md` | Product + licensing | 35 KB | `scripts/build-release.sh` packages all four into every archive | **KEEP** |
+| `README.md`, `LICENSE`, `THIRD-PARTY-LICENSES.md` | Product + licensing | 35 KB | `scripts/build-release.sh` packages all three into every archive | **KEEP** |
 | `.github/workflows/{go,frontend jobs},desktop.yml,release.yml` | CI | 40 KB | GitHub (currently failing to start — §0/#5) | **KEEP** |
 | `docs/adr/` (19 ADRs + README) | Decision record. Immutable by design | 140 KB | `docs/adr/README.md` indexes all 19; README links 6 | **KEEP — never delete an ADR.** Low inbound-link counts on individual ADRs are correct: the index is the entry point |
 | `docs/game/` | "How Dexel works today", derived from the Go source (commit `715a109`) | 176 KB / 10 files | **Nothing links it** — but it is the newest and most accurate doc layer | **KEEP + fix the orphaning** (§7) |

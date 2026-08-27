@@ -13,7 +13,7 @@ import (
 )
 
 // integrityKeyHex is the HMAC key for save-integrity checks, hex-encoded
-// (64 hex chars = 32 bytes). On an Apache-2.0 open-source, fully-local,
+// (64 hex chars = 32 bytes). On an MIT-licensed open-source, fully-local,
 // single-player game this key is NECESSARILY public: it is in this
 // source file and in every compiled binary. It exists to stop CASUAL
 // save-file editing (opening state.json in a text editor and changing

@@ -7,7 +7,7 @@
 [![Build](https://github.com/jawwadzafar/dexel/actions/workflows/build.yml/badge.svg)](https://github.com/jawwadzafar/dexel/actions/workflows/build.yml)
 [![Release](https://img.shields.io/github/v/release/jawwadzafar/dexel?sort=semver&label=release)](https://github.com/jawwadzafar/dexel/releases/latest)
 [![Platform](https://img.shields.io/badge/platform-linux%20%7C%20macOS%20%7C%20windows-8a7fd4)](#platforms)
-[![License: Apache 2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
 ![Dexel at the desk: coin and level HUD, a live sprint bar, and a terminal panel](docs/images/hero.png)
 
@@ -146,11 +146,10 @@ the game window has focus, and freezes idle rather than guessing.
 
 ## License
 
-Dexel is licensed under the **[Apache License 2.0](LICENSE)** — Copyright 2026
-Jawwad Zafar. Free to use, modify, distribute, and sell, with an explicit patent
-grant; redistributions must retain the [`LICENSE`](LICENSE) and [`NOTICE`](NOTICE)
-files. The license covers the code, not the *dexel* name or character as a
-trademark.
+Dexel is licensed under the **[MIT License](LICENSE)** — Copyright (c) 2026
+Jawwad Zafar. Free to use, modify, distribute, and sell; redistributions must
+retain the copyright notice and the [`LICENSE`](LICENSE) text. The license
+covers the code, not the *dexel* name or character as a trademark.
 
 Bundled third-party components and their licenses are listed in
 [`THIRD-PARTY-LICENSES.md`](THIRD-PARTY-LICENSES.md). Contributions are welcome —

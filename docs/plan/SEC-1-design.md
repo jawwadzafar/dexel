@@ -22,7 +22,7 @@ There is exactly one, and it has a recommended default; **SEC-1 ships on the
 default without asking.**
 
 - **Fork K — where the HMAC key lives: baked into the binary (DEFAULT) vs the OS
-  keychain.** On a **fully-local, single-player, Apache-2.0 open-source** game,
+  keychain.** On a **fully-local, single-player, MIT-licensed open-source** game,
   the attacker who would bother is the machine's own owner — who can read their
   own keychain entry (`security`, `secret-tool`, Credential Manager) and their
   own `machine-id` exactly as easily as they can read the public source. So the
@@ -206,7 +206,7 @@ cozy game where a user might copy their save to a new laptop.
 **A baked-in 32-byte key, not obfuscated, openly documented** (`integrity.go`):
 
 ```
-// integrityKey is the HMAC key for save-integrity checks. On an Apache-2.0
+// integrityKey is the HMAC key for save-integrity checks. On an MIT-licensed
 // open-source, fully-local, single-player game this key is NECESSARILY public:
 // it is in this source file and in every compiled binary. It exists to stop
 // CASUAL save-file editing (opening state.json and changing devCash), which it

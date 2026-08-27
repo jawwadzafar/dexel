@@ -80,7 +80,7 @@ RUST_TRIPLE="aarch64-apple-darwin"
 # script duplicates its recipe deliberately rather than refactoring it, so a
 # release cannot be broken from two directions at once). If that list ever
 # changes there, change it here: both are checked against the repo root below.
-LICENSE_FILES="README.md LICENSE NOTICE THIRD-PARTY-LICENSES.md"
+LICENSE_FILES="README.md LICENSE THIRD-PARTY-LICENSES.md"
 
 # ---------------------------------------------------------------------------
 # output helpers — loud on purpose; this script is run by a human, rarely

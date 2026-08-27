@@ -1,11 +1,11 @@
 # Third-party licenses
 
-dexel is licensed under the [Apache License 2.0](LICENSE) (see [`NOTICE`](NOTICE)).
-It bundles or is built with the third-party components listed below, each
-under its own license. Full license texts for MIT and ISC are reproduced
-here; Apache-2.0 components are covered by the same license text as this
-project (see [`LICENSE`](LICENSE)); the OFL is referenced rather than
-reproduced in full, per the note below.
+dexel is licensed under the [MIT License](LICENSE). It bundles or is built
+with the third-party components listed below, each under its own license.
+Full license texts for MIT and ISC are reproduced here; the Apache-2.0
+component (TypeScript, a build-time compiler dependency) is referenced rather
+than reproduced in full; the OFL is likewise referenced rather than reproduced
+in full, per the note below.
 
 | Component | Used for | License |
 |---|---|---|
@@ -100,5 +100,7 @@ SOFTWARE.
 
 ## TypeScript — Apache License 2.0
 
-TypeScript is licensed under the Apache License, Version 2.0 — the same
-license as this project. See [`LICENSE`](LICENSE) for the full text.
+TypeScript is licensed under the Apache License, Version 2.0. It is a
+build-time-only dependency (the `tsc` type-checker); no TypeScript code ships
+in the product. The full Apache-2.0 text is available at
+<https://www.apache.org/licenses/LICENSE-2.0>.

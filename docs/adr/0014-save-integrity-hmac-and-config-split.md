@@ -14,7 +14,9 @@ economy-critical fields become tamper-evident.
 
 This is a **fully-local, single-player, Apache-2.0 open-source** game. That
 last fact governs everything below: the key and the algorithm are visible in
-the public source. So the honest goal is **"stop casual JSON editing,"** not
+the public source. (Historical note: the project's license was later changed
+from Apache-2.0 to **MIT**; the reasoning here is unaffected — it turns only on
+the source being *public*, which both licenses make it.) So the honest goal is **"stop casual JSON editing,"** not
 "defeat a determined attacker who has the source + binary." We refuse to
 oversell it.
 

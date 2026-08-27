@@ -24,7 +24,7 @@ Companion to `ARCHITECTURE.md`. How a git tag becomes
 
 `scripts/build-release.sh` builds linux/{amd64,arm64} and windows/{amd64,arm64}
 at `CGO_ENABLED=0`, adds `darwin/arm64` **only on a darwin host**, stages
-`dexel[.exe]` + `README.md` + `LICENSE` + `NOTICE` +
+`dexel[.exe]` + `README.md` + `LICENSE` +
 `THIRD-PARTY-LICENSES.md` per target, tars/zips it, and emits one
 `sha256sums.txt` covering every archive from that run. It also pre-flights the
 `go:embed` inputs (`app/public/index.html`, `app/public/js/dexel.js`,

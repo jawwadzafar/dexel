@@ -5,7 +5,7 @@
 # Builds the Go server binary (module github.com/jawwadzafar/dexel/app,
 # source under app/) for each release target, and packages each one into an
 # archive holding the binary plus the licensing files a redistributed binary
-# needs (README.md, LICENSE, NOTICE, THIRD-PARTY-LICENSES.md).
+# needs (README.md, LICENSE, THIRD-PARTY-LICENSES.md).
 #
 # Since EMBED-1 (docs/plan/ROADMAP.md) the binary IS the product: app/embed.go
 # compiles both static trees it serves — app/public/ (the committed frontend
@@ -70,7 +70,6 @@
 #     dexel.png   (128x128, linux/darwin)  |  dexel.ico (windows)
 #     README.md
 #     LICENSE
-#     NOTICE
 #     THIRD-PARTY-LICENSES.md
 #
 # The icon is the ONE thing in here that the binary does not carry itself, and
@@ -186,7 +185,7 @@ done
 # License/doc files bundled into every archive alongside the binary. Fails
 # loudly if one is missing rather than silently shipping an incomplete
 # archive.
-license_files=(README.md LICENSE NOTICE THIRD-PARTY-LICENSES.md)
+license_files=(README.md LICENSE THIRD-PARTY-LICENSES.md)
 for f in "${license_files[@]}"; do
   if [ ! -f "$REPO_ROOT/$f" ]; then
     echo "ERROR: $REPO_ROOT/$f not found — required in every release archive" >&2

@@ -161,7 +161,7 @@ body is *compact* JSON, not indented.
 The key is a single baked-in 32-byte constant in `integrity.go`, and its doc
 comment is unusually honest about what that buys:
 
-> On an Apache-2.0 local single-player game the key is *necessarily* public. It
+> On an MIT-licensed local single-player game the key is *necessarily* public. It
 > stops casual editing and nothing more. Obfuscation whose inverse lives in the
 > same public repo is theatre.
 
