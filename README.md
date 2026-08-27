@@ -42,8 +42,8 @@ curl -fsSL https://raw.githubusercontent.com/jawwadzafar/dexel/main/install.sh |
 irm https://raw.githubusercontent.com/jawwadzafar/dexel/main/install.ps1 | iex
 ```
 
-**macOS:** [build from source](#build-from-source) — one `go build` and you're
-running.
+**macOS:** clone the repo and run [`./install.sh`](#install-from-a-clone) —
+it detects it's inside the source tree and builds automatically.
 
 Remove it any time with `dexel uninstall` (add `--purge` to delete your save
 too). It's the exact reversal of the install and never touches anything outside
@@ -93,20 +93,26 @@ Privacy is the project's defining constraint, not a footnote.
 - **100% local.** Everything runs on your machine over loopback. Nothing phones
   home.
 
-## Build from source
+## Install from a clone
 
-Requires [Go 1.27+](https://go.dev/dl/). Node/npm are **not** needed to run the
-game — the compiled frontend bundle and all sprites are embedded at build time.
+Prefer the one-liner above when you can — it's the same install, no cloning
+needed. This path is for macOS (no published one-liner yet) or anyone who'd
+rather install from a local copy of the repo:
 
 ```bash
 git clone https://github.com/jawwadzafar/dexel.git
-cd dexel/app
-go build -o dexel .        # Windows: go build -o dexel.exe .
-./dexel                    # starts the runtime and opens the game
+cd dexel
+./install.sh
 ```
 
-macOS builds the same way (Xcode Command Line Tools supply the C compiler the
-mac activity provider needs).
+There's no separate build step — `install.sh` detects it's running from
+inside the dexel source tree and builds automatically, finding a Go
+toolchain on `PATH` or in the common install locations ([Go 1.27+](https://go.dev/dl/)
+is required; Node/npm are not — the frontend bundle and sprites are already
+committed and get embedded into the binary it builds). Force this path with
+`./install.sh --from-source` even when a release exists. macOS builds the
+same way (Xcode Command Line Tools supply the C compiler the mac activity
+provider needs).
 
 ### The `dexel` CLI
 

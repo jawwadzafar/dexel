@@ -487,7 +487,7 @@ no `python`, no `sudo`, ever.
 
 1. **Detect OS + arch.** `uname -s` → `linux` | `darwin`; `uname -m` →
    `x86_64|amd64 → amd64`, `aarch64|arm64 → arm64`. Anything else exits 3 naming
-   what it saw and pointing at README § Building from source. Windows is not
+   what it saw and pointing at README § Install from a clone. Windows is not
    covered by `install.sh` — `install.ps1` is phase 2 and the manifest already
    carries the artifacts.
 2. **Check tools.** `curl` or `wget`; `tar`; `sha256sum` or `shasum -a 256`
@@ -566,7 +566,7 @@ Consequences, each of them good:
   `linux-amd64`, `linux-arm64`, `windows-amd64`, `windows-arm64` — and **not**
   `darwin-arm64`, because `release.yml`'s `release-macos` job is a gated no-op.
 * `install.sh` on a Mac exits 5 with "no darwin-arm64 build in v1.4.0 yet — see
-  README § Building from source". True, actionable, not a crash.
+  README § Install from a clone". True, actionable, not a crash.
 * `dexel update` on a Mac says the same.
 * When the owner registers their Mac (F3-design FORK 1), the flipped
   `release-macos` job builds `darwin/arm64` natively, uploads it into the
