@@ -210,17 +210,18 @@
   .hero { padding-top: clamp(36px, 6vw, 64px); }
   /* Install is the primary above-the-fold action, so the copy column is the
      wider one; the hero screenshot is secondary and may shrink beside it. */
-  .hero-grid { display:grid; grid-template-columns: 1.35fr 0.9fr; gap: clamp(24px, 4vw, 48px); align-items:center; }
-  @media (max-width: 900px){ .hero-grid { grid-template-columns: 1fr; } }
+  /* Stacked single column: the title + install block on top (full content
+     width), then the hero scene screenshot large and full-width directly
+     beneath it. */
+  .hero-grid { display:grid; grid-template-columns: 1fr; gap: clamp(32px, 5vw, 56px); }
 
   /* ---------- Hero install block (the star of the fold) ---------- */
-  .hero-install { margin: 2px 0 12px; }
+  .hero-install { margin: 2px 0 12px; max-width: 900px; }
   .hero-install .os-tabs { border-radius: 12px 12px 0 0; }
-  .hero-install .os-tab { padding: 11px 14px; font-size: 10px; }
-  .hero-install .os-panel { padding: 12px; }
-  .hero-install .code-block { font-size: 12px; padding: 12px 12px 12px 14px; }
-  .hero-install .copy-btn { font-size: 9px; padding: 7px 9px; }
-  .hero-note { color: var(--ink-dim); font-size: 13px; margin: 0 0 18px; }
+  /* 13px keeps the whole one-liner + Copy visible (no truncation) inside the
+     900px box at 1366/1440 while staying prominent. */
+  .hero-install .code-block { font-size: 13px; }
+  .hero-note { color: var(--ink-dim); font-size: 14px; margin: 0 0 20px; }
   .hero-note code { background: var(--code-bg); color: var(--screen); padding: 1px 6px; border-radius: 5px; font-size: .92em; }
   .hero .tagline { margin-bottom: 16px; }
 
@@ -270,6 +271,14 @@
   .os-panel { padding: 18px; }
   .os-panel[hidden]{ display:none; }
   .os-note { color:var(--ink-dim); font-size:13px; margin: 10px 2px 0; }
+
+  /* Install notes card (no command — the command lives once in the hero) */
+  .install-notes { padding: 4px; }
+  .note-block { padding: 20px 22px; }
+  .note-block + .note-block { border-top: 2px solid var(--border); }
+  .note-h { font-family:"Press Start 2P", monospace; font-size:12px; margin:0 0 12px; color:var(--ink); line-height:1.5; }
+  .note-block p { margin:0; color:var(--ink-dim); font-size:15px; }
+  .note-block code { background: var(--code-bg); color: var(--screen); padding:1px 6px; border-radius:5px; font-size:.9em; }
 
   .code-block {
     display:flex; align-items:center; gap:12px;
@@ -458,32 +467,21 @@
   <div class="wrap">
     <div class="section-head">
       <p class="eyebrow">Get started</p>
-      <h2 class="px">One line, and dexel is running</h2>
-      <p class="lede center">No <code>sudo</code>, no elevation, no autostart. Installed, added to your app grid, and running. Remove it any time with <code>dexel uninstall</code>.</p>
+      <h2 class="px">What that one line does</h2>
+      <p class="lede center">No <code>sudo</code>, no elevation, no autostart. dexel is installed, added to your app grid, and running. Remove it any time with <code>dexel uninstall</code>.</p>
     </div>
 
-    <div class="install-card">
-      <div class="os-tabs" role="tablist" aria-label="Install command by platform">
-        <button class="os-tab" id="tab-unix" role="tab" aria-selected="true" aria-controls="panel-unix">Linux / macOS / WSL</button>
-        <button class="os-tab" id="tab-win" role="tab" aria-selected="false" aria-controls="panel-win" tabindex="-1">Windows</button>
+    <!-- The install COMMAND lives once, in the hero above. This card carries
+         only the platform-specific details, so the "Full install notes"
+         link lands on real content and no command is duplicated. -->
+    <div class="install-card install-notes">
+      <div class="note-block">
+        <h3 class="note-h">Linux · macOS · WSL</h3>
+        <p>The <code>curl … | bash</code> line above works on Linux and macOS (Apple&nbsp;silicon), and on Windows via Git Bash / MSYS2 / Cygwin or WSL. On macOS it installs the native <b>Dexel.app</b> window into <code>~/Applications</code> and opens it — the desktop window is the default, not the browser. The build is unsigned, so the installer clears the Gatekeeper quarantine for you; if macOS still blocks the first launch, right-click the app&nbsp;&rarr;&nbsp;<b>Open</b> (or run <code>xattr -dr com.apple.quarantine ~/Applications/Dexel.app</code>). Prefer to build it yourself? <a href="https://github.com/jawwadzafar/dexel#install-from-a-clone">Install from a clone</a>.</p>
       </div>
-
-      <div class="os-panel" id="panel-unix" role="tabpanel" aria-labelledby="tab-unix">
-        <div class="code-block">
-          <span class="prompt" aria-hidden="true">$&nbsp;</span>
-          <code id="cmd-unix">curl -fsSL https://raw.githubusercontent.com/jawwadzafar/dexel/main/install.sh | bash</code>
-          <button class="copy-btn" type="button" data-copy="cmd-unix" aria-label="Copy install command">Copy</button>
-        </div>
-        <p class="os-note">Works on Linux and macOS (Apple&nbsp;silicon), and on Windows via Git Bash / MSYS2 / Cygwin or WSL. On macOS it installs the native <b>Dexel.app</b> window into <code>~/Applications</code> and opens it — the desktop window is the default, not the browser. The build is unsigned; the installer clears the Gatekeeper quarantine for you (first launch may still need a right-click&nbsp;&rarr;&nbsp;Open), or <a href="https://github.com/jawwadzafar/dexel#install-from-a-clone">build from a clone</a>.</p>
-      </div>
-
-      <div class="os-panel" id="panel-win" role="tabpanel" aria-labelledby="tab-win" hidden>
-        <div class="code-block">
-          <span class="prompt" aria-hidden="true">&gt;&nbsp;</span>
-          <code id="cmd-win">irm https://raw.githubusercontent.com/jawwadzafar/dexel/main/install.ps1 | iex</code>
-          <button class="copy-btn" type="button" data-copy="cmd-win" aria-label="Copy PowerShell install command">Copy</button>
-        </div>
-        <p class="os-note">Run in PowerShell.</p>
+      <div class="note-block">
+        <h3 class="note-h">Windows</h3>
+        <p>Run the PowerShell one-liner above (<code>irm … | iex</code>) in a PowerShell window. It installs permissionlessly — no elevation required.</p>
       </div>
     </div>
   </div>
