@@ -410,41 +410,29 @@
              modal's inner width (8px/char, Press Start 2P). -->
         <div class="about-tagline">a cozy pixel-art companion</div>
         <div class="about-tagline">that runs on your real typing</div>
-        <!-- "by <AUTHOR>" — text filled by about-modal.ts from config.AUTHOR. -->
-        <div id="about-author"></div>
 
-        <div class="about-row">
-          <span class="label">VERSION</span>
-          <!-- Filled by about-modal.ts from config.VERSION, and #about-commit
-               from config.COMMIT (hidden when the build knows no commit). -->
-          <span id="about-version" class="value"></span><span id="about-commit"></span>
-        </div>
-
-        <div class="about-section-title">LINKS</div>
-        <!-- The repository URL, shown in full. href + text filled by
-             about-modal.ts from config.REPO_URL. The href is here for a real
-             browser's middle/cmd-click new-tab and for accessibility; the
-             ordinary left-click is intercepted and routed to an EXTERNAL open
-             (never an in-page navigation). It is also the copy-fallback target
-             (user-select: text) in a locked-down webview. -->
-        <a id="about-repo" href="#" target="_blank" rel="noopener noreferrer"></a>
-        <!-- The three derived links (releases / issues / docs), each opened
-             externally the same way. href set by about-modal.ts from
-             config.{RELEASES,ISSUES,DOCS}_URL. -->
+        <!-- LINKS: two labelled links, each opened EXTERNALLY (never an in-page
+             navigation) by about-modal.ts. GitHub = config.REPO_URL,
+             Website = config.WEBSITE_URL; only the hrefs are build-injected. -->
         <div id="about-links">
-          <a id="about-releases" class="about-link" href="#" target="_blank" rel="noopener noreferrer">RELEASES</a>
+          <a id="about-repo" class="about-link" href="#" target="_blank" rel="noopener noreferrer">GitHub</a>
           <span class="about-link-sep">·</span>
-          <a id="about-issues" class="about-link" href="#" target="_blank" rel="noopener noreferrer">REPORT BUG</a>
-          <span class="about-link-sep">·</span>
-          <a id="about-docs" class="about-link" href="#" target="_blank" rel="noopener noreferrer">DOCS</a>
+          <a id="about-website" class="about-link" href="#" target="_blank" rel="noopener noreferrer">Website</a>
         </div>
-        <!-- Hidden until a fallback path (copy / manual-copy) has something
+        <!-- Hidden until a fallback path (copy / could-not-open) has something
              to say — see about-modal.ts. -->
         <div id="about-repo-status"></div>
 
-        <!-- Privacy promise (the app's whole contract) and the license line. -->
-        <div id="about-privacy">Your keystrokes are counted, never read.</div>
-        <div id="about-license">MIT &middot; &copy; 2026 Jawwad Zafar</div>
+        <div class="about-row">
+          <span class="label">VERSION</span>
+          <!-- Filled by about-modal.ts from config.VERSION. -->
+          <span id="about-version" class="value"></span>
+        </div>
+
+        <!-- Divider, then the license line. The © name is filled by
+             about-modal.ts from config.AUTHOR (no author literal in the DOM). -->
+        <div class="about-divider"></div>
+        <div id="about-license"></div>
       </div>
 
       <div id="about-help">I / ESC CLOSE</div>
