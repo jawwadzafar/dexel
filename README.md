@@ -45,8 +45,18 @@ curl -fsSL https://raw.githubusercontent.com/jawwadzafar/dexel/main/install.sh |
 irm https://raw.githubusercontent.com/jawwadzafar/dexel/main/install.ps1 | iex
 ```
 
-**macOS:** clone the repo and run [`./install.sh`](#install-from-a-clone) —
-it detects it's inside the source tree and builds automatically.
+**macOS:** the one-liner above works on macOS too — each release ships an
+Apple-silicon build. Because that binary is **unsigned**, the installer
+clears the macOS quarantine flag for you automatically; if macOS still
+refuses it as "from an unidentified developer", clear it by hand:
+
+```bash
+xattr -dr com.apple.quarantine ~/.local/bin/dexel
+```
+
+Or sidestep signing entirely by [installing from a
+clone](#install-from-a-clone) — a binary you build locally is never
+quarantined.
 
 Remove it any time with `dexel uninstall` (add `--purge` to delete your save
 too). It's the exact reversal of the install and never touches anything outside
@@ -99,8 +109,10 @@ Privacy is the project's defining constraint, not a footnote.
 ## Install from a clone
 
 Prefer the one-liner above when you can — it's the same install, no cloning
-needed. This path is for macOS (no published one-liner yet) or anyone who'd
-rather install from a local copy of the repo:
+needed. This path builds from source instead: useful on macOS if you'd
+rather not run the unsigned release binary (a local build is never
+quarantined by Gatekeeper), or for anyone who'd rather install from a local
+copy of the repo:
 
 ```bash
 git clone https://github.com/jawwadzafar/dexel.git

@@ -1786,6 +1786,17 @@ install_binary_from() {
         fi
     fi
     ok "installed $BINDIR/dexel"
+
+    # macOS Gatekeeper: an unsigned binary that arrived carrying a quarantine
+    # flag (a downloaded release archive can) is refused on first run as
+    # "from an unidentified developer". This is an unsigned OSS build, so
+    # clear the flag now rather than making every user discover `xattr` after
+    # a scary dialog. Safe no-op where there is nothing to clear — a
+    # source build is never quarantined, and `xattr -d` on an absent
+    # attribute just fails quietly (|| true keeps set -e happy).
+    if [ "$OS" = darwin ] && have xattr; then
+        xattr -dr com.apple.quarantine "$BINDIR/dexel" 2>/dev/null || true
+    fi
 }
 
 # Step 8 of the contract: create the state dir and its logs dir, so a first
