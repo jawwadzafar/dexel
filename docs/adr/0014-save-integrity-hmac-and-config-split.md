@@ -2,6 +2,16 @@
 
 Status: accepted (2026-08-22, SEC-1 design pass) · Honours ADR 0002/0009 (privacy), extends the schema-4 save (ADR 0013 lineage)
 
+> **Update (public v0.1.0):** the HMAC scheme, the baked-key honesty, and the
+> config/state split described here are all **unchanged and fully intact** — a
+> hand-edited, foreign, or corrupt save is still refused and reset. What changed
+> is only the schema *lineage*: for the public first release `CurrentSchema` was
+> reset to a clean baseline of `1`, and all pre-v0.1.0 migration/import/back-compat
+> code (the `state.json` import, the schema-N upgrade paths, the schema≤4
+> grandfather window, and the MAC-preimage-preserving `ownedTints`/`appSwitches`/
+> `importedFromRust` fields) was **deleted**. There is now exactly one supported
+> schema: current-schema-or-fresh, nothing else. See `docs/game/persistence.md §3`.
+
 ## Context
 
 The save is plain JSON at `~/.config/dexel/state.json` (schema 4). Any user can

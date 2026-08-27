@@ -2,6 +2,13 @@
 
 Status: accepted (2026-08-22, DB-1 design pass) · Extends ADR 0014 (save integrity) · Honours ADR 0002/0009 (privacy) · Constrained by the `CGO_ENABLED=0` release matrix
 
+> **Update (public v0.1.0):** the **one-time `state.json` → `state.db` import**
+> (§4.3 below) has been **removed**. This is the first public release, so there
+> are no prior public saves to migrate; `LoadAll` now reads `state.db` or
+> reports "no save", and a stray `state.json` is ignored (never imported, never
+> minted from). The signed-snapshot row, the open-gate, and the SEC-1 integrity
+> carry-over described below are unchanged. See `docs/game/persistence.md §3`.
+
 ## Context
 
 Game state lives in `~/.config/dexel/state.json` (schema 5), HMAC-signed per ADR

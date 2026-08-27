@@ -1,9 +1,9 @@
 // sessions_test.go is P2's store-layer test suite (docs/plan/P2-design.md
 // §7.3, ADR 0017 Decision 5): the chained-MAC session log's round trip,
 // its 11-row tamper matrix, Load/LoadAll's identical verification through
-// both entry points, AppendSession's one-transaction atomicity, and the
-// schema-5-grandfather/schema-7-refusal boundary. Session NAMES belong to
-// config.go's own tests (config_test.go) — this file never touches them.
+// both entry points, and AppendSession's one-transaction atomicity.
+// Session NAMES belong to config.go's own tests (config_test.go) — this
+// file never touches them.
 package store
 
 import (
@@ -106,47 +106,14 @@ func assertSessionTampered(t *testing.T, path string) {
 
 // --- Schema / round-trip (docs/plan/P2-design.md §7.3's opening bullet) --
 
-// TestSchema5GrandfatherLoadHasNoActiveSessionAndTheEmptyLogIsOK proves
-// §5.6's migration claim: a pre-P2 schema-5 state.db (no Session, no
-// SessionLogHead, no `sessions` table at all) loads cleanly under
-// CurrentSchema 6, with no active session and the honest empty log —
-// no error, no quarantine, every pre-existing field intact.
-func TestSchema5GrandfatherLoadHasNoActiveSessionAndTheEmptyLogIsOK(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, "state.db")
-	if err := Save(path, SaveData{Schema: 5, DevCash: 42}); err != nil {
-		t.Fatalf("Save: %v", err)
-	}
-
-	d, sessions, ok, err := LoadAll(path)
-	if err != nil {
-		t.Fatalf("LoadAll: %v", err)
-	}
-	if !ok {
-		t.Fatal("ok = false, want true")
-	}
-	if d.Session != nil {
-		t.Errorf("d.Session = %+v, want nil", d.Session)
-	}
-	if d.SessionLogHead != "" {
-		t.Errorf("d.SessionLogHead = %q, want empty", d.SessionLogHead)
-	}
-	if len(sessions) != 0 {
-		t.Errorf("sessions = %v, want an empty/nil slice", sessions)
-	}
-	if d.DevCash != 42 {
-		t.Errorf("DevCash = %d, want 42 — a schema-5 grandfather load must not disturb pre-existing fields", d.DevCash)
-	}
-}
-
-// TestSchema6RoundTripWithActiveSessionAndAThreeRowLog is §7.3's second
-// bullet: an active session and a 3-row finished-session log coexist and
-// both survive a save/reload cycle intact. AppendSession itself always
-// clears the active session (§5.5: "the just-finished session is no
-// longer the active one"), so the active session here is written by an
-// ORDINARY Save on top of an already-built log — exactly how main.go's
-// 30s autosave would persist "3 sessions done, a 4th now in progress."
-func TestSchema6RoundTripWithActiveSessionAndAThreeRowLog(t *testing.T) {
+// TestRoundTripWithActiveSessionAndAThreeRowLog is §7.3's second bullet:
+// an active session and a 3-row finished-session log coexist and both
+// survive a save/reload cycle intact. AppendSession itself always clears
+// the active session (§5.5: "the just-finished session is no longer the
+// active one"), so the active session here is written by an ORDINARY Save
+// on top of an already-built log — exactly how main.go's 30s autosave
+// would persist "3 sessions done, a 4th now in progress."
+func TestRoundTripWithActiveSessionAndAThreeRowLog(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "state.db")
 	if err := Save(path, SaveData{Schema: CurrentSchema, DevCash: 99}); err != nil {

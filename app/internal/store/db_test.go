@@ -108,8 +108,8 @@ func TestFreshInstallCreatesTheDBWithUserVersionAndOneSignedRow(t *testing.T) {
 }
 
 // TestLoadMissingDBIsNotAnError is Load's "(SaveData{}, false, nil)" case
-// with neither state.db nor state.json present at all — the ONLY branch
-// allowed to reach a caller's legacy Rust import (design §4.2).
+// with no state.db present at all — the ONLY genuine "no save" case
+// (design §4.2), the one that reports (SaveData{}, false, nil).
 func TestLoadMissingDBIsNotAnError(t *testing.T) {
 	d, ok, err := Load(filepath.Join(t.TempDir(), "state.db"))
 	if err != nil {
@@ -216,13 +216,15 @@ func TestTamperedSchemaColumnIsDetected(t *testing.T) {
 // half: PRAGMA user_version disagreeing with the signed payload.schema
 // (here, edited DOWN rather than up — an up-edit is covered by
 // TestFutureUserVersionIsRenamedToFutureNeverDowngradedInPlace) must also
-// fail the cross-check.
+// fail the cross-check. With CurrentSchema reset to 1, "down" is 0 — still
+// a genuine disagreement with the payload's own schema, so the row's MAC
+// verifies and the cross-check is what refuses it.
 func TestTamperedUserVersionDownIsDetected(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "state.db")
 	saveRichDB(t, path)
 
-	rawExec(t, path, `PRAGMA user_version = 3`)
+	rawExec(t, path, `PRAGMA user_version = 0`)
 
 	_, ok, err := Load(path)
 	if !errors.Is(err, ErrTampered) {
@@ -405,24 +407,24 @@ func TestCorruptDBFileIsRenamedToCorrupt(t *testing.T) {
 	}
 }
 
-// TestLegacyImportIsNotReachableViaATamperedDB is the SEC-1 anti-cheat
-// regression guard (docs/plan/SEC-1-design.md §4, DB-1 design §3.4),
-// ported to state.db and exercised via DELETE FROM state (§3.3 row 6)
-// rather than a payload edit — proving the (ok=false, err=nil) "safe to
-// legacy-import" shape is unreachable through EITHER DB-1 tamper surface,
-// not just the payload one integrity_test.go already covers.
-func TestLegacyImportIsNotReachableViaATamperedDB(t *testing.T) {
+// TestTamperedDBNeverPresentsAsNoSave: a tampered state.db (here, an
+// emptied state table) must return ErrTampered, never the
+// (ok=false, err=nil) shape reserved for "no save at all". main.go's
+// loadOrImport keys onboarding — and, historically, a now-deleted legacy
+// re-grant — off exactly that distinction, so collapsing a refused save
+// into "fresh install" must remain impossible.
+func TestTamperedDBNeverPresentsAsNoSave(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "state.db")
 	saveRichDB(t, path)
 	rawExec(t, path, `DELETE FROM state`)
 
-	// Mirrors main.go's loadOrImport: only (ok=false, err=nil) may fall
-	// through to the legacy-import path.
+	// Mirrors main.go's loadOrImport: only (ok=false, err=nil) is treated
+	// as a genuinely fresh install.
 	_, ok, loadErr := Load(path)
-	wouldRunLegacyImport := !ok && loadErr == nil
-	if wouldRunLegacyImport {
-		t.Fatal("a tampered state.db must never present as (ok=false, err=nil) — that shape is reserved for \"no save at all\" and would trigger a legacy re-grant")
+	looksLikeAFreshInstall := !ok && loadErr == nil
+	if looksLikeAFreshInstall {
+		t.Fatal("a tampered state.db must never present as (ok=false, err=nil) — that shape is reserved for \"no save at all\"")
 	}
 	if !errors.Is(loadErr, ErrTampered) {
 		t.Errorf("loadErr = %v, want it to wrap ErrTampered", loadErr)
@@ -545,14 +547,13 @@ func TestSaveLeavesNoWalOrShmOrJournalFilesAtRest(t *testing.T) {
 	}
 }
 
-// TestMacPreimageIsByteIdenticalToTheJSONEraPreimage proves DB-1's
-// carry-across claim (design §3.1) at the byte level, not just by
-// observation: canonicalBody(d) fed through macPreimage must equal
-// EXACTLY the bytes the pre-DB-1 single-shot macPreimage(d) used to hash
-// — domainTag ‖ 0x00 ‖ compact-json(d with Mac zeroed) — reconstructed
-// here by hand from encoding/json directly, independent of this
-// package's own helpers.
-func TestMacPreimageIsByteIdenticalToTheJSONEraPreimage(t *testing.T) {
+// TestMacPreimageIsDomainTagThenNulThenCompactJSON pins the MAC preimage
+// construction at the byte level, independent of this package's own
+// helpers: canonicalBody(d) fed through macPreimage must equal EXACTLY
+// domainTag ‖ 0x00 ‖ compact-json(d with Mac zeroed), reconstructed here
+// by hand from encoding/json directly. This is what makes the DB's
+// "verify against the stored payload bytes" (design §3.1) well-defined.
+func TestMacPreimageIsDomainTagThenNulThenCompactJSON(t *testing.T) {
 	d := SaveData{
 		Schema:     CurrentSchema,
 		DevCash:    12345,
@@ -574,7 +575,7 @@ func TestMacPreimageIsByteIdenticalToTheJSONEraPreimage(t *testing.T) {
 	want = append(want, independentBody...)
 
 	if !reflect.DeepEqual(got, want) {
-		t.Errorf("macPreimage(canonicalBody(d)) differs from the independently-reconstructed JSON-era preimage:\ngot:  %s\nwant: %s", got, want)
+		t.Errorf("macPreimage(canonicalBody(d)) differs from the independently-reconstructed preimage (domainTag ‖ 0x00 ‖ compact-json):\ngot:  %s\nwant: %s", got, want)
 	}
 }
 

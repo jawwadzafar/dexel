@@ -324,7 +324,7 @@ func TestSessionSpansMidnight(t *testing.T) {
 	}
 
 	clock.advance(2 * time.Minute) // now 00:01:00 on the 11th
-	g.Tick(tr(7, false, 0))     // this tick crosses midnight
+	g.Tick(tr(7, false, 0))        // this tick crosses midnight
 
 	postDate, postToday, lifetime := g.StatsSnapshot()
 	if postDate != "2026-03-11" {

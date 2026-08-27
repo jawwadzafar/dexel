@@ -94,54 +94,53 @@ pattern-matching a driver error string.
 
 ---
 
-## 3. The schema, and how it moves
+## 3. The schema — exactly one, no migration
 
-`store.CurrentSchema = 7`. There is **no migration engine**. Every bump so far
-has been additive-by-JSON-absence: a new optional field that an older payload
-simply does not have, so `json.Unmarshal` leaves it at the zero value and that
-zero value is the correct grandfathered answer. The history is recorded only in
-`CurrentSchema`'s own doc comment:
+`store.CurrentSchema = 1`. There is exactly **one supported save format** and
+**no migration engine**. This is the public first release (v0.1.0): there are
+no prior *public* saves to preserve, so the schema was reset to a clean baseline
+of `1` and every pre-v0.1.0 bump-history and upgrade path was deleted. The whole
+load policy is one line:
 
-| Schema | Added |
-| --- | --- |
-| 1 | baseline: `schema`, `devCash`, `xp`, `sprint`, `ownedItems`, `ownedTints`, `equipped` |
-| 2 | `stats` (date, today, lifetime) — Analytics A1 |
-| 3 | `focusSessions` / `appSwitches` counters + `coinsToday` — A2 |
-| 4 | `stats.history` + `stats.streak` — A3, explicitly **with no backfill** |
-| 5 | `mac` — SEC-1. Schema ≥ 5 *is* the signal that a save carries a MAC at all |
-| 6 | `session` (the in-progress session) + `sessionLogHead` — P2 |
-| 7 | `paused` + `pausedSeconds` — PR-5, again with no backfill |
+> A save whose `schema` equals `CurrentSchema` **and** whose MAC verifies is
+> used. Anything else — a wrong, older, or future schema; a bad or absent MAC;
+> a corrupt container — is quarantined, and the economy starts fresh.
+> **Current-schema-or-fresh, nothing else.**
 
-Two rules run through that table:
+Two rules still run through the load:
 
 - **A version is written in three places that must agree**: the payload's own
   `schema` field, the `state.schema` column, and `PRAGMA user_version`.
   Disagreement between any of them is treated as tampering.
-- **No backfill, ever.** Schema 4's comment states it outright: inventing past
-  days would be "dishonest fabrication". Schema 7 likewise refuses to
-  reinterpret existing `IdleSeconds` as paused time. A day, or a second, that
-  was never recorded stays unrecorded.
+- **No backfill, ever.** A day, or a second, that was never recorded stays
+  unrecorded — a save is never re-signed with anything it did not legitimately
+  hold.
 
-An older file is loaded as-is and **upgraded on the next save**, because
-`Snapshot` always stamps `CurrentSchema`. A *newer* file is refused: a
-`user_version` above this build's is quarantined `.future` and never
-downgraded in place.
+A **future** save (`schema > CurrentSchema`, which is also how a leftover
+pre-v0.1.0 local save now looks, since those used higher, defunct numbers) keeps
+its own distinct treatment: quarantined `.future`, `ErrFutureSchema`, **never
+downgraded in place**, so a newer build's save is never clobbered by an older
+build run once. Every *other* refusal — an older/foreign schema, a bad MAC, a
+corrupt file — is `.invalid` / `ErrTampered`.
 
-### The one-time JSON import
+### Why the schema was reset rather than kept
 
-`LoadAll` prefers `state.db`. If there is none but a sibling `state.json`
-exists — the pre-SQLite format — it is imported once, and then the JSON file is
-renamed to `state.json.imported`.
+The reset is load-bearing, not cosmetic. `loadDB` verifies a row's MAC against
+the exact bytes **stored** in it, not a re-serialization — so removing fields
+from `SaveData` (the old `ownedTints` / per-slot `tintId`, `appSwitches`,
+`importedFromRust`/`importedAt`) would **not** by itself invalidate a genuine
+old row's tag; it would still verify and load. Changing the schema number is
+what forces the reset: an old save carries a higher `user_version`, so it is
+refused as a future schema and the next save writes a clean `schema-1` economy.
+`internal/store/reset_test.go` pins this end to end.
 
-The import is careful in two ways worth knowing:
+### No import / migration path
 
-- It **carries the file's own MAC across verbatim**, without re-signing, and
-  keeps the file's own schema number. It cannot be used to mint a save.
-- Every failure branch creates **no database at all** — four separate tests
-  assert that for an unsigned, tampered, future-schema and corrupt JSON.
-
-An imported save always comes back with a nil session log; that format never
-had one.
+There is no `state.json` → `state.db` import and no legacy-Rust import — both
+deleted. `LoadAll` reads `state.db` or reports the one genuine "no save" case; a
+stray pre-release `state.json` or `save.json` on disk is simply **ignored** (no
+code reads it), so it can never mint an economy. A fresh install of this build
+always starts fresh.
 
 ---
 
@@ -199,7 +198,9 @@ its own message:
 | 6 | **MAC mismatch** | `.invalid` | `ErrTampered` |
 | 7 | the payload will not parse *despite* a valid MAC | `.invalid` | `ErrTampered` — "our own bug, not a cheat, but the response is identical" |
 | 8 | the three schema numbers disagree | `.invalid` | `ErrTampered` |
-| 9 | the session chain does not replay | `.invalid` | `ErrTampered` |
+| 9 | payload `schema > CurrentSchema` (defence in depth behind rung 3) | `.future` | `ErrFutureSchema` |
+| 10 | payload `schema != CurrentSchema` (older/foreign — this build loads exactly one schema) | `.invalid` | `ErrTampered` |
+| 11 | the session chain does not replay | `.invalid` | `ErrTampered` |
 
 `ErrTampered` and `ErrFutureSchema` are distinct sentinels, and both are
 distinct from "no save" — a tampered file must never present as a fresh
@@ -228,14 +229,13 @@ evidence is bad, leaving a poisoned file in place is worse".
 after a successful rename. There is no `os.RemoveAll` and no `os.Truncate`
 anywhere in the package.
 
-Suffixes in use: `.corrupt`, `.future`, `.invalid`, and `.imported` for a
-consumed `state.json`.
+Suffixes in use: `.corrupt`, `.future`, and `.invalid`.
 
 ---
 
 ## 5. What is in the save — and what is deliberately not
 
-`SaveData` has 14 fields:
+`SaveData` has 11 fields:
 
 ```
 schema           int
@@ -243,10 +243,7 @@ devCash          uint64
 xp               uint64
 sprint           { index int, unitsDone float64 }
 ownedItems       []string                       // sorted
-ownedTints       []string                       // "itemId:tintId" keys, sorted
-equipped         map[slot]{ itemId, tintId? }
-importedFromRust bool     // VESTIGIAL — nothing sets it any more
-importedAt       string   // VESTIGIAL
+equipped         map[slot]{ itemId }
 stats            { date, today, lifetime, coinsToday, history[], streak }
 session          *ActiveSessionSave             // nil when none
 sessionLogHead   string                         // opaque chained-MAC token
@@ -254,10 +251,12 @@ paused           bool
 mac              string
 ```
 
-`ImportedFromRust` / `ImportedAt` are declared vestigial in the struct: the
-legacy import that was the only thing that ever set them has been deleted.
-They stay so a save written by an earlier build still verifies against its own
-MAC and still reports the truth about where it came from.
+Colours are ordinary items now (STORE-2.0), so there is no `ownedTints` and no
+per-slot `tintId`. The pre-v0.1.0 back-compat fields are gone too:
+`importedFromRust` / `importedAt` (the deleted legacy-Rust import), and the
+`appSwitches` counters that were only kept to preserve old MAC preimages. With
+no old save required to round-trip, they are deleted outright — every
+pre-existing local save resets to fresh on first load with this binary.
 
 **Not in the save, on purpose:**
 
@@ -313,7 +312,7 @@ The reasons, quoted from `config.go`:
 - The name is "deliberately the ONLY free text anywhere in dexel's
   persistence". config.json "is never MAC'd, is never touched by Load/Save's
   tamper path, and never influences the protected economy in any way — a
-  corrupt or tampered `state.json` cannot take the user's name down with it,
+  corrupt or tampered `state.db` cannot take the user's name down with it,
   and a malformed `config.json` can never block the economy."
 - `sessionNames` is there because "a *timestamped series* of project names is
   data about the work" — the same artifact class ADR 0013 refused for hourly
@@ -326,9 +325,9 @@ The reasons, quoted from `config.go`:
 `LoadConfig` degrades both a missing file **and a malformed one** to the zero
 value with no error; only a real read failure (permissions) is surfaced.
 `SaveConfig` is `MarshalIndent` plus an atomic write and never computes a MAC.
-A test drives every DB failure path — import, raw sqlite tamper, future
-`user_version`, corrupt file — and asserts `config.json` is untouched by all of
-them. As one test's name puts it: the refusal costs the user their economy and
+A test drives every DB failure path — raw sqlite tamper, future
+`user_version`, an older/foreign schema, a corrupt file — and asserts
+`config.json` is untouched by all of them. As one test's name puts it: the refusal costs the user their economy and
 not their Dexel's name.
 
 ### A verified bug here

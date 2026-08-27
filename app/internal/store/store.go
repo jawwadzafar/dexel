@@ -4,13 +4,18 @@
 // game.Game's public API but nothing about the engine or activity
 // packages — persistence is a leaf, not a hub. config.json (config.go)
 // stays plain, unsigned, hand-editable JSON — DB-1 only moves the
-// protected economy snapshot at state.db; a one-time migration reads a
-// pre-DB-1 state.json exactly once (db.go's importJSON) and never
-// touches it again afterward.
+// protected economy snapshot at state.db.
+//
+// There is exactly ONE supported save format (CurrentSchema). This is the
+// first public release (v0.1.0): there are no prior public saves to
+// migrate, so there is no import path and no schema-upgrade code. A load
+// either finds a current-schema, correctly-signed save and uses it, or it
+// quarantines whatever it found (wrong/older/future schema, bad MAC,
+// corrupt) and the caller starts a fresh economy. Current-schema-or-fresh,
+// nothing else.
 package store
 
 import (
-	"encoding/json"
 	"errors"
 	"fmt"
 	"math"
@@ -54,52 +59,14 @@ type StatCountersSave struct {
 	ActiveSeconds      uint64 `json:"activeSeconds"`
 	IdleSeconds        uint64 `json:"idleSeconds"`
 	SprintsCompleted   uint64 `json:"sprintsCompleted"`
-	// FocusSessions and AppSwitches (A2, docs/plan/A2-design.md §5/§7 Task
-	// GO-3) were added in schema 3 (see CurrentSchema's doc comment). A
-	// schema-2 file has neither key; json.Unmarshal leaves them at 0, the
-	// correct "none observed yet" state — additive, non-breaking, same
-	// pattern as the schema 1->2 bump.
-	//
-	// AppSwitches is DEPRECATED: the app-switch metric was removed from
-	// the product (it relied on foreground-app identity, unobservable on
-	// Linux/Wayland — ADR 0009). The persisted field is deliberately KEPT
-	// (no json tag change, NO omitempty added) so the on-disk schema is
-	// unchanged and canonicalBody(d) still reproduces byte-identical MAC
-	// preimage bytes for every existing save — no schema bump, no
-	// migration, no save reset. It is never written non-zero and never
-	// read back into the live game (see statCountersToSave /
-	// statCountersFromSave), so it stays 0 going forward.
-	FocusSessions uint64 `json:"focusSessions"`
-	AppSwitches   uint64 `json:"appSwitches"`
+	FocusSessions      uint64 `json:"focusSessions"`
 	// PausedSeconds (PR-5, docs/production-runtime/ARCHITECTURE.md
-	// Decision 14) mirrors game.StatCounters.PausedSeconds, added in
-	// schema 7 (see CurrentSchema's doc comment). A schema-6 file has no
-	// such key; json.Unmarshal leaves it at 0, the correct "this build
-	// never recorded a paused second" state — additive and non-breaking,
-	// the same pattern as every bump before it.
-	//
-	// It reaches THREE places for the price of one, because every one of
-	// them reuses this type: the today/lifetime buckets (StatsSave), every
-	// finalized day (DayBucketSave.Counters), and both halves of an
-	// in-progress session (ActiveSessionSave.Baseline/Watermark) — which
-	// is exactly the "a counter added to it later (e.g. PR-5's
-	// pausedSeconds...) joins the session with no edit here" property
-	// ActiveSessionSave's own doc comment predicted.
-	//
-	// `omitempty` IS LOAD-BEARING, and not for file size. The JSON side of
-	// the MAC verifies a save against canonicalBody(d) — a
-	// re-serialization of the parsed struct (integrity.go) — so importJSON
-	// only holds its documented invariant ("canonicalBody(d) ... reproduces
-	// byte-identical preimage bytes") while every field added AFTER a file
-	// was written stays absent from that re-encoding. Without omitempty
-	// this field injected `"pausedSeconds":0` into four buckets of every
-	// pre-PR-5 state.json, changing the preimage and failing the MAC: a
-	// real v1.0.0 save was refused as tampered and the player silently
-	// started a fresh economy. Every other field this wave added
-	// (Session/SessionLogHead/Paused) already carries omitempty/omitzero
-	// for exactly this reason; this one did not, and that was the bug.
-	// Same rule for every future field. See
-	// TestPrePR5StateJSONImportsUnderItsOriginalMac.
+	// Decision 14) mirrors game.StatCounters.PausedSeconds — the seconds
+	// during which dexel observed nothing at all. It reaches THREE places
+	// for the price of one, because every one of them reuses this type:
+	// the today/lifetime buckets (StatsSave), every finalized day
+	// (DayBucketSave.Counters), and both halves of an in-progress session
+	// (ActiveSessionSave.Baseline/Watermark).
 	PausedSeconds uint64 `json:"pausedSeconds,omitempty"`
 }
 
@@ -114,11 +81,6 @@ type CoinBreakdownSave struct {
 	Keystrokes    uint64 `json:"keystrokes"`
 	Mouse         uint64 `json:"mouse"`
 	FocusSessions uint64 `json:"focusSessions"`
-	// AppSwitches is DEPRECATED, kept for the same schema/MAC-stability
-	// reason as StatCountersSave.AppSwitches: the field (and its json tag,
-	// no omitempty) stays so existing saves' MAC preimage is unchanged. It
-	// is never written non-zero nor read back into the live game.
-	AppSwitches uint64 `json:"appSwitches"`
 }
 
 // StatsSave is the persisted `stats` object added in schema 2 (see
@@ -260,12 +222,10 @@ type SessionSave struct {
 // Mac (SEC-1, docs/plan/SEC-1-design.md §2, ADR 0014) is the hex
 // HMAC-SHA256 tag of this struct with Mac itself zeroed (see
 // integrity.go's macPreimage/computeMAC) — a fixed-width digest, not
-// content, so it does not weaken the privacy invariant above. Since B-1
-// (docs/plan/REVIEW-2026-08-22.md) an EMPTY Mac is never trusted at any
-// schema: the schema<=4 grandfather window — which let an unsigned,
-// hand-written file be imported and then signed, minting an economy with
-// no key at all — is closed, so a save that arrives without a valid tag
-// is treated exactly like one with a forged tag (see loadJSON).
+// content, so it does not weaken the privacy invariant above. An EMPTY
+// Mac is never trusted: a save that arrives without a valid tag is
+// treated exactly like one with a forged tag (see loadDB), so a
+// hand-written, unsigned file can never mint an economy.
 type SaveData struct {
 	Schema     int                     `json:"schema"`
 	DevCash    uint64                  `json:"devCash"`
@@ -273,27 +233,14 @@ type SaveData struct {
 	Sprint     SprintSave              `json:"sprint"`
 	OwnedItems []string                `json:"ownedItems"`
 	Equipped   map[string]EquippedSave `json:"equipped"`
-	// ImportedFromRust/ImportedAt are VESTIGIAL as of B-2
-	// (docs/plan/REVIEW-2026-08-22.md): the legacy-Rust import that was
-	// the only thing that ever set them is deleted. They stay in the
-	// struct — both are `omitempty` and both round-trip through
-	// Snapshot/Apply unchanged — so a save written by an earlier build
-	// keeps verifying against its own MAC and keeps reporting the truth
-	// about where it came from. Nothing sets them any more; nothing new
-	// should.
-	ImportedFromRust bool      `json:"importedFromRust,omitempty"`
-	ImportedAt       string    `json:"importedAt,omitempty"` // RFC3339, "" if never imported
-	Stats            StatsSave `json:"stats"`
+	Stats      StatsSave               `json:"stats"`
 	// Session/SessionLogHead (P2, docs/plan/P2-design.md §5.1, ADR 0017
-	// Decision 5, schema 6) are the two additive fields for the in-progress
-	// session and the chained session-log's HEAD. Session is nil/omitted
-	// when no session is active — a schema-5 payload has neither key, so
-	// json.Unmarshal leaves Session nil and SessionLogHead "", which §5.4's
-	// gate accepts as "no active session, the honest empty log" (see
-	// CurrentSchema's doc comment below). SessionLogHead is an OPAQUE
-	// chained-MAC token (integrity.go's computeLogMAC) that this package
-	// alone computes and verifies; game.Game only ever carries it forward,
-	// exactly like ImportedFromRust/ImportedAt.
+	// Decision 5) are the in-progress session and the chained session-log's
+	// HEAD. Session is nil/omitted when no session is active, which §5.4's
+	// gate accepts as "no active session, the honest empty log".
+	// SessionLogHead is an OPAQUE chained-MAC token (integrity.go's
+	// computeLogMAC) that this package alone computes and verifies;
+	// game.Game only ever carries it forward, never interpreting it.
 	Session        *ActiveSessionSave `json:"session,omitzero"`
 	SessionLogHead string             `json:"sessionLogHead,omitempty"`
 	// Paused (PR-5, docs/production-runtime/ARCHITECTURE.md Decision
@@ -304,126 +251,39 @@ type SaveData struct {
 	// — and says so loudly on startup (main.go logs one line) and in
 	// `dexel status`, so a paused-and-forgotten dexel is never mute.
 	//
-	// `omitempty` because false is both the zero value and the correct
-	// grandfathered default: a schema-6-or-earlier payload has no key at
-	// all, json.Unmarshal leaves this false, and Apply hands that to
-	// game.Game.RestorePaused — exactly the "not paused" state such a
-	// save represents.
+	// `omitempty` because false is the zero value and the correct
+	// "not paused" default.
 	Paused bool   `json:"paused,omitempty"`
 	Mac    string `json:"mac,omitempty"`
 }
 
-// CurrentSchema is the schema version this build writes.
+// CurrentSchema is the schema version this build writes, and the ONLY
+// schema it will load. This is the public first release (v0.1.0), so it is
+// reset to a clean baseline of 1: there are no prior PUBLIC saves to
+// preserve, so there is no bump history and no migration/upgrade code to
+// carry one schema into another. Any pre-release local save (which used
+// higher, now-defunct schema numbers) is simply refused on first load with
+// this binary and the economy starts fresh — the owner's accepted
+// "start fresh, no migration" stance.
 //
-// Bumped 1 -> 2 for Analytics track Phase A1 (docs/plan/ROADMAP.md): the
-// new `stats` field above. This is a genuine save-format change, not just
-// an additive JSON key an old build could safely ignore — Load's existing
-// "future schema" guard (see Load's doc comment and ErrFutureSchema) exists
-// specifically so an OLDER build run once against a NEWER save can never
-// silently re-save it minus the fields it doesn't know about; bumping the
-// number is what makes that guard actually fire for this change instead of
-// letting a schema-1-shaped build quietly drop everyone's stats the first
-// time it writes. Migration schema 1 -> 2 needs no dedicated code: a
-// schema-1 file simply has no "stats" key, json.Unmarshal leaves SaveData's
-// Stats field at its zero value (StatsSave{} — empty date, all-zero
-// counters), and Apply hands that straight to game.Game.RestoreStats,
-// which is exactly the right "no stats recorded yet" starting state for a
-// save that predates this feature.
+// The number is load-bearing for the reset, not just a label. loadDB
+// verifies a row's MAC against the exact bytes STORED in it (not a
+// re-serialization), so removing fields from SaveData alone would NOT
+// invalidate a genuine old-schema row's tag — it would still verify and
+// load. Resetting the schema is what forces the reset: an old save carries
+// a higher number, so loadDB refuses it as a future schema
+// (ErrFutureSchema, quarantined to ".future", never downgraded in place)
+// and the next Save writes a clean schema-1 economy.
 //
-// Bumped 2 -> 3 for Analytics track Phase A2 (docs/plan/A2-design.md §7
-// Task GO-3): StatCountersSave gains FocusSessions/AppSwitches and
-// StatsSave gains CoinsToday (CoinBreakdownSave). Same additive-migration
-// reasoning as the 1->2 bump above applies verbatim: a schema-2 file has
-// none of these keys, json.Unmarshal leaves them at their zero value (0
-// counts, an all-zero CoinBreakdownSave), and Apply hands that straight to
-// game.Game.RestoreCoinsToday/RestoreStats — exactly the "nothing observed
-// yet" state a schema-3 file would represent explicitly. No dedicated
-// migration code beyond this bump; existing devCash/xp/owned/equipped and
-// the pre-existing stats counters are read exactly as before.
-//
-// Bumped 3 -> 4 for Analytics track Phase A3 (docs/plan/A3-design.md §4/§7
-// Task GO-2): StatsSave gains History ([]DayBucketSave) and Streak
-// (StreakSave). Same additive-migration reasoning as the 1->2 and 2->3
-// bumps above applies verbatim: a schema-3 file has neither key,
-// json.Unmarshal leaves History as an empty (nil) slice and Streak at its
-// zero value (StreakSave{}), and Apply hands those straight to
-// game.Game.RestoreHistory/RestoreStreak — exactly the "no history/streak
-// recorded yet" state a schema-4 file would represent explicitly. We
-// deliberately do NOT backfill history or a streak from the existing
-// Today/Lifetime counters on migration: this build never had per-day
-// data before now, so inventing past days (or a streak built from them)
-// would be dishonest fabrication, not migration. No dedicated migration
-// code beyond this bump; existing devCash/xp/owned/equipped and every
-// pre-existing stats field (today/lifetime/coinsToday) are read exactly
-// as before. ErrFutureSchema is unchanged by this bump: a schema-5 save
-// is still renamed to ".future" and refused, never silently downgraded.
-//
-// Bumped 4 -> 5 for SEC-1 (docs/plan/SEC-1-design.md,
-// docs/adr/0014-save-integrity-hmac-and-config-split.md): SaveData gains
-// Mac, the hex HMAC-SHA256 tag over the rest of the struct (see
-// integrity.go). Unlike every prior bump, this one is not purely
-// additive in the usual "old build ignores an unknown key" sense —
-// schema >= 5 is the signal that a save carries a MAC at all, so the bump
-// is load-bearing for the anti-cheat mechanism itself, not just a version
-// label. A pre-SEC-1 schema-4-or-earlier file has no "mac" key. Load used
-// to grandfather such a file in as trusted and re-sign it; since B-1
-// (docs/plan/REVIEW-2026-08-22.md) it is REFUSED as tampered, because
-// that window was an unsigned mint anyone could walk through and nothing
-// legitimate has produced a schema<=4 file since. ErrFutureSchema is
-// unchanged by this bump: a schema-6 save is still renamed to ".future"
-// and refused, never silently downgraded (see
-// TestFutureSchema7RefusalStillFiresAfterTheSchema6Bump, which now pins
-// the concrete future number one bump later — see that test's own doc
-// comment for the renaming history).
-//
-// Bumped 5 -> 6 for P2 (docs/plan/P2-design.md §5.6, ADR 0017 Decision 6):
-// SaveData gains Session (*ActiveSessionSave, the in-progress session) and
-// SessionLogHead (the chained-MAC head of the append-only `sessions`
-// table, db.go). Additive in exactly the way every prior bump was: a
-// schema-5 payload has neither key, json.Unmarshal leaves Session nil and
-// SessionLogHead "", and no `sessions` table exists yet — which
-// verifySessionLog's gate (db.go, §5.4) accepts as "no active session,
-// the honest empty log", the correct starting state for a save that
-// predates P2. No dedicated migration code beyond this bump; nothing is
-// backfilled, because inventing past sessions would be fabrication, not
-// migration (§5.6: "we never had sessions before, so inventing past ones
-// would be fabrication").
-//
-// Bumped 6 -> 7 for PR-5 (pause; docs/production-runtime/
-// MIGRATION_PLAN.md §PR-5, ARCHITECTURE.md §6 Decisions 14/16 and FORK D
-// — P2/Sessions had already claimed 5 -> 6, so pause takes the next
-// number, per MIGRATION_PLAN.md sequencing constraint 3's "only ONE
-// schema-bumping task in flight at a time"): SaveData gains Paused (the
-// persisted pause intent) and StatCountersSave gains PausedSeconds (the
-// third, disjoint time bucket). Additive in exactly the way every prior
-// bump was: a schema-6 payload has neither key, json.Unmarshal leaves
-// Paused false and every PausedSeconds 0, and Apply hands those to
-// game.Game.RestorePaused/RestoreStats — respectively "not paused" and
-// "this build never recorded a paused second", which is precisely what a
-// pre-PR-5 save means. Nothing is backfilled: pause did not exist before
-// this bump, so inventing paused time (or, worse, reinterpreting some
-// recorded IdleSeconds as paused) would be fabrication, not migration. No
-// dedicated migration code beyond the bump. ErrFutureSchema is unchanged:
-// a schema-8 save is still renamed ".future" and refused, never silently
-// downgraded (see TestFutureSchema8RefusalStillFiresAfterTheSchema7Bump,
-// which pins the concrete future number one bump later again).
-//
-// Bumped 7 -> 8 for STORE-2.0 (docs/plan/ROADMAP.md §STORE-2.0): the tint
-// system is gone. SaveData drops OwnedTints entirely and EquippedSave drops
-// TintID, so the save FORMAT genuinely changed and an older (schema-7)
-// build must not silently reinterpret a schema-8 file — hence the bump, so
-// that build renames it ".future" and refuses it. Loading in the OTHER
-// direction — a pre-STORE-2.0 save read by this build — needs no migration
-// code, per the owner's pre-release "start fresh, no migration" stance: a
-// schema<=7 payload's now-unknown "ownedTints" key and per-slot "tintId"
-// are ignored by json.Unmarshal, and Apply's own load validation degrades
-// the rest against the new catalog — a now-removed owned id (e.g. the old
-// style "chair_racer") is dropped as unknown, and an equipped slot naming a
-// vanished item falls back to that slot's tier-0 default. The catalog is
-// the source of truth, so such a save simply comes back with the default
-// look for the changed slots rather than being rejected. ErrFutureSchema is
-// unchanged: a schema-9 save is still renamed ".future" and refused.
-const CurrentSchema = 8
+// The load rule is exactly one line of policy: a save whose Schema equals
+// CurrentSchema and whose MAC verifies is used; ANYTHING else — a wrong,
+// older, or future schema; a bad or absent MAC; a corrupt container — is
+// quarantined and the caller starts fresh. Current-schema-or-fresh,
+// nothing else. A future schema (Schema > CurrentSchema) keeps its own
+// distinct quarantine (".future", ErrFutureSchema) so a newer build's save
+// is never clobbered by an older build run once; every other refusal is
+// ".invalid"/ErrTampered.
+const CurrentSchema = 1
 
 // DefaultPath returns <StateDir>/state.db — on Linux with
 // $XDG_CONFIG_HOME unset this is byte-identical to the
@@ -435,10 +295,7 @@ const CurrentSchema = 8
 // saves today (docs/production-runtime/MIGRATION_PLAN.md §PR-1,
 // PLATFORM_NOTES.md §1). paths.StateDir() is the only place that knows
 // the actual per-OS location, including DEXEL_HOME's override and the
-// one-time macOS/Windows relocation. Prior builds wrote
-// ~/.config/dexel/state.json at this same basename-minus-extension; see
-// jsonImportPath and Load's doc comment for the one-time migration from
-// that file into this one.
+// one-time macOS/Windows relocation.
 func DefaultPath() (string, error) {
 	dir, err := paths.StateDir()
 	if err != nil {
@@ -506,14 +363,12 @@ func Snapshot(g *game.Game) SaveData {
 	}
 
 	return SaveData{
-		Schema:           CurrentSchema,
-		DevCash:          g.DevCash,
-		XP:               g.XP,
-		Sprint:           SprintSave{Index: g.SprintIndex(), UnitsDone: quantizeUnits(g.Progress)},
-		OwnedItems:       owned,
-		Equipped:         equipped,
-		ImportedFromRust: g.ImportedFromRust,
-		ImportedAt:       g.ImportedAt,
+		Schema:     CurrentSchema,
+		DevCash:    g.DevCash,
+		XP:         g.XP,
+		Sprint:     SprintSave{Index: g.SprintIndex(), UnitsDone: quantizeUnits(g.Progress)},
+		OwnedItems: owned,
+		Equipped:   equipped,
 		Stats: StatsSave{
 			Date:       statsDate,
 			Today:      statCountersToSave(statsToday),
@@ -560,10 +415,6 @@ func dayBucketFromSave(b DayBucketSave) game.DayBucket {
 }
 
 func statCountersToSave(c game.StatCounters) StatCountersSave {
-	// AppSwitches is intentionally left at its zero value: the app-switch
-	// metric was removed, but the persisted field is kept (DEPRECATED) so
-	// the on-disk schema and the MAC preimage are unchanged — see
-	// StatCountersSave.AppSwitches.
 	return StatCountersSave{
 		Keystrokes:         c.Keystrokes,
 		MouseActiveSeconds: c.MouseActiveSeconds,
@@ -576,8 +427,6 @@ func statCountersToSave(c game.StatCounters) StatCountersSave {
 }
 
 func statCountersFromSave(c StatCountersSave) game.StatCounters {
-	// c.AppSwitches is intentionally ignored: the DEPRECATED persisted
-	// field has no live counterpart any more (app-switch metric removed).
 	return game.StatCounters{
 		Keystrokes:         c.Keystrokes,
 		MouseActiveSeconds: c.MouseActiveSeconds,
@@ -590,7 +439,6 @@ func statCountersFromSave(c StatCountersSave) game.StatCounters {
 }
 
 func coinBreakdownToSave(c game.CoinBreakdown) CoinBreakdownSave {
-	// AppSwitches left at zero — DEPRECATED, kept for schema/MAC stability.
 	return CoinBreakdownSave{
 		Keystrokes:    c.Keystrokes,
 		Mouse:         c.Mouse,
@@ -599,7 +447,6 @@ func coinBreakdownToSave(c game.CoinBreakdown) CoinBreakdownSave {
 }
 
 func coinBreakdownFromSave(c CoinBreakdownSave) game.CoinBreakdown {
-	// c.AppSwitches ignored — DEPRECATED, no live counterpart.
 	return game.CoinBreakdown{
 		Keystrokes:    c.Keystrokes,
 		Mouse:         c.Mouse,
@@ -619,17 +466,13 @@ func Apply(g *game.Game, d SaveData) {
 	g.DevCash = d.DevCash
 	g.XP = d.XP
 	g.RestoreSprint(d.Sprint.Index, d.Sprint.UnitsDone)
-	g.ImportedFromRust = d.ImportedFromRust
-	g.ImportedAt = d.ImportedAt
 
 	// RestoreActiveSession/SetSessionLogHead (P2, docs/plan/P2-design.md
 	// §5.1/§5.5, ADR 0017 Decision 5): the in-progress session and the
 	// session log's opaque chain head, both carried on SaveData itself.
 	// Neither interacts with rolloverStatsIfNewDay, so — unlike History/
 	// Streak/CoinsToday just below — there is no ordering constraint
-	// forcing this before or after RestoreStats; it sits here beside the
-	// other "carried forward, this package's own concern" fields
-	// (ImportedFromRust/ImportedAt immediately above).
+	// forcing this before or after RestoreStats.
 	//
 	// Note this does NOT restore the FINISHED session log or session
 	// names: those are not part of SaveData at all (the former lives in
@@ -935,161 +778,41 @@ func syncDir(dir string) error {
 	return d.Sync()
 }
 
-// LoadAll implements DB-1's full decision tree (docs/plan/DB-1-design.md
-// §4.2), extended by P2 with the session log (docs/plan/P2-design.md
-// §5.4): state.db is the source of truth once it exists (loadDB, db.go,
-// §3.2's gate order extended by §5.4's steps 7-9); a state.db-less
-// machine that still has a state.json runs the one-time import
-// (importJSON, db.go, §4.3), reusing loadJSON below verbatim for
-// verification; neither existing is the ONLY "no save" case —
-// (SaveData{}, nil, false, nil) — that may reach the caller's legacy
-// Rust import (main.go's loadOrImport). A stat failure other than "does
-// not exist" (e.g. a permission error) is surfaced as an error, exactly
-// as it always was.
+// LoadAll is the single load entry point (docs/plan/DB-1-design.md §4.2,
+// extended by P2's session log, docs/plan/P2-design.md §5.4): state.db is
+// the one source of truth. If it exists, loadDB runs §3.2's full gate
+// order (corrupt -> future -> tampered -> session-log -> ok) and returns
+// the verified snapshot plus its session log; if it does not exist, this
+// is a genuinely fresh install — (SaveData{}, nil, false, nil), the ONLY
+// "no save" case, which is what lets main.go's caller show the first-launch
+// intro. A stat failure other than "does not exist" (e.g. a permission
+// error) is surfaced as an error.
 //
-// A one-time JSON import always returns a nil session log: the source
-// state.json predates P2 by construction (state.db did not exist yet,
-// and once it does the DB branch is taken forever after — §4.3's "import
-// is one-time structurally"), so it can only ever be schema <= 5 and
-// carry no session data at all — the honest empty log, exactly what a
-// nil slice represents.
-//
-// Every quarantine/tamper/future-schema property loadJSON's own doc
-// comment describes below still holds — LoadAll just decides FIRST which
-// of the two files (or neither) it's evaluating.
+// There is no state.json import path any more: this is the public first
+// release, so there are no prior public saves to import, and a stray
+// state.json a pre-release build might have left is simply ignored (loadDB
+// never reads it). Every quarantine/tamper/future-schema property lives in
+// loadDB (db.go); LoadAll just decides whether a state.db is there to
+// evaluate at all.
 func LoadAll(path string) (SaveData, []SessionSave, bool, error) {
 	exists, err := fileExists(path)
 	if err != nil {
 		return SaveData{}, nil, false, fmt.Errorf("stat %s: %w", path, err)
 	}
-	if exists {
-		return loadDB(path)
-	}
-
-	jsonPath := jsonImportPath(path)
-	jsonExists, err := fileExists(jsonPath)
-	if err != nil {
-		return SaveData{}, nil, false, fmt.Errorf("stat %s: %w", jsonPath, err)
-	}
-	if !jsonExists {
+	if !exists {
 		return SaveData{}, nil, false, nil
 	}
-	d, ok, err := importJSON(path, jsonPath)
-	return d, nil, ok, err
+	return loadDB(path)
 }
 
 // Load is a THIN WRAPPER over LoadAll that verifies the session log chain
 // identically and then discards it (docs/plan/P2-design.md §5.4:
 // "verification cannot be skipped by construction... a two-function API
 // where the convenient one skips integrity is exactly the silent hole ADR
-// 0016 warns about"). Every existing call site (main.go's loadOrImport)
-// and every pre-P2 test keeps working unchanged, and still exercises the
-// chain check on every call — there is no way to reach a SaveData without
-// LoadAll's full gate having run, including the session log.
+// 0016 warns about"). Every call still exercises the chain check — there
+// is no way to reach a SaveData without LoadAll's full gate having run,
+// including the session log.
 func Load(path string) (SaveData, bool, error) {
 	d, _, ok, err := LoadAll(path)
 	return d, ok, err
-}
-
-// loadJSON reads and parses a JSON save file directly — this is
-// pre-DB-1's entire Load function, renamed verbatim (DB-1 design
-// §4.3/§5/§7: "Reuse today's Load body verbatim... this is the single
-// highest-leverage decision in the migration"). DB-1's Load (above) only
-// ever calls this for the one-time state.json -> state.db import
-// (importJSON, db.go); state.db itself is never touched by this
-// function.
-//
-// A missing file returns (SaveData{}, false, nil) — "no save yet" is not
-// an error. A malformed file is renamed to "state.json.corrupt" (never
-// deleted, so a user can send it in) and reported as "no save" rather
-// than an error the caller must handle — docs/upgrade-design.md: "log
-// once, start fresh... never delete the bad file."
-//
-// A save whose Schema is NEWER than CurrentSchema (i.e. written by a
-// build ahead of this one — the classic "ran an older build once after
-// upgrading" scenario) is handled differently from a malformed file:
-// this build does not understand every field that save might carry, so
-// silently returning (SaveData{}, false, nil) — "no save, start fresh" —
-// would be actively dangerous. The caller, seeing "no save," would go on
-// to either start completely fresh OR run the legacy-import path, and
-// either way its very next write would overwrite the newer data — a
-// silent downgrade that destroys progress the moment someone runs an
-// older build once, with no error and no way back. Instead: the
-// original file is renamed to "<path>.future" completely untouched, and
-// this function returns an error (never (_, true, _) for a future
-// schema) so the caller treats this as a load FAILURE, not "no save" —
-// the same way an unreadable file is surfaced — while the future-schema
-// data sits recoverable at its own path rather than being silently
-// clobbered by whatever this older build does next.
-//
-// SEC-1 (docs/plan/SEC-1-design.md §4, ADR 0014): a save whose Schema is
-// >= 5 (i.e. this build's or a prior SEC-1-era build's) that parses fine
-// but whose Mac does not verify (integrity.go's verifyMAC) is handled the
-// same way as a future schema, and deliberately NOT the same way as a
-// missing file: the original is renamed to "<path>.invalid" (never
-// deleted) and this function returns an error wrapping ErrTampered,
-// never (_, true, _) and never (SaveData{}, false, nil). That last
-// distinction is the entire point — collapsing a tamper failure into "no
-// save" makes a failed load indistinguishable from a fresh install, which
-// pre-B-2 additionally unlocked the unbounded legacy-Rust re-grant and
-// still decides onboarding today. Returning a distinct sentinel closes
-// that the same way ErrFutureSchema already does: the caller must treat
-// "load failed" and "no save yet" as different things.
-//
-// B-1 (docs/plan/REVIEW-2026-08-22.md): the MAC is required at EVERY
-// schema. A schema-4-or-earlier file has no Mac to check, which is now a
-// refusal rather than a free pass — see the check itself below for why
-// the old grandfather window was strictly easier to abuse than forging a
-// tag.
-func loadJSON(path string) (SaveData, bool, error) {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return SaveData{}, false, nil
-		}
-		return SaveData{}, false, fmt.Errorf("read save file: %w", err)
-	}
-	var d SaveData
-	if err := json.Unmarshal(data, &d); err != nil {
-		corruptPath := quarantinePath(path, ".corrupt")
-		_ = os.Rename(path, corruptPath)
-		return SaveData{}, false, fmt.Errorf("parse save file (moved to %s): %w", corruptPath, err)
-	}
-	if d.Schema > CurrentSchema {
-		futurePath := quarantinePath(path, ".future")
-		if renameErr := os.Rename(path, futurePath); renameErr != nil {
-			return SaveData{}, false, fmt.Errorf("%w: schema %d > this build's %d, and backing up %s to %s failed: %v",
-				ErrFutureSchema, d.Schema, CurrentSchema, path, futurePath, renameErr)
-		}
-		return SaveData{}, false, fmt.Errorf("%w: schema %d > this build's %d; original preserved untouched at %s (NOT loaded, NOT deleted, NOT overwritten)",
-			ErrFutureSchema, d.Schema, CurrentSchema, futurePath)
-	}
-	// B-1 (docs/plan/REVIEW-2026-08-22.md): the MAC is required at EVERY
-	// schema, not only >= 5. The old `d.Schema >= 5 &&` guard was a
-	// no-key mint: a hand-written {"schema":4,"devCash":999999999}
-	// state.json was accepted unverified and then SIGNED by importJSON,
-	// which is strictly easier than defeating the MAC. Nothing legitimate
-	// produces a schema<=4 file any more (the only ones that ever existed
-	// were pre-SEC-1 dev artifacts on the machine this was built on; the
-	// product never shipped one), so an unsigned save is now treated
-	// exactly like a forged one: quarantined to .invalid, ErrTampered,
-	// fresh economy. config.json is a separate, unsigned, deliberately
-	// hand-editable file and is untouched by this path, so the dexel's
-	// name survives.
-	if !verifyMAC(d) {
-		// "unsigned" and "wrong tag" are the same refusal but a support
-		// reader deserves to know which one happened.
-		reason := "MAC mismatch"
-		if d.Mac == "" {
-			reason = fmt.Sprintf("no MAC at all (schema %d save file, unsigned)", d.Schema)
-		}
-		invalidPath := quarantinePath(path, ".invalid")
-		if renameErr := os.Rename(path, invalidPath); renameErr != nil {
-			return SaveData{}, false, fmt.Errorf("%w: %s, and backing up %s to %s failed: %v",
-				ErrTampered, reason, path, invalidPath, renameErr)
-		}
-		return SaveData{}, false, fmt.Errorf("%w: %s; original preserved untouched at %s (NOT loaded, NOT deleted, NOT overwritten)",
-			ErrTampered, reason, invalidPath)
-	}
-	return d, true, nil
 }

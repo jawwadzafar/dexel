@@ -324,28 +324,20 @@ func TestRichStateSaveLoadRoundTripHasNoFalsePositive(t *testing.T) {
 	}
 }
 
-// TestUnsignedSchema4FileIsRefusedAndQuarantinedNeverMinted is B-1's
-// regression guard (docs/plan/REVIEW-2026-08-22.md). It replaces
-// TestSchema4FileIsGrandfatheredThenResavedSignedAtCurrentSchema, which
-// pinned the opposite behaviour: that an unsigned schema-4 state.json was
-// imported unverified and then SIGNED at CurrentSchema.
+// TestStrayStateJSONIsIgnoredNeverImportedNeverMints proves the unsigned
+// mint vector is closed BY CONSTRUCTION now that the state.json import
+// path is gone (public first release, no migration). A hand-written
+// state.json claiming an absurd balance sits next to a missing state.db;
+// there is no code that reads it, so Load sees "no save at all" and the
+// economy starts fresh. Nothing is minted, no state.db is created from it,
+// the stray file is left exactly where it was (untouched — nothing
+// consults it), and a sibling config.json — the unsigned, hand-editable
+// half of the split — is untouched too.
 //
-// That was a mint requiring NO key at all — `rm state.db`, write
-// {"schema":4,"devCash":999999999}, start dexel, get a validly-signed
-// save with a billion Dev Cash — which is strictly easier than defeating
-// the MAC and made integrity.go's "stops casual save-file editing
-// completely" claim false. The grandfather window existed for genuine
-// pre-SEC-1 saves, and those only ever existed as dev artifacts on the
-// machine dexel was built on (the Go build has never been released), so
-// the window is closed rather than narrowed: an unsigned save is a
-// tampered save.
-//
-// What must be true now: ErrTampered, ok==false, the file quarantined to
-// .invalid untouched, NO state.db created (nothing was laundered), and a
-// sibling config.json — the unsigned, hand-editable half of the split —
-// left exactly as it was, so the refusal costs the user their economy and
-// not their dexel's name.
-func TestUnsignedSchema4FileIsRefusedAndQuarantinedNeverMinted(t *testing.T) {
+// This replaces the old B-1 unsigned-import refusal test: the refusal used
+// to happen inside importJSON; with importJSON deleted there is nothing to
+// refuse — the file is simply inert.
+func TestStrayStateJSONIsIgnoredNeverImportedNeverMints(t *testing.T) {
 	dir := t.TempDir()
 	dbPath := filepath.Join(dir, "state.db")
 	jsonPath := filepath.Join(dir, "state.json")
@@ -359,10 +351,11 @@ func TestUnsignedSchema4FileIsRefusedAndQuarantinedNeverMinted(t *testing.T) {
 		t.Fatalf("ReadFile (config before): %v", err)
 	}
 
-	// The review's own reproduction fixture, verbatim in spirit: a
-	// hand-written schema-4 file claiming an absurd balance.
+	// A hand-written save claiming a billion Dev Cash, in the old JSON
+	// shape. Under a build with an import path this was the mint to close;
+	// under this build it is just an unread file.
 	raw := `{
-		"schema": 4,
+		"schema": 1,
 		"devCash": 999999999,
 		"xp": 424242,
 		"sprint": {"index": 5, "unitsDone": 0},
@@ -373,57 +366,64 @@ func TestUnsignedSchema4FileIsRefusedAndQuarantinedNeverMinted(t *testing.T) {
 		t.Fatalf("WriteFile: %v", err)
 	}
 
-	d, ok, err := Load(dbPath)
-	if !errors.Is(err, ErrTampered) {
-		t.Fatalf("Load err = %v, want it to wrap ErrTampered — an unsigned save must not be trusted", err)
+	d, ok, loadErr := Load(dbPath)
+	if loadErr != nil {
+		t.Fatalf("Load err = %v, want nil — a stray state.json is not an error, it is simply ignored", loadErr)
 	}
 	if ok {
-		t.Error("ok = true for an unsigned schema-4 file, want false")
+		t.Error("ok = true, want false — a stray state.json must not count as a save")
 	}
 	if d.DevCash != 0 {
-		t.Errorf("d.DevCash = %d, want 0 — nothing from an unsigned file may reach the caller", d.DevCash)
+		t.Errorf("d.DevCash = %d, want 0 — nothing from an unread file may reach the caller", d.DevCash)
 	}
 	if _, statErr := os.Stat(dbPath); !os.IsNotExist(statErr) {
-		t.Error("a state.db was created from an unsigned import — that is the mint B-1 describes")
+		t.Error("a state.db was created — nothing may be minted from a stray state.json")
 	}
-	if _, statErr := os.Stat(jsonPath); !os.IsNotExist(statErr) {
-		t.Error("the unsigned state.json should have been moved aside, not left in place to be re-tried")
-	}
-	quarantined, readErr := os.ReadFile(jsonPath + ".invalid")
+	stray, readErr := os.ReadFile(jsonPath)
 	if readErr != nil {
-		t.Fatalf("expected %s.invalid to exist: %v", jsonPath, readErr)
+		t.Fatalf("the stray state.json should be left in place (nothing reads it): %v", readErr)
 	}
-	if string(quarantined) != raw {
-		t.Error("the quarantined file's bytes changed — quarantine must rename, never rewrite")
+	if string(stray) != raw {
+		t.Error("the stray state.json bytes changed — an ignored file must not be touched")
 	}
 	configAfter, err := os.ReadFile(configPath)
 	if err != nil {
 		t.Fatalf("ReadFile (config after): %v", err)
 	}
 	if string(configAfter) != string(configBefore) {
-		t.Error("config.json changed during a refused unsigned import — the name must survive a wiped economy")
+		t.Error("config.json changed while ignoring a stray state.json — the name must survive")
 	}
 }
 
 // TestASecondQuarantineDoesNotDestroyTheFirstOne is N-1's regression
-// guard: `quarantine` used to rename unconditionally to path+suffix, so a
-// second tampered save silently overwrote the first one's evidence while
-// the message still promised "original preserved untouched ... NOT
-// deleted". The first quarantine keeps the plain documented name; the
-// second gets a timestamped one and BOTH files survive.
+// guard, on the state.db path: `quarantine` used to rename unconditionally
+// to path+suffix, so a second tampered save silently overwrote the first
+// one's evidence while the message still promised "original preserved
+// untouched ... NOT deleted". The first quarantine keeps the plain
+// documented name; the second gets a timestamped one and BOTH files
+// survive.
 func TestASecondQuarantineDoesNotDestroyTheFirstOne(t *testing.T) {
 	dir := t.TempDir()
-	dbPath := filepath.Join(dir, "state.db")
-	jsonPath := filepath.Join(dir, "state.json")
+	path := filepath.Join(dir, "state.db")
 
-	for i, body := range []string{
-		`{"schema": 4, "devCash": 111}`,
-		`{"schema": 4, "devCash": 222}`,
-	} {
-		if err := os.WriteFile(jsonPath, []byte(body), 0o644); err != nil {
-			t.Fatalf("WriteFile #%d: %v", i, err)
+	for i, devCash := range []uint64{111, 222} {
+		// Each round: write a fresh, validly-signed save, then hand-edit
+		// its payload at the sqlite level so it fails verification and is
+		// quarantined. (The first round's quarantine renames state.db away,
+		// so the second Save creates a brand-new one.)
+		g := game.New()
+		g.DevCash = devCash
+		if err := Save(path, Snapshot(g)); err != nil {
+			t.Fatalf("Save #%d: %v", i, err)
 		}
-		if _, _, err := Load(dbPath); !errors.Is(err, ErrTampered) {
+		schema, origPayload, origMac := rawReadStateRow(t, path)
+		var d SaveData
+		if err := json.Unmarshal(origPayload, &d); err != nil {
+			t.Fatalf("Unmarshal #%d: %v", i, err)
+		}
+		d.DevCash = devCash + 1_000_000 // the cheat
+		rawUpdateStateRow(t, path, schema, canonicalBody(d), origMac)
+		if _, _, err := Load(path); !errors.Is(err, ErrTampered) {
 			t.Fatalf("Load #%d err = %v, want ErrTampered", i, err)
 		}
 	}
@@ -441,12 +441,9 @@ func TestASecondQuarantineDoesNotDestroyTheFirstOne(t *testing.T) {
 	if len(invalids) != 2 {
 		t.Fatalf("quarantined files = %v, want 2 distinct ones (the second tamper must not overwrite the first)", invalids)
 	}
-	first, err := os.ReadFile(filepath.Join(dir, "state.json.invalid"))
-	if err != nil {
-		t.Fatalf("the FIRST quarantine must keep the plain .invalid name: %v", err)
-	}
-	if string(first) != `{"schema": 4, "devCash": 111}` {
-		t.Errorf("state.json.invalid = %s, want the FIRST refused file's bytes", first)
+	// The FIRST quarantine keeps the plain .invalid name and still exists.
+	if _, statErr := os.Stat(filepath.Join(dir, "state.db.invalid")); statErr != nil {
+		t.Errorf("the FIRST quarantine must keep the plain .invalid name and survive: %v", statErr)
 	}
 }
 

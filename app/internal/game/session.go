@@ -489,8 +489,7 @@ func (g *Game) RestoreSessionNames(names map[int]string) {
 
 // SessionLogHead returns the opaque chained-MAC head internal/store's
 // GO-2 hands back from AppendSession — Game never interprets this string,
-// exactly the relationship ImportedFromRust/ImportedAt already have with
-// the store (see Game's doc comment on those fields).
+// only ever carries it forward.
 func (g *Game) SessionLogHead() string { return g.sessionLogHead }
 
 // SetSessionLogHead sets the opaque chained-MAC head — called by

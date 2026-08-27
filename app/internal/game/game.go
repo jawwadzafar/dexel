@@ -300,12 +300,6 @@ type Game struct {
 	// OpenStore/CloseStore (the writes) below.
 	openStoreConns map[uint64]bool
 
-	// ImportedFromRust/ImportedAt are set once, by the legacy-import path
-	// (internal/store), and carried forward on every subsequent save —
-	// Game itself never sets these except when store.Apply restores them.
-	ImportedFromRust bool
-	ImportedAt       string // RFC3339, "" if never imported
-
 	// Cosmetic, backend-owned scroll state (docs/ui-spec.md §3). Never
 	// read by the economy — purely decorative.
 	tickerRotation uint64

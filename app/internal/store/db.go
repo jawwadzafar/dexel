@@ -1,9 +1,10 @@
 // db.go implements DB-1's SQLite persistence container
 // (docs/plan/DB-1-design.md, docs/adr/0016-sqlite-persistence.md): the
-// single signed snapshot row at state.db, the full open-gate (§3.2), and
-// the one-time JSON->DB migration (§4.3). integrity.go's byte-level MAC
-// helpers do the signing; store.go's Load/Save are the public
-// dispatchers that call into this file.
+// single signed snapshot row at state.db and the full open-gate (§3.2).
+// integrity.go's byte-level MAC helpers do the signing; store.go's
+// Load/Save are the public dispatchers that call into this file. There is
+// no JSON import path: this is the public first release, so there are no
+// prior public saves to migrate.
 //
 // Driver: modernc.org/sqlite — a transpiled-C, pure-Go SQLite (no cgo),
 // chosen specifically because scripts/build-release.sh cross-compiles
@@ -17,7 +18,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 	"time"
 
 	_ "modernc.org/sqlite"
@@ -67,22 +67,10 @@ const sessionsDDL = `CREATE TABLE IF NOT EXISTS sessions (
 // scrapbook) without a full table scan (§5.2).
 const sessionsIndexDDL = `CREATE INDEX IF NOT EXISTS sessions_ended_at ON sessions(ended_at)`
 
-// jsonImportPath returns dbPath's JSON sibling for the one-time
-// migration (§4.3): ".../state.db" -> ".../state.json". Falls back to
-// appending ".json" for a path that doesn't end in ".db" (defensive; in
-// practice every caller passes DefaultPath()'s "state.db" or a test's
-// own "*.db" fixture).
-func jsonImportPath(dbPath string) string {
-	if strings.HasSuffix(dbPath, ".db") {
-		return strings.TrimSuffix(dbPath, ".db") + ".json"
-	}
-	return dbPath + ".json"
-}
-
 // fileExists is a small os.Stat wrapper distinguishing "doesn't exist"
-// from a real stat error (permissions, etc.) — Load's decision tree
-// (§4.2) needs that distinction at both the state.db and state.json
-// checks, the same way the pre-DB-1 Load already did via os.IsNotExist.
+// from a real stat error (permissions, etc.) — LoadAll needs that
+// distinction at its state.db check, the same way the pre-DB-1 Load
+// already did via os.IsNotExist.
 func fileExists(path string) (bool, error) {
 	_, err := os.Stat(path)
 	if err == nil {
@@ -202,8 +190,8 @@ func openDB(path string) (*sql.DB, error) {
 }
 
 // ensureStateTable creates the state table if it does not already
-// exist. Called only from write paths (Save, importJSON) — see openDB's
-// doc comment for why Load never calls this.
+// exist. Called only from the write path (Save) — see openDB's doc
+// comment for why Load never calls this.
 func ensureStateTable(db *sql.DB) error {
 	_, err := db.Exec(stateDDL)
 	return err
@@ -256,8 +244,8 @@ func writeStateRowTx(tx *sql.Tx, schema int, payload []byte, mac string) error {
 // them disagreeing, because SQLite's own journal makes the pair atomic —
 // a transaction replaces the old tmp+fsync+rename+dir-fsync dance
 // entirely for this file (config.json keeps that recipe; see
-// writeFileAtomically). Used by Save and importJSON, neither of which
-// writes a session row alongside it; AppendSession (§5.5) instead drives
+// writeFileAtomically). Used by Save, which does not write a session row
+// alongside it; AppendSession (§5.5) instead drives
 // writeStateRowTx directly inside its own transaction that also contains
 // the sessions INSERT.
 func writeStateRow(db *sql.DB, schema int, payload []byte, mac string) error {
@@ -276,12 +264,11 @@ func writeStateRow(db *sql.DB, schema int, payload []byte, mac string) error {
 }
 
 // failClosed closes db, quarantines path to path+suffix, and returns
-// LoadAll's (SaveData{}, nil, false, err) shape — the exact phrasing the
-// pre-DB-1 JSON Load used for its own quarantine branches (see loadJSON),
-// carried forward so every "original preserved untouched at %s" style
-// assertion still reads true against a state.db path. The []SessionSave
-// return exists only so this shares LoadAll's exact 4-tuple shape; every
-// caller is a failure branch, so it is always nil here.
+// LoadAll's (SaveData{}, nil, false, err) shape — every "original
+// preserved untouched at %s" style assertion reads true against a state.db
+// path. The []SessionSave return exists only so this shares LoadAll's
+// exact 4-tuple shape; every caller is a failure branch, so it is always
+// nil here.
 func failClosed(db *sql.DB, path, suffix string, reason error) (SaveData, []SessionSave, bool, error) {
 	_ = db.Close()
 	dest, qErr := quarantine(path, suffix)
@@ -394,8 +381,19 @@ func loadDB(path string) (SaveData, []SessionSave, bool, error) {
 	}
 	if d.Schema > CurrentSchema {
 		// Defence in depth (§3.2 step 8) — step 3's user_version check
-		// already catches every way this can actually happen.
+		// already catches every way this can actually happen. A future
+		// schema keeps its own distinct quarantine (.future) so a newer
+		// build's save is preserved, never downgraded in place.
 		return failClosed(db, path, ".future", fmt.Errorf("%w: payload schema %d > this build's %d", ErrFutureSchema, d.Schema, CurrentSchema))
+	}
+	if d.Schema != CurrentSchema {
+		// This build loads exactly ONE schema (CurrentSchema). Anything
+		// below it is an older/foreign save this build cannot use — there
+		// is no migration path (public first release, no prior public
+		// saves). Refuse it exactly like any other foreign save: quarantine
+		// to .invalid and start fresh. (A higher schema was already handled
+		// as a future schema just above.)
+		return failClosed(db, path, ".invalid", fmt.Errorf("%w: payload schema %d != this build's only supported schema %d (no migration; starting fresh)", ErrTampered, d.Schema, CurrentSchema))
 	}
 
 	// P2 §5.4 steps 7-9: the session log chain. d.SessionLogHead is now a
@@ -514,8 +512,7 @@ func verifySessionLog(db *sql.DB, head string) ([]SessionSave, error) {
 // active one); sign d; write both rows in the one transaction; return
 // rowMac. The caller (main.go, GO-3) hands rowMac back to the live game
 // via Game.SetSessionLogHead — an OPAQUE integrity token game never
-// interprets, the same relationship ImportedFromRust/ImportedAt already
-// have with this package.
+// interprets, only ever carries forward.
 //
 // d is the CALLER's current SaveData (typically Snapshot(g) taken
 // immediately before this call, per GO-3's wiring) — its own
@@ -573,71 +570,4 @@ func AppendSession(path string, d SaveData, s SessionSave) (newHead string, err 
 		return "", fmt.Errorf("commit: %w", err)
 	}
 	return rowMac, nil
-}
-
-// importJSON is DB-1's one-time migration (§4.3). The caller (Load) has
-// already confirmed dbPath does not exist and jsonPath does. It reuses
-// loadJSON verbatim for verification — a valid MAC required at EVERY
-// schema (B-1), and every existing .corrupt/.future/.invalid quarantine
-// behaviour on the JSON side — and only a passing file is ever written
-// into the DB; failure branches create no DB and propagate loadJSON's
-// sentinel unchanged.
-func importJSON(dbPath, jsonPath string) (SaveData, bool, error) {
-	d, ok, err := loadJSON(jsonPath)
-	if err != nil {
-		return SaveData{}, false, err
-	}
-	if !ok {
-		// loadJSON's only (false, nil) case is "file missing", already
-		// ruled out by the caller having confirmed jsonPath exists — kept
-		// as a defensive fallback rather than assumed unreachable.
-		return SaveData{}, false, nil
-	}
-
-	// B-1 (docs/plan/REVIEW-2026-08-22.md): there is no mint here any
-	// more. loadJSON now refuses ANY save whose MAC does not verify —
-	// including an unsigned schema<=4 one — so every file that reaches
-	// this line arrived with its own valid tag. mac is that tag, carried
-	// across VERBATIM (§3.1): d.Mac already verified equal to
-	// computeMAC(d) inside loadJSON's verifyMAC call, and canonicalBody(d)
-	// — a deterministic re-encoding of the exact struct loadJSON parsed —
-	// reproduces byte-identical preimage bytes, so this is a
-	// carry-across, not a re-sign. The old code re-signed a MAC-less
-	// payload at CurrentSchema, which laundered a hand-written
-	// {"schema":4,"devCash":999999999} into a validly-signed save with no
-	// key required; that branch is deleted, not guarded.
-	mac := d.Mac
-	if mac == "" {
-		// Unreachable: loadJSON cannot return (_, true, nil) with an
-		// empty Mac. Stated as a hard refusal rather than a comment so a
-		// future edit to loadJSON cannot silently re-open the mint.
-		return SaveData{}, false, fmt.Errorf("%w: refusing to import an unsigned save from %s", ErrTampered, jsonPath)
-	}
-	payload := canonicalBody(d)
-
-	db, err := openDB(dbPath)
-	if err != nil {
-		return SaveData{}, false, fmt.Errorf("open state.db for import: %w", err)
-	}
-	if err := ensureStateTable(db); err != nil {
-		_ = db.Close()
-		return SaveData{}, false, fmt.Errorf("create state table for import: %w", err)
-	}
-	if err := writeStateRow(db, d.Schema, payload, mac); err != nil {
-		_ = db.Close()
-		return SaveData{}, false, fmt.Errorf("write state.db for import: %w", err)
-	}
-	if err := db.Close(); err != nil {
-		return SaveData{}, false, fmt.Errorf("close state.db after import: %w", err)
-	}
-
-	d.Mac = mac
-	// DB written and committed FIRST, rename second (§4.3): a crash
-	// between them leaves a valid DB and an ignored JSON, and the DB
-	// branch never consults jsonPath again regardless — so a rename
-	// failure here (e.g. a permissions oddity) is logged-worthy but not
-	// fatal to the caller: the imported data is already durably and
-	// correctly persisted in state.db.
-	_ = os.Rename(jsonPath, jsonPath+".imported")
-	return d, true, nil
 }

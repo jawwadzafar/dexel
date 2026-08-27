@@ -5,107 +5,13 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 	"time"
 
 	"github.com/jawwadzafar/dexel/app/internal/game"
 )
 
-// TestSchema6GrandfatherLoadsAsNotPausedWithNoPausedSeconds is
-// MIGRATION_PLAN.md §PR-5's migration criterion, first half: "a schema-6
-// save loads with paused=false".
-//
-// This is the whole of the 6 -> 7 migration: a schema-6 payload has
-// neither the `paused` key nor any `pausedSeconds` key, json.Unmarshal
-// leaves them at their zero values, and those zero values ARE the honest
-// answer for a save written by a build that had no pause feature. Nothing
-// is backfilled — in particular no recorded IdleSeconds is retroactively
-// reinterpreted as paused time, which would be fabrication dressed up as
-// migration.
-func TestSchema6GrandfatherLoadsAsNotPausedWithNoPausedSeconds(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, "state.db")
-
-	// The fixture is a HAND-BUILT, byte-exact pre-PR-5 payload rather than
-	// `Save(SaveData{Schema: 6, ...})`, so that what a real pre-PR-5 file
-	// looked like is pinned HERE and cannot drift with the structs. (When
-	// this test was written PausedSeconds lacked `omitempty` and a
-	// Save-produced "schema 6" file still carried `"pausedSeconds":0`,
-	// which would have proven nothing; that missing tag turned out to be
-	// a save-losing upgrade bug on the JSON path — see
-	// TestPrePR5StateJSONImportsUnderItsOriginalMac in
-	// json_upgrade_mac_test.go. Hand-building the fixture stays correct
-	// either way.)
-	// Real, non-zero counters throughout, so "the new fields are zero" is
-	// a claim about the NEW fields only while every pre-existing one is
-	// proven intact alongside them.
-	const prePR5Payload = `{"schema":6,"devCash":4242,"xp":777,` +
-		`"sprint":{"index":2,"unitsDone":12.5},` +
-		`"ownedItems":null,"ownedTints":null,"equipped":null,` +
-		`"stats":{"date":"2026-03-10",` +
-		`"today":{"keystrokes":900,"mouseActiveSeconds":0,"activeSeconds":100,"idleSeconds":400,"sprintsCompleted":0,"focusSessions":0,"appSwitches":0},` +
-		`"lifetime":{"keystrokes":9000,"mouseActiveSeconds":0,"activeSeconds":1000,"idleSeconds":4000,"sprintsCompleted":0,"focusSessions":0,"appSwitches":0},` +
-		`"coinsToday":{"keystrokes":0,"mouse":0,"focusSessions":0,"appSwitches":0},` +
-		`"history":null,"streak":{"current":0,"longest":0,"lastActiveDate":""}}}`
-	if strings.Contains(prePR5Payload, "paused") {
-		t.Fatalf("the fixture mentions `paused` — it is not a pre-PR-5 payload: %s", prePR5Payload)
-	}
-
-	// Establish the DB (which also sets user_version = 6, so the payload's
-	// schema, the schema column and user_version all agree — a
-	// disagreement is itself treated as tampering), then swap in the
-	// hand-built payload with a MAC computed over exactly those bytes,
-	// which is precisely what a schema-6 build would have written.
-	if err := Save(path, SaveData{Schema: 6, DevCash: 1}); err != nil {
-		t.Fatalf("Save (establish a schema-6 DB): %v", err)
-	}
-	body := []byte(prePR5Payload)
-	rawUpdateStateRow(t, path, 6, body, computeMACBytes(body))
-
-	d, ok, err := Load(path)
-	if err != nil {
-		t.Fatalf("Load a schema-6 save under CurrentSchema %d: %v", CurrentSchema, err)
-	}
-	if !ok {
-		t.Fatal("ok = false, want true — a schema-6 save must load, not be quarantined")
-	}
-	if d.Paused {
-		t.Error("d.Paused = true for a schema-6 save, want false — absent means not paused")
-	}
-	if d.Stats.Today.PausedSeconds != 0 || d.Stats.Lifetime.PausedSeconds != 0 {
-		t.Errorf("PausedSeconds = (today %d, lifetime %d) for a schema-6 save, want (0, 0) — nothing may be backfilled",
-			d.Stats.Today.PausedSeconds, d.Stats.Lifetime.PausedSeconds)
-	}
-	// Every pre-existing field intact.
-	if d.DevCash != 4242 || d.XP != 777 || d.Sprint.Index != 2 || d.Stats.Today.Keystrokes != 900 || d.Stats.Today.IdleSeconds != 400 {
-		t.Errorf("a schema-6 grandfather load disturbed pre-existing fields: %+v", d)
-	}
-
-	// ...and it applies to a live game as "not paused", so the runtime
-	// starts observing normally for a user who never paused anything.
-	g := game.New()
-	Apply(g, d)
-	if g.Paused() {
-		t.Error("after Apply of a schema-6 save the game is paused — a save that predates pause must never come back paused")
-	}
-
-	// The next Save upgrades the file to schema 7 in place, the same way
-	// every prior bump did.
-	if err := Save(path, Snapshot(g)); err != nil {
-		t.Fatalf("Save (re-persist): %v", err)
-	}
-	reloaded, _, err := Load(path)
-	if err != nil {
-		t.Fatalf("Load after re-persist: %v", err)
-	}
-	if reloaded.Schema != CurrentSchema {
-		t.Errorf("reloaded.Schema = %d, want CurrentSchema (%d) — migration must upgrade the file on the next save", reloaded.Schema, CurrentSchema)
-	}
-}
-
-// TestSchema7PausedSaveRoundTrips is §PR-5's migration criterion, second
-// half: "a schema-7 paused save round-trips".
+// TestPausedSaveRoundTrips proves a paused save round-trips end to end.
 //
 // It goes the whole way round — a live paused game with real paused
 // seconds in every bucket (today, lifetime, a finalized day, and both
@@ -113,7 +19,7 @@ func TestSchema6GrandfatherLoadsAsNotPausedWithNoPausedSeconds(t *testing.T) {
 // Apply, back to a live game that is still paused with every paused
 // second intact. This is FORK D's behaviour end to end: "a paused dexel
 // restarts paused".
-func TestSchema7PausedSaveRoundTrips(t *testing.T) {
+func TestPausedSaveRoundTrips(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "state.db")
 
@@ -142,8 +48,7 @@ func TestSchema7PausedSaveRoundTrips(t *testing.T) {
 		t.Fatalf("Save: %v", err)
 	}
 
-	// The key really is on disk this time (paused=true is not omitted),
-	// which is what makes the grandfather test's absence-check meaningful.
+	// The `paused` key really is on disk (paused=true is not omitted).
 	_, payload, _ := rawReadStateRow(t, path)
 	var onDisk map[string]any
 	if err := json.Unmarshal(payload, &onDisk); err != nil {

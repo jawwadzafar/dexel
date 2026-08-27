@@ -19,21 +19,18 @@ import (
 	"github.com/jawwadzafar/dexel/app/internal/store"
 )
 
-// loadOrImport restores g's persisted state from state.db (or the
-// one-time state.json import, store.LoadAll's own decision tree).
-//
-// The name is now half a historical artifact: the "import" half was the
-// legacy-Rust save import, deleted by B-2 (see the tail of this function
-// for why). What remains is load-or-start-fresh, with store.LoadAll
-// owning every integrity decision.
+// loadOrImport restores g's persisted state from state.db, or leaves g at
+// game.New()'s fresh defaults when there is no usable save. store.LoadAll
+// owns every integrity decision; there is no import/migration path (this
+// is the public first release — see store.CurrentSchema).
 //
 // Returns whether a save of ANY kind was found — Phase P1's fresh-install
 // half of the onboarding decision (docs/ui-spec.md §7). "Any kind"
-// deliberately includes the failure modes: a tampered save, a
-// future-schema save and an unreadable save all report true, because each
-// one proves somebody has played here before, and showing a returning
-// user the intro is a worse outcome than a genuinely-fresh install
-// missing it. Only "no state.db and no state.json" reports false.
+// deliberately includes the failure modes: a tampered save, an
+// older/future-schema save and an unreadable save all report true, because
+// each one proves somebody has played here before, and showing a returning
+// user the intro is a worse outcome than a genuinely-fresh install missing
+// it. Only "no state.db at all" reports false.
 func loadOrImport(g *game.Game, savePath string) bool {
 	// P2 (docs/plan/P2-design.md §5.4/§8, store.Apply's own doc comment):
 	// store.LoadAll instead of the pre-P2 store.Load, so the finished
@@ -47,22 +44,16 @@ func loadOrImport(g *game.Game, savePath string) bool {
 		// SEC-1 (docs/plan/SEC-1-design.md §4, ADR 0014): ErrTampered and
 		// ErrFutureSchema are NOT "no save" — store.Load never returns
 		// them alongside ok==true, and they must never be collapsed into
-		// the genuine "no save yet" case (ok==false, err==nil) below.
-		// Pre-B-2 that mattered because "no save" unlocked the
-		// legacy-Rust re-grant; with that path deleted the distinction
-		// still decides onboarding (a returning user whose save was
-		// tampered with is not a fresh install) and still keeps a
-		// failed load from ever being papered over. Both cases return
-		// immediately, leaving g at game.New()'s fresh defaults; the
-		// next autosave writes a valid save.
+		// the genuine "no save yet" case (ok==false, err==nil) below. The
+		// distinction decides onboarding (a returning user whose save was
+		// refused is not a fresh install) and keeps a failed load from
+		// being papered over. Both cases return immediately, leaving g at
+		// game.New()'s fresh defaults; the next autosave writes a valid,
+		// current-schema save.
 		if errors.Is(err, store.ErrTampered) {
-			// err's own text already names the real quarantined path —
-			// state.json.invalid for the legacy-import branch, or
-			// state.db.invalid for the SQLite path (db.go's failClosed) —
-			// so log it verbatim instead of reconstructing savePath+".invalid",
-			// which is wrong whenever savePath is the state.db path but the
-			// error actually came from a state.json-shaped quarantine, or
-			// vice versa.
+			// err's own text already names the real quarantined path
+			// (db.go's failClosed writes state.db.invalid), so log it
+			// verbatim.
 			log.Printf("save integrity check failed; starting a fresh economy: %v", err)
 			return true // a save existed — it just failed verification
 		}
@@ -112,27 +103,14 @@ func loadOrImport(g *game.Game, savePath string) bool {
 		return true
 	}
 
-	// B-2 (docs/plan/REVIEW-2026-08-22.md): this is where the legacy-Rust
-	// import used to live, and it is deliberately gone. store.LoadLegacy
-	// read ~/.local/share/dev-companion/save.json (never DEXEL_HOME —
-	// SF-7) and store.ImportLegacy took its `wallet` field VERBATIM as
-	// devCash, plus every item the upgrade table could grant. Unsigned,
-	// unbounded, and repeatable: delete state.db, write a save.json
-	// claiming 18446744073709551615, restart, and the economy was minted
-	// from nothing, again, as often as you liked. It was also the reason
-	// SEC-1 had to argue at length that a tampered save must never be
-	// mistaken for "no save".
-	//
-	// It is deleted rather than clamped because there is nobody to
-	// migrate: the Rust/Bevy build's only public artifact (v0.1.0) has a
-	// single download, the Go build has never been released at all, and a
-	// bounded grant would still be a grant path — more code, more tests,
-	// and the same "your economy came from a file you wrote yourself"
-	// shape, just with a ceiling. A user who really does have a v0.1.0
-	// Rust save now starts fresh, which is what a fresh install of an
-	// unreleased product does.
+	// No state.db at all: the one genuine fresh-install case. Nothing is
+	// imported or migrated — there is no legacy-Rust import and no
+	// state.json import path (both deleted; this is the public first
+	// release). A stray pre-release save.json or state.json left on disk
+	// grants nothing and is simply ignored, so a fresh install of this
+	// build always starts fresh.
 	log.Println("no save found: starting fresh")
-	return false // the one genuine fresh-install case
+	return false
 
 }
 

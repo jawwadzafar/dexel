@@ -123,24 +123,21 @@ func computeMAC(d SaveData) string {
 	return computeMACBytes(canonicalBody(d))
 }
 
-// verifyMAC reports whether d.Mac matches computeMAC(d). Since B-1
-// (docs/plan/REVIEW-2026-08-22.md) EVERY parsed save reaches this
-// function, at every schema: an empty Mac simply fails, which is the
-// point — the old schema<5 bypass was a mint that needed no key (see
-// loadJSON in store.go).
+// verifyMAC reports whether d.Mac matches computeMAC(d). An empty Mac
+// simply fails, which is the point: an unsigned, hand-written save can
+// never be trusted, so it can never mint an economy.
 func verifyMAC(d SaveData) bool {
 	return verifyMACBytes(canonicalBody(d), d.Mac)
 }
 
 // ErrTampered is Load's error (wrapped with detail) when a save parses
-// fine but its MAC does not verify — including a save carrying no MAC at
-// all (B-1). It is deliberately a sentinel
-// DISTINCT from both "no save" (os.IsNotExist, Load's (SaveData{}, false,
-// nil)) and ErrFutureSchema: see Load's doc comment in store.go for why
-// collapsing tamper detection into "no save" would open an anti-cheat
-// hole — main.go's loadOrImport would fall through to the legacy-import
-// path, which grants items and refunds Dev Cash, letting a tampered file
-// trigger a legacy re-grant.
+// fine but is refused: its MAC does not verify (including a save carrying
+// no MAC at all), or it is an older/foreign schema this build cannot use
+// (loadDB, db.go). It is deliberately a sentinel DISTINCT from both "no
+// save" (Load's (SaveData{}, false, nil)) and ErrFutureSchema, so the
+// caller can tell "load failed, quarantined, start fresh" apart from a
+// genuinely fresh install — collapsing the two would let a tampered file
+// masquerade as a first launch.
 var ErrTampered = errors.New("save integrity check failed")
 
 // logDomain is the session log's chain-MAC domain-separation tag (P2,

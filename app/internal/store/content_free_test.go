@@ -27,15 +27,13 @@ func contentFreeRegistry() contentfree.Registry {
 		"store.SaveData": {
 			Sample: SaveData{},
 			Allowed: map[string]string{
-				"Schema":           "int",
-				"DevCash":          "uint64",
-				"XP":               "uint64",
-				"Sprint":           "store.SprintSave",
-				"OwnedItems":       "[]string",
-				"Equipped":         "map[string]store.EquippedSave",
-				"ImportedFromRust": "bool",
-				"ImportedAt":       "string",
-				"Stats":            "store.StatsSave",
+				"Schema":     "int",
+				"DevCash":    "uint64",
+				"XP":         "uint64",
+				"Sprint":     "store.SprintSave",
+				"OwnedItems": "[]string",
+				"Equipped":   "map[string]store.EquippedSave",
+				"Stats":      "store.StatsSave",
 				// Session/SessionLogHead (P2, docs/plan/P2-design.md
 				// §5.1, ADR 0017 Decision 5, schema 6): the in-progress
 				// session and the session log's opaque chain head.
@@ -96,7 +94,6 @@ func contentFreeRegistry() contentfree.Registry {
 				"IdleSeconds":        "uint64",
 				"SprintsCompleted":   "uint64",
 				"FocusSessions":      "uint64",
-				"AppSwitches":        "uint64",
 				// PausedSeconds (PR-5, schema 7): the persisted third
 				// time bucket — seconds during which dexel observed
 				// nothing at all. Reused verbatim in the today/lifetime
@@ -112,7 +109,6 @@ func contentFreeRegistry() contentfree.Registry {
 				"Keystrokes":    "uint64",
 				"Mouse":         "uint64",
 				"FocusSessions": "uint64",
-				"AppSwitches":   "uint64",
 			},
 		},
 
