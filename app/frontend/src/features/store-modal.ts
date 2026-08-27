@@ -32,9 +32,10 @@ import { sendAction, setStoreOpenHoldDesired } from '../state/ws-client';
 import { assetUrl } from '../assets';
 import { clamp, fmtInt } from '../format';
 import { buildTintLayer } from '../render/tint';
+import { CHAIR_RECT, DEV_RECT } from '../geometry';
 import {
-  MONITOR_THUMB_FILE, chairThumbDetailFile, chairThumbFormFile, colourHexForItem,
-  hoodieThumbDetailFile, hoodieThumbFormFile, isColourSlot
+  MONITOR_THUMB_FILE, chairDetailFile, chairFormFile, colourHexForItem,
+  hoodieOverlayFile, isColourSlot, styleToken
 } from '../colours';
 import { flashInsufficientFunds } from '../render/flash';
 import { enableClickAwayDismiss } from './modal-dismiss';
@@ -110,10 +111,10 @@ function computeCardState(item: CatalogItem): CardState {
 
   // Level gate wins over everything for an unowned item — non-buyable.
   if (!owned && state.level < minLevel) {
-    return { kind: 'locked', stateText: 'LV ' + minLevel, priceText: fmtInt(item.price) + ' ◆', minLevel };
+    return { kind: 'locked', stateText: 'LV ' + minLevel, priceText: fmtInt(item.price), minLevel };
   }
 
-  const priceText = owned ? 'OWNED' : fmtInt(item.price) + ' ◆';
+  const priceText = owned ? 'OWNED' : fmtInt(item.price);
 
   // Already wearing exactly this item.
   const eq = state.equipped[item.slot];
@@ -195,8 +196,7 @@ function buildCard(slot: CatalogSlot, item: CatalogItem): HTMLDivElement {
   thumb.appendChild(buildThumb(slot, item));
   card.appendChild(thumb);
 
-  const price = document.createElement('div');
-  price.className = 'price';
+  const price = buildPriceBadge();
   card.appendChild(price);
 
   const name = document.createElement('div');
@@ -218,6 +218,12 @@ function buildCard(slot: CatalogSlot, item: CatalogItem): HTMLDivElement {
 // the Dexel will wear. Every other slot names a real, already-coloured
 // thumbnail; a "nothing" item (no thumb) gets an empty box.
 function buildThumb(slot: CatalogSlot, item: CatalogItem): HTMLElement {
+  // Hoodie/chair cards show the WHOLE seated dexel wearing/using the item
+  // (STORE-CARDS-V3): a full-figure composite of the same scene sprites the
+  // room draws, tinted by the item's colour, scaled to fit the card.
+  if (slot.id === 'hoodie' || slot.id === 'chair') return buildFigureThumb(slot.id, item);
+  // Monitor is a colour slot too, but it is a desk PROP, not the figure —
+  // its full item is the tinted bezel (buildTintedThumb).
   if (isColourSlot(slot.id)) return buildTintedThumb(slot.id, item);
   if (!item.thumb) return document.createElement('span');
   const img = spriteImg();
@@ -226,29 +232,99 @@ function buildThumb(slot: CatalogSlot, item: CatalogItem): HTMLElement {
   return img;
 }
 
-function buildTintedThumb(slotId: string, item: CatalogItem): HTMLElement {
-  let formFile: string;
-  let detailFile: string | null = null;
-  if (slotId === 'hoodie') { formFile = hoodieThumbFormFile(item.id); detailFile = hoodieThumbDetailFile(item.id); }
-  else if (slotId === 'chair') { formFile = chairThumbFormFile(item.id); detailFile = chairThumbDetailFile(item.id); }
-  else { formFile = MONITOR_THUMB_FILE; } // monitor: bezel-only, no detail layer
+// A small coin+amount price badge (STORE-CARDS-V3): the coin.png asset plus
+// the number, replacing the old ◆ diamond. renderPrice() fills the amount and
+// toggles the OWNED (no-coin) look; used by both the card and the preview.
+function buildPriceBadge(): HTMLDivElement {
+  const price = document.createElement('div');
+  price.className = 'price';
+  const coin = spriteImg();
+  coin.className = 'coin-img';
+  coin.alt = '';
+  coin.src = assetUrl('coin.png') || '';
+  const amt = document.createElement('span');
+  amt.className = 'amt';
+  price.appendChild(coin);
+  price.appendChild(amt);
+  return price;
+}
 
+function renderPrice(price: HTMLElement, cs: CardState): void {
+  const amt = price.querySelector('.amt');
+  if (amt) amt.textContent = cs.priceText;
+  // OWNED reads as a word with no coin; a real price shows the coin glyph.
+  price.classList.toggle('owned', cs.priceText === 'OWNED');
+}
+
+// The seated-dexel figure crop, in the scene's 320x200 room-pixel space
+// (geometry.ts). Captures the hood, shoulders, arms and the chair beneath —
+// centred on the figure's own centre line (room x160). buildFigureThumb
+// positions the shared scene sprites at their room coords minus this origin,
+// then game.css scales the whole room to fit the card.
+const FIGURE_CROP = { left: 104, top: 104, w: 112, h: 96 };
+// The neutral CONTEXT the figure wears/sits on when THIS card is not choosing
+// it: a hoodie card shows the item on the base chair; a chair card shows the
+// item under the base hoodie. Deterministic (never the live equip) so a card
+// always renders the same, whatever the player is wearing.
+const DEFAULT_HOODIE = 'hoodie_classic_indigo';
+const DEFAULT_CHAIR = 'chair_basic_slate';
+
+function buildFigureThumb(slotId: string, item: CatalogItem): HTMLElement {
+  const hoodieId = slotId === 'hoodie' ? item.id : DEFAULT_HOODIE;
+  const chairId = slotId === 'chair' ? item.id : DEFAULT_CHAIR;
+  const chairRect = CHAIR_RECT['chair_' + styleToken(chairId)] || CHAIR_RECT['chair_basic'];
+
+  const stage = document.createElement('div');
+  stage.className = 'figure';
+  const room = document.createElement('div');
+  room.className = 'figure-room';
+  room.style.width = FIGURE_CROP.w + 'px';
+  room.style.height = FIGURE_CROP.h + 'px';
+
+  function place(node: HTMLElement, r: { left: number; top: number; w: number; h: number }, z: number): void {
+    node.style.position = 'absolute';
+    node.style.left = (r.left - FIGURE_CROP.left) + 'px';
+    node.style.top = (r.top - FIGURE_CROP.top) + 'px';
+    node.style.width = r.w + 'px';
+    node.style.height = r.h + 'px';
+    node.style.zIndex = String(z);
+    room.appendChild(node);
+  }
+
+  // Same layer order + occlusion as render/scene.ts: dev form (tinted by the
+  // hoodie colour) < hoodie style overlay < dev base (face/hands) < chair
+  // form (tinted by the chair colour) < chair detail. The chair composites
+  // OVER the figure (behind-view), so the shoulders/hood peek past the
+  // backrest exactly as they do in the room.
+  place(buildTintLayer('dev_form_idle.png', colourHexForItem(hoodieId)), DEV_RECT, 10);
+  const hoodieOv = spriteImg();
+  hoodieOv.alt = '';
+  hoodieOv.src = assetUrl(hoodieOverlayFile(hoodieId)) || '';
+  place(hoodieOv, DEV_RECT, 11);
+  const devBase = spriteImg();
+  devBase.alt = '';
+  devBase.src = assetUrl('dev_base_idle.png') || '';
+  place(devBase, DEV_RECT, 12);
+  place(buildTintLayer(chairFormFile(chairId), colourHexForItem(chairId)), chairRect, 13);
+  const chairDetail = spriteImg();
+  chairDetail.alt = '';
+  chairDetail.src = assetUrl(chairDetailFile(chairId)) || '';
+  place(chairDetail, chairRect, 14);
+
+  stage.appendChild(room);
+  return stage;
+}
+
+// The monitor card's full item: its tinted bezel form, recoloured by the
+// item's colour (the screen rect stays fixed). Hoodie/chair no longer come
+// through here — they render a full seated figure via buildFigureThumb.
+function buildTintedThumb(_slotId: string, item: CatalogItem): HTMLElement {
   const wrap = document.createElement('div');
   wrap.style.position = 'absolute';
   wrap.style.inset = '0';
-  const tint = buildTintLayer(formFile, colourHexForItem(item.id));
+  const tint = buildTintLayer(MONITOR_THUMB_FILE, colourHexForItem(item.id));
   tint.style.left = '0'; tint.style.top = '0'; tint.style.width = '100%'; tint.style.height = '100%';
   wrap.appendChild(tint);
-  if (detailFile) {
-    const detail = spriteImg();
-    detail.alt = '';
-    detail.src = assetUrl(detailFile) || '';
-    detail.style.position = 'absolute';
-    detail.style.inset = '0';
-    detail.style.width = '100%';
-    detail.style.height = '100%';
-    wrap.appendChild(detail);
-  }
   return wrap;
 }
 
@@ -268,8 +344,8 @@ export function refreshCardStates(): void {
     card.classList.toggle('locked', cs.kind === 'locked');
     card.classList.toggle('selected', idx === storeUI.cardIndex);
 
-    const price = card.querySelector('.price');
-    if (price) price.textContent = cs.priceText;
+    const price = card.querySelector('.price') as HTMLElement | null;
+    if (price) renderPrice(price, cs);
 
     // "?" mystery overlay: present only while locked (owner refinement
     // 2026-08-27 — a locked item hides its real art/name/price behind a big
@@ -355,7 +431,7 @@ function refreshPreview(): void {
   const item = storeUI.previewItem;
   if (!item) return;
   const cs = computeCardState(item);
-  el.previewPrice.textContent = cs.priceText;
+  renderPrice(el.previewPrice, cs);
   const btn = el.previewAction;
   btn.classList.remove('is-equipped', 'is-cant-afford');
   switch (cs.kind) {

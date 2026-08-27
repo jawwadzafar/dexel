@@ -17,7 +17,7 @@ func TestBuyItemRefusesBelowLevel(t *testing.T) {
 	g.DevCash = 10000 // plenty — affordability must NOT be the thing that refuses
 	g.XP = 0          // LV1
 
-	const item = "hoodie_cloak_neon" // MinLevel 8, price 500
+	const item = "hoodie_cloak_neon" // MinLevel 6, price 500
 	beforeCash := g.DevCash
 	err := g.BuyItem(item)
 	if !errors.Is(err, ErrLevelLocked) {
@@ -39,7 +39,7 @@ func TestBuyItemLevelCheckPrecedesFunds(t *testing.T) {
 	g.DevCash = 0 // broke
 	g.XP = 0      // LV1
 
-	const item = "chair_antigrav_cobalt" // MinLevel 8, price 500
+	const item = "chair_antigrav_cobalt" // MinLevel 6, price 500
 	if err := g.BuyItem(item); !errors.Is(err, ErrLevelLocked) {
 		t.Fatalf("BuyItem(%q) broke and under-level: got %v, want ErrLevelLocked (level checked before funds)", item, err)
 	}
@@ -58,9 +58,9 @@ func TestBuyItemAllowsAtOrAboveLevel(t *testing.T) {
 		price    uint64
 		atLevel  int
 	}{
-		{"hoodie_cloak_neon", 8, 500, 8}, // exactly at MinLevel
-		{"buddy_cat", 10, 300, 10},       // the highest gate, exactly
-		{"kb_neon", 7, 300, 9},           // comfortably above MinLevel
+		{"hoodie_cloak_neon", 6, 500, 6}, // exactly at MinLevel
+		{"buddy_cat", 8, 300, 8},         // the highest gate, exactly
+		{"kb_neon", 5, 300, 7},           // comfortably above MinLevel
 	}
 	for _, tc := range cases {
 		g := New()

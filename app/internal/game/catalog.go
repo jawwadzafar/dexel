@@ -119,47 +119,47 @@ func colourItem(id, slot, name string, price uint64, minLevel int, flavor string
 // colour is a pure cash choice. The free tier-0 default of the slot is the
 // base style's signature colour (preserving the pre-STORE-2.0 default look).
 var catalogItems = []CatalogItem{
-	// --- Hoodie (classic 0/LV1, zip 120/LV3, tech 300/LV5, cloak 500/LV8) ---
+	// --- Hoodie (classic 0/LV1, zip 120/LV2, tech 300/LV3, cloak 500/LV6) ---
 	colourItem("hoodie_classic_indigo", "hoodie", "Indigo Pullover", 0, 0, "Drawstrings, one pocket, no opinions."),
 	colourItem("hoodie_classic_slate", "hoodie", "Slate Pullover", 40, 0, "Drawstrings, one pocket, no opinions."),
 	colourItem("hoodie_classic_cobalt", "hoodie", "Cobalt Pullover", 40, 0, "Drawstrings, one pocket, no opinions."),
 	colourItem("hoodie_classic_ember", "hoodie", "Ember Pullover", 40, 0, "Drawstrings, one pocket, no opinions."),
 
-	colourItem("hoodie_zip_slate", "hoodie", "Slate Zip-Up", 120, 3, "For when the office is exactly two degrees off."),
-	colourItem("hoodie_zip_cobalt", "hoodie", "Cobalt Zip-Up", 160, 3, "For when the office is exactly two degrees off."),
-	colourItem("hoodie_zip_ember", "hoodie", "Ember Zip-Up", 160, 3, "For when the office is exactly two degrees off."),
-	colourItem("hoodie_zip_indigo", "hoodie", "Indigo Zip-Up", 160, 3, "For when the office is exactly two degrees off."),
+	colourItem("hoodie_zip_slate", "hoodie", "Slate Zip-Up", 120, 2, "For when the office is exactly two degrees off."),
+	colourItem("hoodie_zip_cobalt", "hoodie", "Cobalt Zip-Up", 160, 2, "For when the office is exactly two degrees off."),
+	colourItem("hoodie_zip_ember", "hoodie", "Ember Zip-Up", 160, 2, "For when the office is exactly two degrees off."),
+	colourItem("hoodie_zip_indigo", "hoodie", "Indigo Zip-Up", 160, 2, "For when the office is exactly two degrees off."),
 
-	colourItem("hoodie_tech_forest", "hoodie", "Forest Techwear", 300, 5, "Straps that hold nothing. Reflective, though."),
-	colourItem("hoodie_tech_slate", "hoodie", "Slate Techwear", 340, 5, "Straps that hold nothing. Reflective, though."),
-	colourItem("hoodie_tech_cobalt", "hoodie", "Cobalt Techwear", 340, 5, "Straps that hold nothing. Reflective, though."),
-	colourItem("hoodie_tech_neon", "hoodie", "Neon Techwear", 340, 5, "Straps that hold nothing. Reflective, though."),
+	colourItem("hoodie_tech_forest", "hoodie", "Forest Techwear", 300, 3, "Straps that hold nothing. Reflective, though."),
+	colourItem("hoodie_tech_slate", "hoodie", "Slate Techwear", 340, 3, "Straps that hold nothing. Reflective, though."),
+	colourItem("hoodie_tech_cobalt", "hoodie", "Cobalt Techwear", 340, 3, "Straps that hold nothing. Reflective, though."),
+	colourItem("hoodie_tech_neon", "hoodie", "Neon Techwear", 340, 3, "Straps that hold nothing. Reflective, though."),
 
-	colourItem("hoodie_cloak_neon", "hoodie", "Neon Night Cloak", 500, 8, "Ships at 3am or not at all."),
-	colourItem("hoodie_cloak_slate", "hoodie", "Slate Night Cloak", 540, 8, "Ships at 3am or not at all."),
-	colourItem("hoodie_cloak_indigo", "hoodie", "Indigo Night Cloak", 540, 8, "Ships at 3am or not at all."),
-	colourItem("hoodie_cloak_ember", "hoodie", "Ember Night Cloak", 540, 8, "Ships at 3am or not at all."),
+	colourItem("hoodie_cloak_neon", "hoodie", "Neon Night Cloak", 500, 6, "Ships at 3am or not at all."),
+	colourItem("hoodie_cloak_slate", "hoodie", "Slate Night Cloak", 540, 6, "Ships at 3am or not at all."),
+	colourItem("hoodie_cloak_indigo", "hoodie", "Indigo Night Cloak", 540, 6, "Ships at 3am or not at all."),
+	colourItem("hoodie_cloak_ember", "hoodie", "Ember Night Cloak", 540, 6, "Ships at 3am or not at all."),
 
-	// --- Chair (basic 0/LV1, racer 100/LV3, exec 300/LV5, antigrav 500/LV8) ---
+	// --- Chair (basic 0/LV1, racer 100/LV2, exec 300/LV3, antigrav 500/LV6) ---
 	colourItem("chair_basic_slate", "chair", "Slate Office Chair", 0, 0, `Adjusts in one axis. That axis is "no".`),
 	colourItem("chair_basic_cobalt", "chair", "Cobalt Office Chair", 40, 0, `Adjusts in one axis. That axis is "no".`),
 	colourItem("chair_basic_forest", "chair", "Forest Office Chair", 40, 0, `Adjusts in one axis. That axis is "no".`),
 	colourItem("chair_basic_ember", "chair", "Ember Office Chair", 40, 0, `Adjusts in one axis. That axis is "no".`),
 
-	colourItem("chair_racer_ember", "chair", "Ember Racer", 100, 3, "Bolstered wings. Zero laps completed."),
-	colourItem("chair_racer_slate", "chair", "Slate Racer", 140, 3, "Bolstered wings. Zero laps completed."),
-	colourItem("chair_racer_cobalt", "chair", "Cobalt Racer", 140, 3, "Bolstered wings. Zero laps completed."),
-	colourItem("chair_racer_neon", "chair", "Neon Racer", 140, 3, "Bolstered wings. Zero laps completed."),
+	colourItem("chair_racer_ember", "chair", "Ember Racer", 100, 2, "Bolstered wings. Zero laps completed."),
+	colourItem("chair_racer_slate", "chair", "Slate Racer", 140, 2, "Bolstered wings. Zero laps completed."),
+	colourItem("chair_racer_cobalt", "chair", "Cobalt Racer", 140, 2, "Bolstered wings. Zero laps completed."),
+	colourItem("chair_racer_neon", "chair", "Neon Racer", 140, 2, "Bolstered wings. Zero laps completed."),
 
-	colourItem("chair_exec_ember", "chair", "Ember Executive", 300, 5, "Tufted. Reclines further than the deadline."),
-	colourItem("chair_exec_slate", "chair", "Slate Executive", 340, 5, "Tufted. Reclines further than the deadline."),
-	colourItem("chair_exec_cobalt", "chair", "Cobalt Executive", 340, 5, "Tufted. Reclines further than the deadline."),
-	colourItem("chair_exec_forest", "chair", "Forest Executive", 340, 5, "Tufted. Reclines further than the deadline."),
+	colourItem("chair_exec_ember", "chair", "Ember Executive", 300, 3, "Tufted. Reclines further than the deadline."),
+	colourItem("chair_exec_slate", "chair", "Slate Executive", 340, 3, "Tufted. Reclines further than the deadline."),
+	colourItem("chair_exec_cobalt", "chair", "Cobalt Executive", 340, 3, "Tufted. Reclines further than the deadline."),
+	colourItem("chair_exec_forest", "chair", "Forest Executive", 340, 3, "Tufted. Reclines further than the deadline."),
 
-	colourItem("chair_antigrav_cobalt", "chair", "Cobalt Anti-Grav", 500, 8, "Floats. Physics pending review."),
-	colourItem("chair_antigrav_slate", "chair", "Slate Anti-Grav", 540, 8, "Floats. Physics pending review."),
-	colourItem("chair_antigrav_forest", "chair", "Forest Anti-Grav", 540, 8, "Floats. Physics pending review."),
-	colourItem("chair_antigrav_neon", "chair", "Neon Anti-Grav", 540, 8, "Floats. Physics pending review."),
+	colourItem("chair_antigrav_cobalt", "chair", "Cobalt Anti-Grav", 500, 6, "Floats. Physics pending review."),
+	colourItem("chair_antigrav_slate", "chair", "Slate Anti-Grav", 540, 6, "Floats. Physics pending review."),
+	colourItem("chair_antigrav_forest", "chair", "Forest Anti-Grav", 540, 6, "Floats. Physics pending review."),
+	colourItem("chair_antigrav_neon", "chair", "Neon Anti-Grav", 540, 6, "Floats. Physics pending review."),
 
 	// --- Keyboard (unchanged) ---
 	{ID: "kb_membrane", Slot: "keyboard", Name: "Stock Membrane", Price: 0,
@@ -168,10 +168,10 @@ var catalogItems = []CatalogItem{
 	{ID: "kb_mech", Slot: "keyboard", Name: "Mechanical", Price: 60, MinLevel: 2,
 		Sprite: strp("kb_mech.png"), Thumb: strp("thumb_kb_mech.png"),
 		Flavor: "Audible from the next room. Intentionally."},
-	{ID: "kb_split", Slot: "keyboard", Name: "Split Ergo", Price: 180, MinLevel: 4,
+	{ID: "kb_split", Slot: "keyboard", Name: "Split Ergo", Price: 180, MinLevel: 3,
 		Sprite: strp("kb_split.png"), Thumb: strp("thumb_kb_split.png"),
 		Flavor: "Two halves, one wrist, endless smugness."},
-	{ID: "kb_neon", Slot: "keyboard", Name: "Neon 60%", Price: 300, MinLevel: 7,
+	{ID: "kb_neon", Slot: "keyboard", Name: "Neon 60%", Price: 300, MinLevel: 5,
 		Sprite: strp("kb_neon.png"), Thumb: strp("thumb_kb_neon.png"),
 		Flavor: "Fewer keys, more colours, same bugs."},
 
@@ -182,10 +182,10 @@ var catalogItems = []CatalogItem{
 	{ID: "mouse_gaming", Slot: "mouse", Name: "Gaming Mouse", Price: 50, MinLevel: 2,
 		Sprite: strp("mouse_gaming.png"), Thumb: strp("thumb_mouse_gaming.png"),
 		Flavor: "Seven buttons. Two are bound."},
-	{ID: "mouse_trackball", Slot: "mouse", Name: "Trackball", Price: 150, MinLevel: 4,
+	{ID: "mouse_trackball", Slot: "mouse", Name: "Trackball", Price: 150, MinLevel: 3,
 		Sprite: strp("mouse_trackball.png"), Thumb: strp("thumb_mouse_trackball.png"),
 		Flavor: "The wrist thanks you. The cursor does not."},
-	{ID: "mouse_vertical", Slot: "mouse", Name: "Vertical Ergo", Price: 220, MinLevel: 7,
+	{ID: "mouse_vertical", Slot: "mouse", Name: "Vertical Ergo", Price: 220, MinLevel: 5,
 		Sprite: strp("mouse_vertical.png"), Thumb: strp("thumb_mouse_vertical.png"),
 		Flavor: "Held like a handshake with your desk."},
 
@@ -196,10 +196,10 @@ var catalogItems = []CatalogItem{
 	{ID: "bev_thermos", Slot: "beverage", Name: "Thermos", Price: 40, MinLevel: 2,
 		Sprite: strp("bev_thermos.png"), Thumb: strp("thumb_bev_thermos.png"),
 		Flavor: "Still hot at 4pm. Suspiciously."},
-	{ID: "bev_teacup", Slot: "beverage", Name: "Tea & Saucer", Price: 90, MinLevel: 4,
+	{ID: "bev_teacup", Slot: "beverage", Name: "Tea & Saucer", Price: 90, MinLevel: 3,
 		Sprite: strp("bev_teacup.png"), Thumb: strp("thumb_bev_teacup.png"),
 		Flavor: "A saucer. On a developer's desk."},
-	{ID: "bev_energy", Slot: "beverage", Name: "Energy Can", Price: 140, MinLevel: 7,
+	{ID: "bev_energy", Slot: "beverage", Name: "Energy Can", Price: 140, MinLevel: 4,
 		Sprite: strp("bev_energy.png"), Thumb: strp("thumb_bev_energy.png"),
 		Flavor: "Tastes like a changelog."},
 
@@ -209,10 +209,10 @@ var catalogItems = []CatalogItem{
 	{ID: "plant_succulent", Slot: "plant", Name: "Succulent", Price: 50, MinLevel: 2,
 		Sprite: strp("plant_succulent.png"), Thumb: strp("thumb_plant_succulent.png"),
 		Flavor: "Survives neglect. Relatable."},
-	{ID: "plant_monstera", Slot: "plant", Name: "Monstera", Price: 140, MinLevel: 4,
+	{ID: "plant_monstera", Slot: "plant", Name: "Monstera", Price: 140, MinLevel: 3,
 		Sprite: strp("plant_monstera.png"), Thumb: strp("thumb_plant_monstera.png"),
 		Flavor: "Big leaves. Bigger commitment."},
-	{ID: "plant_bonsai", Slot: "plant", Name: "Bonsai", Price: 260, MinLevel: 8,
+	{ID: "plant_bonsai", Slot: "plant", Name: "Bonsai", Price: 260, MinLevel: 5,
 		Sprite: strp("plant_bonsai.png"), Thumb: strp("thumb_plant_bonsai.png"),
 		Flavor: "Pruned more carefully than the git history."},
 
@@ -222,10 +222,10 @@ var catalogItems = []CatalogItem{
 	{ID: "wall_poster", Slot: "wall", Name: `"Works On My Machine"`, Price: 80, MinLevel: 2,
 		Sprite: strp("wall_poster.png"), Thumb: strp("thumb_wall_poster.png"),
 		Flavor: "The oldest defence."},
-	{ID: "wall_shelf", Slot: "wall", Name: "Shelf: Books & Trophy", Price: 200, MinLevel: 5,
+	{ID: "wall_shelf", Slot: "wall", Name: "Shelf: Books & Trophy", Price: 200, MinLevel: 3,
 		Sprite: strp("wall_shelf.png"), Thumb: strp("thumb_wall_shelf.png"),
 		Flavor: "Four books, one trophy, zero pages read."},
-	{ID: "wall_neon", Slot: "wall", Name: "Neon Sign", Price: 380, MinLevel: 9,
+	{ID: "wall_neon", Slot: "wall", Name: "Neon Sign", Price: 380, MinLevel: 6,
 		Sprite: strp("wall_neon.png"), Thumb: strp("thumb_wall_neon.png"),
 		Flavor: "Casts a glow on every late commit."},
 
@@ -235,20 +235,20 @@ var catalogItems = []CatalogItem{
 	{ID: "buddy_duck", Slot: "buddy", Name: "Rubber Duck", Price: 60, MinLevel: 2,
 		Sprite: strp("buddy_duck.png"), Thumb: strp("thumb_buddy_duck.png"),
 		Flavor: "Best listener on the team."},
-	{ID: "buddy_bot", Slot: "buddy", Name: "Desk Bot", Price: 250, MinLevel: 6,
+	{ID: "buddy_bot", Slot: "buddy", Name: "Desk Bot", Price: 250, MinLevel: 4,
 		// 2-frame blink animation (buddy_bot_a.png/_b.png); sprite points
 		// at frame A — see this file's top-of-file doc comment.
 		Sprite: strp("buddy_bot_a.png"), Thumb: strp("thumb_buddy_bot.png"),
 		Flavor: "Blinks. Judges. Blinks again."},
-	{ID: "buddy_cat", Slot: "buddy", Name: "Sleeping Cat", Price: 300, MinLevel: 10,
+	{ID: "buddy_cat", Slot: "buddy", Name: "Sleeping Cat", Price: 300, MinLevel: 8,
 		Sprite: strp("buddy_cat.png"), Thumb: strp("thumb_buddy_cat.png"),
 		Flavor: "Has opinions about the keyboard. Asleep."},
 
 	// --- Monitor (STORE-2.0: bezel-colour item skins; screen rect fixed) ---
 	colourItem("monitor_slate", "monitor", "Slate Monitor", 0, 0, "Matte bezel, honest pixels."),
 	colourItem("monitor_cobalt", "monitor", "Cobalt Monitor", 80, 2, "A cool frame for warm takes."),
-	colourItem("monitor_forest", "monitor", "Forest Monitor", 160, 5, "Evergreen edges, deciduous focus."),
-	colourItem("monitor_neon", "monitor", "Neon Monitor", 280, 8, "The bezel glows so the code doesn't have to."),
+	colourItem("monitor_forest", "monitor", "Forest Monitor", 160, 3, "Evergreen edges, deciduous focus."),
+	colourItem("monitor_neon", "monitor", "Neon Monitor", 280, 5, "The bezel glows so the code doesn't have to."),
 }
 
 // DefaultCatalog returns the full, static item table.

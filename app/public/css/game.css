@@ -1066,35 +1066,88 @@ body.shell #titlebar { cursor: default; }
 }
 .slot-head:not(:first-child) { margin-top: 4px; }
 
-/* Three cards per row: 3*182 + 2*8 gap = 562, inside the grid's 564px
-   padded content width (576 - 2*6 padding). */
+/* STORE-CARDS-V3 (owner reference images): each card is a rounded BOX whose
+   BORDER VARIES BY STATE, over a very-light low-opacity fill. Three per row:
+   3*182 + 2*8 gap = 562, inside the grid's 564px padded content width. */
 .card {
   position: relative;
   flex: 0 0 182px;
   width: 182px;
-  height: 108px;
-  background: var(--wall-dark);
-  outline: 2px solid transparent;
+  height: 120px;
+  box-sizing: border-box;
+  border: 2px solid var(--wall-light);       /* DEFAULT: light border */
+  border-radius: 5px;
+  background: rgba(242, 224, 201, 0.05);      /* very-light low-opacity fill */
   cursor: pointer;
 }
-.card.hovered { outline: 2px solid var(--gold); }
-/* The EQUIPPED ring is GOLD (the owner's own word for it) so the worn item
-   reads at a glance in the grid; keyboard selection stays the lamp colour.
-   The grid now has 6px inner padding so this 2px ring is never clipped, even
-   on the top-left and right-column cards (owner refinement 2026-08-27). */
-.card.equipped { outline: 2px solid var(--gold); }
-.card.selected { outline: 2px solid var(--lamp); } /* keyboard selection */
+/* DISABLED / can't-afford: dimmed border + dimmed content, price in the
+   warning colour. Still clickable (the preview says NEED n). */
+.card.cant-afford {
+  border-color: var(--wall-dark);
+  background: rgba(242, 224, 201, 0.02);
+}
+.card.cant-afford .figure,
+.card.cant-afford .thumb,
+.card.cant-afford .name { opacity: 0.4; }
+.card.cant-afford .price .amt { color: var(--pot); }
+/* SELECTED / EQUIPPED — the worn item, in the SAME gold as the active tab so
+   selection reads consistently across tabs and cards (cohesive). */
+.card.equipped {
+  border-color: var(--gold);
+  background: rgba(232, 196, 106, 0.14);
+}
+.card.equipped .name { color: var(--gold); }
+/* LOCKED: muted + dashed, a "?" mystery (rules below hide its real content) —
+   a treatment distinct from every buyable state. */
+.card.locked {
+  border: 2px dashed var(--wall-light);
+  background: rgba(242, 224, 201, 0.015);
+}
+/* HOVER: brighter/raised. Two classes + :not() outrank the single-class state
+   rules above, so hovering a buyable card always brightens it; a locked card
+   is never hovered into a lie. */
+.card.hovered:not(.locked) {
+  border-color: var(--lamp);
+  background: rgba(242, 224, 201, 0.11);
+}
+/* Keyboard-cursor focus ring — an inset gold-family ring layered ON TOP of
+   whatever border the state drew, so "cursor here" never fights the state. */
+.card.selected { box-shadow: inset 0 0 0 2px var(--lamp); }
 
-/* Each unlocked card is a clickable THUMBNAIL: art centred at the top, name
-   centred below, price in the top-right corner, NO inline buy/equip button
-   (owner refinement 2026-08-27 — the action moved into the preview). */
+/* Per-card tint isolation: each buildTintLayer wrapper (the figure's dev/chair
+   forms) must be its own isolated stacking context or its multiply blend
+   reaches through the whole modal (same rule the scene carries). */
+#store .tintable { isolation: isolate; }
+
+/* The FULL item, centred (STORE-CARDS-V3). Hoodie/chair render a full-figure
+   composite (.figure) of the scene sprites; every other slot shows its full
+   item sprite (.thumb). The .figure stage fills its container and centres the
+   112x96 room crop (FIGURE_CROP) at a per-context --fig-scale; the SAME stage
+   is reused by the grid card and by the larger #store-preview-art overlay. */
+.figure {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+}
+.figure-room {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%) scale(var(--fig-scale, 1));
+  image-rendering: pixelated;
+}
+.figure-room img { image-rendering: pixelated; }
+/* Card region: the figure sits in the top band above the name. */
+.card .figure { top: 5px; bottom: 30px; }
+.card .figure-room { --fig-scale: 0.875; }
+/* Preview overlay: bigger, fills the 128x128 art box. */
+#store-preview-art .figure-room { --fig-scale: 1.15; }
 .card .thumb {
   position: absolute;
   left: 59px;   /* (182-64)/2 */
-  top: 10px;
+  top: 14px;
   width: 64px;
   height: 64px;
-  background: var(--shadow);
   overflow: hidden;
 }
 .card .thumb img {
@@ -1104,24 +1157,34 @@ body.shell #titlebar { cursor: default; }
   image-rendering: pixelated;
 }
 
-/* PRICE, top-right corner (the spec's key placement). */
+/* PRICE BADGE — coin.png + amount, top-right (STORE-CARDS-V3), a small dark
+   rounded chip so it reads over the figure. OWNED shows the word, no coin. */
 .card .price {
   position: absolute;
-  top: 8px;
-  right: 8px;
-  height: 10px;
-  line-height: 10px;
+  top: 5px;
+  right: 5px;
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  height: 14px;
+  padding: 0 4px;
+  background: var(--shadow);
+  border-radius: 7px;
   font-size: 8px;
+  line-height: 12px;
   color: var(--gold);
-  text-align: right;
   white-space: nowrap;
 }
+.card .price .coin-img { width: 10px; height: 10px; }
+.card .price.owned { color: var(--cream); }
+.card .price.owned .coin-img { display: none; }
 
 .card .name {
   position: absolute;
   left: 6px;
   right: 6px;
-  top: 80px;
+  top: 94px;
   height: 22px;
   line-height: 11px;
   font-size: 8px;
@@ -1130,7 +1193,6 @@ body.shell #titlebar { cursor: default; }
   overflow: hidden;
   word-break: break-word;
 }
-.card.equipped .name { color: var(--gold); }
 
 /* .swatch is kept because ANOTHER feature reuses this chip (see the
    comment further down in this file); the store card itself no longer
@@ -1159,6 +1221,7 @@ body.shell #titlebar { cursor: default; }
 /* A locked card shows ONLY the "?" — its real art/name/price stay hidden
    until the level is reached. */
 .card.locked .thumb,
+.card.locked .figure,
 .card.locked .price,
 .card.locked .name { display: none; }
 .card .mystery {
@@ -1254,13 +1317,20 @@ body.shell #titlebar { cursor: default; }
   left: 0;
   top: 244px;
   width: 576px;
-  height: 12px;
-  line-height: 12px;
+  height: 14px;
+  line-height: 14px;
   font-size: 10px;
   color: var(--gold);
-  text-align: center;
   white-space: nowrap;
+  /* STORE-CARDS-V3: coin + amount, centred (matches the card badge glyph). */
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
 }
+#store-preview-price .coin-img { width: 12px; height: 12px; }
+#store-preview-price.owned { color: var(--cream); }
+#store-preview-price.owned .coin-img { display: none; }
 #store-preview-action {
   position: absolute;
   left: 178px;   /* (576-220)/2 */

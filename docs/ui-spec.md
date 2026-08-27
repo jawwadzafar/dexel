@@ -690,20 +690,46 @@ at 1× and 2× (tight `padding: 0 4px`, `gap: 3px`); the active tab is
 gold-outlined. Clicking a tab swaps `#store-grid` to that slot's cards; `[` /
 `]` cycle tabs by keyboard.
 
-**Card grid.** `#store-grid` (left 8, top 74, width 576, height 264,
-`overflow-y: auto`, `box-sizing: border-box`) has **`padding: 6px`** so a
-card's 2px `outline` (selection / EQUIPPED ring) is never shaved by the
-scrollport's clip — the full ring shows on the top-left and right-column
-cards. Three `182×108` cards per row (`3*182 + 2*8 = 562 ≤ 564` content
-width). Each **unlocked** card is a clickable **thumbnail**: art centred at
-top, name centred below, price top-right (`N ◆`, or `OWNED`). No inline
-buy/equip button. The **equipped** card carries a **gold** outline; keyboard
-selection carries the `--lamp` outline. `#store-scroll` is the hidden-native
-custom scroll thumb (left 586).
+**Card grid (STORE-CARDS-V3, 2026-08-27 owner cozy redesign).** `#store-grid`
+(left 8, top 74, width 576, height 264, `overflow-y: auto`,
+`box-sizing: border-box`) has **`padding: 6px`** so a card's border/ring is
+never shaved by the scrollport's clip. Three `182×120` cards per row
+(`3*182 + 2*8 = 562 ≤ 564` content width). Each card is a **rounded box**
+(`border-radius: 5px`) — a border over a very-light low-opacity cream fill —
+that shows the **FULL item, centred**, with a **coin + amount price badge**
+top-right and the name at the bottom.
+
+- **Full item.** Hoodie and chair cards render a **full seated-dexel
+  composite** (`.figure`): the same scene sprites the room draws (dev
+  form tinted by the hoodie colour → hoodie style overlay → dev base → chair
+  form tinted by the chair colour → chair detail, in scene layer order),
+  cropped to the figure (room `FIGURE_CROP` `{104,104,112×96}`) and scaled to
+  fit — so a hoodie card shows the whole figure in that colour and a chair
+  card shows the figure on that chair. The figure's context (the *other* worn
+  item) is a fixed neutral default (`hoodie_classic_indigo` /
+  `chair_basic_slate`), never the live equip, so a card renders the same
+  whatever the player wears. The **monitor** slot (a desk prop, not the
+  figure) shows its full tinted bezel; every other slot shows its full item
+  sprite, centred.
+- **Price badge.** A small dark rounded chip top-right holding the **`coin.png`
+  glyph + the exact amount** (replaces the old `◆` diamond). An owned item
+  shows the word `OWNED` with no coin.
+- **Per-state borders (each visually distinct).** DEFAULT — light border
+  (`--wall-light`). HOVER — brighter (`--lamp`) border + brighter fill
+  (`:not(.locked)`, so a locked card is never hovered into a lie).
+  SELECTED / EQUIPPED — the **same gold (`--gold`) as the active tab**, plus a
+  gold-tinted fill and gold name, so selection reads cohesively across tabs
+  and cards. DISABLED / can't-afford — dimmed border, the figure/name at
+  `opacity 0.4`, and the price amount in `--pot`. LOCKED — a muted **dashed**
+  border (see below). The keyboard cursor is a separate inset `--lamp` ring
+  (`box-shadow`) that layers on top of whatever border the state drew.
+
+`#store-scroll` is the hidden-native custom scroll thumb (left 586).
 
 **Locked = "?" mystery.** A level-gated, unowned item (catalog `minLevel` >
-player level) renders as a **`.card.locked`**: its real art/name/price are
-`display:none`, replaced by a big gold pixel **`?`** and a small `LV n` hint
+player level) renders as a **`.card.locked`** (a muted **dashed** border):
+its real figure/art/name/price are `display:none`, replaced by a big gold
+pixel **`?`** and a small `LV n` hint
 (`.mystery`). It is **not** buyable and clicking it opens **no preview**
 (no-op). It reveals its real content only once the level is reached. (Replaces
 the old padlock — owner wants "a question mark for them to come back".)
